@@ -1,0 +1,46 @@
+#!/bin/sh
+
+# bootmail need to be installed on /usr/local/etc/rc.d and permit to send a mail after system boot
+# PROVIDE: bootmail
+# REQUIRE: mail
+
+# Add the following lines to /etc/rc.conf to enable bootmail:
+#
+# bootmail_enable (bool):	Set to "NO" by default.
+#				Set it to "YES" to enable panicmail.
+#
+# bootmail_sendto (str):	Set to root@localhost by default.
+#				Change to your desired submission target.
+#
+: ${bootmail_enable:="NO"}
+: ${bootmail_sendto:="root@localhost"}
+
+. /etc/rc.subr
+
+name="bootmail"
+rcvar="bootmail_enable"
+start_cmd="bootmail_run"
+stop_cmd=":"
+
+# Gather the data we want to include in a boot report.
+bootmail_gather()
+{
+	(
+		echo "ifconfig"
+		echo "##############################################################"
+		ifconfig
+		echo "##############################################################"
+		echo "df -h"
+		df -h
+	) > /tmp/bootmail
+}
+
+bootmail_run()
+{
+	bootmail_gather
+	hostname=`hostname -s`
+	cat /tmp/bootmail | mail -s "${hostname} reboot" ${bootmail_sendto}
+}
+
+load_rc_config $name
+run_rc_command "$1"

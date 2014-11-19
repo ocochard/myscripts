@@ -1,142 +1,216 @@
 #!/bin/sh
-#This script install desktop environnement to a FreeBSD 9.1
+# FreeBSD desktop configuration script
 set -eu
 
-skip () {
-# Boot loader
-echo "Configuring /boot/loader.conf"
-echo "#Reduce the boot menu timeout" >> /boot/loader.conf
-echo 'autoboot_delay="2"' >> /boot/loader.conf
-echo "#gamin process recommand to increase kern.maxfiles" >> /boot/loader.conf
-echo 'kern.maxfiles="25000"' >> /boot/loader.conf
-echo "#splash screen" >> /boot/loader.conf
-echo 'splash_bmp_load="YES"' >> /boot/loader.conf
-echo 'bitmap_load="YES"' >> /boot/loader.conf
-echo 'bitmap_name="/boot/splash.bmp"' >> /boot/loader.conf
-fetch -o /boot/splash.bmp http://gugus69.free.fr/images/splash.bmp
+OLDIFS=$IFS
+IFS="
+"
+# A usefull function (from: http://code.google.com/p/sh-die/) 
+die() { echo -n "EXIT: " >&2; echo "$@" >&2; exit 1; } 
 
-#locale
-
-echo "Enabling UTF-8"
-# Generat the login.conf.patch
-cat > login.conf.patch << "EOF"
---- login.conf.orig     2012-09-24 23:39:35.000000000 +0200
-+++ login.conf  2012-09-24 23:45:58.000000000 +0200
-@@ -44,7 +44,9 @@
-        :pseudoterminals=unlimited:\
-        :priority=0:\
-        :ignoretime@:\
--       :umask=022:
-+       :umask=022:\
-+       :charset=UTF-8:\
-+       :lang=en_US.UTF-8:
- 
- 
- #
-EOF
-
-patch /etc/login.conf login.conf.patch
-echo "Adding french language to login.conf"
-echo 'french|French Users Accounts:\' >> /etc/login.conf
-echo '        :charset=UTF-8:\' >> /etc/login.conf
-echo '        :lang=fr_FR.UTF-8:\' >> /etc/login.conf
-echo '        :tc=default:' >> /etc/login.conf
-echo "Rebuilding cap database"
-cap_mkdb /etc/login.conf
-echo "defaultclass = french" >> /etc/adduser.conf
-
-#/etc/rc.conf
-
-echo "Configuring /etc/rc.conf"
-echo "#Increase console resolution"
-echo 'allscreens_flags="MODE_261"' >> /etc/rc.conf
-echo "#Put all kernel module to load here"
-echo "kld_list='ichsmb'" >> /etc/rc.conf
-echo "Configuring /etc/sysctl.conf"
-echo "# Disable sendmail" >> /etc/rc.conf
-echo 'sendmail_enable="NONE"' >> /etc/rc.conf
-echo 'sendmail_submit_enable="NO"' >> /etc/rc.conf
-echo 'sendmail_outbound_enable="NO"' >> /etc/rc.conf
-echo 'sendmail_msp_queue_enable="NO"' >> /etc/rc.conf
-
-#/etc/sysctl.conf
-
-echo "#Permit user to mount"
-echo "vfs.usermount=1" >> /etc/sysctl.conf
-
-#/etc/fstab
-
-echo "HAL need procfs mounted"
-echo "proc	/proc	procfs	rw	0	0" >> /etc/fstab
-mount /proc
-
-#.cshrc
-
-echo "Session profile setup"
-# Generate the cshrc.patch
-cat > cshrc.patch << "EOF"
---- .cshrc.orig 2012-09-24 23:23:13.000000000 +0200
-+++ .cshrc      2012-09-24 23:24:05.000000000 +0200
-@@ -19,6 +19,7 @@
- 
- setenv EDITOR  vi
- setenv PAGER   less
-+setenv LESS    -x4
- setenv BLOCKSIZE       K
- 
- if ($?prompt) then
-@@ -28,7 +29,9 @@
-        endif
-        set prompt = "%n@%m:%/ %# "
-        set promptchars = "%#"
--
-+       set color
-+       set colorcat
-+       set nobeep
-        set filec
-        set history = 1000
-        set savehist = (1000 merge)
-EOF
-patch /root/.cshrc cshrc.patch
-
-echo "Bootstraping pkg"
-env ASSUME_ALWAYS_YES=true pkg info
-echo "Configuring my own repo"
-echo "packagesite: http://dev.bsdrp.net/pkg/9.1/`uname -m`/desktop/" >  /usr/local/etc/pkg.conf
-echo "Installing my packages"
-pkg update
-pkg install -y vim-lite
-pkg install -y bsdstats
-pkg install -y smartmontools
-pkg install -y tmux
-pkg install -y xorg
-pkg install -y slim
-pkg install -y slim-themes
-pkg install -y xfce
-pkg install -y webfonts
-pkg install -y freefonts
-pkg install -y cups
-pkg install -y chromium
-pkg install -y vlc
-pkg install -y fr-libreoffice
-echo 'dbus_enable="YES"' >> /etc/rc.conf
-service dbus start
-echo 'hald_enable="YES"' >> /etc/rc.conf
-service hald start
-echo 'smartd_enable="YES"' >> /etc/rc.conf
-echo "DEVICESCAN" >> /usr/local/etc/smartd.conf
-service smartd start
-echo 'slim_enable="YES"' >> /etc/rc.conf
-echo "Gamin tuning"
-mkdir /usr/local/etc/gamin
-echo "fsset ufs poll 10" > /usr/local/etc/gamin/gaminrc
-echo "Change slim default theme to fbsd"
-sed -i "" -e "/current_theme/s/default/fbsd/" /usr/local/etc/slim.conf
+check_and_add() {
+	# $1: Table of values
+	# $2: Filename to patch
+	for VALUE in $1; do
+		grep -q ${VALUE} $2 || echo ${VALUE} >> $2
+	done
 }
 
-echo "Configure fr keyboard mapping for HAL:"
-echo "/usr/local/etc/hal/fdi/policy/x11-input.fdi"
-cat > /usr/local/etc/hal/fdi/policy/x11-input.fdi << "EOF"
+install_pkg () {
+	# $1: package name
+	if ! pkg info -q ${PACKAGE}; then
+		pkg install -y ${PACKAGE} || echo "Can't install ${PACKAGE}"
+	fi
+}
+
+
+[ `id -u` -ne 0 ] && die "you need to execute this script as root"
+
+# Boot loader
+LOADER_CONF='
+autoboot_delay="2"
+kern.maxfiles="2500"
+splash_bmp_load="YES"
+bitmap_load="YES"
+bitmap_name="/boot/splash.bmp"
+'
+
+check_and_add "${LOADER_CONF}" /boot/loader.conf
+
+if [ ! -f /boot/splash.bmp ]; then
+    fetch -o /boot/splash.bmp http://gugus69.free.fr/images/splash.bmp || echo "Can't download a splash screen"
+fi
+
+#Add french UTF-8locale
+
+if ! grep -q french /etc/login.conf; then
+	LOGIN_CONF='
+french|French Users Accounts:\
+	:charset=UTF-8:\
+	:lang=fr_FR.UTF-8:\
+	:tc=default:
+'
+	for line in $LOGIN_CONF; do
+		echo $line >>/etc/login.conf
+	done
+
+	echo "Rebuilding cap database"
+	cap_mkdb /etc/login.conf || die "ERROR during rebuild cap database"
+fi
+
+check_and_add "defaultclass = french" /etc/adduser.conf
+
+#/etc/rc.conf
+sysrc sendmail_enable=NONE
+sysrc sendmail_submit_enable=NO
+sysrc sendmail_outbound_enable=NO
+sysrc sendmail_msp_queue_enable=NO
+sysrc kld_list="ichsmb fuse sem coretemp ichwd acpi_video"
+
+CSH_CSHRC='
+setenv CLICOLOR
+set nobeep
+'
+
+check_and_add "${CSH_CSHRC}" /etc/csh.cshrc
+
+SYSCTL_CONF='
+vfs.usermount=1
+kern.ipc.shm_allow_removed=1
+'
+
+check_and_add "${SYSCTL_CONF}" /etc/sysctl.conf
+
+FSTAB='
+fdesc		/dev/fd		fdescfs	rw	0	0
+proc		/proc		procfs	rw	0	0
+'
+check_and_add "${FSTAB}" /etc/fstab
+
+env ASSUME_ALWAYS_YES=true pkg info
+mkdir -p /usr/local/etc/pkg/repos
+cat >/usr/local/etc/pkg/repos/myrepo.conf <<EOF
+myrepo: {
+ URL: http://dev.bsdrp.net/pkg/\${ABI}/desktop,
+ ENABLED: YES
+}
+FreeBSD: {
+    enabled         : no
+}
+EOF
+
+pkg update || die "Can't bootstrap pkg"
+
+echo "Installing packages"
+#fusefs-exfat
+#fusefs-ntfs
+#automount
+#corkscrew 
+PKG_LIST='
+vim-lite
+smartmontools
+ssmtp
+panicmail
+tmux
+openvpn
+keychain
+xorg
+slim
+slim-themes
+xfce
+ristretto
+galculator
+webfonts
+freefonts
+inconsolata-ttf
+dejavu
+liberation-fonts-ttf
+proggy_fonts
+proggy_fonts-ttf
+ubuntu-font
+urwfonts
+urwfonts-ttf
+terminus-font
+cups
+firefox
+vlc
+fr-libreoffice
+'
+for PACKAGE in ${PKG_LIST}; do
+	install_pkg ${PACKAGE}
+done
+
+sysctl -n dev.agp.0.%desc | grep -q Intel && install_pkg xf86-video-intel
+
+sysrc dbus_enable=YES
+sysrc smartd_enable=YES
+sysrc slim_enable=YES
+sysrc panicmail_enable=YES
+sysrc panicmail_autosubmit=YES
+
+service dbus start || echo "Can't start dbus"
+
+check_and_add "DEVICESCAN" /usr/local/etc/smartd.conf
+service smartd start || echo "Can't start smartd"
+
+if grep -q "/usr/local/sbin/ssmtp" /etc/mail/mailer.conf; then
+	cp /etc/mail/mailer.conf /etc/mail/mailer.conf.bak
+	cat >/etc/mail/mailer.conf <<EOF
+sendmail        /usr/local/sbin/ssmtp
+send-mail       /usr/local/sbin/ssmtp
+mailq           /usr/local/sbin/ssmtp
+newaliases      /usr/local/sbin/ssmtp
+hoststat        /usr/bin/true
+purgestat       /usr/bin/true
+EOF
+fi
+
+echo "Gamin tuning"
+[ -d /usr/local/etc/gamin ] || mkdir /usr/local/etc/gamin
+check_and_add "fsset ufs poll 10" /usr/local/etc/gamin/gaminrc
+
+echo "template for ssmtp"
+if [ ! -f /usr/local/etc/ssmtp/ssmtp.conf ]; then
+	cat >/usr/local/etc/ssmtp/ssmtp.conf <<EOF
+root=username-to-map@gmail.com
+mailhub=smtp.gmail.com:587
+AuthUser=username@gmail.com
+AuthPass=your password
+rewriteDomain=your.domain
+hostname=_HOSTNAME_
+FromLineOverride=YES
+UseSTARTTLS=YES
+EOF
+fi
+
+echo "Change slim default theme to fbsd"
+if [ -f /usr/local/etc/slim.conf ]; then
+	sed -i "" -e "/current_theme/s/default/fbsd/" /usr/local/etc/slim.conf || echo "slim allready configured?"
+fi
+
+if [ ! -f /usr/share/syscons/keymaps/fr-dvorak-bepo.kbd ]; then
+	fetch http://download.tuxfamily.org/dvorak/devel/fr-dvorak-bepo-kbdmap-1.0rc2.tgz || echo "Can't fetch bepo layout"
+	tar zxvf fr-dvorak-bepo-kbdmap-1.0rc2.tgz || echo "Can't extract bepo layout"
+	cp fr-dvorak-bepo-kbdmap-1.0rc2/fr-dvorak-bepo.kbd /usr/share/syscons/keymaps/ || echo "Can't install bepo layout"
+	echo 'keymap="fr-dvorak-bepo"' >> /etc/rc.conf
+fi
+
+if ! grep -q 'Option "XkbLayout" "fr"' /etc/X11/xorg.conf; then
+	cat >>/etc/X11/xorg.conf <<EOF
+Section "InputDevice"
+	Identifier "Generic Keyboard"
+	Driver "kbd"
+	Option "XkbLayout" "fr"
+	Option "XkbVariant" "bepo"
+EndSection
+EOF
+
+fi
+
+if [ -d /usr/local/etc/hal ]; then
+	if [ ! -f /usr/local/etc/hal/fdi/policy/x11-input.fdi ]; then
+		echo "Configure fr keyboard mapping for HAL"
+		cat > /usr/local/etc/hal/fdi/policy/x11-input.fdi << EOF
 <?xml version="1.0" encoding="ISO-8859-1"?>
 <deviceinfo version="0.2">
   <device>
@@ -148,10 +222,12 @@ cat > /usr/local/etc/hal/fdi/policy/x11-input.fdi << "EOF"
   </device>
 </deviceinfo>
 EOF
-
-echo "Enable shutdown/reboot/suspend for xfce"
-echo "/usr/local/etc/polkit-1/localauthority/50-local.d/40-power.pkla"
-cat > /usr/local/etc/polkit-1/localauthority/50-local.d/40-power.pkla << "EOF"
+	fi
+fi
+if [ ! -f /usr/local/etc/polkit-1/localauthority/50-local.d/40-power.pkla ]; then
+	echo "Enable shutdown/reboot/suspend for xfce"
+	echo "/usr/local/etc/polkit-1/localauthority/50-local.d/40-power.pkla"
+	cat > /usr/local/etc/polkit-1/localauthority/50-local.d/40-power.pkla << EOF
 [Restart]
 Identity=unix-group:operator
 Action=org.freedesktop.consolekit.system.restart
@@ -174,22 +250,23 @@ ResultInactive=yes
 ResultActive=yes
 EOF
 
-cat >> /etc/rc.conf << "EOF"
-#configure a failover between Ethernet and wireless"
-ifconfig_em0="up"
-ifconfig_ath0="ether 00:0d:60:2f:19:4f"
-wlans_ath0="wlan0"
-ifconfig_wlan0="WPA"
-cloned_interfaces="lagg0"
-ifconfig_lagg0="laggproto failover laggport em0 laggport wlan0 DHCP"
-ifconfig_lagg0_ipv6="inet6 accept_rtadv"
-EOF
+fi
+
+#Cool background picture: http://gugus69.free.fr/freebsd/FreeBSD_paefchen_1920x1200.jpg
 
 echo "TO DO:"
+echo "Configuring ssmtp: /usr/local/etc/ssmtp/ssmtp.conf"
 echo "Start vipw and add class french for your user"
 echo "Add your user to operator and dialer group:"
 echo "pw group mod operator -m <username>"
 echo "pw group mod dialer -m <username>"
-echo 'echo export LANG="fr_FR.UTF-8"' >> .xinitrc
-echo 'echo export MM_CHARSET="UTF-8"' >> .xinitrc
-echo 'echo "exec ck-launch-session startxfce4" >> .xinitrc'
+echo 'echo export LANG="fr_FR.UTF-8" >> ~/.xinitrc'
+echo 'echo export MM_CHARSET="UTF-8" >> ~/.xinitrc'
+echo 'echo xset m 5 1 >> ~/.xinitrc'
+echo 'echo "exec ck-launch-session startxfce4" >> ~/.xinitrc'
+echo 'fetch http://gugus69.free.fr/freebsd/FreeBSD_paefchen_1920x1200.jpg'
+
+echo "FreeBSD configured as a desktop: Done!"
+#Need to put this in a trap:
+IFS=$OLDIFS
+exit 0
