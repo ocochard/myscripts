@@ -252,17 +252,15 @@ EOF
 
 fi
 
-#Cool background picture: http://gugus69.free.fr/freebsd/FreeBSD_paefchen_1920x1200.jpg
-
 echo "TO DO:"
-echo "Configuring ssmtp: /usr/local/etc/ssmtp/ssmtp.conf"
+echo "Configuring dma with your smtp loging/password: /etc/dma/dma.conf"
 echo "Start vipw and add class french for your user"
 echo "Add your user to operator and dialer group:"
 echo "pw group mod operator -m <username>"
 echo "pw group mod dialer -m <username>"
 echo 'echo export LANG="fr_FR.UTF-8" >> ~/.xinitrc'
 echo 'echo export MM_CHARSET="UTF-8" >> ~/.xinitrc'
-echo 'echo xset m 5 1 >> ~/.xinitrc'
+echo 'echo export GDM_LANG=fr_FR.UTF-8" >> ~/.xinitrc'
 echo 'echo "exec ck-launch-session startxfce4" >> ~/.xinitrc'
 echo 'fetch http://gugus69.free.fr/freebsd/FreeBSD_paefchen_1920x1200.jpg'
 
