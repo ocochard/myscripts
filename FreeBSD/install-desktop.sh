@@ -197,11 +197,11 @@ fi
 
 if ! grep -q 'Option "XkbLayout" "fr"' /etc/X11/xorg.conf; then
 	cat >>/etc/X11/xorg.conf <<EOF
-Section "InputDevice"
-	Identifier "Generic Keyboard"
-	Driver "kbd"
-	Option "XkbLayout" "fr"
-	Option "XkbVariant" "bepo"
+Section "InputClass"
+	Identifier "All Keyboards"
+	Driver "keyboard"
+	MatchIsKeyboard "on
+	Option "XkbLayout" "fr(bepo)"
 EndSection
 EOF
 
