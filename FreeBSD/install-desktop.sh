@@ -133,7 +133,7 @@ for PACKAGE in ${PKG_LIST}; do
 	install_pkg ${PACKAGE}
 done
 
-if [ -f /usr/local/share/certs/ca-root-nss.crt ];
+if [ -f /usr/local/share/certs/ca-root-nss.crt ]; then
     [ ! -h /etc/ssl/cert.pem ] && ln -s /usr/local/share/certs/ca-root-nss.crt /etc/ssl/cert.pem
 fi
 
@@ -176,6 +176,7 @@ SECURETRANSFER
 STARTTLS
 MASQUERADE your-login@gmail.com
 EOF
+fi
 if [ ! -f /etc/dma/auth.conf ]; then
 	cat >/etc/dma/auth.conf <<EOF
 your-loging|smtp.gmail.com:your-password
