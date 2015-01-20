@@ -100,6 +100,7 @@ echo "Installing packages"
 #automount
 #corkscrew 
 PKG_LIST='
+ca_root_nss
 vim-lite
 smartmontools
 panicmail
@@ -131,6 +132,10 @@ fr-libreoffice
 for PACKAGE in ${PKG_LIST}; do
 	install_pkg ${PACKAGE}
 done
+
+if [ -f /usr/local/share/certs/ca-root-nss.crt ];
+    [ ! -h /etc/ssl/cert.pem ] && ln -s /usr/local/share/certs/ca-root-nss.crt /etc/ssl/cert.pem
+fi
 
 sysctl -n dev.agp.0.%desc | grep -q Intel && install_pkg xf86-video-intel
 
