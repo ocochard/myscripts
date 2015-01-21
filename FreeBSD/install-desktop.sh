@@ -68,7 +68,11 @@ sysrc sendmail_enable=NONE
 sysrc sendmail_submit_enable=NO
 sysrc sendmail_outbound_enable=NO
 sysrc sendmail_msp_queue_enable=NO
+sysrc firewall_enable=YES
+sysrc firewall_type=workstation
 sysrc kld_list="ichsmb fuse sem coretemp ichwd acpi_video"
+
+service ipfw start
 
 CSH_CSHRC='
 setenv CLICOLOR
