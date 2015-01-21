@@ -63,17 +63,23 @@ check_and_add "CHARSET=UTF-8; export CHARSET" /etc/profile
 check_and_add "GDM_LANG=fr_FR.UTF-8; export GDM_LANG" /etc/profile
 check_and_add "defaultclass = french" /etc/adduser.conf
 
-#/etc/rc.conf
+# system service enable/disable
 sysrc sendmail_enable=NONE
-sysrc sendmail_submit_enable=NO
-sysrc sendmail_outbound_enable=NO
-sysrc sendmail_msp_queue_enable=NO
 sysrc firewall_enable=YES
 sysrc firewall_type=workstation
 sysrc kld_list="ichsmb fuse sem coretemp ichwd acpi_video"
 
+service sendmail onestop
 service ipfw start
 
+cat >>/etc/periodic.conf <<EOF
+#disable some sendmail specific daily maintenance routines
+daily_clean_hoststat_enable="NO"
+daily_status_mail_rejects_enable="NO"
+daily_status_include_submit_mailq="NO"
+daily_submit_queuerun="NO"
+EOF
+    
 CSH_CSHRC='
 setenv CLICOLOR
 set nobeep
@@ -143,6 +149,7 @@ fi
 
 sysctl -n dev.agp.0.%desc | grep -q Intel && install_pkg xf86-video-intel
 
+# ports services enable
 sysrc dbus_enable=YES
 sysrc smartd_enable=YES
 sysrc slim_enable=YES
