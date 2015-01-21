@@ -206,7 +206,7 @@ if [ ! -f /usr/share/syscons/keymaps/fr-dvorak-bepo.kbd ]; then
 	echo 'keymap="fr-dvorak-bepo"' >> /etc/rc.conf
 fi
 
-if ! grep -q 'Option "XkbLayout" "fr"' /etc/X11/xorg.conf; then
+if ! grep -q 'Option "XkbLayout"' /etc/X11/xorg.conf; then
 	cat >>/etc/X11/xorg.conf <<EOF
 Section "InputClass"
 	Identifier "All Keyboards"
