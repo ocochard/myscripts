@@ -58,15 +58,28 @@ french|French Users Accounts:\
 	cap_mkdb /etc/login.conf || die "ERROR during rebuild cap database"
 fi
 
+check_and_add "LANG=fr_FR.UTF-8; export LANG" /etc/profile
+check_and_add "CHARSET=UTF-8; export CHARSET" /etc/profile
+check_and_add "GDM_LANG=fr_FR.UTF-8; export GDM_LANG" /etc/profile
 check_and_add "defaultclass = french" /etc/adduser.conf
 
-#/etc/rc.conf
+# system service enable/disable
 sysrc sendmail_enable=NONE
-sysrc sendmail_submit_enable=NO
-sysrc sendmail_outbound_enable=NO
-sysrc sendmail_msp_queue_enable=NO
+sysrc firewall_enable=YES
+sysrc firewall_type=workstation
 sysrc kld_list="ichsmb fuse sem coretemp ichwd acpi_video"
 
+service sendmail onestop
+service ipfw start
+
+cat >>/etc/periodic.conf <<EOF
+#disable some sendmail specific daily maintenance routines
+daily_clean_hoststat_enable="NO"
+daily_status_mail_rejects_enable="NO"
+daily_status_include_submit_mailq="NO"
+daily_submit_queuerun="NO"
+EOF
+    
 CSH_CSHRC='
 setenv CLICOLOR
 set nobeep
@@ -88,16 +101,6 @@ proc		/proc		procfs	rw	0	0
 check_and_add "${FSTAB}" /etc/fstab
 
 env ASSUME_ALWAYS_YES=true pkg info
-mkdir -p /usr/local/etc/pkg/repos
-cat >/usr/local/etc/pkg/repos/myrepo.conf <<EOF
-myrepo: {
- URL: http://dev.bsdrp.net/pkg/\${ABI}/desktop,
- ENABLED: YES
-}
-FreeBSD: {
-    enabled         : no
-}
-EOF
 
 pkg update || die "Can't bootstrap pkg"
 
@@ -107,9 +110,9 @@ echo "Installing packages"
 #automount
 #corkscrew 
 PKG_LIST='
+ca_root_nss
 vim-lite
 smartmontools
-ssmtp
 panicmail
 tmux
 openvpn
@@ -132,7 +135,7 @@ urwfonts
 urwfonts-ttf
 terminus-font
 cups
-firefox
+firefox-i18n
 vlc
 fr-libreoffice
 '
@@ -140,8 +143,13 @@ for PACKAGE in ${PKG_LIST}; do
 	install_pkg ${PACKAGE}
 done
 
+if [ -f /usr/local/share/certs/ca-root-nss.crt ]; then
+    [ ! -h /etc/ssl/cert.pem ] && ln -s /usr/local/share/certs/ca-root-nss.crt /etc/ssl/cert.pem
+fi
+
 sysctl -n dev.agp.0.%desc | grep -q Intel && install_pkg xf86-video-intel
 
+# ports services enable
 sysrc dbus_enable=YES
 sysrc smartd_enable=YES
 sysrc slim_enable=YES
@@ -153,13 +161,13 @@ service dbus start || echo "Can't start dbus"
 check_and_add "DEVICESCAN" /usr/local/etc/smartd.conf
 service smartd start || echo "Can't start smartd"
 
-if grep -q "/usr/local/sbin/ssmtp" /etc/mail/mailer.conf; then
+if grep -q "/usr/libexec/dma" /etc/mail/mailer.conf; then
 	cp /etc/mail/mailer.conf /etc/mail/mailer.conf.bak
 	cat >/etc/mail/mailer.conf <<EOF
-sendmail        /usr/local/sbin/ssmtp
-send-mail       /usr/local/sbin/ssmtp
-mailq           /usr/local/sbin/ssmtp
-newaliases      /usr/local/sbin/ssmtp
+sendmail        /usr/libexec/dma
+send-mail       /usr/libexec/dma
+mailq           /usr/libexec/dma
+newaliases      /usr/bin/true
 hoststat        /usr/bin/true
 purgestat       /usr/bin/true
 EOF
@@ -169,17 +177,20 @@ echo "Gamin tuning"
 [ -d /usr/local/etc/gamin ] || mkdir /usr/local/etc/gamin
 check_and_add "fsset ufs poll 10" /usr/local/etc/gamin/gaminrc
 
-echo "template for ssmtp"
-if [ ! -f /usr/local/etc/ssmtp/ssmtp.conf ]; then
-	cat >/usr/local/etc/ssmtp/ssmtp.conf <<EOF
-root=username-to-map@gmail.com
-mailhub=smtp.gmail.com:587
-AuthUser=username@gmail.com
-AuthPass=your password
-rewriteDomain=your.domain
-hostname=_HOSTNAME_
-FromLineOverride=YES
-UseSTARTTLS=YES
+echo "template for dma"
+if [ ! -f /etc/dma/dma.conf ]; then
+	cat >/etc/dma/dma.conf <<EOF
+SMARTHOST smtp.gmail.com
+PORT 587
+AUTHPATH /usr/local/etc/dma/auth.conf
+SECURETRANSFER
+STARTTLS
+MASQUERADE your-login@gmail.com
+EOF
+fi
+if [ ! -f /etc/dma/auth.conf ]; then
+	cat >/etc/dma/auth.conf <<EOF
+your-loging|smtp.gmail.com:your-password
 EOF
 fi
 
@@ -195,13 +206,13 @@ if [ ! -f /usr/share/syscons/keymaps/fr-dvorak-bepo.kbd ]; then
 	echo 'keymap="fr-dvorak-bepo"' >> /etc/rc.conf
 fi
 
-if ! grep -q 'Option "XkbLayout" "fr"' /etc/X11/xorg.conf; then
+if ! grep -q 'Option "XkbLayout"' /etc/X11/xorg.conf; then
 	cat >>/etc/X11/xorg.conf <<EOF
-Section "InputDevice"
-	Identifier "Generic Keyboard"
-	Driver "kbd"
-	Option "XkbLayout" "fr"
-	Option "XkbVariant" "bepo"
+Section "InputClass"
+	Identifier "All Keyboards"
+	Driver "keyboard"
+	MatchIsKeyboard "on
+	Option "XkbLayout" "fr(bepo)"
 EndSection
 EOF
 
@@ -252,17 +263,15 @@ EOF
 
 fi
 
-#Cool background picture: http://gugus69.free.fr/freebsd/FreeBSD_paefchen_1920x1200.jpg
-
 echo "TO DO:"
-echo "Configuring ssmtp: /usr/local/etc/ssmtp/ssmtp.conf"
+echo "Configuring dma with your smtp loging/password: /etc/dma/dma.conf"
 echo "Start vipw and add class french for your user"
 echo "Add your user to operator and dialer group:"
 echo "pw group mod operator -m <username>"
 echo "pw group mod dialer -m <username>"
 echo 'echo export LANG="fr_FR.UTF-8" >> ~/.xinitrc'
 echo 'echo export MM_CHARSET="UTF-8" >> ~/.xinitrc'
-echo 'echo xset m 5 1 >> ~/.xinitrc'
+echo 'echo export GDM_LANG=fr_FR.UTF-8" >> ~/.xinitrc'
 echo 'echo "exec ck-launch-session startxfce4" >> ~/.xinitrc'
 echo 'fetch http://gugus69.free.fr/freebsd/FreeBSD_paefchen_1920x1200.jpg'
 
