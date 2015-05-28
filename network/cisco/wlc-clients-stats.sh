@@ -39,7 +39,7 @@ done
 echo "Station hostname;Station MAC;Protocol Used;Connected to AP;Received Signal Strength Indicator;Signal-to-Noise Ratio;Quality (RSSI/SNR);WLAN SSID;STATUS"
 snmpwalk $args ${bsnMobileStationMacAddress} | while read line; do
 	#Load variable stored during the previous subshell/while loop
-	. stupidshell.sh
+	. stupidshell
 	IDX=`echo $line | cut -d ' ' -f 1 | cut -d '.' -f 14-19`
 	MAC=`echo $line | cut -d '"' -f 2 | tr -s ' ' ':' | cut -d ':' -f 1-6`
 	RSSI=`snmpget -Ov $args ${bsnMobileStationRSSI}.${IDX}`
