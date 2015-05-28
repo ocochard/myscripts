@@ -1,8 +1,7 @@
 #!/bin/sh
 
-# Get from a Cisco WLC a table of:
-# Station hostname;Station MAC;Protocol Used;Connected to AP;Received Signal Strength Indicator;Signal-to-Noise Ratio;Quality (RSSI/SNR);SSID;STATUS
-# using snmpget+snmpwalk
+# Get from a Cisco WLC a table of connected station and link quality
+# by using snmpget
 
 set -eu
 
@@ -37,7 +36,7 @@ snmpwalk $args ${bsnAPDot3MacAddress} | while read line; do
 done
 
 # 
-echo "Station hostname;Station MAC;Protocol Used;Connected to AP;Received Signal Strength Indicator;Signal-to-Noise Ratio;Quality (RSSI/SNR);SSID;STATUS"
+echo "Station hostname;Station MAC;Protocol Used;Connected to AP;Received Signal Strength Indicator;Signal-to-Noise Ratio;Quality (RSSI/SNR);WLAN SSID;STATUS"
 snmpwalk $args ${bsnMobileStationMacAddress} | while read line; do
 	#Load variable stored during the previous subshell/while loop
 	. stupidshell.sh
@@ -46,6 +45,7 @@ snmpwalk $args ${bsnMobileStationMacAddress} | while read line; do
 	RSSI=`snmpget -Ov $args ${bsnMobileStationRSSI}.${IDX}`
 	SNR=`snmpget -Ov $args ${bsnMobileStationSnr}.${IDX}`
 	HOSTNAME=`snmpget -Ov $args ${bsnMobileStationUserName}.${IDX} | cut -d '"' -f 2`
+	[ -z "${HOSTNAME}" ] && HOSTNAME="Unknown"
 	SSID=`snmpget -Ov $args ${bsnMobileStationSsid}.${IDX} | cut -d '"' -f 2`
 	PROTO=`snmpget -Ov $args ${bsnMobileStationProtocol}.${IDX}`
 	APMAC=`snmpget -Ov $args ${bsnMobileStationAPMacAddr}.${IDX} | cut -d '"' -f 2 | tr -d '[[:space:]]'`
