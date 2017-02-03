@@ -125,12 +125,12 @@ int main ()
 	struct in_addr dst_addr; /* uint32_t */
 	printf("Verifying the RSS Hash Calculation\n");
 	printf("https://msdn.microsoft.com/en-us/windows/hardware/drivers/network/verifying-the-rss-hash-calculation\n");
-	printf("Dest IP:port\t\tSource IP:port\t\t2tuple MS ref\t2tuple fbsd\t4tuple MS ref\t4tuple fbsd\n");
+	printf("Dest IP:port\t\tSource IP:port\t\t2tuple MS ref\t2tuple fbsd\t4tuple MS ref\t4tuple fbsd\n\n");
 	for (u_int i=0; i < 5 ;i++) {
 		inet_aton(src_addrt[i], &src_addr);
 		inet_aton(dst_addrt[i], &dst_addr);
-		printf("%s:%d\t%s:%d\t0x%08x\t0x%08x\t0x%08x\t0x%08x\n", dst_addrt[i], dst_portt[i], src_addrt[i], src_portt[i], two[i], four[i],
-		rss_hash_ip4_2tuple(src_addr, dst_addr), rss_hash_ip4_4tuple(src_addr, src_portt[i], dst_addr, dst_portt[i]));
+		printf("%s:%d\t%s:%d\t0x%08x\t0x%08x\t0x%08x\t0x%08x\n", dst_addrt[i], dst_portt[i], src_addrt[i], src_portt[i], two[i],
+		rss_hash_ip4_2tuple(src_addr, dst_addr), four[i], rss_hash_ip4_4tuple(src_addr, src_portt[i], dst_addr, dst_portt[i]));
 	}
 	return 0;
 }
