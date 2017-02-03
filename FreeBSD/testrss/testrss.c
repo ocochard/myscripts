@@ -43,7 +43,19 @@ static uint8_t rss_key[RSS_KEYSIZE] = {
     0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
 };
 
-/* ====== src/sys/net/toeplitz.c ======= */
+/* Toeplitz official MS pseudo code 
+*
+* ComputeHash(input[], n)
+*   result = 0
+*   For each bit b in input[] from left to right {
+*       if (b == 1) result ^= (left-most 32 bits of K)
+*       shift K left 1 bit position
+*   }
+*   return result
+*/
+
+
+/* ====== code from src/sys/net/toeplitz.c ======= */
 
 uint32_t
 toeplitz_hash(u_int keylen, const uint8_t *key, u_int datalen,
@@ -67,6 +79,29 @@ toeplitz_hash(u_int keylen, const uint8_t *key, u_int datalen,
     }
     return (hash);
 }
+
+/* ===== code from  http://read.pudn.com/downloads163/sourcecode/internet/tcp_ip/743929/toeplitz_hash.c__.htm */
+/* Give same result as FreeBSD */
+uint32_t toeplitz_hash3(u_int keylen, const uint8_t *key, u_int datalen, uint8_t *data)
+{
+    uint32_t hash=0;
+    uint8_t bdata=0;
+    uint32_t keysmall = 0;
+    u_int i, b;
+ 
+    keysmall = ntohl(*(uint32_t *)key);
+
+    for (i=0; i < datalen; i++){
+        bdata = data[i];
+        for (b=0; b < 8; b++){
+            if((bdata << b)& (0x80))
+                hash ^= keysmall;
+            keysmall =  (keysmall <<1) | ((key[i+4] >> (7-b)) & 0x1);
+            }
+        }
+    return (hash);
+}
+
 
 /* ======= src/sys/netinet/in_rss.c ========= */
 
@@ -111,6 +146,19 @@ rss_hash_ip4_4tuple(struct in_addr src, u_short srcport, struct in_addr dst,
 }
 
 
+uint64_t ntohll(uint64_t host_longlong)
+{
+    int x = 1;
+ 
+    /* little endian */
+    if(*(char *)&x == 1)
+        return ((((uint64_t)ntohl(host_longlong)) << 32) + ntohl(host_longlong >> 32));
+ 
+    /* big endian */
+    else
+        return host_longlong;
+ 
+}
 /* Here we add the MS official value to check */
 int main ()
 {
@@ -125,7 +173,11 @@ int main ()
 	struct in_addr dst_addr; /* uint32_t */
 	printf("Verifying the RSS Hash Calculation\n");
 	printf("https://msdn.microsoft.com/en-us/windows/hardware/drivers/network/verifying-the-rss-hash-calculation\n");
-	printf("Dest IP:port\t\tSource IP:port\t\t2tuple MS ref\t2tuple fbsd\t4tuple MS ref\t4tuple fbsd\n\n");
+	printf("key:\n");
+	for (u_int i=0; i < RSS_KEYSIZE; i=i+8) {
+		printf("%lx\n",ntohll(*(uint64_t *)(rss_key + i)));
+	}
+	printf("\nDest IP:port\t\tSource IP:port\t\t2tuple MS ref\t2tuple fbsd\t4tuple MS ref\t4tuple fbsd\n\n");
 	for (u_int i=0; i < 5 ;i++) {
 		inet_aton(src_addrt[i], &src_addr);
 		inet_aton(dst_addrt[i], &dst_addr);
