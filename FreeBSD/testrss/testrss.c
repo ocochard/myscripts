@@ -23,6 +23,7 @@
  * Maximum key size used throughout.  It's OK for hardware to use only the
  * first 16 bytes, which is all that's required for IPv4.
  */
+/* The key is 40 bytes (320 bits) long for the Toeplitz hash on IPv6 and 16 bytes (128 bits) for IPv4 packets */
 #define RSS_KEYSIZE 40
 
 /*
@@ -35,6 +36,7 @@
  * This is the default Microsoft RSS specification key which is also
  * the Chelsio T5 firmware default key.
  */
+
 static uint8_t rss_key[RSS_KEYSIZE] = {
     0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
     0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
@@ -68,6 +70,7 @@ toeplitz_hash(u_int keylen, const uint8_t *key, u_int datalen,
 
     v = (key[0]<<24) + (key[1]<<16) + (key[2] <<8) + key[3];
     for (i = 0; i < datalen; i++) {
+	//printf("key loop[%d]: %08x\n",i, v);
         for (b = 0; b < 8; b++) {
             if (data[i] & (1<<(7-b)))
                 hash ^= v;
@@ -145,7 +148,7 @@ rss_hash_ip4_4tuple(struct in_addr src, u_short srcport, struct in_addr dst,
         return toeplitz_hash(sizeof(rss_key), rss_key, datalen, data);
 }
 
-
+/* http://revoman.tistory.com/entry/Implementation-of-htonll-ntohll-uint64t-byte-ordering */
 uint64_t ntohll(uint64_t host_longlong)
 {
     int x = 1;
@@ -177,12 +180,16 @@ int main ()
 	for (u_int i=0; i < RSS_KEYSIZE; i=i+8) {
 		printf("%lx\n",ntohll(*(uint64_t *)(rss_key + i)));
 	}
-	printf("\nDest IP:port\t\tSource IP:port\t\t2tuple MS ref\t2tuple fbsd\t4tuple MS ref\t4tuple fbsd\n\n");
+	printf("\nMS websibe dispaly table with destination IP first, but because all functions use source first, I've swapped them\n");
+	printf("Source IP:port\t\tDest IP:port\t\t2tuple MS ref\t2tuple fbsd\t4tuple MS ref\t4tuple fbsd\n");
 	for (u_int i=0; i < 5 ;i++) {
 		inet_aton(src_addrt[i], &src_addr);
 		inet_aton(dst_addrt[i], &dst_addr);
-		printf("%s:%d\t%s:%d\t0x%08x\t0x%08x\t0x%08x\t0x%08x\n", dst_addrt[i], dst_portt[i], src_addrt[i], src_portt[i], two[i],
-		rss_hash_ip4_2tuple(src_addr, dst_addr), four[i], rss_hash_ip4_4tuple(src_addr, src_portt[i], dst_addr, dst_portt[i]));
+		/* printf("%s(%08x):%d(%02x)\t%s(%08x):%d(%02x)\t%08x\t%08x\t%08x\t%08x\n", src_addrt[i], ntohl(src_addr.s_addr),
+		src_portt[i], ntohs(src_portt[i]) , dst_addrt[i], ntohl(dst_addr.s_addr), dst_portt[i], ntohs(dst_portt[i]), two[i],
+		rss_hash_ip4_2tuple(src_addr, dst_addr), four[i], rss_hash_ip4_4tuple(src_addr, src_portt[i], dst_addr, dst_portt[i])); */
+		printf("%s:%d\t%s:%d\t%08x\t%08x\t%08x\t%08x\n", src_addrt[i], src_portt[i], dst_addrt[i], dst_portt[i], two[i],
+                rss_hash_ip4_2tuple(src_addr, dst_addr), four[i], rss_hash_ip4_4tuple(src_addr, ntohs(src_portt[i]), dst_addr, ntohs(dst_portt[i])));
 	}
 	return 0;
 }
