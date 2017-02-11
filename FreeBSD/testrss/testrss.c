@@ -189,7 +189,7 @@ int main ()
 		src_portt[i], ntohs(src_portt[i]) , dst_addrt[i], ntohl(dst_addr.s_addr), dst_portt[i], ntohs(dst_portt[i]), two[i],
 		rss_hash_ip4_2tuple(src_addr, dst_addr), four[i], rss_hash_ip4_4tuple(src_addr, src_portt[i], dst_addr, dst_portt[i])); */
 		printf("%s:%d\t%s:%d\t%08x\t%08x\t%08x\t%08x\n", src_addrt[i], src_portt[i], dst_addrt[i], dst_portt[i], two[i],
-                rss_hash_ip4_2tuple(src_addr, dst_addr), four[i], rss_hash_ip4_4tuple(src_addr, ntohs(src_portt[i]), dst_addr, ntohs(dst_portt[i])));
+                rss_hash_ip4_2tuple(src_addr, dst_addr), four[i], rss_hash_ip4_4tuple(src_addr, htons(src_portt[i]), dst_addr, htons(dst_portt[i])));
 	}
 	return 0;
 }
