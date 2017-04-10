@@ -8,6 +8,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <strings.h>
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <sys/param.h>
 #include <sys/mbuf.h>
@@ -163,9 +166,8 @@ uint64_t ntohll(uint64_t host_longlong)
  
 }
 /* Here we add the MS official value to check */
-int main ()
+int validate ()
 {
-	
 	const char *dst_addrt[5] = {"161.142.100.80", "65.69.140.83", "12.22.207.184", "209.142.163.6", "202.188.127.2"};
 	const char *src_addrt[5] = {"66.9.149.187", "199.92.111.2", "24.19.198.95", "38.27.205.30", "153.39.163.191"};
 	const u_short dst_portt[5] = { 1766, 4739, 38024, 2217, 1303};
@@ -174,6 +176,7 @@ int main ()
 	const uint32_t four[5] = { 0x51ccc178, 0xc626b0ea, 0x5c2b394a, 0xafc7327f, 0x10e828a2 };
 	struct in_addr src_addr; /* uint32_t */
 	struct in_addr dst_addr; /* uint32_t */
+	printf("No argument given SRC_IP:SRC_PORT DST_IP:DST_PORT");
 	printf("Verifying the RSS Hash Calculation\n");
 	printf("https://msdn.microsoft.com/en-us/windows/hardware/drivers/network/verifying-the-rss-hash-calculation\n");
 	printf("key:\n");
@@ -191,5 +194,41 @@ int main ()
 		printf("%s:%d\t%s:%d\t%08x\t%08x\t%08x\t%08x\n", src_addrt[i], src_portt[i], dst_addrt[i], dst_portt[i], two[i],
                 rss_hash_ip4_2tuple(src_addr, dst_addr), four[i], rss_hash_ip4_4tuple(src_addr, htons(src_portt[i]), dst_addr, htons(dst_portt[i])));
 	}
-	return 0;
+	exit (0);
+}
+
+int
+main(int argc, char *argv[])
+{
+	struct in_addr src, dst;
+	uint16_t srcport, dstport;
+	uint32_t hash;
+	int val;
+	char *p;
+	static short rss_mask = 0x3;
+
+	if (argc != 3)
+		validate();
+
+	printf("[%s] [%s]\n", argv[1], argv[2]);
+
+	p = strchr(argv[1], ':');
+	assert(p != NULL);
+	*p = '\0';
+	inet_aton(argv[1], &src);
+	val = atoi(p + 1);
+	assert(val >= 0 && val <= 65535);
+	srcport = (uint16_t)val;
+
+	p = strchr(argv[2], ':');
+	assert(p != NULL);
+	*p = '\0';
+	inet_aton(argv[2], &dst);
+	val = atoi(p + 1);
+	assert(val >= 0 && val <= 65535);
+	dstport = (uint16_t)val;
+	hash=rss_hash_ip4_4tuple(src, htons(srcport), dst, htons(dstport));
+	printf("hash/queue: %08x/%u\n", hash, hash & rss_mask);
+
+	return (0);
 }
