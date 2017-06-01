@@ -1,0 +1,28 @@
+"Disable vi compatible mode
+set nocompatible
+"Enable syntax highlight
+syntax enable
+set background=light
+"set background=dark
+colorscheme solarized
+"TAB=4 space
+set ts=4
+set sw=4 noet
+" Display insecable space
+highlight NbSp ctermbg=lightgray guibg=lightred
+match NbSp /\%xa0/
+"highlight EdSp ctermbg=lightgray guibg=lightred
+"atch EdSp /\s\+$/
+
+"Check common c errors
+let c_space_errors=1
+
+"Display red line
+set colorcolumn=80
+"Load /usr/src/tools/tools/editing/freebsd.vim
+"enable it with: \f
+:so /usr/src/tools/tools/editing/freebsd.vim
+"Enable to read the vim config file
+set modeline
+"Improve escape key delay
+set timeoutlen=1000 ttimeoutlen=0
