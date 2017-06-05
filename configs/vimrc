@@ -25,4 +25,4 @@ set colorcolumn=80
 "Enable to read the vim config file
 set modeline
 "Improve escape key delay
-set timeoutlen=1000 ttimeoutlen=0
+"set timeoutlen=1000 ttimeoutlen=0

@@ -13,7 +13,6 @@ tmux new-window -t $SESSION:6 -n "HP" "ssh hp"
 tmux new-window -t $SESSION:7 -n "SM" "ssh sm"
 tmux new-window -t $SESSION:8 -n "netgate" "ssh netgate"
 tmux new-window -t $SESSION:9 -n "apu2" "ssh apu2"
-tmux new-window -t $SESSION:10 -n "apu" "ssh apu"
 
 # Set default window
 tmux select-window -t $SESSION:0
