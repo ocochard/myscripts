@@ -1,0 +1,76 @@
+#!/bin/sh -
+#
+# $FreeBSD$
+#
+
+if [ -r /etc/defaults/periodic.conf ]; then
+	. /etc/defaults/periodic.conf
+	source_periodic_confs
+fi
+
+rc=0
+
+upgrade_pkg() {
+	local pkgargs="$1"
+	local rc
+
+	if pkg upgrade -y $pkgargs; then
+		rc=0
+	else
+		rc=3
+	fi
+
+	return $rc
+}
+
+pkg_upgrade() {
+	local last_rc
+
+	echo
+	echo 'Upgrading packages:'
+
+	if [ -n "${daily_upgrade_pkg_jails}" ]; then
+		echo "Host system:"
+	fi
+	upgrade_pkg ""
+	rc=$?
+
+	case $daily_upgrade_pkg_jails in
+	\*)
+		jails=$(jls -q -h name | sed -e 1d)
+		;;
+	'')
+		jails=
+		;;
+	*)
+		jails=$daily_upgrade_pkg_jails
+		;;
+	esac
+
+	for j in $jails ; do
+		echo
+		echo "jail: $j"
+		upgrade_pkg "-j $j"
+		last_rc=$?
+		[ $last_rc -gt 1 ] && rc=$last_rc
+	done
+
+	return $rc
+}
+
+case "${daily_pkg_upgrade_enable:-NO}" in
+[Nn][Oo])
+	;;
+*)
+	pkgcmd=/usr/local/sbin/pkg
+
+	if ! ${pkgcmd} -N >/dev/null 2>&1 ; then
+		echo 'pkg-backup is enabled but pkg is not used'
+		rc=2
+	else
+		pkg_upgrade
+	fi
+	;;
+esac
+
+exit $rc
