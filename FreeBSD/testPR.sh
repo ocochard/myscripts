@@ -14,7 +14,7 @@ SVNCMD="svnlite"
 die() { echo -n "EXIT: " >&2; echo "$@" >&2; exit 1; }
 
 usage () {
-	echo "$0 PR-attachement-id"
+	echo "$0 PR-attachement-id|phabricator-id"
 	exit 0
 }
 
@@ -28,7 +28,11 @@ fi
 ID=$1
 [ -f ${PORTDIR}/${PATCH} ] && rm  ${PORTDIR}/${PATCH}
 echo "Downloading patch..."
-fetch -q -o ${PORTDIR}/${PATCH} "https://bz-attachments.freebsd.org/attachment.cgi?id=${ID}"
+if echo ${ID} | egrep -q '^D.*'; then
+	fetch -q -o ${PORTDIR}/${PATCH} "https://reviews.freebsd.org/${ID}?download=true"
+else
+	fetch -q -o ${PORTDIR}/${PATCH} "https://bz-attachments.freebsd.org/attachment.cgi?id=${ID}"
+fi
 grep -q 'DOCTYPE html' ${PORTDIR}/${PATCH} && die "Seems not a good patch (check ${PORTDIR}/${PATCH})"
 TOPATCH=$(grep -m 1 '\-\-\-' ${PORTDIR}/${PATCH} | cut -d ' ' -f 2)
 echo ${TOPATCH} | grep -q '/' || die "Patch didn't include full path"
