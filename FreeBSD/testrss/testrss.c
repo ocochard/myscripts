@@ -48,7 +48,7 @@ static uint8_t rss_key[RSS_KEYSIZE] = {
     0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
 };
 
-/* Toeplitz official MS pseudo code 
+/* Toeplitz official MS pseudo code
 *
 * ComputeHash(input[], n)
 *   result = 0
@@ -94,7 +94,7 @@ uint32_t toeplitz_hash3(u_int keylen, const uint8_t *key, u_int datalen, uint8_t
     uint8_t bdata=0;
     uint32_t keysmall = 0;
     u_int i, b;
- 
+
     keysmall = ntohl(*(uint32_t *)key);
 
     for (i=0; i < datalen; i++){
@@ -155,15 +155,15 @@ rss_hash_ip4_4tuple(struct in_addr src, u_short srcport, struct in_addr dst,
 uint64_t ntohll(uint64_t host_longlong)
 {
     int x = 1;
- 
+
     /* little endian */
     if(*(char *)&x == 1)
         return ((((uint64_t)ntohl(host_longlong)) << 32) + ntohl(host_longlong >> 32));
- 
+
     /* big endian */
     else
         return host_longlong;
- 
+
 }
 /* Here we add the MS official value to check */
 int validate ()
