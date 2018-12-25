@@ -1,67 +1,61 @@
 #!/bin/sh
-# Generate dot graph from the FreeBSD audio system (hdaa mainly)
-# This tool is an helper to found output pcm to use or troubleshoot problem
-# Work in progress
+# Generate a graphviz dot file from the FreeBSD audio system (hdaa mainly)
+# This tool is an helper to found output pcm to use or to troubleshoot problem
+# Work in progress, need to add an option to display ALL the existing nid
 # Usage:
-# hdaa2dot | dot -Tpng -o sound.png
-set -e
-#sysctl -q hw.snd.verbose=0 || true
-OLDIFS=$IFS
-IFS=$'\n'
-default=false
-as_groups=""
+# hdaa2dot | dot -Tpng -o soundsetup.png
+
+set -eu
+
+# Start by pcm device (bottom value of the graph)
+as_group_list=""
 printf "digraph G {\n"
-for line in $(grep pcm /dev/sndstat); do
-	pcmid=$(echo ${line} | cut -d ':' -f 1)
-	pcmid=${pcmid#pcm}
-	desc=$(echo ${line} | cut -d ':' -f 2)
-	parent=$(sysctl -n dev.pcm.$pcmid.%parent)
-	parentid=$(echo $parent | tr -dc '0-9')
-	parentfam=$(echo $parent | tr -dc 'a-z')
-	printf '  "pcm%s %s" -> %s;\n' $pcmid $desc $parent
-	if [ "$parentfam" == 'hdaa' ]; then
-		for line in $(sysctl dev.hdaa.$parentid. | grep _original); do
-		# Need to create a group per as, and put them on a subgraph
-		#dev.hdaa.0.nid35_original: 0x90a60170 as=7 seq=0 device=Mic conn=Fixed ctype=Digital loc=Internal color=Unknown misc=1
-		#dev.hdaa.0.nid34_original: 0x40f001f0 as=15 seq=0 device=Other conn=None ctype=Unknown loc=0x00 color=Unknown misc=1
-		#dev.hdaa.0.nid32_original: 0x40f001f0 as=15 seq=0 device=Other conn=None ctype=Unknown loc=0x00 color=Unknown misc=1
-			nidid=$(echo $line | cut -d '.' -f 4 | cut -d ':' -f 1 | tr -dc '0-9')
-			as=$(echo $line | cut -d ':' -f 2 | cut -d '=' -f 2 | cut -d ' ' -f 1)
-			device=$(echo $line | cut -d ':' -f 2 | cut -d '=' -f 4 | cut -d ' ' -f 1)
-			conn=$(echo $line | cut -d ':' -f 2 | cut -d '=' -f 5 | cut -d ' ' -f 1)
-			#printf '  %s -- "nid%s (%s/%s)";\n' $parent $nidid $device $conn
-			printf '  %s -> nid%s;\n' $parent $nidid
-			if ! echo "${as_groups}" | grep -wq ${as}; then
-				# Avoid duplicate members
-				as_groups="${as_groups} ${as}"
-				#printf 'DEBUG as_groups contains: %s\n' ${as_groups}
+for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
+	# For each pcm, need to check if parent is hdaa type
+	if sysctl -n dev.pcm.${pcmid}.%parent | grep -q hdaa; then
+		hdaa_id=$(sysctl -n dev.pcm.${pcmid}.%parent)
+		hdaa_id=${hdaa_id#hdaa}
+		# Extracting nid attached to the hdaa pcm
+		#% sysctl -n dev.pcm.0.%location
+		#nid=31,25,35,27
+		#nid=7
+		nid_list=$(sysctl -n dev.pcm.${pcmid}.%location | cut -d'=' -f 2)
+		for i in $(echo ${nid_list} | sed "s/,/ /g"); do
+			line=$(sysctl -n dev.hdaa.${hdaa_id}.nid${i}_config)
+			# 0x90a60120 as=2 seq=0 device=Mic conn=Fixed ctype=Digital loc=Internal color=Unknown misc=1
+			as=$(echo $line | cut -d '=' -f 2 | cut -d ' ' -f 1)
+			seq=$(echo $line | cut -d '=' -f 3 | cut -d ' ' -f 1)
+			device=$(echo $line | cut -d '=' -f 4 | cut -d ' ' -f 1)
+			conn=$(echo $line | cut -d '=' -f 5 | cut -d ' ' -f 1)
+			ctype=$(echo $line | cut -d '=' -f 6 | cut -d ' ' -f 1)
+			loc=$(echo $line | cut -d '=' -f 7 | cut -d ' ' -f 1)
+			if ! echo "${as_group_list}" | grep -wq ${as}; then
+				as_group_list="${as_group_list} $as"
 			fi
 			eval "
-				[ -z \${as_group_$as+x} ] && as_group_${as}=\"\"
-				#printf 'adding nid %s into group as_group_%s\n' \${nidid} $as
-				if ! echo \"\${as_groups_$as}\" | grep -wq \${nidid}; then
-					# Avoid duplicate members
-					# BUG: Didn't work!
-					as_group_${as}=\"\${as_group_$as} \${nidid}\"
-				fi
-				#printf 'group as_group_%s contains now: %s\n' $as \${as_group_$as}
+				[ -z \${as_group_${as}+x} ] && as_group_${as}=\"\"
+				as_group_${as}=\"\${as_group_${as}} \${i}\"
+				nid_${i}_desc=\"\$device,\$conn,\$ctype,\$loc\"
+				printf '  \"hdaa%s\" -> \"nid%s <%s>\";\n' \${hdaa_id} \${i} \${nid_${i}_desc}
+				printf '  \"nid%s <%s>\" -> \"pcm%s <%s>\";\n' \${i} \${nid_${i}_desc} \${pcmid} \"$(sysctl -n dev.pcm.${pcmid}.%desc)\"
 			"
 		done
+	else
+		parent=$(sysctl -n dev.pcm.${pcmid}.%parent | tr -dc 'a-z')
+		parent_id=$(sysctl -n dev.pcm.${pcmid}.%parent | tr -dc '0-9')
+		parent_desc=$(sysctl -n dev.${parent}.${parent_id}.%desc | cut -d ',' -f 1)
+		printf '  "%s <%s>" -> "pcm%s <%s>";\n' $(sysctl -n dev.pcm.${pcmid}.%parent) "${parent_desc}" ${pcmid} "$(sysctl -n dev.pcm.${pcmid}.%desc)"
 	fi
 done
-#printf 'Dummy DEBUG, as_group_7 contains (multiple):%s\n' "${as_group_1}"
-IFS=" "
-for as in ${as_groups}; do
-	#printf 'DEBUG as group (one number!):%s\n' "${as}"
-	printf 'subgraph cluster_%s {\n' $as
-	printf 'label = "as %s";\n'  $as
-	eval "
-		#printf 'DEBUG as_group_%s contains: %s\n' \${as} \"\${as_group_$as}\"
-		for nid in \${as_group_${as}}; do
-			printf 'nid%s;\n' \${nid}
-		done
-	"
-	printf '}\n'
+# graph cluster containing as group
+for as in ${as_group_list}; do
+	printf '  subgraph cluster_%s {\n' $as
+	printf '    label = "Association group %s";\n'  $as
+	# Can't call a for loop into eval "" (because inside variable is not updated)
+	eval "as_group=\${as_group_${as}}"
+	for i in ${as_group}; do
+		eval "printf '    \"nid%s <%s>\";\n' \${i} \${nid_${i}_desc}"
+	done
+	printf '  }\n'
 done
-IFS=$OLDIFS
 printf "}\n"
