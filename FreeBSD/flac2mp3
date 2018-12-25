@@ -1,0 +1,43 @@
+#!/bin/sh
+# Convert all .flac into given directory as .mp3
+# need flac and lame installed
+set -eu
+usage () {
+	echo "$0 folder-to-works"
+	exit 0
+}
+
+loop () {
+	for i in "${DIR}"/*.flac; do
+		bi=$(basename -s .flac "$i")
+		if ($1); then
+			flac --decode --stdout "${DIR}/${bi}".flac | lame --preset extreme - "${DIR}/${bi}".mp3
+		else
+			echo "${bi}"
+		fi
+	done
+}
+
+for i in flac lame; do
+	if ! which -s $i; then
+		echo "Need $i installed"
+		exit 1
+	fi
+done
+if [ $# -lt 1 ]; then
+	echo "Not enought argument"
+	usage
+else
+	DIR=$1
+fi
+echo "Will convert all .flac files found into $DIR in .mp3"
+loop false
+
+echo "Do you want to continue ? (y/n)"
+USER_CONFIRM=""
+while [ "$USER_CONFIRM" != "y" -a "$USER_CONFIRM" != "n" ]; do
+	read USER_CONFIRM <&1
+done
+[ "$USER_CONFIRM" = "n" ] && exit 0
+
+loop true
