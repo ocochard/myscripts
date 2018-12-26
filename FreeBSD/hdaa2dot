@@ -9,9 +9,11 @@ set -eu
 
 # Start by pcm device (bottom value of the graph)
 as_group_list=""
+rank=""
 printf "digraph G {\n"
 for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 	# For each pcm, need to check if parent is hdaa type
+	pcm_desc=$(sysctl -n dev.pcm.${pcmid}.%desc)
 	if sysctl -n dev.pcm.${pcmid}.%parent | grep -q hdaa; then
 		hdaa_id=$(sysctl -n dev.pcm.${pcmid}.%parent)
 		hdaa_id=${hdaa_id#hdaa}
@@ -37,16 +39,21 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 				as_group_${as}=\"\${as_group_${as}} \${i}\"
 				nid_${i}_desc=\"\$device,\$conn,\$ctype,\$loc\"
 				printf '  \"hdaa%s\" -> \"nid%s <%s>\";\n' \${hdaa_id} \${i} \${nid_${i}_desc}
-				printf '  \"nid%s <%s>\" -> \"pcm%s <%s>\";\n' \${i} \${nid_${i}_desc} \${pcmid} \"$(sysctl -n dev.pcm.${pcmid}.%desc)\"
+				printf '  \"nid%s <%s>\" -> \"pcm%s <%s>\";\n' \${i} \${nid_${i}_desc} \${pcmid} \"\${pcm_desc}\"
 			"
 		done
 	else
 		parent=$(sysctl -n dev.pcm.${pcmid}.%parent | tr -dc 'a-z')
 		parent_id=$(sysctl -n dev.pcm.${pcmid}.%parent | tr -dc '0-9')
 		parent_desc=$(sysctl -n dev.${parent}.${parent_id}.%desc | cut -d ',' -f 1)
-		printf '  "%s <%s>" -> "pcm%s <%s>";\n' $(sysctl -n dev.pcm.${pcmid}.%parent) "${parent_desc}" ${pcmid} "$(sysctl -n dev.pcm.${pcmid}.%desc)"
+		printf '  "%s <%s>" -> "pcm%s <%s>";\n' $(sysctl -n dev.pcm.${pcmid}.%parent) "${parent_desc}" ${pcmid} "${pcm_desc}"
+	fi
+	# Put all pcm nodes in the same bottom rank
+	if ! echo "${rank}" | grep -wq "pcm${pcmid}"; then
+		rank="${rank} \"pcm${pcmid} <${pcm_desc}>\";"
 	fi
 done
+printf '  { rank = same;%s}\n' "${rank}"
 # graph cluster containing as group
 for as in ${as_group_list}; do
 	printf '  subgraph cluster_%s {\n' $as
