@@ -1,3 +1,6 @@
+! Standard x11 buffer (cut/past) usage
+XTerm*selectToClipboard: true
+
 !! Sixel graphic support
 ! Allow sixel graphics. (Try: "convert -colors 16 foo.jpg sixel:-").
 xterm*decTerminalID	:	vt340
