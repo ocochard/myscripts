@@ -1,0 +1,68 @@
+#!/bin/sh
+# Generate a graphviz dot file from the FreeBSD audio system (hdaa mainly)
+# This tool is an helper to found output pcm to use or to troubleshoot problem
+# Work in progress, need to add an option to display ALL the existing nid
+# Usage:
+# hdaa2dot | dot -Tpng -o soundsetup.png
+
+set -eu
+
+# Start by pcm device (bottom value of the graph)
+as_group_list=""
+rank=""
+printf "digraph G {\n"
+for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
+	# For each pcm, need to check if parent is hdaa type
+	pcm_desc=$(sysctl -n dev.pcm.${pcmid}.%desc)
+	if sysctl -n dev.pcm.${pcmid}.%parent | grep -q hdaa; then
+		hdaa_id=$(sysctl -n dev.pcm.${pcmid}.%parent)
+		hdaa_id=${hdaa_id#hdaa}
+		# Extracting nid attached to the hdaa pcm
+		#% sysctl -n dev.pcm.0.%location
+		#nid=31,25,35,27
+		#nid=7
+		nid_list=$(sysctl -n dev.pcm.${pcmid}.%location | cut -d'=' -f 2)
+		for i in $(echo ${nid_list} | sed "s/,/ /g"); do
+			line=$(sysctl -n dev.hdaa.${hdaa_id}.nid${i}_config)
+			# 0x90a60120 as=2 seq=0 device=Mic conn=Fixed ctype=Digital loc=Internal color=Unknown misc=1
+			as=$(echo $line | cut -d '=' -f 2 | cut -d ' ' -f 1)
+			seq=$(echo $line | cut -d '=' -f 3 | cut -d ' ' -f 1)
+			device=$(echo $line | cut -d '=' -f 4 | cut -d ' ' -f 1)
+			conn=$(echo $line | cut -d '=' -f 5 | cut -d ' ' -f 1)
+			ctype=$(echo $line | cut -d '=' -f 6 | cut -d ' ' -f 1)
+			loc=$(echo $line | cut -d '=' -f 7 | cut -d ' ' -f 1)
+			if ! echo "${as_group_list}" | grep -wq ${as}; then
+				as_group_list="${as_group_list} $as"
+			fi
+			eval "
+				[ -z \${as_group_${as}+x} ] && as_group_${as}=\"\"
+				as_group_${as}=\"\${as_group_${as}} \${i}\"
+				nid_${i}_desc=\"\$device,\$conn,\$ctype,\$loc\"
+				printf '  \"hdaa%s\" -> \"nid%s <%s>\";\n' \${hdaa_id} \${i} \${nid_${i}_desc}
+				printf '  \"nid%s <%s>\" -> \"pcm%s <%s>\";\n' \${i} \${nid_${i}_desc} \${pcmid} \"\${pcm_desc}\"
+			"
+		done
+	else
+		parent=$(sysctl -n dev.pcm.${pcmid}.%parent | tr -dc 'a-z')
+		parent_id=$(sysctl -n dev.pcm.${pcmid}.%parent | tr -dc '0-9')
+		parent_desc=$(sysctl -n dev.${parent}.${parent_id}.%desc | cut -d ',' -f 1)
+		printf '  "%s <%s>" -> "pcm%s <%s>";\n' $(sysctl -n dev.pcm.${pcmid}.%parent) "${parent_desc}" ${pcmid} "${pcm_desc}"
+	fi
+	# Put all pcm nodes in the same bottom rank
+	if ! echo "${rank}" | grep -wq "pcm${pcmid}"; then
+		rank="${rank} \"pcm${pcmid} <${pcm_desc}>\";"
+	fi
+done
+printf '  { rank = same;%s}\n' "${rank}"
+# graph cluster containing as group
+for as in ${as_group_list}; do
+	printf '  subgraph cluster_%s {\n' $as
+	printf '    label = "Association group %s";\n'  $as
+	# Can't call a for loop into eval "" (because inside variable is not updated)
+	eval "as_group=\${as_group_${as}}"
+	for i in ${as_group}; do
+		eval "printf '    \"nid%s <%s>\";\n' \${i} \${nid_${i}_desc}"
+	done
+	printf '  }\n'
+done
+printf "}\n"
