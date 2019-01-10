@@ -1,0 +1,21 @@
+set showmode ruler
+set filec=^[
+set cedit=^[
+"Disabling arrow keys didn't work
+" "^[OA" isn't currently mapped
+"unmap OA
+"unmap OB
+"unmap OC
+"unmap OD
+"unmap! OA
+"unmap! OB
+"unmap! OC
+"unmap! OD
+map c h
+map r l
+map t j
+map s k
+map C H
+map R L
+map T J
+map S K
