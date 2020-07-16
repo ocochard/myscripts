@@ -1,13 +1,26 @@
+" tap indent movement (use mark `m' for cursor position)
+" allows to select and use tab to tab a full selection
+vmap <S-Tab>  mm<`m:<C-U>exec "normal ".&shiftwidth."h"<CR>mmgv`m
+vmap <Tab>    mm>`m:<C-U>exec "normal ".&shiftwidth."l"<CR>mmgv`m
+"Disable mouse
+set mouse=
 "Disable vi compatible mode
 set nocompatible
+" Disable automatic tab when pasting
+set noai
 "Enable syntax highlight
 syntax enable
 set background=light
 "set background=dark
+" #### solarized #####
+" mkdir -p ~.vim/colors
+" cd ~.vim/colors
+"fetch https://raw.githubusercontent.com/altercation/vim-colors-solarized/master/colors/solarized.vim
 colorscheme solarized
 "TAB=4 space
-set ts=4
-"set sw=4 noet
+"https://vim.fandom.com/wiki/Indenting_source_code
+set shiftwidth=4
+set tabstop=4
 " Display insecable space
 highlight NbSp ctermbg=lightgray guibg=lightred
 match NbSp /\%xa0/
