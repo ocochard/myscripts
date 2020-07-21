@@ -29,7 +29,7 @@ int main(int argc, char *argv[]){
 
 	unsigned long port=0; /* UDP destination port */
 	char *dummy; /* mandatory for strtoul but not used */
-	char host[256]={0},ports[256]={0},file[256]={0};
+	char host[NI_MAXHOST]={0},ports[NI_MAXSERV]={0},file[256]={0};
 
 	for (;;) {
 		int opt = getopt(argc, argv, "f:h:p:");
@@ -68,7 +68,9 @@ int main(int argc, char *argv[]){
 	const char *cause = NULL; /* Error explanation */
 
 
-	struct addrinfo hints, *res, *res0, *client;
+	struct addrinfo hints, *res, *res0;
+	struct sockaddr client;
+
 	/* hints: will give hints about family (4 or 6) */
 	/* res: pointer to a struct */
 	/* res0: a linked list of struct */
@@ -122,6 +124,7 @@ int main(int argc, char *argv[]){
 	}
 	if (s < 0) {
 		perror(cause);
+		freeaddrinfo(res0);
 		return (-1);
 		/*NOTREACHED*/
 	}
@@ -134,9 +137,13 @@ int main(int argc, char *argv[]){
 	int read_return = 0;
 	long unsigned int bytes=0;
 	printf("Waiting for a client...");
-	socklen_t foo = client->ai_addrlen;
+
+       /* Initialize the client struct */
+	memset(&client, 0, sizeof(client));
+	socklen_t foo = client.sa_len;
+
 	/* Wait for one client only */
-	int sockfd = accept(s, client->ai_addr, &foo);
+	int sockfd = accept(s, &client, &foo);
 	if (sockfd < 0) {
 		perror("accept");
 		close(s);

@@ -33,7 +33,7 @@ int main(int argc, char *argv[]){
 
 	unsigned long port=0; /* UDP destination port */
 	char *dummy; /* mandatory for strtoul but not used */
-	char host[256]={0},ports[256]={0},file[256]={0};
+	char host[NI_MAXHOST]={0},ports[NI_MAXSERV]={0},file[256]={0};
 	off_t offset=0;
 	size_t nbytes=0;
 	unsigned int readahead=16;

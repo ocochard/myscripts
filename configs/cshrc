@@ -19,7 +19,7 @@ alias ll	ls -lAF
 # A righteous umask
 # umask 22
 
-setenv	EDITOR	vi
+setenv	EDITOR	vim
 setenv	PAGER	more
 
 if ($?prompt) then
@@ -27,7 +27,7 @@ if ($?prompt) then
 	#set prompt = "%N@%m:%~ %# "
 	set prompt="%{\033]0;%n@%m\007%}%N@%m:%~ %# "
 	set promptchars = "%#"
-
+	stty erase '^?'
 	set filec
 	set history = 1000
 	set savehist = (1000 merge)
