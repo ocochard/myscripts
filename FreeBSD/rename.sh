@@ -8,14 +8,14 @@ usage () {
 
 loop () {
 	for i in ${DIR}/*; do
-		if echo $i | grep -q ${SRC_STRING}; then
+		if echo $i | grep -q -- "${SRC_STRING}"; then
 			if ($1); then
 				mv -v "$i" `echo $i | sed -e "s/${SRC_STRING}/${DST_STRING}/"`
 			else
 				echo "$i -> `echo $i | sed -e \"s/${SRC_STRING}/${DST_STRING}/\"`"
 			fi
 		fi
-	done	
+	done
 }
 
 if [ $# -lt 2 ]; then
