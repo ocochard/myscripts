@@ -1,0 +1,81 @@
+/* Discovering FreeBSD CI
+To generate png or better (because include URLs) svg:
+pkg install graphviz
+dot -Tpng -o FreeBSD-CI.png FreeBSD-CI.gv
+dot -Tsvg -o FreeBSD-CI.svg FreeBSD-CI.gv
+*/
+digraph FreeBSDCI {
+	graph [fontsize=10 fontname="Verdana" compound=true];
+	Artifact [shape=cylinder constraint=false URL="https://artifact.ci.freebsd.org/"];
+	"config-head/testvm/*" [shape=cylinder constraint=false];
+	"Pkgs repository" [shape=cylinder constraint=false URL="http://pkg.freebsd.org/"];
+	"FreeBSD-head-amd64-build" [shape=tab URL="https://github.com/freebsd/freebsd-ci/tree/master/jobs/FreeBSD-head-amd64-build"];
+	"FreeBSD-head-amd64-testvm" [shape=tab URL="https://github.com/freebsd/freebsd-ci/tree/master/jobs/FreeBSD-head-amd64-testvm"];
+	"FreeBSD-head-amd64-test" [shape=tab URL="https://github.com/freebsd/freebsd-ci/tree/master/jobs/FreeBSD-head-amd64-test"];
+	"meta/run.sh" [shape=parallelogram URL="https://github.com/freebsd/freebsd-ci/blob/master/jobs/FreeBSD-head-amd64-test/meta/run.sh"];
+	"build-world-kernel-head.sh" [shape=parallelogram URL = "https://github.com/freebsd/freebsd-ci/blob/master/scripts/build/build-world-kernel-head.sh"];
+	"build-test_image-head.sh" [shape=parallelogram URL = "https://github.com/freebsd/freebsd-ci/blob/master/scripts/build/build-test_image-head.sh"];
+"create-meta.sh" [shape=parallelogram URL = "https://github.com/freebsd/freebsd-ci/blob/master/scripts/test/create-meta.sh"];
+	"extract-meta.sh" [shape=parallelogram URL = "https://github.com/freebsd/freebsd-ci/blob/master/scripts/test/extract-meta.sh"];
+	"FreeBSD-head-amd64-build" -> "build-world-kernel-head.sh";
+	"FreeBSD-head-amd64-test" -> "create-meta.sh" [ lhead="cluster_tests"];
+	"FreeBSD-head-amd64-test" -> "meta/run.sh";
+	"FreeBSD-head-amd64-testvm" -> "build-test_image-head.sh";
+	"FreeBSD-head-amd64-build" ->  "FreeBSD-head-amd64-testvm";
+	"FreeBSD-head-amd64-testvm" -> "FreeBSD-head-amd64-test";
+	"build-world-kernel-head.sh" -> Artifact [ label="base and kernel pkgs" color=blue fontcolor=blue];
+	"meta/run.sh" -> "create-meta.sh";
+	"xfail-list" -> "extract-meta.sh";
+	Artifact -> "create-meta.sh" [ lhead="cluster_tests" label="disk-test.img" color=red fontcolor=red];
+	Artifact -> "build-test_image-head.sh" [ label="base and kernel pkgs" color=blue fontcolor=blue];
+	"config-head/testvm/*" -> "build-test_image-head.sh" [color=brown fontcolor=brown];
+	"build-test_image-head.sh" -> Artifact [ label="disk-test.img" color=red fontcolor=red];
+	"Pkgs repository" -> "build-test_image-head.sh" [ label="packages" color=pink fontcolor=pink];
+	"create-meta.sh" -> "bhyve or qemu" [ label="disk-test.img and meta.tar"];
+	"bhyve or qemu" -> "extract-meta.sh";
+	"disable-dtrace-tests.sh" [shape=parallelogram URL="https://github.com/freebsd/freebsd-ci/blob/master/scripts/test/subr/disable-dtrace-tests.sh"];
+	"disable-zfs-tests.sh" [shape=parallelogram URL="https://github.com/freebsd/freebsd-ci/blob/master/scripts/test/subr/disable-zfs-tests.sh"];
+	"disable-notyet-tests.sh" [shape=parallelogram URL="https://github.com/freebsd/freebsd-ci/blob/master/scripts/test/subr/disable-notyet-tests.sh"];
+	"run-kyua.sh" [shape=parallelogram URL="https://github.com/freebsd/freebsd-ci/blob/master/scripts/test/subr/run-kyua.sh"];
+	"run-kyua.sh" -> "create-meta.sh" [ltail=cluster_regtests];
+	subgraph cluster_jobs{
+		label = "Jenkins jobs"
+		URL = "https://ci.freebsd.org/";
+		"FreeBSD-head-amd64-build";
+		"FreeBSD-head-amd64-test";
+		"FreeBSD-head-amd64-testvm";
+	subgraph cluster_amd64test{
+			label ="";
+			"FreeBSD-head-amd64-test";
+			"meta/run.sh";
+			"xfail-list";
+		}
+	}
+	subgraph cluster_build{
+		label = "build scripts";
+		URL = "https://github.com/freebsd/freebsd-ci/blob/master/scripts/build";
+		"build-world-kernel-head.sh";
+		"build-test_image-head.sh";
+		"config-head/testvm/*";
+	}
+	subgraph cluster_tests{
+		label = "run-tests.sh"
+		URL ="https://github.com/freebsd/freebsd-ci/blob/master/scripts/test/run-tests.sh";
+		"create-meta.sh";
+		"bhyve or qemu";
+		"extract-meta.sh";
+	}
+	subgraph cluster_regtests{
+		label = "test/subr (regression tests scripts)"
+		URL ="https://github.com/freebsd/freebsd-ci/tree/master/scripts/test/subr";
+		"disable-dtrace-tests.sh";
+		"disable-zfs-tests.sh";
+		"disable-notyet-tests.sh";
+		"run-kyua.sh";
+	}
+	subgraph cluster_infra{
+		label = "Infrastructure";
+		Artifact;
+		"Pkgs repository";
+	}
+}
