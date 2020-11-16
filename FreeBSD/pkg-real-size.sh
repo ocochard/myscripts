@@ -42,5 +42,5 @@ for i in $(sort $TMPFILE | uniq); do
 	total_size=$(( total_size + size ))
 done
 echo "----------------------------------"
-echo "TOTAL size in bytes: ${total_size} bytes (" $(units -o %0.f -t "${total_size} bytes" megabytes) " megabytes )"
+echo "TOTAL size: ${total_size} bytes (" $(units -o %0.f -t "${total_size} bytes" megabytes) " megabytes )"
 rm $TMPFILE
