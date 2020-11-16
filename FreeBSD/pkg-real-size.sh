@@ -4,8 +4,6 @@ set -eu
 total_size=0
 tempfoo=$(basename $0)
 TMPFILE=$(mktemp /tmp/${tempfoo}.XXXXXX)
-
-# replace r="" by r="r" for a remote query
 r=""
 
 get_deps () {
@@ -18,10 +16,31 @@ get_deps () {
 	fi
 }
 
+usage() {
+    echo "$0 [-r] [-h] [-v] package-name" >&2;
+    echo -e "\t-r: use remote pkg repository" >&2
+    echo -e "\t-h: emit this message, then exit" >&2
+    echo -e "\t-v: enable execution tracing" >&2
+    exit $1
+}
+
+while getopts "hrv" arg; do
+    case "$arg" in
+    h)  usage 0 ;;
+    r)  r="r" ;;
+    v)  set -x ;;
+    *)  usage 1 ;;
+    esac
+done
+shift $(( OPTIND - 1 ))
+
 get_deps $1
+echo "List of dependencies and their size:"
 for i in $(sort $TMPFILE | uniq); do
 	size=$(pkg ${r}query %sb $i)
+	echo "$i : $size bytes"
 	total_size=$(( total_size + size ))
 done
-echo "size in bytes: ${total_size} bytes (" $(units -o %0.f -t "${total_size} bytes" megabytes) " megabytes )"
+echo "----------------------------------"
+echo "TOTAL size in bytes: ${total_size} bytes (" $(units -o %0.f -t "${total_size} bytes" megabytes) " megabytes )"
 rm $TMPFILE
