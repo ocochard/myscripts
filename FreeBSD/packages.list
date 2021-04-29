@@ -1,5 +1,10 @@
+benchmarks/flamegraph
+benchmarks/iperf
+benchmarks/iperf3
+benchmarks/wrk
+devel/gdb
 devel/git
-dns/dnsmasq-nflx
+dns/dnsmasq
 editors/libreoffice
 editors/vim-console
 french/libreoffice
@@ -10,7 +15,9 @@ multimedia/vlc
 multimedia/webcamd
 net-mgmt/netdata
 ports-mgmt/poudriere-devel
+ports-mgmt/portlint
 security/sudo
+sysutils/bsdstats
 sysutils/ipmitool
 sysutils/tmux
 sysutils/vm-bhyve
