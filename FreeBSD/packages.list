@@ -1,5 +1,4 @@
 benchmarks/flamegraph
-benchmarks/iperf
 benchmarks/iperf3
 benchmarks/wrk
 devel/gdb
@@ -8,6 +7,7 @@ dns/dnsmasq
 editors/libreoffice
 editors/vim-console
 french/libreoffice
+ftp/wget
 graphics/drm-current-kmod
 graphics/gimp
 lang/python
@@ -22,7 +22,9 @@ sysutils/ipmitool
 sysutils/tmux
 sysutils/vm-bhyve
 www/chromium
+www/mohawk
 www/npm
+www/nginx
 www/node
 x11-drivers/xf86-video-nv
 x11-drivers/xf86-video-scfb
