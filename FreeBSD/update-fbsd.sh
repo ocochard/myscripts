@@ -10,5 +10,5 @@ poudriere ports -u
 # But could be mandatory in case of video modules than need to be synced with kernel
 #poudriere jail -j builder -u -m src=/usr/src
 poudriere bulk -j builder -f ${script_dir}/packages.list
-tools/build/beinstall.sh
+env NO_PKG_UPGRADE=YES tools/build/beinstall.sh
 echo "shutdown -r now"

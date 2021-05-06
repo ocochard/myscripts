@@ -6,6 +6,13 @@ devel/git
 dns/dnsmasq
 editors/libreoffice
 editors/vim-console
+emulators/dolphin-emu
+emulators/dosbox
+emulators/fs-uae
+emulators/rpcs3
+emulators/wine
+emulators/winetricks
+emulators/xcpc
 french/libreoffice
 ftp/wget
 graphics/drm-current-kmod
@@ -16,11 +23,13 @@ multimedia/webcamd
 net-mgmt/netdata
 ports-mgmt/poudriere-devel
 ports-mgmt/portlint
+security/py-yubikey-manager
 security/sudo
 sysutils/bsdstats
 sysutils/ipmitool
 sysutils/tmux
 sysutils/vm-bhyve
+sysutils/zfs-stats-lite
 www/chromium
 www/mohawk
 www/npm
