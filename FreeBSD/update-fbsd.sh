@@ -1,7 +1,10 @@
 #!/bin/sh
 # Update FreeBSD and ports, then install new environment using ZFS BE
 set -eu
-script_dir=$(dirname $0)
+# Absolute path script name
+script=$(readlink -f $0)
+# Absolute path this script is in
+script_dir=$(dirname $script)
 cd /usr/src
 git pull --ff-only
 make -j 32 buildworld buildkernel

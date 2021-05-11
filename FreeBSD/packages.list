@@ -1,3 +1,4 @@
+archivers/p7zip
 benchmarks/flamegraph
 benchmarks/iperf3
 benchmarks/wrk
@@ -9,6 +10,8 @@ editors/vim-console
 emulators/dolphin-emu
 emulators/dosbox
 emulators/fs-uae
+emulators/fs-uae-launcher
+emulators/hatari
 emulators/rpcs3
 emulators/wine
 emulators/winetricks
@@ -20,6 +23,7 @@ graphics/gimp
 lang/python
 multimedia/vlc
 multimedia/webcamd
+multimedia/mplayer
 net-mgmt/netdata
 ports-mgmt/poudriere-devel
 ports-mgmt/portlint
