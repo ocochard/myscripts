@@ -2,6 +2,7 @@ archivers/p7zip
 benchmarks/flamegraph
 benchmarks/iperf3
 benchmarks/wrk
+devel/p5-Cache-LRU
 devel/gdb
 devel/git
 dns/dnsmasq
@@ -13,7 +14,8 @@ emulators/fs-uae
 emulators/fs-uae-launcher
 emulators/hatari
 emulators/rpcs3
-emulators/wine
+emulators/snes9x-gtk
+emulators/wine-devel
 emulators/winetricks
 emulators/xcpc
 french/libreoffice
@@ -24,7 +26,10 @@ lang/python
 multimedia/vlc
 multimedia/webcamd
 multimedia/mplayer
+net/mrtparse
+net/tcprtt
 net-mgmt/netdata
+net/wireshark
 ports-mgmt/poudriere-devel
 ports-mgmt/portlint
 security/py-yubikey-manager
@@ -34,11 +39,13 @@ sysutils/ipmitool
 sysutils/tmux
 sysutils/vm-bhyve
 sysutils/zfs-stats-lite
+textproc/jq
 www/chromium
 www/mohawk
 www/npm
 www/nginx
 www/node
+www/p5-WWW-Curl
 x11-drivers/xf86-video-nv
 x11-drivers/xf86-video-scfb
 x11-drivers/xf86-video-vesa
