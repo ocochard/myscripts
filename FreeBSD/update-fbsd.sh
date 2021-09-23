@@ -16,6 +16,13 @@ git stash pop
 # Warning: Rebuilding the jail will force a rebuild of all ports
 # But could be mandatory in case of video modules than need to be synced with kernel
 #poudriere jail -j builder -u -m src=/usr/src
+if [ ! -f /usr/local/etc/poudriere.d/make.conf ]; then
+	(
+	echo "LICENSES_ACCEPTED+= DCC"
+	echo "LICENSES_ACCEPTED+= Proprietary"
+	) > /usr/local/etc/poudriere.d/make.conf
+fi
 poudriere bulk -j builder -f ${script_dir}/packages.list
+cd /usr/src
 env NO_PKG_UPGRADE=YES /usr/src/tools/build/beinstall.sh
 echo "shutdown -r now"
