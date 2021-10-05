@@ -1,0 +1,2 @@
+/dev/ntfs/USB3_1TO      /mnt    ntfs    rw,noauto,locale=fr_FR.UTF-8,mountprog=/usr/local/bin/ntfs-3g,late      0       0
+my.nfs.server:/sharingdir   /media/nfsserver        nfs     ro,late,failok,noatime,nfsv4 0 0

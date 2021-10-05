@@ -3,9 +3,11 @@ benchmarks/glmark2
 benchmarks/flamegraph
 benchmarks/iperf3
 benchmarks/wrk
-devel/p5-Cache-LRU
 devel/gdb
 devel/git
+devel/p5-Cache-LRU
+devel/p5-POSIX-strptime
+devel/R-cran-plyr
 dns/dnsmasq
 editors/libreoffice
 editors/vim
@@ -44,6 +46,7 @@ security/py-certbot
 security/py-ssh-audit
 security/py-yubikey-manager
 security/sudo
+sysutils/ansible
 sysutils/bsdstats
 sysutils/ipmitool
 sysutils/p5-BSD-Sysctl
