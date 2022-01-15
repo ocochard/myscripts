@@ -40,6 +40,7 @@ fi
 cat > /etc/make.conf <<EOF
 # Use our custom kernel configuration file
 KERNCONF=BBR
+DEVELOPER=yes
 EOF
 
 # Using META_MODE requiere filemon
