@@ -1,0 +1,42 @@
+#!/bin/sh
+# Queue commands to the existing list
+# Useful to copy long list of files, like
+# queue cp /tmp/ya /mnt/
+# queue cp /tmp/yi /mnt/
+# queue cp /mnt/ye /mnt/
+set -eu
+
+PIDFILE=~/.queue.pid
+
+#this waits for any PIDs to finish
+anywait(){
+    for pid in "$@"; do
+        while kill -0 "$pid" 2&>1 >/dev/null; do
+            sleep 1
+        done
+    done
+}
+
+#read previous instances PID from PIDFILE and write own PID to PIDFILE
+updatequeue() {
+	OLDPID=$(<$PIDFILE)
+	echo $$>$PIDFILE
+}
+
+#afterwards: cleanup (if pidfile still contains own PID, truncate it)
+clean() {
+	if [ $(<$PIDFILE) == $$ ]; then
+	truncate -s0 $PIDFILE
+	fi
+}
+#open PIDFILE and aquire lock
+exec 9>>$PIDFILE
+lockf -t 2 updatequeue || { echo "ERROR: lockf() failed to readpid()." >&2; exit 1; }
+
+#wait for OLDPID
+anywait $OLDPID
+
+#do stuff
+"$@"
+
+lockf -t 2 clean || { echo "ERROR: flock() failed." >&2; exit 1; }

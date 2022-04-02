@@ -13,6 +13,7 @@ devel/git
 devel/p5-Cache-LRU
 devel/p5-POSIX-strptime
 devel/py-flake8
+devel/valgrind
 dns/dnsmasq
 editors/libreoffice
 editors/vim
@@ -45,6 +46,8 @@ net/samba413
 net/tcplog_dumper
 net/tcprtt
 net/tightvnc
+net/wireguard-kmod
+net/wireguard-tools
 net/wireshark
 net/x11vnc
 ports-mgmt/portlint
@@ -55,10 +58,14 @@ security/py-certbot
 security/py-ssh-audit
 security/py-yubikey-manager
 security/sudo
+shells/ksh93
 sysutils/ansible
 sysutils/bhyve-firmware
 sysutils/bsdstats
 sysutils/ipmitool
+sysutils/hw-probe
+sysutils/mstflint
+sysutils/neofetch
 sysutils/p5-BSD-Sysctl
 sysutils/p5-Filesys-ZFS
 sysutils/smartmontools
