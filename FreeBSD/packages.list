@@ -62,6 +62,7 @@ shells/ksh93
 sysutils/ansible
 sysutils/bhyve-firmware
 sysutils/bsdstats
+sysutils/flashrom
 sysutils/ipmitool
 sysutils/hw-probe
 sysutils/mstflint
