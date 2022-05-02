@@ -25,12 +25,13 @@ emulators/hatari
 emulators/rpcs3
 emulators/snes9x-gtk
 emulators/wine-devel
+emulators/wine-proton
 emulators/winetricks
 emulators/xcpc
 french/libreoffice
 ftp/wget
-graphics/drm-devel-kmod
 graphics/drm-kmod
+graphics/drm-510-kmod
 graphics/gimp
 graphics/mesa-demos
 lang/expect
