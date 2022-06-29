@@ -1,4 +1,4 @@
-archivers/p7zip
+archivers/7-zip
 benchmarks/flamegraph
 benchmarks/glmark2
 benchmarks/iperf3
@@ -15,6 +15,7 @@ devel/p5-POSIX-strptime
 devel/py-flake8
 devel/valgrind
 dns/dnsmasq
+dns/nextdns
 editors/libreoffice
 editors/vim
 emulators/dolphin-emu
@@ -41,6 +42,7 @@ multimedia/vlc
 multimedia/webcamd
 net-mgmt/netdata
 net/mrtparse
+net/py-speedtest-cli
 net/read_bbrlog
 net/rsync
 net/samba413
@@ -70,10 +72,11 @@ sysutils/mstflint
 sysutils/neofetch
 sysutils/p5-BSD-Sysctl
 sysutils/p5-Filesys-ZFS
+sysutils/pfetch
 sysutils/smartmontools
 sysutils/syslog-ng
 sysutils/tmux
-sysutils/uefi-edk2-bhyve
+sysutils/edk2@bhyve
 sysutils/vm-bhyve
 sysutils/zfs-stats-lite
 textproc/jq
