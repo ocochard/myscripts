@@ -41,6 +41,8 @@ multimedia/mplayer
 multimedia/vlc
 multimedia/webcamd
 net-mgmt/netdata
+net/bird2
+net/frr7
 net/mrtparse
 net/py-speedtest-cli
 net/read_bbrlog
