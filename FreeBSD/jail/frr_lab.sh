@@ -446,7 +446,6 @@ create_jail () {
 
 destroy_jail () {
 	# FreeBSD bug https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981
-	# We MUST destroy interfaces before destroying the jail
 	# $1: jail id
 	iflist=$(jexec frr$1 ifconfig -l | sed 's/lo0//')
 	jail -R frr$1 || true
@@ -477,7 +476,7 @@ stop () {
 	for i in $(seq 7); do
 		destroy_jail $i
 		rm -rf /var/run/frr/frr${i}
-		rm /var/run/frr/frr${i}_*
+		rm -f /var/run/frr/frr${i}_*
 	done
 }
 
