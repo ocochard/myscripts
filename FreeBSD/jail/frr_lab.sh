@@ -448,8 +448,11 @@ destroy_jail () {
 	# FreeBSD bug https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981
 	# We MUST destroy interfaces before destroying the jail
 	# $1: jail id
-	jexec frr$1 ifconfig -l | tr -s ' ' '\0' | xargs -0 -L1 -I % jexec frr$1 ifconfig % destroy || true
+	iflist=$(jexec frr$1 ifconfig -l | sed 's/lo0//')
 	jail -R frr$1 || true
+	for iftodestroy in $iflist; do
+		ifconfig $if destroy || true
+	done
 }
 
 start () {
@@ -464,7 +467,6 @@ start () {
 	cat /tmp/topo.txt
 	echo "To run command from jail, some examples:"
 	echo "jexec frr1 ping -c 4 -S 192.168.10.1 192.168.70.7"
-	echo "jexec frr2 netstat -rn"
 	echo "jexec frr3 vtysh --vty_socket /var/run/frr/frr3.sock"
 	echo "jexec frr4"
 	exit 0
@@ -475,14 +477,7 @@ stop () {
 	for i in $(seq 7); do
 		destroy_jail $i
 		rm -rf /var/run/frr/frr${i}
-		eval "
-			if [ -z "\$frr${i}_ifa_p" ] || [ "\$frr${i}_ifa_p" != b ]; then
-				ifconfig \$frr${i}_ifa\$frr${i}_ifa_p destroy || true
-			fi
-			if [ -z "\$frr${i}_ifb_p" ] || [ "\$frr${i}_ifb_p" != b ]; then
-				eval ifconfig \$frr${i}_ifb\$frr${i}_ifb_p destroy || true
-			fi
-		"
+		rm /var/run/frr/frr${i}_*
 	done
 }
 
