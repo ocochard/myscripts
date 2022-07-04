@@ -112,13 +112,13 @@ interface epair123a
  ipv6 address 2001:db8:23::2/64
 !
 router rip
- network epair1a
+ network epair123a
  redistribute bgp
  redistribute connected
  version 2
 !
 router ripng
- network epair1a
+ network epair123a
  redistribute bgp
  redistribute connected
 !
