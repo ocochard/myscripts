@@ -451,7 +451,7 @@ destroy_jail () {
 	iflist=$(jexec frr$1 ifconfig -l | sed 's/lo0//')
 	jail -R frr$1 || true
 	for iftodestroy in $iflist; do
-		ifconfig $if destroy || true
+		ifconfig $iftodestroy destroy || true
 	done
 }
 
