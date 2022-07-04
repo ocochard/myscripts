@@ -8,20 +8,23 @@ cat > /tmp/topo.txt <<EOF
  2001:db8:10::1/64
   lo110
     |
-  --------                       --------                       --------
-  | frr1 | .1                 .2 | frr2 |                       | frr3 |
+  --------                      ---------                       --------
+  | frr1 |    192.168.12.0/24   | frr2  |                       | frr3 |
+  |      | .1                .2 |       |    192.168.23.0/24    |      |
   | BGP  |-epair112a<->epair112b-| BGP  | .2                 .3 |      |
   --------                       | RIP  |-epair123a<->epair123b-| RIP  |
                                  --------                       |      |
                                                                 |      |
   --------                       --------                       |      |
-  | frr5 |                       | frr4 | .4                .3  |      |
+  | frr5 |                       | frr4 |    192.168.34.0/24    |      |
+  |      |    192.168.45.0/24    |      | .4                .3  |      |
   |      | .5                 .4 | OSPF |-epair134b<->epair134a-| OSPF |
   | ISIS |-epair145b<->epair145a-| ISIS |                       --------
   |      |                       --------
   |      |
   |      |                       --------                       --------
-  |      | .5                .6  | frr6 |                       | frr7 |
+  |      |    192.168.56.0/24    | frr6 |                       | frr7 |
+  |      | .5                .6  |      |    192.168.67.0/24    |      |
   |BABEL |-epair156a<->epair156b-|BABEL | .6                 .7 |      |
   --------                       |STATIC|-epair167a<->epair167b-|STATIC|
                                  --------                       --------
@@ -404,7 +407,8 @@ create_jail () {
 destroy_jail () {
 	# FreeBSD bug https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981
 	# We MUST destroy interfaces before destroying the jail
-	jexec frr1 ifconfig -l | tr -s ' ' '\0' | xargs -0 -L1 -I % jexec frr1 ifconfig % destroy || true
+	# $1: jail id
+	jexec frr$1 ifconfig -l | tr -s ' ' '\0' | xargs -0 -L1 -I % jexec frr$1 ifconfig % destroy || true
 	jail -R frr$1 || true
 }
 
