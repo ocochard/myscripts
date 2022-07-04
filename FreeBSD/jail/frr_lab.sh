@@ -4,34 +4,72 @@
 #
 set -eu
 cat > /tmp/topo.txt <<EOF
+******************************************************************************
+*                 net/frr regression lab using vnet jails                    *
+******************************************************************************
+
  192.168.10.1/24
  2001:db8:10::1/64
   lo110
     |
-  --------                      ---------                       --------
-  | frr1 |    192.168.12.0/24   | frr2  |                       | frr3 |
-  |      | .1                .2 |       |    192.168.23.0/24    |      |
-  | BGP  |-epair112a<->epair112b-| BGP  | .2                 .3 |      |
-  --------                       | RIP  |-epair123a<->epair123b-| RIP  |
-                                 --------                       |      |
-                                                                |      |
-  --------                       --------                       |      |
-  | frr5 |                       | frr4 |    192.168.34.0/24    |      |
-  |      |    192.168.45.0/24    |      | .4                .3  |      |
-  |      | .5                 .4 | OSPF |-epair134b<->epair134a-| OSPF |
-  | ISIS |-epair145b<->epair145a-| ISIS |                       --------
-  |      |                       --------
+  --------                          --------                         --------
+  | frr1 |                          | frr2 |                          | frr3 |
+  |      | .1 (192.168.12.0/24)  .2 |      |                          |      |
+  | BGP  |--epair112a<-->epair112b--| BGP  | .2 (192.168.23.0/24)  .3 |      |
+  --------                          | RIP  |--epair123a<-->epair123b--| RIP  |
+                                    --------                          |      |
+                                                                      |      |
+  --------                          --------                          |      |
+  | frr5 |                          | frr4 |                          |      |
+  |      |                          |      | .4 (192.168.34.0/24)  .3 |      |
+  |      | .5 (192.168.45.0/24) .4  | OSPF |--epair134b<-->epair134a--| OSPF |
+  | ISIS |--epair145b<-->epair145a--| ISIS |                          --------
+  |      |                          --------
   |      |
-  |      |                       --------                       --------
-  |      |    192.168.56.0/24    | frr6 |                       | frr7 |
-  |      | .5                .6  |      |    192.168.67.0/24    |      |
-  |BABEL |-epair156a<->epair156b-|BABEL | .6                 .7 |      |
-  --------                       |STATIC|-epair167a<->epair167b-|STATIC|
-                                 --------                       --------
-                                                                   |
-                                                                 lo170
-                                                            192.168.70.7/24
-                                                           2001:db8:70::7/64
+  |      |                          --------                          --------
+  |      |                          | frr6 |                          | frr7 |
+  |      | .5 (192.168.56.0/24) .6  |      |                          |      |
+  |BABEL |--epair156a<-->epair156b--|BABEL | .6 (192.168.67.0/24)  .7 |      |
+  --------                          |STATIC|--epair167a<-->epair167b--|STATIC|
+                                    --------                          --------
+                                                                         |
+                                                                       lo170
+                                                                192.168.70.7/24
+                                                              2001:db8:70::7/64
+
+                      ****** Expected results *******
+# jexec frr1 netstat -rn | grep -v '^fe80'
+Routing tables
+
+Internet:
+Destination        Gateway            Flags     Netif Expire
+192.168.10.1       link#2             UH        lo110
+192.168.12.0/24    link#3             U      epair112
+192.168.12.1       link#3             UHS         lo0
+192.168.34.0/24    192.168.12.2       UG1    epair112
+192.168.45.0/24    192.168.12.2       UG1    epair112
+192.168.56.0/24    192.168.12.2       UG1    epair112
+192.168.67.0/24    192.168.12.2       UG1    epair112
+192.168.70.0/24    192.168.12.2       UG1    epair112
+
+Internet6:
+Destination        Gateway                          Flags     Netif Expire
+::1                link#2                           UHS         lo0
+2001:db8:10::/64   link#2                           U         lo110
+2001:db8:10::1     link#2                           UHS         lo0
+2001:db8:12::/64   link#3                           U      epair112
+2001:db8:12::1     link#3                           UHS         lo0
+2001:db8:34::/64   fe80::4:c1ff:fe7a:ef0b%epair112a UG1    epair112
+
+# jexec frr1 traceroute -ns 192.168.10.1 192.168.70.7
+traceroute to 192.168.70.7 (192.168.70.7) from 192.168.10.1, 64 hops max, 40 byte packets
+ 1  192.168.12.2  0.044 ms  0.017 ms  0.013 ms
+ 2  192.168.23.3  0.020 ms  0.016 ms  0.015 ms
+ 3  192.168.34.4  0.022 ms  0.018 ms  0.017 ms
+ 4  192.168.45.5  0.026 ms  0.021 ms  0.020 ms
+ 5  192.168.56.6  0.028 ms  0.023 ms  0.023 ms
+ 6  192.168.70.7  0.032 ms  0.027 ms  0.025 ms
+
 EOF
 
 # Routers configuration
@@ -207,6 +245,7 @@ router ospf
 router ospf6
  redistribute connected
  redistribute ripng
+ interface epair134a area 0.0.0.0
 !
 bfd
  peer 2001:db8:34::4 local-address 2001:db8:34::3
@@ -252,6 +291,7 @@ router ospf
 router ospf6
  redistribute connected
  redistribute isis
+ interface epair134b area 0.0.0.0
 !
 router isis BSDRP
  is-type level-1-2
