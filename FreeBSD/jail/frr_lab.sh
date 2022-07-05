@@ -78,10 +78,6 @@ frr1_ifa_p=""
 frr1_ifb=epair112
 frr1_ifb_p=a
 frr1_daemons="zebra bgpd bfdd"
-#frr1_ifa_inet=192.168.10.1/24
-#frr1_ifa_inet6=2001:db8:10::1/64
-#frr1_ifb_inet=192.168.12.1/24
-#frr1_ifb_inet6=2001:db8:12::1/64
 mkdir -p /var/run/frr/frr1
 cat > /var/run/frr/frr1/frr.conf <<EOF
 log file /var/run/frr/frr1/frr.log
@@ -128,10 +124,6 @@ frr2_ifa_p=b
 frr2_ifb=epair123
 frr2_ifb_p=a
 frr2_daemons="zebra bgpd bfdd ripd ripngd"
-#frr2_ifa_inet=192.168.12.2/24
-#frr2_ifa_inet6=2001:db8:12::2/64
-#frr2_ifb_inet=192.168.13.2/24
-#frr2_ifb_inet6=2001:db8:13::3/64
 mkdir -p /var/run/frr/frr2
 cat > /var/run/frr/frr2/frr.conf <<EOF
 log file /var/run/frr/frr2/frr.log
@@ -434,14 +426,6 @@ create_jail () {
 		done
 		jexec frr${id} vtysh -b --config_dir /var/run/frr/frr${id}/ --vty_socket /var/run/frr/frr${id}.sock || true
 		"
-		#jexec frr${id} ifconfig \$frr${id}_ifa\$frr${id}_ifa_p inet \
-		#	\$frr${id}_ifa_inet up
-		#jexec frr${id} ifconfig \$frr${id}_ifa\$frr${id}_ifa_p inet6 \
-		#	\$frr${id}_ifa_inet6
-		#jexec frr${id} ifconfig \$frr${id}_ifb\$frr${id}_ifb_p inet \
-		#	\$frr${id}_ifb_inet up
-		#jexec frr${id} ifconfig \$frr${id}_ifb\$frr${id}_ifb_p inet6 \
-		#	\$frr${id}_ifb_inet6
 }
 
 destroy_jail () {
