@@ -24,6 +24,7 @@ emulators/fs-uae
 emulators/fs-uae-launcher
 emulators/hatari
 emulators/rpcs3
+emulators/qemu
 emulators/snes9x-gtk
 emulators/wine-devel
 emulators/wine-proton
