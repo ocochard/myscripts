@@ -47,7 +47,7 @@ while [ $JOBS -le $((CPUS * 2)) ]; do
 		echo "Build..."
 		# Write log into ram disk to avoid benching local disk speed
 		env __MAKE_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK \
-			time -ao $TMPFS/buildbench.$JOBS.time make -j $JOBS \
+			time -ao $TMPDIR/buildbench.$JOBS.time make -j $JOBS \
 				KERNCONF=GENERIC buildworld buildkernel > $RAMDISK/buildbench.$JOBS.$j.log
 	done # for j
 
