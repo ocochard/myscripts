@@ -27,11 +27,12 @@ EOF
 
 cat > /usr/src/sys/amd64/conf/BBR <<EOF
 include GENERIC-NODEBUG
-ident           BBR
-options         TCPHPTS
-options         RATELIMIT
-makeoptions     WITH_EXTRA_TCP_STACKS=1
-options         KDB_UNATTENDED
+ident			BBR
+options			KDB_UNATTENDED
+makeoptions		WITH_EXTRA_TCP_STACKS=1 # Enable RACK & BBR
+options			TCPHPTS		# Need high precision timer for rackh & bbr
+options			RATELIMIT	# RACK depends on some constants
+options			CC_NEWRENO	# RACK depends on some constants
 EOF
 
 if [ -f /etc/make.conf ]; then
