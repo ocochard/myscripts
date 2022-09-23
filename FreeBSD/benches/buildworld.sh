@@ -45,6 +45,7 @@ fi
 mkdir -p $RAMDISK
 
 TMPDIR=$(mktemp -d /tmp/buildbench.XXXXXX)
+
 if mount | grep -q $RAMDISK; then
 	# Previous run detection
 	echo "Detected already mounted $RAMDISK"
@@ -61,8 +62,8 @@ mkdir -p $SRCDIR
 git clone --depth 1 --branch main --single-branch https://git.freebsd.org/src.git $SRCDIR
 
 cd $SRCDIR
-
-echo "Results in $TMPDIR"
+GITREV=$(git rev-parse --short HEAD)
+GITDATE=$(git log -1 --format=%ai)
 
 # Init gnuplot data file
 for i in real user sys; do
@@ -107,4 +108,48 @@ while [ $JOBS -le $((CPUS * 2)) ]; do
 	# multiply job per 2
 	JOBS=$(( JOBS * 2 ))
 done # while JOBS
+
+# Gnuplot example file
+
+MACHINE=$(uname -m)
+VERSION=$(uname -r)
+VERSIONU=$(uname -U)
+MODEL=$(sysctl -n hw.model)
+CORES=$(sysctl -n kern.smp.cores)
+TPC=$(sysctl -n kern.smp.threads_per_core)
+CPUS=$(sysctl -n kern.smp.cpus)
+RAM=$(sysctl -n hw.physmem)
+RAM=$((RAM / 1024 / 1024 / 1024))	# convert byte into GB
+
+cat > $TMPDIR/gnuplot.plt <<EOF
+# Gnuplot script file for plotting data from bench lab
+
+set yrange [0:*]
+set decimalsign locale
+set terminal png truecolor size 1920,1080 font "Gill Sans,22"
+set output 'graph.png'
+set grid back
+set border 3 back linestyle 80
+set tics nomirror
+set style fill solid 1.0 border -1
+set style histogram errorbars gap 2 lw 2
+set boxwidth 0.9 relative
+
+set title noenhanced "Job numbers' impact on 'make buildworld buildkernel' execution time\n$MODEL (cores: $CORES, thread per core: $TPC, Total CPUs: $CPUS) with $RAM GB RAM"
+set xlabel font "Gill Sans,16"
+set xlabel noenhanced "FreeBSD/$MACHINE $VERSION ($VERSIONU) building main sources cloned at $GITREV ($GITDATE)"
+set ylabel "Time to build in seconds, median of 3 benches"
+
+set xtics 1
+set key on inside top right
+plot "gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram notitle, \
+  ''using 0:( \$2 + 50 ):2 with labels notitle
+EOF
+
+echo "Benches done"
+echo "You can generate a graph.png with gnuplot:"
+echo "pkg install gnuplot"
+echo "cd $TMPDIR"
+echo "gnuplot gnuplot.plt"
+
 umount $RAMDISK
