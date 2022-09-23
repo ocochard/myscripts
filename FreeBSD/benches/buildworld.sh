@@ -40,15 +40,15 @@ done
 while [ $JOBS -le $((CPUS * 2)) ]; do
 	for j in $(seq $RUNS); do
 		echo "Jobs: $JOBS, run: $j/$RUNS"
-		# Forcing default kernel to be GENERIC and no custom MAKE_CONF
+		# Forcing GENERIC kernel, no custom MAKE_CONF/SRCCONF/SRC_ENV_CONF
 		echo "Cleanup..."
-		env __MAKE_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK \
-			make clean > /dev/null
+		env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK \
+			make SRCCONF=/dev/null clean > /dev/null
 		echo "Build..."
 		# Write log into ram disk to avoid benching local disk speed
-		env __MAKE_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK \
+		env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK \
 			time -ao $TMPDIR/buildbench.$JOBS.time make -j $JOBS \
-				KERNCONF=GENERIC buildworld buildkernel > $RAMDISK/buildbench.$JOBS.$j.log
+				KERNCONF=GENERIC SRCCONF=/dev/null buildworld buildkernel > $RAMDISK/buildbench.$JOBS.$j.log
 	done # for j
 
 	# Stats extractions to be ready to use by ministat
