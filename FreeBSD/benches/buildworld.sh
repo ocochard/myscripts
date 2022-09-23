@@ -2,7 +2,6 @@
 # Bench time spend to buildworld & kernel
 # User are expected to have downloaded src in /usr/src
 # cd /usr
-# git clone --depth 1 https://git.freebsd.org/src.git -b main
 set -eu
 
 # Variables definitions
@@ -14,8 +13,27 @@ else
 	JOBS=4
 fi
 RUNS=3
+
+### System check ###
+
+## Space needed ##
+# - 1.2G for sources
+# - 10G for obj dir
+# - 1G free to compile
+# => 16G minimum to build from RAM
+
+PHYSMEM=$(sysctl -n hw.physmem)
+if [ $PHYSMEM -lt 17105900000 ]; then
+	echo "Need a minimum of 16G RAM"
+	exit 1
+fi
+
+## tooling ##
+
+# git
+
 RAMDISK="/usr/obj/ramdisk"
-SRCDIR="/usr/src"
+SRCDIR="$RAMDISK/src"
 
 mkdir -p $RAMDISK
 
@@ -25,12 +43,18 @@ if mount | grep -q $RAMDISK; then
 	echo "Detected already mounted $RAMDISK"
 	echo "Don't forget to unmount it next time!"
 else
-	# Build in a tmpfs, avoid benching hard disk write
-	# Notice that read disk containing $SRC will be benched
+	# Build in a tmpfs, avoid benching hard disk i/o
 	mount -t tmpfs tmpfs $RAMDISK
 fi
 
+# --depth 1 should imply --single-branch by default
+# Consume about 1.2G of space
+mkdir -p $SRCDIR
+git clone --depth 1 --branch main --single-branch https://git.freebsd.org/src.git $SRCDIR
+
 cd $SRCDIR
+
+echo "Result in $TMPDIR"
 
 # Init gnuplot data file
 for i in real user sys; do
@@ -78,4 +102,3 @@ while [ $JOBS -le $((CPUS * 2)) ]; do
 done # while JOBS
 umount $RAMDISK
 
-echo "Result in $TMPDIR"
