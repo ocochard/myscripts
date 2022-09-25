@@ -115,8 +115,11 @@ MACHINE=$(uname -m)
 VERSION=$(uname -r)
 VERSIONU=$(uname -U)
 MODEL=$(sysctl -n hw.model)
+# Number of physical cores online
 CORES=$(sysctl -n kern.smp.cores)
+# Number of SMT threads online per core
 TPC=$(sysctl -n kern.smp.threads_per_core)
+# Number of CPUs online
 CPUS=$(sysctl -n kern.smp.cpus)
 RAM=$(sysctl -n hw.physmem)
 RAM=$((RAM / 1024 / 1024 / 1024))	# convert byte into GB
@@ -143,7 +146,7 @@ set ylabel "Time to build in seconds, median of 3 benches"
 set xtics 1
 set key on inside top right
 plot "gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram notitle, \
-  ''using 0:( \$2 + 50 ):2 with labels notitle
+  ''using 0:( \$2 + 80 ):2 with labels notitle
 EOF
 
 echo "Benches done"

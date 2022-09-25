@@ -43,7 +43,7 @@ multimedia/vlc
 multimedia/webcamd
 net-mgmt/netdata
 net/bird2
-net/frr7
+net/frr8
 net/mrtparse
 net/py-speedtest-cli
 net/read_bbrlog
@@ -61,6 +61,7 @@ ports-mgmt/portlint
 ports-mgmt/poudriere-devel
 security/keepassxc
 security/nmap
+security/openvpn
 security/py-certbot
 security/py-ssh-audit
 security/py-yubikey-manager
