@@ -1,6 +1,8 @@
 #!/bin/sh
 # Update FreeBSD and ports, then install new environment using ZFS BE
 set -eu
+
+ARCH=$(uname -m)
 # Absolute path script name
 script=$(readlink -f $0)
 # Absolute path this script is in
@@ -25,7 +27,7 @@ cat > /etc/src-env.conf <<EOF
 WITH_META_MODE=yes
 EOF
 
-cat > /usr/src/sys/amd64/conf/BBR <<EOF
+cat > /usr/src/sys/$ARCH/conf/BBR <<EOF
 include GENERIC-NODEBUG
 ident			BBR
 options			KDB_UNATTENDED
