@@ -3,6 +3,11 @@
 set -eu
 
 ARCH=$(uname -m)
+JOBS=$(sysctl -n kern.smp.cpus)
+if [ ${JOBS} -gt 64 ]; then
+	# No buildtime improvement with more than 64 cores/threads
+	JOBS=64
+fi
 # Absolute path script name
 script=$(readlink -f $0)
 # Absolute path this script is in
@@ -53,12 +58,12 @@ echo "Updating source tree"
 cd /usr/src
 git pull --ff-only
 echo "Building world and kernel"
-make -j 32 buildworld buildkernel
+make -j ${JOBS} buildworld buildkernel
 ports_src=$(poudriere ports -lq | grep '^default' | awk {'print $5'})
 cd ${ports_src}
 git stash
 poudriere ports -u
-git stash pop
+git stash pop || true
 # Warning: Rebuilding the jail will force a rebuild of all ports
 # But could be mandatory in case of video modules than need to be synced with kernel
 #poudriere jail -j builder -u -m src=/usr/src
