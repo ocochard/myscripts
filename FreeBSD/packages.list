@@ -18,6 +18,7 @@ dns/dnsmasq
 dns/nextdns
 editors/libreoffice
 editors/vim
+editors/vim-console
 emulators/dolphin-emu
 emulators/dosbox
 emulators/fs-uae
