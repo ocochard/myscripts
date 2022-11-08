@@ -45,12 +45,12 @@ EOF
 kldstat -qm filemon || kldload filemon
 
 if [ -e /usr/src/.git ]; then
-	git clone -b main --single-branch https://git.freebsd.org/src.git /usr/src
-	cd /usr/src
-else
 	cd /usr/src
 	echo "Updating source tree"
 	git pull --ff-only
+else
+	git clone -b main --single-branch https://git.freebsd.org/src.git /usr/src
+	cd /usr/src
 fi
 
 cat > /usr/src/sys/$ARCH/conf/BBR <<EOF
