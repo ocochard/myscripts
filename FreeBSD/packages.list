@@ -18,7 +18,6 @@ dns/dnsmasq
 dns/nextdns
 editors/libreoffice
 editors/vim
-editors/vim-console
 emulators/dolphin-emu
 emulators/dosbox
 emulators/fs-uae
@@ -49,11 +48,10 @@ net/mrtparse
 net/py-speedtest-cli
 net/read_bbrlog
 net/rsync
-net/samba413
+net/samba416
 net/tcplog_dumper
 net/tcprtt
 net/tightvnc
-net/wireguard-kmod
 net/wireguard-tools
 net/wireshark
 net/x11vnc

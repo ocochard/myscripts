@@ -54,9 +54,14 @@ EOF
 # Using META_MODE requiere filemon
 kldstat -qm filemon || kldload filemon
 
-echo "Updating source tree"
-cd /usr/src
-git pull --ff-only
+if [ -e /usr/src/.git ]; then
+	git clone -b main --single-branch https://git.freebsd.org/src.git /usr/src
+	cd /usr/src
+else
+	cd /usr/src
+	echo "Updating source tree"
+	git pull --ff-only
+fi
 echo "Building world and kernel"
 make -j ${JOBS} buildworld buildkernel
 ports_src=$(poudriere ports -lq | grep '^default' | awk {'print $5'})
