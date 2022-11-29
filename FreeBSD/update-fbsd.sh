@@ -1,5 +1,7 @@
 #!/bin/sh
 # Update FreeBSD and ports, then install new environment using ZFS BE
+# To cleanup old BE:
+# bectl list | grep -v 'NR\|default\|BE' | cut -d ' ' -f 1 | xargs -L1 bectl destroy
 set -eu
 
 ARCH=$(uname -m)
@@ -84,5 +86,5 @@ if ! poudriere bulk -j builder -f ${script_dir}/packages.list; then
 	echo "[WARNING] Some packages fails to build"
 fi
 cd /usr/src
-env NO_PKG_UPGRADE=YES /usr/src/tools/build/beinstall.sh
+env NO_PKG_UPGRADE=YES /usr/src/tools/build/beinstall.sh -j ${JOBS}
 echo "shutdown -r now"
