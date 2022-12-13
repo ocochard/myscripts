@@ -36,44 +36,37 @@ cat > /tmp/topo.txt <<EOF
                                 2001:db8:60::6/64
 
                       ****** Expected results *******
-root@host:~ # jexec bird1 netstat -rn
+# jexec bird1 netstat -rn
 Routing tables
 
 Internet:
 Destination        Gateway            Flags     Netif Expire
-127.0.0.1          link#16            UH          lo0
-192.168.10.0/24    link#26            U1          lo1
-192.168.10.1       link#26            UH          lo1
-192.168.12.0/24    link#4             U     epair112a
-192.168.12.1       link#4             UHS         lo0
-192.168.23.0/24    192.168.12.2       UG1   epair112a
-192.168.34.0/24    192.168.12.2       UG1   epair112a
-192.168.45.0/24    192.168.12.2       UG1   epair112a
-192.168.56.0/24    192.168.12.2       UG1   epair112a
-192.168.60.0/24    192.168.12.2       UG1   epair112a
+192.168.10.0/24    link#7             U1        lo110
+192.168.10.1       link#7             UH        lo110
+192.168.12.0/24    link#8             U      epair112
+192.168.12.1       link#8             UHS         lo0
+192.168.23.0/24    192.168.12.2       UG1    epair112
+192.168.34.0/24    192.168.12.2       UG1    epair112
+192.168.45.0/24    192.168.12.2       UG1    epair112
+192.168.56.0/24    192.168.12.2       UG1    epair112
+192.168.60.0/24    192.168.12.2       UG1    epair112
 
 Internet6:
 Destination                       Gateway                       Flags     Netif Expire
-::/96                             ::1                           UGRS        lo0
-::1                               link#16                       UHS         lo0
-::ffff:0.0.0.0/96                 ::1                           UGRS        lo0
-2001:db8:10::/64                  link#26                       U           lo1
-2001:db8:10::1                    link#26                       UHS         lo0
-2001:db8:12::/64                  link#4                        U     epair112a
-2001:db8:12::1                    link#4                        UHS         lo0
-2001:db8:23::/64                  2001:db8:12::2                UG1   epair112a
-2001:db8:34::/64                  2001:db8:12::2                UG1   epair112a
-2001:db8:45::/64                  2001:db8:12::2                UG1   epair112a
-2001:db8:56::/64                  2001:db8:12::2                UG1   epair112a
-2001:db8:60::/64                  2001:db8:12::2                UG1   epair112a
-fe80::/10                         ::1                           UGRS        lo0
-fe80::%epair112a/64               link#4                        U     epair112a
-fe80::99:d6ff:fe95:710a%epair112a link#4                        UHS         lo0
-fe80::%lo0/64                     link#16                       U           lo0
-fe80::1%lo0                       link#16                       UHS         lo0
-fe80::%lo1/64                     link#26                       U           lo1
-fe80::1%lo1                       link#26                       UHS         lo0
-ff02::/16                         ::1                           UGRS        lo0
+::1                               link#7                        UHS         lo0
+2001:db8:10::/64                  link#7                        U         lo110
+2001:db8:10::1                    link#7                        UHS         lo0
+2001:db8:12::/64                  link#8                        U      epair112
+2001:db8:12::1                    link#8                        UHS         lo0
+2001:db8:23::/64                  2001:db8:12::2                UG1    epair112
+2001:db8:34::/64                  2001:db8:12::2                UG1    epair112
+2001:db8:45::/64                  2001:db8:12::2                UG1    epair112
+2001:db8:56::/64                  2001:db8:12::2                UG1    epair112
+2001:db8:60::/64                  2001:db8:12::2                UG1    epair112
+fe80::%lo110/64                   link#7                        U         lo110
+fe80::1%lo110                     link#7                        UHS         lo0
+fe80::%epair112a/64               link#8                        U      epair112
+fe80::a5:42ff:fea7:820a%epair112a link#8                        UHS         lo0
 
 # jexec bird1 traceroute 192.168.60.6
 traceroute to 192.168.60.6 (192.168.60.6), 64 hops max, 40 byte packets
@@ -90,12 +83,16 @@ mkdir -p /var/run/bird/
 # Routers configuration
 bird1_ifa=lo110
 bird1_ifa_p=""
+bird1_ifa_inet="192.168.10.1/24"
+bird1_ifa_inet6="2001:db8:10::1/64"
 bird1_ifb=epair112
 bird1_ifb_p=a
+bird1_ifb_inet="192.168.12.1/24"
+bird1_ifb_inet6="2001:db8:12::1/64"
 cat > /var/run/bird/bird1.conf <<EOF
 # Configure logging
 log syslog all;
-log "/var/log/bird.log" all;
+log "/var/log/bird1.log" all;
 log stderr all;
 
 # Override router ID
@@ -125,11 +122,7 @@ protocol direct {
 
 protocol bgp bgp4 {
         local as 12;
-        # Bird creates IPSEC SAD entry automatically but it need to know the source IP address
-        # Otherwise it will use the wrong 0.0.0.0 IP as source
-        source address 192.168.12.1;
         neighbor 192.168.12.2 as 12;
-        password "abigpassword";
         ipv4 {
             import all;
             export all;
@@ -138,11 +131,7 @@ protocol bgp bgp4 {
 
 protocol bgp bgp6 {
         local as 12;
-        # Bird creates IPSEC SAD entry automatically but it need to know the source IP address
-        # Otherwise it will use the wrong :: IP as source
-        source address 2001:db8:12::1;
         neighbor 2001:db8:12::2 as 12;
-        password "abigpassword";
         ipv6 {
             import all;
             export all;
@@ -154,12 +143,16 @@ EOF
 
 bird2_ifa=epair112
 bird2_ifa_p=b
+bird2_ifa_inet="192.168.12.2/24"
+bird2_ifa_inet6="2001:db8:12::2/64"
 bird2_ifb=epair123
 bird2_ifb_p=a
+bird2_ifb_inet="192.168.23.2/24"
+bird2_ifb_inet6="2001:db8:23::2/64"
 cat > /var/run/bird/bird2.conf <<EOF
 # Configure logging
 log syslog all;
-log "/var/log/bird.log" all;
+log "/var/log/bird2.log" all;
 log stderr all;
 
 # Override router ID
@@ -189,11 +182,7 @@ protocol direct {
 
 protocol bgp bgp4 {
         local as 12;
-        # Bird creates IPSEC SAD entry automatically but it need to know the source IP address
-        # Otherwise it will use the wrong 0.0.0.0 IP as source
-        source address 192.168.12.2;
         neighbor 192.168.12.1 as 12;
-        password "abigpassword";
         ipv4 {
             import all;
             export all;
@@ -203,11 +192,7 @@ protocol bgp bgp4 {
 
 protocol bgp bgp6 {
         local as 12;
-        # Bird creates IPSEC SAD entry automatically but it need to know the source IP address
-        # Otherwise it will use the wrong :: IP as source
-        source address 2001:db8:12::2;
         neighbor 2001:db8:12::1 as 12;
-        password "abigpassword";
         ipv6 {
             import all;
             export all;
@@ -219,24 +204,28 @@ protocol bfd {}
 
 protocol rip rip4 {
   ipv4 { import all; export all;};
-  interface "epair1a" {};
+  interface "epair123a" {};
 }
 
 protocol rip ng rip6 {
   ipv6 { import all; export all;};
-  interface "epair1a" {};
+  interface "epair123a" {};
 }
 
 EOF
 
 bird3_ifa=epair123
 bird3_ifa_p=b
+bird3_ifa_inet="192.168.23.3/24"
+bird3_ifa_inet6="2001:db8:23::3/64"
 bird3_ifb=epair134
 bird3_ifb_p=a
+bird3_ifb_inet="192.168.34.3/24"
+bird3_ifb_inet6="2001:db8:34::3/64"
 cat > /var/run/bird/bird3.conf <<EOF
 # Configure logging
 log syslog all;
-log "/var/log/bird.log" all;
+log "/var/log/bird3.log" all;
 log stderr all;
 
 # Override router ID
@@ -268,25 +257,25 @@ protocol bfd {}
 
 protocol rip rip4 {
   ipv4 { import all; export all;};
-  interface "epair1b" {};
+  interface "epair123b" {};
 }
 
 protocol rip ng rip6 {
   ipv6 { import all; export all;};
-  interface "epair1b" {};
+  interface "epair123b" {};
 }
 
 protocol ospf v2 ospf4 {
   ipv4 { import all; export all;};
   area 0 {
-    interface "epair2a" {};
+    interface "epair134a" {};
     };
 }
 
 protocol ospf v3 ospf6 {
   ipv6 { import all; export all;};
   area 0 {
-    interface "epair2a" {};
+    interface "epair134a" {};
     };
 }
 
@@ -294,12 +283,16 @@ EOF
 
 bird4_ifa=epair134
 bird4_ifa_p=b
+bird4_ifa_inet="192.168.34.4/24"
+bird4_ifa_inet6="2001:db8:34::4/64"
 bird4_ifb=epair145
 bird4_ifb_p=a
+bird4_ifb_inet="192.168.45.4/24"
+bird4_ifb_inet6="2001:db8:45::5/64"
 cat > /var/run/bird/bird4.conf <<EOF
 # Configure logging
 log syslog all;
-log "/var/log/bird.log" all;
+log "/var/log/bird4.log" all;
 log stderr all;
 
 # Override router ID
@@ -332,19 +325,19 @@ protocol bfd {}
 protocol ospf v2 ospf4 {
   ipv4 { import all; export all;};
   area 0 {
-    interface "epair2b" {};
+    interface "epair134b" {};
     };
 }
 
 protocol ospf v3 ospf6 {
   ipv6 { import all; export all;};
   area 0 {
-    interface "epair2b" {};
+    interface "epair134b" {};
     };
 }
 
 protocol babel {
-  interface "epair3a" { type wired; };
+  interface "epair145a" { type wired; };
   ipv4 { import all; export all;};
   ipv6 { import all; export all;};
 }
@@ -353,12 +346,16 @@ EOF
 
 bird5_ifa=epair145
 bird5_ifa_p=b
+bird5_ifa_inet="192.168.45.5/24"
+bird5_ifa_inet6="2001:db8:45::5/64"
 bird5_ifb=epair156
 bird5_ifb_p=a
+bird5_ifb_inet="192.168.56.5/24"
+bird5_ifb_inet6="2001:db8:56::5/64"
 cat > /var/run/bird/bird5.conf <<EOF
 # Configure logging
 log syslog all;
-log "/var/log/bird.log" all;
+log "/var/log/bird5.log" all;
 log stderr all;
 
 # Override router ID
@@ -387,14 +384,14 @@ protocol direct {
 }
 
 protocol babel {
-  interface "epair3b" { type wired; };
+  interface "epair145b" { type wired; };
   ipv4 { import all; export all;};
   ipv6 { import all; export all;};
 }
 
 protocol static static4 {
     ipv4;
-    route 192.168.60.0/24 via 192.168.56.6;
+    route 0.0.0.0/0 via 192.168.56.6;
 }
 
 protocol static static6 {
@@ -405,12 +402,16 @@ EOF
 
 bird6_ifa=epair156
 bird6_ifa_p=b
-bird6_ifb=lo170
+bird6_ifa_inet="192.168.56.6/24"
+bird6_ifa_inet6="2001:db8:56::6/64"
+bird6_ifb=lo160
 bird6_ifb_p=""
+bird6_ifb_inet="192.168.60.6/24"
+bird6_ifb_inet6="2001:db8:60::6/64"
 cat > /var/run/bird/bird6.conf <<EOF
 # Configure logging
 log syslog all;
-log "/var/log/bird.log" all;
+log "/var/log/bird6.log" all;
 log stderr all;
 
 # Override router ID
@@ -436,6 +437,15 @@ protocol device {
 protocol direct {
         ipv4;
         ipv6;
+}
+
+protocol static static4 {
+        ipv4;
+        route 0.0.0.0/0 via 192.168.56.5;
+}
+protocol static static6 {
+        ipv6;
+        route ::/0 via 2001:db8:56::5;
 }
 EOF
 
@@ -465,6 +475,10 @@ create_jail () {
 			vnet vnet.interface=\$bird${id}_ifb\$bird${id}_ifb_p
 		jexec bird${id} sysctl net.inet.ip.forwarding=1
 		jexec bird${id} sysctl net.inet6.ip6.forwarding=1
+		jexec bird${id} ifconfig \$bird${id}_ifa\$bird${id}_ifa_p inet \$bird${id}_ifa_inet up
+		jexec bird${id} ifconfig \$bird${id}_ifa\$bird${id}_ifa_p inet6 \$bird${id}_ifa_inet6
+		jexec bird${id} ifconfig \$bird${id}_ifb\$bird${id}_ifb_p inet \$bird${id}_ifb_inet up
+		jexec bird${id} ifconfig \$bird${id}_ifb\$bird${id}_ifb_p inet6 \$bird${id}_ifb_inet6
 		jexec bird${id} bird -c /var/run/bird/bird${id}.conf -s /var/run/bird/bird${id}.ctl || true
 		"
 }
@@ -490,17 +504,19 @@ start () {
 	cat /tmp/topo.txt
 	echo "To run command from jail, some examples:"
 	echo "jexec bird1 ping -c 4 -S 192.168.10.1 192.168.60.6"
-	echo "jexec bird3 birdc -s /var/run/bird/bird3.sock"
+	echo "jexec bird3 birdc -s /var/run/bird/bird3.ctl"
 	echo "jexec bird4"
+	echo "Warning: FreeBSD invisible vnet interfaces big will be triggered with this script preventing multiple start&stop"
+	echo "(https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981)"
 	exit 0
 }
 
 stop () {
 	echo stop
-	for i in $(seq 7); do
+	for i in $(seq 6); do
 		destroy_jail $i
 		rm -f /var/run/bird/bird${i}.conf
-		#rm -f /var/run/bird/bird${i}_*
+		rm -f /var/log/bird${i}.log
 	done
 }
 
