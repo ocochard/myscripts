@@ -400,7 +400,7 @@ usage () {
 }
 
 check_req () {
-	whereis -b vtysh > /dev/null 2>&1 || die "net/frr not installed: vtysh not found"
+	which vtysh > /dev/null 2>&1 || die "net/frr not installed: vtysh not found"
 	[ "$(id -u)" != "0" ] && die "Need to be root" || true
 }
 

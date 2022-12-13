@@ -38,6 +38,8 @@ graphics/gimp
 graphics/mesa-demos
 lang/expect
 lang/python
+multimedia/libva-utils
+multimedia/mpv
 multimedia/mplayer
 multimedia/vlc
 multimedia/webcamd
@@ -70,6 +72,7 @@ sysutils/ansible
 sysutils/bhyve-firmware
 sysutils/bsdstats
 sysutils/flashrom
+sysutils/fusefs-smbnetfs
 sysutils/ipmitool
 sysutils/hw-probe
 sysutils/mstflint
