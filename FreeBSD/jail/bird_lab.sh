@@ -391,7 +391,7 @@ protocol babel {
 
 protocol static static4 {
     ipv4;
-    route 0.0.0.0/0 via 192.168.56.6;
+    route 192.168.60.0/24 via 192.168.56.6;
 }
 
 protocol static static6 {
