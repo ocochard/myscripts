@@ -68,13 +68,22 @@ fe80::1%lo110                     link#7                        UHS         lo0
 fe80::%epair112a/64               link#8                        U      epair112
 fe80::a5:42ff:fea7:820a%epair112a link#8                        UHS         lo0
 
-# jexec bird1 traceroute 192.168.60.6
-traceroute to 192.168.60.6 (192.168.60.6), 64 hops max, 40 byte packets
- 1  192.168.12.2 (192.168.12.2)  0.038 ms  0.030 ms  0.014 ms
- 2  192.168.23.3 (192.168.23.3)  0.020 ms  0.025 ms  0.014 ms
- 3  192.168.34.4 (192.168.34.4)  0.020 ms  0.026 ms  0.016 ms
- 4  192.168.45.5 (192.168.45.5)  0.033 ms  0.027 ms  0.020 ms
- 5  192.168.60.6 (192.168.60.6)  0.031 ms  0.030 ms  0.020 ms
+#jexec bird1 traceroute -s 192.168.10.1 192.168.60.6
+traceroute to 192.168.60.6 (192.168.60.6) from 192.168.10.1, 64 hops max, 40 byte packets
+ 1  192.168.12.2 (192.168.12.2)  0.086 ms  0.065 ms  0.030 ms
+ 2  192.168.23.3 (192.168.23.3)  0.033 ms  0.069 ms  0.028 ms
+ 3  192.168.34.4 (192.168.34.4)  0.032 ms  0.070 ms  0.030 ms
+ 4  192.168.45.5 (192.168.45.5)  0.033 ms  0.095 ms  0.042 ms
+ 5  192.168.60.6 (192.168.60.6)  0.364 ms  0.095 ms  0.095 ms
+
+# jexec bird1 ping -c 2 -S 2001:db8:10::1 2001:db8:60::6
+PING6(56=40+8+8 bytes) 2001:db8:10::1 --> 2001:db8:60::6
+16 bytes from 2001:db8:60::6, icmp_seq=0 hlim=60 time=0.241 ms
+16 bytes from 2001:db8:60::6, icmp_seq=1 hlim=60 time=0.114 ms
+
+--- 2001:db8:60::6 ping6 statistics ---
+2 packets transmitted, 2 packets received, 0.0% packet loss
+round-trip min/avg/max/std-dev = 0.114/0.178/0.241/0.064 ms
 
 EOF
 
