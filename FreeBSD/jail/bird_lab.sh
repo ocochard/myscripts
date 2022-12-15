@@ -11,29 +11,29 @@ cat > /tmp/topo.txt <<EOF
  2001:db8:10::1/64
   lo110
     |
-  ---------                          --------                           ---------
-  | bird1 |                          | bird2 |                          | bird3 |
-  |       | .1 (192.168.12.0/24)  .2 |       |                          |       |
-  |  BGP  |--epair112a<-->epair112b--| BGP   | .2 (192.168.23.0/24)  .3 |       |
-  --------                           | RIP   |--epair123a<-->epair123b--| RIP   |
-                                      --------                          |       |
-                                                                        |       |
-  ---------                         ---------                           |       |
-  | bird5 |                         | bird4 |                           |       |
-  |       |                         |       | .4 (192.168.34.0/24)   .3 |       |
-  |       | .5 (192.168.45.0/24) .4 | OSPF  |--epair134b<-->epair134a---| OSPF  |
-  | BABEL |--epair145b<->epair145a--| BABEL |                           ---------
-  |       |                         --------
-  |       |
-  |       |                          --------
-  |       |                          | bird6|
-  |       | .5 (192.168.56.0/24) .6  |      |
-  |STATIC |--epair156a<-->epair156b--|STATIC|
-  --------                           --------
-                                        |
-                                      lo160
+ ---------                         ---------                          ---------
+ | bird1 |                         | bird2 |                          | bird3 |
+ |       | .1 (192.168.12.0/24) .2 |       |                          |       |
+ |  BGP  |--epair112a<->epair112b--| BGP   | .2 (192.168.23.0/24)  .3 |       |
+ ---------                         | RIP   |--epair123a<-->epair123b--| RIP   |
+                                   ---------                          |       |
+                                                                      |       |
+ ---------                         ---------                          |       |
+ | bird5 |                         | bird4 |                          |       |
+ |       |                         |       | .4 (192.168.34.0/24)  .3 |       |
+ |       | .5 (192.168.45.0/24) .4 | OSPF  |--epair134b<-->epair134a--| OSPF  |
+ | BABEL |--epair145b<->epair145a--| BABEL |                          ---------
+ |       |                         --------
+ |       |
+ |       |                         ---------
+ |       |                         | bird6 |
+ |       | .5 (192.168.56.0/24) .6 |       |
+ |STATIC |--epair156a<->epair156b--|STATIC |
+ ---------                         ---------
+                                       |
+                                     lo160
                                  192.168.60.6/24
-                                2001:db8:60::6/64
+                                 2001:db8:60::6/64
 
                       ****** Expected results *******
 # jexec bird1 netstat -rn
@@ -482,6 +482,12 @@ create_jail () {
 	    jail -c name=bird${id} host.hostname=bird${id} persist \
 			vnet vnet.interface=\$bird${id}_ifa\$bird${id}_ifa_p \
 			vnet vnet.interface=\$bird${id}_ifb\$bird${id}_ifb_p
+		# Once destroyed, jail will stay in dying state during 2 x tcp.msl delay
+		# which is 30000 seconds (8 hours and 30 minutes)
+		# So reduce this value to a crazy small value to be able to restart after destroying them
+		# quickly
+		# XXX : Commented because it doesn't solve the 'stuck in dying state" bug
+		#jexec bird${id} sysctl net.inet.tcp.msl=1
 		jexec bird${id} sysctl net.inet.ip.forwarding=1
 		jexec bird${id} sysctl net.inet6.ip6.forwarding=1
 		jexec bird${id} ifconfig \$bird${id}_ifa\$bird${id}_ifa_p inet \$bird${id}_ifa_inet up
