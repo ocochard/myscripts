@@ -406,7 +406,7 @@ check_req () {
 
 create_jail () {
 	id=$1
-	if [ $(jls -d -j frr${id} dying) = "true" ]; then
+	if [ "$(jls -d -j frr${id} dying)" = "true" ]; then
 		echo "BUG: Previous jail stuck in dying state"
 		echo "https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981"
 		exit 1
