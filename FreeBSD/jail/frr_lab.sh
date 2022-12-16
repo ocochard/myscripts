@@ -406,6 +406,11 @@ check_req () {
 
 create_jail () {
 	id=$1
+	if [ $(jls -d -j frr${id} dying) = "true" ]; then
+		echo "BUG: Previous jail stuck in dying state"
+		echo "https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981"
+		exit 1
+	fi
 	eval "
 		if [ -z "\$frr${id}_ifa_p" ] || [ "\$frr${id}_ifa_p" != b ]; then
 			ifconfig \$frr${id}_ifa create group frr

@@ -454,6 +454,11 @@ check_req () {
 
 create_jail () {
 	id=$1
+	if [ $(jls -d -j bird${id} dying) = "true" ]; then
+		echo "BUG: Previous jail stuck in dying state"
+		echo "https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981"
+		exit 1
+	fi
 	eval "
 		if [ -z "\$bird${id}_ifa_p" ] || [ "\$bird${id}_ifa_p" != b ]; then
 			ifconfig \$bird${id}_ifa create group bird
@@ -475,8 +480,6 @@ create_jail () {
 }
 
 destroy_jail () {
-	# BUG: Jails are stuck in dying state for no reason
-	# FreeBSD bug https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981
 	# $1: jail id
 	iflist=$(jexec bird$1 ifconfig -l | sed 's/lo0//')
 	jail -R bird$1 || true
@@ -486,7 +489,7 @@ destroy_jail () {
 }
 
 start () {
-	echo start
+	echo starting...
 	check_req
 	for i in $(seq 6); do
 		create_jail $i
@@ -502,7 +505,7 @@ start () {
 }
 
 stop () {
-	echo stop
+	echo stoping...
 	for i in $(seq 6); do
 		destroy_jail $i
 		rm -f /var/run/bird/bird${i}.conf
