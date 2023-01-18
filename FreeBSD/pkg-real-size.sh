@@ -37,7 +37,7 @@ shift $(( OPTIND - 1 ))
 get_deps $1
 echo "List of dependencies and their size:"
 for i in $(sort $TMPFILE | uniq); do
-	size=$(pkg ${r}query %sb $i)
+	size=$(pkg ${r}query %sb $i | head -1)
 	echo "$i : $size bytes"
 	total_size=$(( total_size + size ))
 done

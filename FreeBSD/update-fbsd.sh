@@ -67,19 +67,31 @@ EOF
 
 echo "Building world and kernel"
 make -j ${JOBS} buildworld buildkernel
-ports_src=$(poudriere ports -lq | grep '^default' | awk {'print $5'})
-cd ${ports_src}
-git stash
-poudriere ports -u
-git stash pop || true
-# Warning: Rebuilding the jail will force a rebuild of all ports
-# But could be mandatory in case of video modules than need to be synced with kernel
-#poudriere jail -j builder -u -m src=/usr/src
-if [ ! -f /usr/local/etc/poudriere.d/make.conf ]; then
+if poudriere ports -ln | grep -q 'default'; then
+	# Updating the port tree
+	ports_src=$(poudriere ports -lq | grep '^default' | awk {'print $5'})
+	cd ${ports_src}
+	git stash
+	poudriere ports -u
+	git stash pop || true
+else
+	# Creating the port tree
+	poudriere ports -c
+fi
+
+if poudriere jail -ln | grep -q builder; then
+	# Warning: Upgrading the jail will force a rebuild of all ports
+	# But could be mandatory in case of video modules than need to be synced with kernel
+	poudriere jail -j builder -u -m src=/usr/src
+else
+	# Create the builder jail
+	poudriere jail -j builder -c -m src=/usr/src
+fi
+if [ ! -f /usr/local/etc/poudriere.d/builder-make.conf ]; then
 	(
 	echo "LICENSES_ACCEPTED+= DCC"
 	echo "LICENSES_ACCEPTED+= Proprietary"
-	) > /usr/local/etc/poudriere.d/make.conf
+	) > /usr/local/etc/poudriere.d/builder-make.conf
 fi
 echo "Building ports..."
 if ! poudriere bulk -j builder -f ${script_dir}/packages.list; then
