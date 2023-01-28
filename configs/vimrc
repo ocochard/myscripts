@@ -1,27 +1,70 @@
-" tap indent movement (use mark `m' for cursor position)
-" allows to select and use tab to tab a full selection
-vmap <S-Tab>  mm<`m:<C-U>exec "normal ".&shiftwidth."h"<CR>mmgv`m
-vmap <Tab>    mm>`m:<C-U>exec "normal ".&shiftwidth."l"<CR>mmgv`m
+"Disable vi compatible mode
+" Need to be the first one
+set nocompatible
+
+" Sources
+" https://vimawesome.com/
+" https://blog.jez.io/vim-as-an-ide/
+" 
+" --- Pluging manager: https://github.com/junegunn/vim-plug
+" FreeBSD install:
+" mkdir -p ~/.vim/autoload/
+" fetch -o ~/.vim/autoload/plug.vim https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+
+call plug#begin()
+" cool color
+Plug 'altercation/vim-colors-solarized'
+" Syntax check
+Plug 'dense-analysis/ale'
+" completion
+Plug 'Shougo/deoplete.nvim'
+" file manager
+Plug 'preservim/nerdtree'
+call plug#end()
+
+" Plugin install (first time)
+" :source %
+" :PlugInstall
+
+" --- General settings ---
+" Automatically apply changes to the vimrc
+if has("autocmd")
+  autocmd! bufwritepost .vimrc source ~/.vimrc
+endif
 "Disable mouse
 set mouse=
-"Disable vi compatible mode
-set nocompatible
-" Disable automatic tab when pasting
+"Disable automatic tab when pasting
 set noai
 "Enable syntax highlight
 syntax enable
+"Display line number
+set number
+"Display red line
+set colorcolumn=80
+"Enable incremental search
+set incsearch
+"Enable highlight in search mode
+set hlsearch
+
+" tap indent movement (use mark `m' for cursor position)
+vmap <S-Tab>  mm<`m:<C-U>exec "normal ".&shiftwidth."h"<CR>mmgv`m
+vmap <Tab>    mm>`m:<C-U>exec "normal ".&shiftwidth."l"<CR>mmgv`m
+
+" --- Plugin settings ---
+" -- Solarized
 set background=light
 "set background=dark
-" #### solarized #####
-" mkdir -p ~.vim/colors
-" cd ~.vim/colors
-"fetch https://raw.githubusercontent.com/altercation/vim-colors-solarized/master/colors/solarized.vim
 colorscheme solarized
+" -- NERDtree
+" Call it with F2
+noremap <F2> :NERDTree<CR>
+" --- Display
 "TAB=4 space
 "https://vim.fandom.com/wiki/Indenting_source_code
 set shiftwidth=4
 set tabstop=4
-" Display insecable space
+
+" Display insecable space (side effect of using bépo)
 highlight NbSp ctermbg=lightgray guibg=lightred
 match NbSp /\%xa0/
 "highlight EdSp ctermbg=lightgray guibg=lightred
@@ -39,116 +82,25 @@ match ExtraWhitespace /^\t*\zs \+/
 " Alternatively, the following pattern will match trailing whitespace, except when typing at the end of a line.
 match ExtraWhitespace /\s\+\%#\@<!$/
 
-"Check common c errors
-let c_space_errors=1
-
+" --- Input
 " Do not use arrow!
-noremap <Up> <NOP>
-noremap <Down> <NOP>
-noremap <Left> <NOP>
-noremap <Right> <NOP>
+"noremap <Up> <NOP>
+"noremap <Down> <NOP>
+"noremap <Left> <NOP>
+"noremap <Right> <NOP>
 
-" Appliquer automatiquement les modification de ce fichier
-if has("autocmd")
-  autocmd! bufwritepost .vimrc source ~/.vimrc
-endif
-" {W} -> [É]
-" ——————————
-" On remappe W sur É :
-noremap é w
-noremap É W
-" Corollaire: on remplace les text objects aw, aW, iw et iW
-" pour effacer/remplacer un mot quand on n’est pas au début (daé / laé).
-onoremap aé aw
-onoremap aÉ aW
-onoremap ié iw
-onoremap iÉ iW
-" Pour faciliter les manipulations de fenêtres, on utilise {W} comme un Ctrl+W :
-noremap w <C-w>
-noremap W <C-w><C-w>
- 
-" [HJKL] -> {CTSR}
-" ————————————————
-" {cr} = « gauche / droite »
-noremap c h
-noremap r l
-" {ts} = « haut / bas »
-noremap t j
-noremap s k
-" {CR} = « haut / bas de l'écran »
-noremap C H
-noremap R L
-" {TS} = « joindre / aide »
-noremap T J
-noremap S K
-" Corollaire : repli suivant / précédent
-noremap zs zj
-noremap zt zk
- 
-" {HJKL} <- [CTSR]
-" ————————————————
-" {J} = « Jusqu'à »            (j = suivant, J = précédant)
-noremap j t
-noremap J T
-" {L} = « Change »             (l = attend un mvt, L = jusqu'à la fin de ligne)
-noremap l c
-noremap L C
-" {H} = « Remplace »           (h = un caractère slt, H = reste en « Remplace »)
-noremap h r
-noremap H R
-" {K} = « Substitue »          (k = caractère, K = ligne)
-noremap k s
-noremap K S
-" Corollaire : correction orthographique
-noremap ]k ]s
-noremap [k [s
- 
-" Désambiguation de {g}
-" —————————————————————
-" ligne écran précédente / suivante (à l'intérieur d'une phrase)
-noremap gs gk
-noremap gt gj
-" onglet précédant / suivant
-noremap gb gT
-noremap gé gt
-" optionnel : {gB} / {gÉ} pour aller au premier / dernier onglet
-noremap gB :exe "silent! tabfirst"<CR>
-noremap gÉ :exe "silent! tablast"<CR>
-" optionnel : {g"} pour aller au début de la ligne écran
-noremap g" g0
- 
-" <> en direct
-" ————————————
-noremap « <
-noremap » >
-
-" Remaper la gestion des fenêtres
-" ———————————————————————————————
-noremap wt <C-w>j
-noremap ws <C-w>k
-noremap wc <C-w>h
-noremap wr <C-w>l
-noremap wd <C-w>c
-noremap wo <C-w>s
-noremap wp <C-w>o
-noremap w<SPACE> :split<CR>
-noremap w<CR> :vsplit<CR>
-" display invisible characters
-"set listchars=nbsp:¤,tab:>-,trail:¤,extends:>,precedes:<
-"set listchars=nbsp:¤
-"set list
-" interdit les nbsp en mode insertion (espace espace-insécalbe espace <Esc>)
-inoremap   <Esc>
-
-"Display line number
-set number
-"Display red line
-set colorcolumn=80
 "Load /usr/src/tools/tools/editing/freebsd.vim
 "enable it with: \f
 ":so /usr/src/tools/tools/editing/freebsd.vim
 "Enable to read the vim config file
 set modeline
+
+" --- Language
+
+" ---- c
+"Check common c errors
+let c_space_errors=1
+
 "autoindentation for python file
 
 autocmd FileType html setlocal shiftwidth=2 tabstop=2
@@ -162,3 +114,8 @@ autocmd FileType python setlocal expandtab shiftwidth=4 softtabstop=4
 "    \ set expandtab
 "    \ set autoindent
 "    \ set fileformat=unix
+"   filetype indent off   " Disable file-type-specific indentation
+"   syntax off            " Disable syntax highlighting
+
+" --- BÉPO user remapping ---
+source ~/.vimrc.bepo
