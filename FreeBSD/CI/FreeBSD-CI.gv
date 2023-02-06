@@ -27,7 +27,6 @@ digraph FreeBSDCI {
 	/* Nodes relations */
 	"FreeBSD-head-amd64-build" -> "build-world-kernel-head.sh";
 	"FreeBSD-head-amd64-test" -> "create-meta.sh" [ lhead="cluster_tests"];
-	"FreeBSD-head-amd64-test" -> "meta/run.sh";
 	"FreeBSD-head-amd64-testvm" -> "build-test_image-head.sh";
 	"FreeBSD-head-amd64-build" ->  "FreeBSD-head-amd64-testvm";
 	"FreeBSD-head-amd64-testvm" -> "FreeBSD-head-amd64-test";
