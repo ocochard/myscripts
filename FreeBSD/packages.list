@@ -37,6 +37,7 @@ graphics/drm-510-kmod
 graphics/gimp
 graphics/mesa-demos
 lang/expect
+lang/go
 lang/python
 multimedia/libva-utils
 multimedia/mpv
@@ -71,6 +72,7 @@ shells/ksh93
 sysutils/ansible
 sysutils/bhyve-firmware
 sysutils/bsdstats
+sysutils/devcpu-data
 sysutils/flashrom
 sysutils/fusefs-smbnetfs
 sysutils/ipmitool
