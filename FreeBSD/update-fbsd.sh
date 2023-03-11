@@ -5,7 +5,11 @@
 set -eu
 
 ARCH=$(uname -m)
-JOBS=$(sysctl -n kern.smp.cpus)
+if which -s nproc; then
+	JOBS=$(nproc)
+else
+	JOBS=$(sysctl -n kern.smp.cpus)
+fi
 if [ ${JOBS} -gt 64 ]; then
 	# No buildtime improvement with more than 64 cores/threads
 	JOBS=64
@@ -87,11 +91,16 @@ else
 	# Create the builder jail
 	poudriere jail -j builder -c -m src=/usr/src
 fi
+# Fixing licenses that need user confirmation
 if [ ! -f /usr/local/etc/poudriere.d/builder-make.conf ]; then
 	(
 	echo "LICENSES_ACCEPTED+= DCC"
 	echo "LICENSES_ACCEPTED+= Proprietary"
 	) > /usr/local/etc/poudriere.d/builder-make.conf
+fi
+# Improving build speed for some ports (warning, could consume a lot of RAM/CPU)
+if [ ! grep -q llvm /usr/local/etc/poudriere.conf ]; then
+	echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg ccache rust gcc* llvm* libreoffice chromium node* ghc qt5-webkit"' >> /usr/local/etc/poudriere.conf
 fi
 echo "Building ports..."
 if ! poudriere bulk -j builder -f ${script_dir}/packages.list; then
