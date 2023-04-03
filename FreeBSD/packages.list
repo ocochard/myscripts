@@ -72,9 +72,11 @@ shells/ksh93
 sysutils/ansible
 sysutils/bhyve-firmware
 sysutils/bsdstats
+sysutils/cdrkit
 sysutils/devcpu-data
 sysutils/flashrom
 sysutils/fusefs-smbnetfs
+sysutils/grub2-bhyve
 sysutils/ipmitool
 sysutils/hw-probe
 sysutils/mstflint
