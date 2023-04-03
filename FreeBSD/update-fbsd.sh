@@ -32,29 +32,36 @@ WITH_MALLOC_PRODUCTION=yes
 EOF
 
 if [ -f /etc/src-env.conf ]; then
-	mv  /etc/src-env.conf  /etc/src-env.conf.bak
+	if ! grep -q WITH_META_MODE /etc/src-env.conf; then
+		mv  /etc/src-env.conf  /etc/src-env.conf.bak
+		echo "WITH_META_MODE=yes" > /etc/src-env.conf
+	fi
 fi
-cat > /etc/src-env.conf <<EOF
-WITH_META_MODE=yes
-EOF
 
 if [ -f /etc/make.conf ]; then
-	mv /etc/make.conf /etc/make.conf.bak
-fi
-cat > /etc/make.conf <<EOF
-# Use our custom kernel configuration file
+	if ! grep -q BBR /etc/make.conf; then
+		mv /etc/make.conf /etc/make.conf.bak
+		cat > /etc/make.conf <<EOF
+# Use a custom kernel configuration file
 KERNCONF=BBR
+# run stage-qa automatically when building ports
 DEVELOPER=yes
 EOF
+	fi
+fi
 
 # Using META_MODE requiere filemon
-kldstat -qm filemon || kldload filemon
+if ! kldstat -qm filemon; then
+	kldload filemon
+	sysrc kld_list+=" filemon"
+fi
 
 if [ -e /usr/src/.git ]; then
 	cd /usr/src
-	echo "Updating source tree"
+	echo "Updating source tree..."
 	git pull --ff-only
 else
+	echo "Cloning main source tree..."
 	git clone -b main --single-branch https://git.freebsd.org/src.git /usr/src
 	cd /usr/src
 fi
@@ -69,14 +76,16 @@ options			RATELIMIT	# RACK depends on some constants
 options			CC_NEWRENO	# RACK depends on some constants
 EOF
 
-echo "Building world and kernel"
+echo "Building world and kernel..."
 make -j ${JOBS} buildworld buildkernel
 if poudriere ports -ln | grep -q 'default'; then
-	# Updating the port tree
 	ports_src=$(poudriere ports -lq | grep '^default' | awk {'print $5'})
+	# Backing up local patches
 	cd ${ports_src}
 	git stash
+	# Updating port tree
 	poudriere ports -u
+	# Restoring local patches
 	git stash pop || true
 else
 	# Creating the port tree
@@ -84,13 +93,14 @@ else
 fi
 
 if poudriere jail -ln | grep -q builder; then
-	# Warning: Upgrading the jail will force a rebuild of all ports
+	# Warning: Upgrading the jail will force a rebuild of all ports each time!
 	# But could be mandatory in case of video modules than need to be synced with kernel
 	poudriere jail -j builder -u -m src=/usr/src
 else
 	# Create the builder jail
 	poudriere jail -j builder -c -m src=/usr/src
 fi
+
 # Fixing licenses that need user confirmation
 if [ ! -f /usr/local/etc/poudriere.d/builder-make.conf ]; then
 	(
@@ -98,14 +108,19 @@ if [ ! -f /usr/local/etc/poudriere.d/builder-make.conf ]; then
 	echo "LICENSES_ACCEPTED+= Proprietary"
 	) > /usr/local/etc/poudriere.d/builder-make.conf
 fi
+
 # Improving build speed for some ports (warning, could consume a lot of RAM/CPU)
-if [ ! grep -q llvm /usr/local/etc/poudriere.conf ]; then
+if ! grep -q llvm /usr/local/etc/poudriere.conf; then
+	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
 	echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg ccache cmake-core rust gcc* llvm* libreoffice chromium node* ghc qt5-webkit ruby webkit2-gtk3 qemu"' >> /usr/local/etc/poudriere.conf
 fi
+
 echo "Building ports..."
 if ! poudriere bulk -j builder -f ${script_dir}/packages.list; then
 	echo "[WARNING] Some packages fails to build"
 fi
 cd /usr/src
+# Don't want to fail upgrade if some packages refuse to install, so don't upgrade package at the same step
 env NO_PKG_UPGRADE=YES /usr/src/tools/build/beinstall.sh -j ${JOBS}
+echo "Base and kernel upgraded, time to reboot:"
 echo "shutdown -r now"
