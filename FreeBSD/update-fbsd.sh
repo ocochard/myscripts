@@ -79,7 +79,7 @@ EOF
 echo "Building world and kernel..."
 make -j ${JOBS} buildworld buildkernel
 if poudriere ports -ln | grep -q 'default'; then
-	ports_src=$(poudriere ports -lq | grep '^default' | awk {'print $5'})
+	ports_src=$(poudriere ports -lq | awk '/^default/ { print $5; exit; }')
 	# Backing up local patches
 	cd ${ports_src}
 	git stash
