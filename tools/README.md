@@ -1,0 +1,3 @@
+# Tools
+
+- [hashcat](hashcat.md)

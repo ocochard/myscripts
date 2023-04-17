@@ -1,4 +1,7 @@
-myscripts
-=========
+# Scripts & notes
 
-Somes of my scripts used on my limited daily FreeBSD usage
+Somes of my notes and scripts:
+- [FreeBSD](FreeBSD)
+- [Linux](Linux/README.md)
+- [tools](tools/README.md)
+- [network](network)

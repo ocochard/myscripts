@@ -51,6 +51,10 @@ tmux -2 -u attach-session -t $SESSION ||
 # #  ----------------------------
 # #  | pane 3 | pane 4 | pane 5 |
 # #  -----------------------------
+#
+# MacOS terminal user bug not able to copy/past with mouse
+# Need to use iterm2 with:
+# Pref -> General -> selection -> check "Applications in the terminal may access the clipboard"
 tmux \
   new-session -s $SESSION -n 'w0'\; \
   send-keys 'echo pane 0' C-m \; \
