@@ -71,7 +71,7 @@ Started: Sat Apr 15 18:34:17 2023
 Stopped: Sat Apr 15 19:15:17 2023
 ```
 
-Hash is MD5, Password lenght somewhere between 1 and 8 caracters long, all caracters:
+Hash is MD5, Password lenght somewhere between 1 and 8 caracters long, all characters:
 ```
-hashcat -m 0 -a 3 -O -w 3 --increment $(echo -n 'm0tdP!' | md5sum | awk '{print $1}') ?1?1?1?1?1?1?1?1
+hashcat -m 0 -a 3 -O -w 3 --increment $(echo -n 'm0tdP!' | md5sum | awk '{print $1}') ?a?a?a?a?a?a?a?a
 ```
