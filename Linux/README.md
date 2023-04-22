@@ -4,10 +4,19 @@ Simple note for a Linux newbie
 
 # Ubuntu
 
-# After install
+# Cleaning dirty ads and closed-source snap
+
+## Dirty ads: ubuntu-advantage-tools
+
+Doesn't work :-(
+
+```
+sudo pro config set apt_news=false
+```
 
 ## Remove snap
 
+[Best doc about](https://haydenjames.io/remove-snap-ubuntu-22-04-lts/)
 ```
 snap list
 snap remove --purge packages-in-the-list
@@ -19,6 +28,40 @@ apt remove snapd
 
 ```
 ubuntu-drivers devices
+```
+
+## AMD GPU
+
+```
+$ lspci | grep VGA
+74:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Rembrandt (rev 0a)
+$ sudo dmesg | egrep 'drm|radeon'
+(etc.)
+[    2.317230] [drm] Initialized amdgpu 3.48.0 20150101 for 0000:74:00.0 on minor 0
+(etc)
+```
+
+Binary from [AMD website](https://www.amd.com/en/support/linux-drivers) and doc](https://amdgpu-install.readthedocs.io/en/latest/):
+```
+curl -O https://repo.radeon.com/amdgpu-install/22.40.3/ubuntu/jammy/amdgpu-install_5.4.50403-1_all.deb
+sudo apt-get install ./amdgpu-install_5.4.50403-1_all.deb
+sudo amdgpu-install --usecase=graphics --vulkan=amdvlk --opencl=rocr
+sudo usermod -a -G render $LOGNAME
+sudo usermod -a -G video $LOGNAME
+echo "VK_ICD_FILENAMES=/etc/alternatives/amd_icd64.json" | sudo tee -a /etc/environment
+sudo reboot
+```
+
+If proprietary drivers needed, replace amdgpu by this line:
+```
+sudo amdgpu-install --usecase=graphics --vulkan=pro --opencl=rocr
+```
+
+Need to test Vulkan API with vkcube tool:
+```
+sudo apt-get install vulkan-tools
+vulkaninfo
+vkcube
 ```
 
 ## Nvidia Tesla
