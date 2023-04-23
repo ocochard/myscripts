@@ -6,12 +6,13 @@ Simple note for a Linux newbie
 
 # Cleaning dirty ads and closed-source snap
 
-## Dirty ads: ubuntu-advantage-tools
+Ubuntu is no more 'clean' and adding crap like ESM and snap.
 
-Doesn't work :-(
+## disable Expanded Security Maintenance spam message
 
+Hidden repo (not showed with add-apt-repository --list), that need to be manually disabled
 ```
-sudo pro config set apt_news=false
+sed -i 's/^deb/#deb/g' /var/lib/ubuntu-advantage/apt-esm/etc/apt/sources.list.d/ubuntu-esm-apps.list
 ```
 
 ## Remove snap
@@ -26,6 +27,7 @@ apt remove snapd
 
 # Drivers
 
+listing devices and drivers:
 ```
 ubuntu-drivers devices
 ```
@@ -41,7 +43,7 @@ $ sudo dmesg | egrep 'drm|radeon'
 (etc)
 ```
 
-Binary from [AMD website](https://www.amd.com/en/support/linux-drivers) and doc](https://amdgpu-install.readthedocs.io/en/latest/):
+Binary from [AMD website](https://www.amd.com/en/support/linux-drivers) and [install doc](https://amdgpu-install.readthedocs.io/en/latest/):
 ```
 curl -O https://repo.radeon.com/amdgpu-install/22.40.3/ubuntu/jammy/amdgpu-install_5.4.50403-1_all.deb
 sudo apt-get install ./amdgpu-install_5.4.50403-1_all.deb
@@ -64,10 +66,12 @@ vulkaninfo
 vkcube
 ```
 
+Use [radeontop](https://github.com/clbr/radeontop) to see GPU usage
+
 ## Nvidia Tesla
 -------------
 
-If already installed by `ubuntu-drivers autoinstall`:
+If already installed by `ubuntu-drivers autoinstall`, need to be removed first:
 ```
 apt remove nvidia-headless-525-server nvidia-dkms-525-server nvidia-headless-no-dkms-525-server  nvidia-kernel-common-525
 wget https://us.download.nvidia.com/XFree86/aarch64/530.41.03/NVIDIA-Linux-aarch64-530.41.03.run
