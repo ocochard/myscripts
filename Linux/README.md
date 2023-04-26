@@ -1,3 +1,7 @@
+# Script
+
+ - [sysload]: Display CPU/MEM/GPU (amd only) usage in CSV format
+
 # Notes
 
 Simple note for a Linux newbie
@@ -27,7 +31,7 @@ apt remove snapd
 
 # Drivers
 
-listing devices and drivers:
+listing devices that need a drivers:
 ```
 ubuntu-drivers devices
 ```
