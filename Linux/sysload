@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
 # This script monitors CPU, memory and AMD GPU usage in CSV format
 set -eu
-gpuVRAMTot=$(sudo dmesg | awk '/VRAM memory ready/ {print substr($5, 1, length($5)-1)}')
-gpuGTTTot=$(sudo dmesg | awk '/GTT memory ready/ {print substr($5, 1, length($5)-1)}')
 
-echo "CPU usage (%), mem Tot (MiB), mem Free (MiB), mem Used (MiB), GPU usage (%), GPU VRAM Tot (MB), GPU VRAM usage (MB), GPU VRAM usage (%), GPU GTT Tot (MB), GPU GTT usage (MB), GPU GTT usage (%)"
+RADEONTOP=false
+
+if which radeontop >/dev/null; then
+	RADEONTOP=", GPU usage (%), GPU VRAM Tot (MB), GPU VRAM usage (MB), GPU VRAM usage (%), GPU GTT Tot (MB), GPU GTT usage (MB), GPU GTT usage (%)"
+else
+	RADEONTOP=""
+fi
+
+if [ -n "$RADEONTOP" ]; then
+	gpuVRAMTot=$(sudo dmesg | awk '/VRAM memory ready/ {print substr($5, 1, length($5)-1)}')
+	gpuGTTTot=$(sudo dmesg | awk '/GTT memory ready/ {print substr($5, 1, length($5)-1)}')
+fi
+
+echo "CPU usage (%), mem Tot (MiB), mem Free (MiB), mem Used (MiB)${RADEONTOP}"
 while true; do
 	OLDIFS=$IFS
 	IFS=$'\n'
@@ -15,18 +26,23 @@ while true; do
 	# %Cpu(s): 0.0 us, 0.0 sy, 0.0 ni,100.0 id, 0.0 wa, 0.0 hi, 0.0 si, 0.0 st
 	# %Cpu(s):  0.0 us,  0.4 sy,  0.0 ni, 99.6 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
 	IFS=$OLDIFS
-	read -a radeon < <(radeontop -d - -l 1 | tail -n 1)
-	# 1682538215.325064: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 3.19% 260.28mb, gtt 0.15% 17.50mb, mclk 55.76% 1.338ghz, sclk 18.86% 0.415ghz
 	cpuIdle=$(echo ${top[2]} | cut -d ',' -f 4 | awk '{print $1}')
-	cpuUsage=$(echo "scale=2; 100 - $cpuIdle;" | bc)
+	# Using only awk and not depending on bc for floating point
+	cpuUsage=$(awk "BEGIN { printf(\"%.1f\n\", 100 - $cpuIdle)}")
 	memTot=$(echo ${top[3]} | awk '/MiB Mem/ {print $4}')
 	memFree=$(echo ${top[3]} | awk '/MiB Mem/ {print $6}')
 	memUsed=$(echo ${top[3]} | awk '/MiB Mem/ {print $8}')
-	gpuUsage=$(echo ${radeon[4]} | cut -d '%' -f 1)
-	gpuVRAMUsedPercent=$(echo ${radeon[26]} | cut -d '%' -f 1)
-	gpuVRAMUsed=$(echo ${radeon[27]} | cut -d 'm' -f 1)
-	gpuGTTUsedPercent=$(echo ${radeon[29]} | cut -d '%' -f 1)
-	gpuGTTUsed=$(echo ${radeon[30]} | cut -d 'm' -f 1)
-	echo "$cpuUsage, $memTot, $memFree, $memUsed, $gpuUsage, $gpuVRAMTot, $gpuVRAMUsed, $gpuVRAMUsedPercent, $gpuGTTTot, $gpuGTTUsed, $gpuGTTUsedPercent"
+	echo -n "$cpuUsage, $memTot, $memFree, $memUsed"
+	if [ -n "$RADEONTOP" ]; then
+		read -a radeon < <(radeontop -d - -l 1 | tail -n 1)
+		# 1682538215.325064: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 3.19% 260.28mb, gtt 0.15% 17.50mb, mclk 55.76% 1.338ghz, sclk 18.86% 0.415ghz
+		gpuUsage=$(echo ${radeon[4]} | cut -d '%' -f 1)
+		gpuVRAMUsedPercent=$(echo ${radeon[26]} | cut -d '%' -f 1)
+		gpuVRAMUsed=$(echo ${radeon[27]} | cut -d 'm' -f 1)
+		gpuGTTUsedPercent=$(echo ${radeon[29]} | cut -d '%' -f 1)
+		gpuGTTUsed=$(echo ${radeon[30]} | cut -d 'm' -f 1)
+		echo ", $gpuUsage, $gpuVRAMTot, $gpuVRAMUsed, $gpuVRAMUsedPercent, $gpuGTTTot, $gpuGTTUsed, $gpuGTTUsedPercent"
+	fi
+	echo
 	sleep 1
 done

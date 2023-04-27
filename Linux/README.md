@@ -1,6 +1,6 @@
 # Script
 
- - [sysload]: Display CPU/MEM/GPU (amd only) usage in CSV format
+ - [sysload](sysload): Display CPU/MEM/GPU (amd only) usage in CSV format
 
 # Notes
 
