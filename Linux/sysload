@@ -15,7 +15,13 @@ if [ -n "$RADEONTOP" ]; then
 	gpuGTTTot=$(sudo dmesg | awk '/GTT memory ready/ {print substr($5, 1, length($5)-1)}')
 fi
 
-echo "CPU usage (%), mem Tot (MiB), mem Free (MiB), mem Used (MiB)${RADEONTOP}"
+scalingFreqMax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq)
+scalingFreqMin=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)
+cores=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq | wc -l)
+let scalingFreqTotalMax=scalingFreqMax*cores
+let scalingFreqTotalMin=scalingFreqMin*cores
+
+echo "CPU usage (%), avg scaling freq (MHz), max freq reached (%), mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%)${RADEONTOP}"
 while true; do
 	OLDIFS=$IFS
 	IFS=$'\n'
@@ -32,7 +38,16 @@ while true; do
 	memTot=$(echo ${top[3]} | awk '/MiB Mem/ {print $4}')
 	memFree=$(echo ${top[3]} | awk '/MiB Mem/ {print $6}')
 	memUsed=$(echo ${top[3]} | awk '/MiB Mem/ {print $8}')
-	echo -n "$cpuUsage, $memTot, $memFree, $memUsed"
+	memUsedPercent=$(awk "BEGIN { printf(\"%.1f\n\", $memUsed / $memFree)}")
+	# Create average of all core scaling_cur_freq
+	mapfile freqs < <(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq)
+	scalingFreqSum=0
+	for freq in ${freqs[@]}; do
+		let scalingFreqSum=scalingFreqSum+freq
+	done
+	scalingFreqAvg=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $cores)}")
+	scalingFreqPercent=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $scalingFreqTotalMax * 100)}")
+	echo -n "$cpuUsage, $scalingFreqAvg, $scalingFreqPercent, $memTot, $memFree, $memUsed, $memUsedPercent"
 	if [ -n "$RADEONTOP" ]; then
 		read -a radeon < <(radeontop -d - -l 1 | tail -n 1)
 		# 1682538215.325064: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 3.19% 260.28mb, gtt 0.15% 17.50mb, mclk 55.76% 1.338ghz, sclk 18.86% 0.415ghz
@@ -42,7 +57,8 @@ while true; do
 		gpuGTTUsedPercent=$(echo ${radeon[29]} | cut -d '%' -f 1)
 		gpuGTTUsed=$(echo ${radeon[30]} | cut -d 'm' -f 1)
 		echo ", $gpuUsage, $gpuVRAMTot, $gpuVRAMUsed, $gpuVRAMUsedPercent, $gpuGTTTot, $gpuGTTUsed, $gpuGTTUsedPercent"
+	else
+		echo
 	fi
-	echo
 	sleep 1
 done
