@@ -31,6 +31,13 @@ apt remove snapd
 
 # Drivers
 
+## Hardware inventory
+
+```
+sudo lshw
+lspci
+```
+
 listing devices that need a drivers:
 ```
 ubuntu-drivers devices
