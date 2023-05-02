@@ -23,7 +23,7 @@ Simple usage, cracking a SHA1 hash, password length is 8 characters long and has
 hashcat -m 100 -a 3 $(echo -n password | sha1sum | awk '{print $1}') ?l?l?l?l?l?l?l?l
 ```
 
-Pushing hardware (-O -w 3), password 8 characters long with letters, decimals and special:
+Pushing hardware (-O for optimized kernel, -w 3 for workload profile "high"), password 8 characters long with letters, decimals and special:
 ```
 hashcat -m 100 -a 3 -O -w 3 $(echo -n m0tdP!ss | sha1sum | awk '{print $1}') ?a?a?a?a?a?a?a?a
 ```

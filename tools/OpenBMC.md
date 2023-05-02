@@ -7,6 +7,16 @@ Globals variable used:
 bmc=bmc.ip.ad.dress
 token=$(curl -k -H "Content-Type: application/json" -X POST https://$bmc/login -d '{"username" :  "root", "password" :  "0penBmc"}' | awk -F'"' '/token/ {print $4;}')
 ```
+You can use the user/pass way:
+
+```
+curl -u username:password ...
+```
+
+Or the Token way:
+```
+curl -H "X-Auth-Token: $token" ...
+```
 
 Listing firmwares installed:
 
@@ -16,7 +26,7 @@ curl -k -H "X-Auth-Token: $token" -X GET https://${bmc}/redfish/v1/UpdateService
 
 Listing firmware details (@odata.id variable from previous output):
 ```
-curl -k -u user:pass https://ipmi-ip-address/redfish/v1/UpdateService/FirmwareInventory/XXXX
+curl -k -H "X-Auth-Token: $token" -X GET https://${bmc}/redfish/v1/UpdateService/FirmwareInventory/XXXX
 ```
 
 Upgrading firmware:
