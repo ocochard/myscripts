@@ -61,6 +61,8 @@ net/wireguard-tools
 net/wireshark
 net/x11vnc
 net/xrdp
+net/wifibox
+net/wifibox-alpine
 ports-mgmt/portlint
 ports-mgmt/poudriere-devel
 security/keepassxc
