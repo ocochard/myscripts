@@ -10,7 +10,7 @@ devel/hs-ShellCheck
 devel/arcanist
 devel/gdb
 devel/git
-devel/git-lite
+devel/git@lite
 devel/git-lfs
 devel/p5-Cache-LRU
 devel/p5-POSIX-strptime
