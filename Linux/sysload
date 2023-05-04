@@ -1,18 +1,62 @@
 #!/usr/bin/env bash
 # This script monitors CPU, memory and AMD GPU usage in CSV format
+# It could collect data for a period of time, and generate average/median using ministat
 set -eu
 
-RADEONTOP=false
+GTT=true
+ministat=false
+time=30
+raw=""
 
-if which radeontop >/dev/null; then
-	RADEONTOP=", GPU usage (%), GPU VRAM Tot (MB), GPU VRAM usage (MB), GPU VRAM usage (%), GPU GTT Tot (MB), GPU GTT usage (MB), GPU GTT usage (%)"
-else
-	RADEONTOP=""
+die() { echo -n "EXIT: " >&2; echo "$@" >&2; exit 1; }
+
+usage() {
+	echo "$0 [-m] [-g] [-h]"
+	echo "-m : ministat mode, display avg values after 30 seconds of run"
+	echo "-g : disable GPU GTT stats"
+	echo "-h : display this message"
+	exit 0
+}
+
+while getopts "ghm" arg; do
+	case "${arg}" in
+		g)
+			GTT=false
+			;;
+		h)
+			usage
+			;;
+		m)
+			ministat=true
+			raw=$(mktemp -p /tmp sysload.XXX)
+			;;
+		*)
+			die "Bad argument, cf help (-h)"
+	esac
+done
+
+if $ministat; then
+	if ! which ministat >/dev/null; then
+		die "ministat needs... ministat installed"
+	fi
 fi
 
-if [ -n "$RADEONTOP" ]; then
+headers="CPU usage (%), CPU avg scaling freq (MHz), CPU max freq reached (%), mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%)"
+
+if which radeontop >/dev/null; then
+	radeontop=", GPU usage (%), GPU Temp (°C), Package Power Tracking (Watt), GPU VRAM (mb), GPU VRAM usage (mb), GPU VRAM usage (%)"
+	if $GTT; then
+		radeontop="$radeontop, GPU GTT (mb), GPU GTT usage (mb), GPU GTT usage (%)"
+	fi
+else
+	radeontop=""
+fi
+
+if [ -n "$radeontop" ]; then
 	gpuVRAMTot=$(sudo dmesg | awk '/VRAM memory ready/ {print substr($5, 1, length($5)-1)}')
-	gpuGTTTot=$(sudo dmesg | awk '/GTT memory ready/ {print substr($5, 1, length($5)-1)}')
+	if $GTT; then
+		gpuGTTTot=$(sudo dmesg | awk '/GTT memory ready/ {print substr($5, 1, length($5)-1)}')
+	fi
 fi
 
 scalingFreqMax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq)
@@ -21,7 +65,12 @@ cores=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq | wc -l)
 let scalingFreqTotalMax=scalingFreqMax*cores
 let scalingFreqTotalMin=scalingFreqMin*cores
 
-echo "CPU usage (%), avg scaling freq (MHz), max freq reached (%), mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%)${RADEONTOP}"
+echo "${headers}${radeontop}"
+
+if $ministat; then
+	echo "${headers}${radeontop}" > $raw
+fi
+
 while true; do
 	OLDIFS=$IFS
 	IFS=$'\n'
@@ -47,18 +96,67 @@ while true; do
 	done
 	scalingFreqAvg=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $cores)}")
 	scalingFreqPercent=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $scalingFreqTotalMax * 100)}")
-	echo -n "$cpuUsage, $scalingFreqAvg, $scalingFreqPercent, $memTot, $memFree, $memUsed, $memUsedPercent"
-	if [ -n "$RADEONTOP" ]; then
+	output="$cpuUsage, $scalingFreqAvg, $scalingFreqPercent, $memTot, $memFree, $memUsed, $memUsedPercent"
+	if [ -n "$radeontop" ]; then
+		# XXX need to detect card id if multiples card used
+		# unit: 36000 for 36°C
+		gpuName=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/name)
+		if [ "$gpuName" == "amdgpu" ]; then
+			let gpuTemp=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/temp1_input)/1000
+		else
+			gpuTemp=0
+		fi
+		# MicroWatt
+		gpuUwatt=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/power1_average)
+		gpuWatt=$(awk "BEGIN { printf(\"%.1f\n\", $gpuUwatt / 1000000)}")
 		read -a radeon < <(radeontop -d - -l 1 | tail -n 1)
 		# 1682538215.325064: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 3.19% 260.28mb, gtt 0.15% 17.50mb, mclk 55.76% 1.338ghz, sclk 18.86% 0.415ghz
 		gpuUsage=$(echo ${radeon[4]} | cut -d '%' -f 1)
 		gpuVRAMUsedPercent=$(echo ${radeon[26]} | cut -d '%' -f 1)
 		gpuVRAMUsed=$(echo ${radeon[27]} | cut -d 'm' -f 1)
-		gpuGTTUsedPercent=$(echo ${radeon[29]} | cut -d '%' -f 1)
-		gpuGTTUsed=$(echo ${radeon[30]} | cut -d 'm' -f 1)
-		echo ", $gpuUsage, $gpuVRAMTot, $gpuVRAMUsed, $gpuVRAMUsedPercent, $gpuGTTTot, $gpuGTTUsed, $gpuGTTUsedPercent"
-	else
-		echo
+		output="$output, $gpuUsage, $gpuTemp, $gpuWatt, $gpuVRAMTot, $gpuVRAMUsed, $gpuVRAMUsedPercent"
+		if $GTT; then
+			gpuGTTUsedPercent=$(echo ${radeon[29]} | cut -d '%' -f 1)
+			gpuGTTUsed=$(echo ${radeon[30]} | cut -d 'm' -f 1)
+			output="$output, $gpuGTTTot, $gpuGTTUsed, $gpuGTTUsedPercent"
+		fi
+	fi
+	echo $output
+	if $ministat; then
+		if [ $time -ne 0 ]; then
+			echo $output >> $raw
+			time=$(( time - 1))
+		else
+			break
+		fi
 	fi
 	sleep 1
 done
+
+if $ministat; then
+	# Generate a new output with only the avg value
+	# merge all lines in one ministat file .ministat.avg and ministat.median
+	tail -n +2 $raw > $raw.noheaders
+	IFS=","
+	c=1
+	head -1 $raw > $raw.avg
+	for i in $(head -1 $raw); do
+		# ministat output
+		#    N           Min           Max        Median           Avg        Stddev
+		#   x  30             0           0.8           0.4           0.4    0.25730701
+		avg=$(ministat -C $c -d ',' -n $raw.noheaders | tail -n 1 | awk '{print $6;}')
+		if [ $c -eq 1 ]; then
+			echo -n "${avg}" >> $raw.avg
+		else
+			echo -n ",${avg}" >> $raw.avg
+		fi
+		c=$(( c + 1))
+	done
+	echo >> $raw.avg
+	IFS=$OLDIFS
+	echo "=================== 30 seconds average ===================="
+	cat $raw.avg
+	for i in $raw $raw.avg $raw.noheaders; do
+		rm $i
+	done
+fi

@@ -104,8 +104,7 @@ fi
 # Fixing licenses that need user confirmation
 if [ ! -f /usr/local/etc/poudriere.d/builder-make.conf ]; then
 	(
-	echo "LICENSES_ACCEPTED+= DCC"
-	echo "LICENSES_ACCEPTED+= Proprietary"
+	echo "DISABLE_LICENSES=yes"
 	) > /usr/local/etc/poudriere.d/builder-make.conf
 fi
 

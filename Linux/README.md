@@ -8,9 +8,19 @@ Simple note for a Linux newbie
 
 # Ubuntu
 
-# Cleaning dirty ads and closed-source snap
+# Remove Ubuntu apt SPAM and closed-source snap
 
-Ubuntu is no more 'clean' and adding crap like ESM and snap.
+Ubuntu is [no more 'clean' and adding crap like ESM](https://github.com/Skyedra/UnspamifyUbuntu) and snap.
+
+So, a lot of work need to be done:
+- Replace ubuntu-advantage-tools with a fake package
+- Disable ESM motd spam
+- Disable dynamic motd spam
+
+```
+wget -q --content-disposition https://github.com/Skyedra/UnspamifyUbuntu/blob/master/fake-ubuntu-advantage-tools/fake-ubuntu-advantage-tools.deb?raw=true
+sudo apt install ./fake-ubuntu-advantage-tools.deb
+```
 
 ## disable Expanded Security Maintenance spam message
 
@@ -27,7 +37,6 @@ snap list
 snap remove --purge packages-in-the-list
 apt remove snapd
 ```
-
 
 # Drivers
 
