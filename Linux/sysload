@@ -41,7 +41,20 @@ if $ministat; then
 	fi
 fi
 
-headers="CPU usage (%), CPU avg scaling freq (MHz), CPU max freq reached (%), mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%)"
+headers="CPU usage (%),"
+
+if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq ]; then
+	scalingFreqMax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq)
+	scalingFreqMin=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)
+	cores=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq | wc -l)
+	let scalingFreqTotalMax=scalingFreqMax*cores
+	let scalingFreqTotalMin=scalingFreqMin*cores
+	scalingHeaders="CPU avg scaling freq (MHz), CPU max freq reached (%)"
+else
+	scalingHeaders=""
+fi
+
+headers="${headers}, ${scalingHeaders}, mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%)"
 
 if which radeontop >/dev/null; then
 	radeontop=", GPU usage (%), GPU Temp (°C), Package Power Tracking (Watt), GPU VRAM (mb), GPU VRAM usage (mb), GPU VRAM usage (%)"
@@ -59,11 +72,6 @@ if [ -n "$radeontop" ]; then
 	fi
 fi
 
-scalingFreqMax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq)
-scalingFreqMin=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)
-cores=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq | wc -l)
-let scalingFreqTotalMax=scalingFreqMax*cores
-let scalingFreqTotalMin=scalingFreqMin*cores
 
 echo "${headers}${radeontop}"
 
@@ -87,29 +95,36 @@ while true; do
 	memTot=$(echo ${top[3]} | awk '/MiB Mem/ {print $4}')
 	memFree=$(echo ${top[3]} | awk '/MiB Mem/ {print $6}')
 	memUsed=$(echo ${top[3]} | awk '/MiB Mem/ {print $8}')
-	memUsedPercent=$(awk "BEGIN { printf(\"%.1f\n\", $memUsed / $memFree)}")
-	# Create average of all core scaling_cur_freq
-	mapfile freqs < <(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq)
-	scalingFreqSum=0
-	for freq in ${freqs[@]}; do
-		let scalingFreqSum=scalingFreqSum+freq
-	done
-	scalingFreqAvg=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $cores)}")
-	scalingFreqPercent=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $scalingFreqTotalMax * 100)}")
-	output="$cpuUsage, $scalingFreqAvg, $scalingFreqPercent, $memTot, $memFree, $memUsed, $memUsedPercent"
+	memUsedPercent=$(awk "BEGIN { printf(\"%.2f\n\", $memUsed / $memFree)}")
+	if [ -n "${scalingHeaders}" ]; then
+		# Create average of all core scaling_cur_freq
+		mapfile freqs < <(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq)
+		scalingFreqSum=0
+		for freq in ${freqs[@]}; do
+			let scalingFreqSum=scalingFreqSum+freq
+		done
+		scalingFreqAvg=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $cores)}")
+		scalingFreqPercent=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $scalingFreqTotalMax * 100)}")
+		output="$cpuUsage, $scalingFreqAvg, $scalingFreqPercent, $memTot, $memFree, $memUsed, $memUsedPercent"
+	else
+		output="$cpuUsage, $memTot, $memFree, $memUsed, $memUsedPercent"
+	fi
 	if [ -n "$radeontop" ]; then
 		# XXX need to detect card id if multiples card used
 		# unit: 36000 for 36°C
-		gpuName=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/name)
-		if [ "$gpuName" == "amdgpu" ]; then
+		if [ -r /sys/class/drm/card0/device/hwmon/hwmon2/temp1_input ]; then
 			let gpuTemp=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/temp1_input)/1000
 		else
 			gpuTemp=0
 		fi
 		# MicroWatt
-		gpuUwatt=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/power1_average)
-		gpuWatt=$(awk "BEGIN { printf(\"%.1f\n\", $gpuUwatt / 1000000)}")
-		read -a radeon < <(radeontop -d - -l 1 | tail -n 1)
+		if [ -r /sys/class/drm/card0/device/hwmon/hwmon2/power1_average ]; then
+			gpuUwatt=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/power1_average)
+			gpuWatt=$(awk "BEGIN { printf(\"%.1f\n\", $gpuUwatt / 1000000)}")
+		else
+			gpuUwatt=0
+		fi
+		read -a radeon < <(radeontop -d - -l 1 -t 30| tail -n 1)
 		# 1682538215.325064: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 3.19% 260.28mb, gtt 0.15% 17.50mb, mclk 55.76% 1.338ghz, sclk 18.86% 0.415ghz
 		gpuUsage=$(echo ${radeon[4]} | cut -d '%' -f 1)
 		gpuVRAMUsedPercent=$(echo ${radeon[26]} | cut -d '%' -f 1)
