@@ -2,6 +2,41 @@
 
 To do: Convert my [Desktop install webpage tips](https://olivier.cochard.me/bidouillage/installation-et-configuration-de-freebsd-comme-poste-de-travail) here
 
+## Build from a builder, clients on NFS
+
+Process:
+- Builder is buildworld buildkernel, beinstall, testing
+- if okay, all other servers NFS read-only mount the builder's /usr/src and /usr/obj (their /etc/src\*.conf and /etc/make.conf are in sync)
+
+To avoid all "Read-only file system" message, don't forget to set MAKE_OBJDIR_CHECK_WRITABLE=0 in your env
+
+But in case of libc upgrade, the clients can't upgrade:
+```
+make installkernel
+/usr/obj/../make: Undefined symbol "__libc_start1@FBSD_1.7
+```
+
+Then we can install the new kernel with:
+```
+LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 make -j 4 installkernel
+etcupdate -p
+```
+
+And the `make buildworld` will start working too, but as soon as it will replace your /lib/libc.so.7,
+there is a risk it will crash your system :-(
+So to prepare to ease the rescue by copy localy the new libc:
+```
+cp /usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 /root
+LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 make -j 4 installworld
+```
+
+If still alive, finish it with an `etcupdate -B`, if not:
+- It will reboot in single-user mode (with lot of libc error)
+- from /rescue/sh copy the /root/libc.so.7 in /lib/
+- reboot
+- Restart the `make installworld`
+- `etcupdate -B`
+
 ## ZFS
 
 With SSD disks or all trim compliant (off by default):
