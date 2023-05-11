@@ -74,6 +74,7 @@ security/py-yubikey-manager
 security/sudo
 shells/ksh93
 sysutils/ansible
+sysutils/atop
 sysutils/bhyve-firmware
 sysutils/bsdstats
 sysutils/cdrkit
