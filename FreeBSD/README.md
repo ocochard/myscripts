@@ -10,7 +10,8 @@ Process:
 
 To avoid all "Read-only file system" message, don't forget to set MAKE_OBJDIR_CHECK_WRITABLE=0 in your env
 
-But in case of libc upgrade, the clients can't upgrade:
+But in case of libc upgrade, the clients can't upgrade.
+Example on old-way that doesn't support ZFS BE:
 ```
 make installkernel
 /usr/obj/../make: Undefined symbol "__libc_start1@FBSD_1.7
@@ -36,6 +37,11 @@ If still alive, finish it with an `etcupdate -B`, if not:
 - reboot
 - Restart the `make installworld`
 - `etcupdate -B`
+
+On a ZFS BE, it is resume as:
+```
+LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall
+```
 
 ## ZFS
 
