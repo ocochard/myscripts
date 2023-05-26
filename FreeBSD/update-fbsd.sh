@@ -10,10 +10,6 @@ if which -s nproc; then
 else
 	JOBS=$(sysctl -n kern.smp.cpus)
 fi
-if [ ${JOBS} -gt 64 ]; then
-	# No buildtime improvement with more than 64 cores/threads
-	JOBS=64
-fi
 # Absolute path script name
 script=$(readlink -f $0)
 # Absolute path this script is in
@@ -77,7 +73,7 @@ options			CC_NEWRENO	# RACK depends on some constants
 EOF
 
 echo "Building world and kernel..."
-make -j ${JOBS} buildworld buildkernel
+make buildworld-jobs buildkernel-jobs
 if poudriere ports -ln | grep -q 'default'; then
 	ports_src=$(poudriere ports -lq | awk '/^default/ { print $5; exit; }')
 	# Backing up local patches
