@@ -44,6 +44,7 @@ lang/python
 multimedia/libva-utils
 multimedia/mpv
 multimedia/mplayer
+multimedia/obs-studio
 multimedia/vlc
 multimedia/webcamd
 net-mgmt/netdata
@@ -52,6 +53,7 @@ net/frr8
 net/mrtparse
 net/py-speedtest-cli
 net/read_bbrlog
+net/realtek-re-kmod
 net/rsync
 net/samba416
 net/tcplog_dumper
