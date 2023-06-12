@@ -65,6 +65,7 @@ net/x11vnc
 net/xrdp
 net/wifibox
 net/wifibox-alpine
+net-mgmt/nstat
 ports-mgmt/portlint
 ports-mgmt/poudriere-devel
 security/keepassxc
