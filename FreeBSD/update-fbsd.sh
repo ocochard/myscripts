@@ -107,7 +107,7 @@ fi
 # Improving build speed for some ports (warning, could consume a lot of RAM/CPU)
 if ! grep -q llvm /usr/local/etc/poudriere.conf; then
 	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
-	echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg ccache cmake-core rust gcc* llvm* libreoffice chromium node* ghc qt5-webkit py-qt5-pyqt* ruby rpcs* webkit2-gtk3 qemu wireshark"' >> /usr/local/etc/poudriere.conf
+	echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg ccache cmake-core rust gcc* llvm* libreoffice chromium node* ghc qt5-webkit qt6-declarative py-qt5-pyqt* ruby rpcs* webkit2-gtk3 qemu wireshark"' >> /usr/local/etc/poudriere.conf
 fi
 
 echo "Building ports..."
