@@ -15,7 +15,25 @@ case ${product} in
 	*) ;;
 esac
 
-curl -v -d "nickname=$USER" -d "email=$USER@$(hostname)" -d \
-"description=FreeBSD/$(uname -m) on ${maker} ${product}" -d \
+if [ "$USER" = "olivier" ]; then
+	email="$USER@FreeBSD.org"
+else
+	email="$USER@$(hostname)"
+fi
+description="FreeBSD $(uname -r)/$(uname -m) on ${maker} ${product}"
+
+echo "USER = $USER"
+echo "email = $email"
+echo "description= ${description}"
+
+echo "Do you confirm those variable? (y/n)"
+user_confirm=""
+while [ "${user_confirm}" != "y" -a "${user_confirm}" != "n" ]; do
+	read user_confirm <&1
+done
+[ "${user_confirm}" = "n" ] && exit 0
+
+curl -v -d "nickname=$USER" -d "email=$email" -d \
+"description=$description" -d \
 "do=addd" --data-urlencode 'dmesg@/var/run/dmesg.boot' \
 http://dmesgd.nycbug.org/index.cgi
