@@ -8,6 +8,13 @@ Simple note for a Linux newbie
 
 # Ubuntu
 
+# Install and enable SSHD
+
+```
+sudo apt install openssh-server
+sudo systemctl enable ssh
+```
+
 # Remove Ubuntu apt SPAM and closed-source snap
 
 Ubuntu is [no more 'clean' and adding crap like ESM](https://github.com/Skyedra/UnspamifyUbuntu) and snap.
@@ -44,6 +51,7 @@ apt remove snapd
 
 ```
 sudo lshw
+lshw -c video
 lspci
 ```
 
@@ -52,10 +60,34 @@ listing devices that need a drivers:
 ubuntu-drivers devices
 ```
 
+## Drivers in use (mesa)
+
+```
+sudo apt install -y mesa-utils
+DISPLAY=:0 glxinfo -B
+```
+
+## Intel GPU
+
+(Official Intel doc](https://dgpu-docs.intel.com/driver/client/overview.html)
+
+```
+wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
+  sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg
+sudo apt-add-repository \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu $(lsb_release -cs) arc"
+sudo apt-get install -y \
+  intel-opencl-icd intel-level-zero-gpu level-zero \
+  intel-media-va-driver-non-free libmfx1 libmfxgen1 libvpl2 \
+  libegl-mesa0 libegl1-mesa libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
+  libglapi-mesa libgles2-mesa-dev libglx-mesa0 libigdgmm12 libxatracker2 mesa-va-drivers \
+  mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all vainfo hwinfo clinfo
+```
+
 ## AMD GPU
 
 ```
-$ lspci | grep VGA
+$ lshw -c video
 74:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Rembrandt (rev 0a)
 $ sudo dmesg | egrep 'drm|radeon'
 (etc.)
