@@ -6,9 +6,62 @@
 
 Simple note for a Linux newbie
 
-# Ubuntu
+## Ubuntu
 
-# Remove Ubuntu apt SPAM and closed-source snap
+### Debian package creation
+
+Official docs:
+
+ - [Chapter 4. Required files under the debian directory](https://www.debian.org/doc/manuals/maint-guide/dreq.en.html)
+ - [Chapter 6. Building the package](https://www.debian.org/doc/manuals/maint-guide/build.en.html)
+
+#### Global concept
+
+A debian packages is build with 3 files:
+- name_version.dsc (description text file)
+- name_version.orig.tar.xz (original sources archives)
+- name_version.debian.tar.xz (debian patches and build scripts, to be untar into the sources dir)
+
+Generic linux tooling needed:
+- build-essential (compilers)
+- devscript (packages build tools, like dpkg-depcheck)
+- packages listed in Build-Depends field
+- packages listed in the Build-Depends-indep field of debian/control
+
+About the package build dependencies, file debian/control should be the one, but the dpkg-buildpackage will display
+all missings deps.
+
+#### Example by repuilding existing util-linux packages
+
+Do not (download original sources)[https://www.kernel.org/pub/linux/utils/util-linux/], but the Ubuntu repository fork.
+
+```
+git clone -b ubuntu/jammy --single-branch https://git.launchpad.net/ubuntu/+source/util-linux
+cd util-linux
+=> Install build-deps from debian/control
+DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b
+```
+
+==== 2. Install build dependencies
+
+Reading the debian/control file gives more clue:
+sudo apt install bison libaudit-dev libcap-ng-dev libcrypt-dev libcryptsetup-dev libncurses5-dev libncursesw5-dev libpam0g-dev libreadline-dev libselinux1-dev libsystemd-dev libtool libudev-dev zlib1g-dev libaudit-dev
+
+Then running (it will display the exact list of missing build dependencies too):
+
+DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b
+
+
+DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
+
+```
+-us, --unsigned-source      unsigned source package.
+-uc, --unsigned-changes     unsigned .buildinfo and .changes file.
+-b, --build=binary          binary-only, no source files.
+env nocheck: avoid running regression test
+```
+
+## Remove Ubuntu apt SPAM and closed-source snap
 
 Ubuntu is [no more 'clean' and adding crap like ESM](https://github.com/Skyedra/UnspamifyUbuntu) and snap.
 
@@ -37,6 +90,11 @@ snap list
 snap remove --purge packages-in-the-list
 apt remove snapd
 ```
+
+## Network
+
+Disable privacy address:
+- Replace net.ipv6.conf.*.use_tempaddr = 2 in /etc/sysctl.d/10-ipv6-privacy.conf buy = 0
 
 # Drivers
 
@@ -156,7 +214,7 @@ $ nvidia-smi
 +-----------------------------------------+----------------------+----------------------+
 
 +---------------------------------------------------------------------------------------+
-| Processes:                                                                            |
+|7 Processes:                                                                            |
 |  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
 |        ID   ID                                                             Usage      |
 |=======================================================================================|
@@ -166,16 +224,22 @@ $ nvidia-smi
 +---------------------------------------------------------------------------------------+
 ```
 
+# Base
 
-# Systemd
+## Systemd
 
-## journalctl
+### journalctl
 ----------
 [command comprehensive guide](https://www.linuxjournal.com/content/mastering-journalctl-command-comprehensive-guide)
 
+reverse mode:
+```
+sudo journalctl -r
+```
+
 # Packages management
 
-## dpkg
+### dpkg
 
 Options:
   -i install
@@ -184,7 +248,7 @@ Options:
   -l list
   --force-all
 
-## Alternatives
+### Alternatives
 
 If need multiples compilers:
 
@@ -201,12 +265,63 @@ update-alternatives --config g++
 update-alternatives --config gcc
 ```
 
-# Docker
+# Tooling
+
+## Profiling
+
+```
+apt-get install linux-tools-common linux-tools-generic linux-tools-`uname -r`
+perf record -f -g -a
+```
+
+## Docker
+
+[Install instruction on Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
+
+```
+docker run hello-world
+```
+
+Customize a docker image:
+
+```
+olivier@host:~$ docker run -it ubuntu bash
+root@f18e5dff2f03:/# lsb_release -a
+bash: lsb_release: command not found
+root@f18e5dff2f03:/# apt update && apt install lsb-core
+(etc.)
+root@f18e5dff2f03:/# lsb_release -a
+LSB Version:    core-11.1.0ubuntu4-noarch:security-11.1.0ubuntu4-noarch
+Distributor ID: Ubuntu
+Description:    Ubuntu 22.04.2 LTS
+Release:        22.04
+=> on other terminal
+olivier@host~$ docker ps
+CONTAINER ID   IMAGE     COMMAND   CREATED          STATUS          PORTS     NAMES
+f18e5dff2f03   ubuntu    "bash"    6 minutes ago    Up 6 minutes              goofy_almeida
+olivier@host:~$ docker images
+REPOSITORY      TAG       IMAGE ID       CREATED         SIZE
+ubuntuwithlsb   latest    bae41ca408fc   7 seconds ago   586MB
+hello-world     latest    9c7a54a9a43c   2 weeks ago     13.3kB
+ubuntu          latest    3b418d7b466a   3 weeks ago     77.8MB
+olivier@host:~$ docker run -it ubuntuwithlsb bash
+root@d781574512cd:/# lsb_release -a
+LSB Version:    core-11.1.0ubuntu4-noarch:security-11.1.0ubuntu4-noarch
+Distributor ID: Ubuntu
+Description:    Ubuntu 22.04.2 LTS
+Release:        22.04
+Codename:       jammy
+```
+
+Persisting data folder:
+```
+sudo docker run -ti --rm -v ~/Docker_Share:/data ubuntu /bin/bash
+```
 
 ```
 docker container ls
-docker ps
-````
+docker ps --no-trunc
+```
 
 Copying files:
 ```
@@ -217,3 +332,29 @@ Open shell inside:
 ```
 docker exec -it CONTAINER sh
 ```
+
+System stat:
+```
+docker stats
+```
+
+## Perf
+
+```
+sudo apt install linux-tools-generic
+```
+
+Example:
+```
+olivier@ryzen7:~$ sudo perf record --call-graph dwarf /usr/bin/radeontop -d - -i 15 -t 20
+Dumping to -, until termination.
+1683580703.217021: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 2.97% 242.41mb, gtt 0.06% 17.50mb, mclk 43.61% 1.047ghz, sclk 18.18% 0.400ghz
+1683580718.217399: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 2.97% 242.41mb, gtt 0.06% 17.50mb, mclk 43.61% 1.047ghz, sclk 18.18% 0.400ghz
+1683580733.217864: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 2.97% 242.41mb, gtt 0.06% 17.50mb, mclk 42.06% 1.009ghz, sclk 18.18% 0.400ghz
+1683580748.218396: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 2.97% 242.41mb, gtt 0.06% 17.50mb, mclk 43.42% 1.042ghz, sclk 18.18% 0.400ghz
+1683580763.218933: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 2.97% 242.41mb, gtt 0.06% 17.50mb, mclk 42.64% 1.023ghz, sclk 18.18% 0.400ghz
+^C1683580765.868285: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 2.97% 242.41mb, gtt 0.06% 17.50mb, mclk 42.44% 1.019ghz, sclk 18.18% 0.400ghz
+[ perf record: Woken up 36 times to write data ]
+[ perf record: Captured and wrote 9.256 MB perf.data (1136 samples) ]
+```
+

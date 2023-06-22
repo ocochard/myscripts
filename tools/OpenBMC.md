@@ -18,18 +18,18 @@ Or the Token way:
 curl -H "X-Auth-Token: $token" ...
 ```
 
-Listing firmwares installed:
+Listing BMC firmwares installed:
 
 ```
 curl -k -H "X-Auth-Token: $token" -X GET https://${bmc}/redfish/v1/UpdateService/FirmwareInventory
 ```
 
-Listing firmware details (@odata.id variable from previous output):
+Listing BMC firmware details (@odata.id variable from previous output):
 ```
 curl -k -H "X-Auth-Token: $token" -X GET https://${bmc}/redfish/v1/UpdateService/FirmwareInventory/XXXX
 ```
 
-Upgrading firmware:
+Upgrading BMC firmware:
 
 ```
 curl -k -H "X-Auth-Token: $token" -X POST -i -H "Content-Typation/octet-stream" -T bmc-firmware-version.tar https://${bmc}/redfish/v1/UpdateService

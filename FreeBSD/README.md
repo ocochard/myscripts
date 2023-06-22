@@ -74,3 +74,11 @@ root@broken:~ # cp /mnt/lib/libc.so.7.bak /mnt/lib/libc.so.7
 root@broken:~ # bectl umount 14.0-CURRENT-20230116.182721
 root@broken:~ # shutdown -r now "I've fixed my mess!"
 ```
+
+## Extra
+
+### dmesgd.nycbug.org
+
+```
+curl -v -d "nickname=$USER" -d "email=$USER@$(hostname)" -d "description=FreeBSD/$(uname -m) on $(kenv smbios.system.maker) $(kenv smbios.system.product)" -d "do=addd" --data-urlencode 'dmesg@/var/run/dmesg.boot' http://dmesgd.nycbug.org/index.cgi
+```

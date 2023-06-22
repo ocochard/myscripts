@@ -41,7 +41,7 @@ if $ministat; then
 	fi
 fi
 
-headers="CPU usage (%),"
+headers="CPU usage (%)"
 
 if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq ]; then
 	scalingFreqMax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq)
@@ -67,8 +67,10 @@ fi
 
 if [ -n "$radeontop" ]; then
 	gpuVRAMTot=$(sudo dmesg | awk '/VRAM memory ready/ {print substr($5, 1, length($5)-1)}')
+	[ -z "${gpuVRAMTot}" ] && gpuVRAMTot=0
 	if $GTT; then
 		gpuGTTTot=$(sudo dmesg | awk '/GTT memory ready/ {print substr($5, 1, length($5)-1)}')
+		[ -z "${gpuGTTTot}" ] && gpuGTTTot=0
 	fi
 fi
 
@@ -122,17 +124,22 @@ while true; do
 			gpuUwatt=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/power1_average)
 			gpuWatt=$(awk "BEGIN { printf(\"%.1f\n\", $gpuUwatt / 1000000)}")
 		else
-			gpuUwatt=0
+			gpuWatt=0
 		fi
 		read -a radeon < <(radeontop -d - -l 1 -t 30| tail -n 1)
 		# 1682538215.325064: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 3.19% 260.28mb, gtt 0.15% 17.50mb, mclk 55.76% 1.338ghz, sclk 18.86% 0.415ghz
 		gpuUsage=$(echo ${radeon[4]} | cut -d '%' -f 1)
+		[ -z "${gpuUsage}" ] && echo "[BUG] gpuUsage empty"
 		gpuVRAMUsedPercent=$(echo ${radeon[26]} | cut -d '%' -f 1)
+		[ -z "${gpuVRAMUsedPercent}" ] && echo "[BUG] gpuVRAMUsedPercent empty"
 		gpuVRAMUsed=$(echo ${radeon[27]} | cut -d 'm' -f 1)
+		[ -z "${gpuVRAMUsed}" ] && echo "[BUG] gpuVRAMUsed empty"
 		output="$output, $gpuUsage, $gpuTemp, $gpuWatt, $gpuVRAMTot, $gpuVRAMUsed, $gpuVRAMUsedPercent"
 		if $GTT; then
 			gpuGTTUsedPercent=$(echo ${radeon[29]} | cut -d '%' -f 1)
+			[ -z "${gpuGTTUsedPercent}" ] && echo "[BUG] gpuGTTUsedPercent empty"
 			gpuGTTUsed=$(echo ${radeon[30]} | cut -d 'm' -f 1)
+			[ -z "${gpuGTTUsed}" ] && echo "[BUG] gpuGTTUsed empty"
 			output="$output, $gpuGTTTot, $gpuGTTUsed, $gpuGTTUsedPercent"
 		fi
 	fi
