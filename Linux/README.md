@@ -127,7 +127,7 @@ DISPLAY=:0 glxinfo -B
 
 ## Intel GPU
 
-(Official Intel doc](https://dgpu-docs.intel.com/driver/client/overview.html)
+[Official Intel doc](https://dgpu-docs.intel.com/driver/client/overview.html)
 
 ```
 wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
