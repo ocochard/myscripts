@@ -10,10 +10,6 @@ if which -s nproc; then
 else
 	JOBS=$(sysctl -n kern.smp.cpus)
 fi
-if [ ${JOBS} -gt 64 ]; then
-	# No buildtime improvement with more than 64 cores/threads
-	JOBS=64
-fi
 # Absolute path script name
 script=$(readlink -f $0)
 # Absolute path this script is in
@@ -77,7 +73,7 @@ options			CC_NEWRENO	# RACK depends on some constants
 EOF
 
 echo "Building world and kernel..."
-make -j ${JOBS} buildworld buildkernel
+make buildworld-jobs buildkernel-jobs
 if poudriere ports -ln | grep -q 'default'; then
 	ports_src=$(poudriere ports -lq | awk '/^default/ { print $5; exit; }')
 	# Backing up local patches
@@ -111,7 +107,7 @@ fi
 # Improving build speed for some ports (warning, could consume a lot of RAM/CPU)
 if ! grep -q llvm /usr/local/etc/poudriere.conf; then
 	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
-	echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg ccache cmake-core rust gcc* llvm* libreoffice chromium node* ghc qt5-webkit py-qt5-pyqt* ruby rpcs* webkit2-gtk3 qemu wireshark"' >> /usr/local/etc/poudriere.conf
+	echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg ccache cmake-core rust gcc* llvm* libreoffice chromium node* ghc qt5-webkit qt6-declarative py-qt5-pyqt* ruby rpcs* webkit2-gtk3 qemu wireshark"' >> /usr/local/etc/poudriere.conf
 fi
 
 echo "Building ports..."

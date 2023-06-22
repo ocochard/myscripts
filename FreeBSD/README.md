@@ -40,7 +40,7 @@ If still alive, finish it with an `etcupdate -B`, if not:
 
 On a ZFS BE, it is resume as:
 ```
-LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall
+LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall.sh
 ```
 
 ## ZFS
