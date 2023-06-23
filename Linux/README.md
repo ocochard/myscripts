@@ -103,6 +103,11 @@ apt remove snapd
 Disable privacy address:
 - Replace net.ipv6.conf.*.use_tempaddr = 2 in /etc/sysctl.d/10-ipv6-privacy.conf buy = 0
 
+Flush DNS cache:
+```
+sudo resolvectl flush-caches
+```
+
 # Drivers
 
 ## Hardware inventory
