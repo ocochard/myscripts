@@ -33,6 +33,7 @@ emulators/wine-proton
 emulators/winetricks
 emulators/xcpc
 french/libreoffice
+ftp/curl
 ftp/wget
 graphics/drm-kmod
 graphics/drm-510-kmod
@@ -87,6 +88,7 @@ sysutils/fusefs-smbnetfs
 sysutils/grub2-bhyve
 sysutils/ipmitool
 sysutils/hw-probe
+sysutils/monit
 sysutils/mstflint
 sysutils/neofetch
 sysutils/p5-BSD-Sysctl
