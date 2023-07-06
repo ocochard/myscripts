@@ -35,6 +35,7 @@ emulators/xcpc
 french/libreoffice
 ftp/curl
 ftp/wget
+games/flightgear
 graphics/drm-kmod
 graphics/drm-510-kmod
 graphics/gimp
@@ -83,6 +84,7 @@ sysutils/bhyve-firmware
 sysutils/bsdstats
 sysutils/cdrkit
 sysutils/devcpu-data
+sysutils/fastfetch
 sysutils/flashrom
 sysutils/fusefs-smbnetfs
 sysutils/grub2-bhyve
