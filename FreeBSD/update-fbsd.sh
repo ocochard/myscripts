@@ -25,6 +25,9 @@ WITHOUT_LLVM_ASSERTIONS=yes
 WITHOUT_LLVM_TARGET_ALL=yes
 # Disable assertions and statistics gathering in malloc(3)
 WITH_MALLOC_PRODUCTION=yes
+# Disable asserstion about pthread
+# https://cgit.freebsd.org/src/commit/?id=642cd511028b8839db2c89a44cf7807d80664f38
+WITHOUT_PTHREADS_ASSERTIONS=yes
 EOF
 
 if [ -f /etc/src-env.conf ]; then
