@@ -84,7 +84,7 @@ sysutils/bhyve-firmware
 sysutils/bsdstats
 sysutils/cdrkit
 sysutils/devcpu-data
-sysutils/fastfetch
+sysutils/fastfetch@lite
 sysutils/flashrom
 sysutils/fusefs-smbnetfs
 sysutils/grub2-bhyve
