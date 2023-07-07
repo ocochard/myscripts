@@ -395,3 +395,6 @@ Dumping to -, until termination.
 [ perf record: Captured and wrote 9.256 MB perf.data (1136 samples) ]
 ```
 
+## Wayland
+
+To be able to start graphical software from SSH, need to export XAUTHORITY and DISPLAY
