@@ -1,9 +1,23 @@
 # GPU benchmark
 
+## Prerequisite
+
+Vulkan and OpenGL need to work:
+
+```
+sudo apt install mesa-utils vulkan-tools
+glxinfo -B
+vulkaninfo --summary
+```
+
 ## [Blender](https://opendata.blender.org/)
+
+Blender needs CUDA for Nvidia GPU and OpenCL for AMD GPU.
 
 Download bench script, engine and scenes:
 ```
+mkdir blender
+cd blender
 wget https://download.blender.org/release/BlenderBenchmark2.0/launcher/benchmark-launcher-cli-3.1.0-linux.tar.gz
 tar zxvf benchmark-launcher-cli-3.1.0-linux.tar.gz
 ./benchmark-launcher-cli authenticate (optional)
@@ -17,6 +31,7 @@ Display list of devices to uses (CPU or GPU):
 ```
 ./benchmark-launcher-cli devices --blender-version 3.6.0
 ```
+
 Run it on selected device (here: CPU):
 ```
 DISPLAY=:0 ./benchmark-launcher-cli  benchmark --blender-version 3.6.0 --device-type CPU --json --submit monster junkshop classroom

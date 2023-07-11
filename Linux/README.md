@@ -6,6 +6,22 @@
 
 Simple note for a Linux newbie
 
+## Base
+
+### sudo
+
+Prevent password request without modifying default configuration file:
+```
+echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/$USER
+```
+
+### SSHd
+
+```
+sudo apt install openssh-server
+sudo systemctl enable ssh
+```
+
 ## Ubuntu
 
 ### Debian package creation
@@ -61,12 +77,6 @@ DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
 env nocheck: avoid running regression test
 ```
 
-# Install and enable SSHD
-
-```
-sudo apt install openssh-server
-sudo systemctl enable ssh
-```
 
 # Remove Ubuntu apt SPAM and closed-source snap
 
@@ -147,7 +157,7 @@ sudo apt-get install -y \
   mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all vainfo hwinfo clinfo
 ```
 
-## AMD GPU
+## AMD proprietary GPU drivers
 
 ```
 $ lshw -c video
@@ -158,10 +168,11 @@ $ sudo dmesg | egrep 'drm|radeon'
 (etc)
 ```
 
-Binary from [AMD website](https://www.amd.com/en/support/linux-drivers) and [install doc](https://amdgpu-install.readthedocs.io/en/latest/):
+Binary from [AMD website](https://www.amd.com/en/support/linux-drivers) and [install doc](https://amdgpu-install.readthedocs.io/en/latest/).
+Check on the [repository](https://repo.radeon.com/amdgpu-install/) the latest version
 ```
-curl -O https://repo.radeon.com/amdgpu-install/22.40.3/ubuntu/jammy/amdgpu-install_5.4.50403-1_all.deb
-sudo apt-get install ./amdgpu-install_5.4.50403-1_all.deb
+curl -O https://repo.radeon.com/amdgpu-install/23.10.2/ubuntu/jammy/amdgpu-install_5.5.50502-1_all.deb
+sudo apt-get install ./amdgpu-install_5.4.50502-1_all.deb
 sudo amdgpu-install --usecase=graphics --vulkan=amdvlk --opencl=rocr
 sudo usermod -a -G render $LOGNAME
 sudo usermod -a -G video $LOGNAME
@@ -398,3 +409,19 @@ Dumping to -, until termination.
 ## Wayland
 
 To be able to start graphical software from SSH, need to export XAUTHORITY and DISPLAY
+
+From local term:
+```
+env > env.txt
+```
+
+Then from SSH, running xcalc on local screen:
+```
+egrep 'DISPLAY|XAUTH' env.txt
+XAUTHORITY=/run/user/1000/gdm/Xauthority
+DISPLAY=:0
+export XAUTHORITY=/run/user/1000/gdm/Xauthority
+export DISPLAY=:0
+xcalc
+```
+
