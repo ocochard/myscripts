@@ -2,6 +2,15 @@
 
 To do: Convert my [Desktop install webpage tips](https://olivier.cochard.me/bidouillage/installation-et-configuration-de-freebsd-comme-poste-de-travail) here
 
+## Custom install media
+
+Once world & kernel are built:
+```
+cd /usr/src/release
+make -DNOPORTS -DNODOC -DNOSRC memstick
+dd if=/usr/obj/usr/src/amd64.amd64/release/memstick.img of=/dev/your-usb-stick bs=1M
+```
+
 ## Build from a builder, clients on NFS
 
 Process:

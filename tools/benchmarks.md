@@ -61,6 +61,17 @@ chmod +x GravityMark_1.82.run
 ```
 Select full screen and resolution
 
+Or manual mode:
+OpenGL in full screen FHD resolution:
+```
+sh -c ./GravityMark.x64 -gl -ta 1 -fs 1 -w 1920 -h 1080 -a 200000 -fps 1 -info 1 -sensors 1 -name "Olivier Cochard-Labbé" -benchmark 1
+```
+
+Vulkan:
+```
+sh -c ./GravityMark.x64 -vk -ta 1 -fs 1 -w 1920 -h 1080 -a 200000 -fps 1 -info 1 -sensors 1 -name "Olivier Cochard-Labbé" -benchmark 1
+```
+
 ## [vkmark](https://github.com/vkmark/vkmark)
 
 ```
