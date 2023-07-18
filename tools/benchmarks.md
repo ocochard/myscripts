@@ -12,7 +12,10 @@ vulkaninfo --summary
 
 ## [Blender](https://opendata.blender.org/)
 
-Blender needs CUDA for Nvidia GPU and OpenCL for AMD GPU.
+[GPU support is more complex](https://docs.blender.org/manual/en/latest/render/cycles/gpu_rendering.html) because uses compute framework:
+- Nivida: CUDA or OptiX
+- AMD: HIP
+- Intel: OneAPI
 
 Download bench script, engine and scenes:
 ```
@@ -34,7 +37,7 @@ Display list of devices to uses (CPU or GPU):
 
 Run it on selected device (here: CPU):
 ```
-DISPLAY=:0 ./benchmark-launcher-cli  benchmark --blender-version 3.6.0 --device-type CPU --json --submit monster junkshop classroom
+./benchmark-launcher-cli  benchmark --blender-version 3.6.0 --device-type CPU --json --submit monster junkshop classroom
 ```
 
 ## [Geekbench](https://www.geekbench.com/)
