@@ -106,6 +106,7 @@ sed -i 's/^deb/#deb/g' /var/lib/ubuntu-advantage/apt-esm/etc/apt/sources.list.d/
 snap list
 snap remove --purge packages-in-the-list
 apt remove snapd
+apt purge snapd
 ```
 
 ## Network
@@ -408,20 +409,22 @@ Dumping to -, until termination.
 
 ## Wayland
 
-To be able to start graphical software from SSH, need to export XAUTHORITY and DISPLAY
+### Disabling
 
-From local term:
 ```
-env > env.txt
+sudo sed -i 's/#WaylandEnable/WaylandEnable/' /etc/gdm3/custom.conf
+sudo systemctl restart gdm3
 ```
 
-Then from SSH, running xcalc on local screen:
+### Start local graphical from SSH
+To be able to start graphical software from SSH, need to export XAUTHORITY and DISPLAY.
+Your user need to be locally logged on the wayland/xorg (to create the XAUTH token file), then from SSH session:
 ```
-egrep 'DISPLAY|XAUTH' env.txt
-XAUTHORITY=/run/user/1000/gdm/Xauthority
-DISPLAY=:0
-export XAUTHORITY=/run/user/1000/gdm/Xauthority
+export XAUTHORITY=$(ls /run/user/$(id -u)/.* | grep auth)
 export DISPLAY=:0
+```
+Then try to run simple app:
+```
 xcalc
 ```
 

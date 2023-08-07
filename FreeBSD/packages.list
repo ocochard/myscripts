@@ -4,6 +4,7 @@ benchmarks/glmark2
 benchmarks/iperf3
 benchmarks/linux-unigine-heaven
 benchmarks/linux-unigine-valley
+benchmarks/nuttcp
 benchmarks/wrk
 devel/R-cran-plyr
 devel/hs-ShellCheck
