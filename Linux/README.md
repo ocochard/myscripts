@@ -88,6 +88,10 @@ So, a lot of work need to be done:
 - Disable dynamic motd spam
 
 ```
+sudo pro config set apt_news=false
+```
+
+```
 wget -q --content-disposition https://github.com/Skyedra/UnspamifyUbuntu/blob/master/fake-ubuntu-advantage-tools/fake-ubuntu-advantage-tools.deb?raw=true
 sudo apt install ./fake-ubuntu-advantage-tools.deb
 ```
@@ -328,7 +332,17 @@ perf record -f -g -a
 [Install instruction on Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 
 ```
+sudo usermod -aG docker $USER
+newgrp docker
 docker run hello-world
+```
+
+Where are image stored:
+```
+$ docker info
+... 
+Storage Driver: overlay2
+ Docker Root Dir: /var/lib/docker
 ```
 
 Customize a docker image:
@@ -385,6 +399,11 @@ docker exec -it CONTAINER sh
 System stat:
 ```
 docker stats
+```
+
+Cleaning docker layer cache (can be in weird buggy state):
+```
+yes | docker system prune -a
 ```
 
 ## Perf
