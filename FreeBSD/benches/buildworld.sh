@@ -1,7 +1,5 @@
 #!/bin/sh
 # Bench time spend to buildworld & kernel
-# User are expected to have downloaded src in /usr/src
-# cd /usr
 set -eu
 
 # Variables definitions
