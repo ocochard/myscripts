@@ -58,7 +58,7 @@ fi
 mkdir -p $RAMDISK
 
 #TMPDIR=$(mktemp -d /tmp/buildbench.XXXXXX)
-TMPDIR=/tmp/buildbench.$(date '+%Y%m%d%H%M')
+TMPDIR=/tmp/buildbench.$(date -u '+%Y%m%d%H%M')
 mkdir -p $TMPDIR
 
 if mount | grep -q $RAMDISK; then
