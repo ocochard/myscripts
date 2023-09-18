@@ -179,7 +179,7 @@ echo "cd $TMPDIR"
 echo "gnuplot gnuplot.plt"
 
 sleep 4
-if ! umount $RAMDISK;
+if ! umount $RAMDISK; then
 	echo "ERROR: Failed to umount $RAMDISK, processes using it:"
 	fstat $RAMDISK
 fi
