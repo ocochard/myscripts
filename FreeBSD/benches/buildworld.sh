@@ -1,14 +1,29 @@
 #!/bin/sh
 # Bench time spend to buildworld & kernel
+# Used to compare performance of AMD Epyc and ARM Ampere
+# So, using a cross-compilation target of RISCV, avoiding local target optimisation
+
 set -eu
 
 # Variables definitions
 
-CPUS=$(sysctl -n kern.smp.cpus)
-if [ $CPUS -le 4 ]; then
-	JOBS=1
+if which -s nproc; then
+	CPUS=$(nproc)
 else
-	JOBS=4
+	# Deprecated
+	CPUS=$(sysctl -n kern.smp.cpus)
+fi
+
+# Initial number of jobs
+# - AMD Epyc has 32c and 64t
+# - Ampere has 160 (80 x 2) cores
+# To be able to compare them, we need:
+# 1. to start using the same number
+# 2. but not a so small number
+if [ $CPUS -ge 32 ]; then
+	JOBS=16
+else
+   JOBS=4
 fi
 
 RUNS=3						# Number of iteration for each bench
@@ -42,11 +57,13 @@ fi
 
 mkdir -p $RAMDISK
 
-TMPDIR=$(mktemp -d /tmp/buildbench.XXXXXX)
+#TMPDIR=$(mktemp -d /tmp/buildbench.XXXXXX)
+TMPDIR=/tmp/buildbench.$(date '+%Y%m%d%H%M')
+mkdir -p $TMPDIR
 
 if mount | grep -q $RAMDISK; then
 	# Previous run detection
-	echo "Detected already mounted $RAMDISK"
+	echo "WARNING: Detected already mounted $RAMDISK"
 	echo "Don't forget to unmount it next time!"
 else
 	# Build in a tmpfs, avoid benching hard disk i/o
@@ -56,8 +73,12 @@ fi
 
 # --depth 1 should imply --single-branch by default
 # Consume about 1.2G of space
-mkdir -p $SRCDIR
-git clone --depth 1 --branch main --single-branch https://git.freebsd.org/src.git $SRCDIR
+if ! [ -d $SRCDIR ]; then
+	mkdir -p $SRCDIR
+	git clone --depth 1 --branch main --single-branch https://git.freebsd.org/src.git $SRCDIR
+else
+	echo "WARNING: Already source directory"
+fi
 
 cd $SRCDIR
 GITREV=$(git rev-parse --short HEAD)
@@ -73,13 +94,17 @@ while [ $JOBS -le $((CPUS * 2)) ]; do
 		echo "Jobs: $JOBS, run: $j/$RUNS"
 		# Forcing GENERIC kernel, no custom MAKE_CONF/SRCCONF/SRC_ENV_CONF
 		echo "Cleanup..."
-		env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK \
+		env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK TARGET_ARCH=riscv64 \
 			make SRCCONF=/dev/null clean > /dev/null 2>&1
 		echo "Build..."
 		# Write log into ram disk to avoid benching local disk speed
-		env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK \
+		if ! env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK TARGET_ARCH=riscv64 \
 			time -ao $TMPDIR/buildbench.$JOBS.time make -j $JOBS \
-				KERNCONF=GENERIC SRCCONF=/dev/null buildworld buildkernel > $RAMDISK/buildbench.$JOBS.$j.log
+				SRCCONF=/dev/null buildworld > $RAMDISK/buildbench.$JOBS.$j.log; then
+			echo "ERROR, last log line:"
+			tail -n 100 $RAMDISK/buildbench.$JOBS.$j.log
+			exit 1
+		fi
 	done # for j
 
 	# Stats extractions to be ready to use by ministat
@@ -153,4 +178,8 @@ echo "pkg install gnuplot"
 echo "cd $TMPDIR"
 echo "gnuplot gnuplot.plt"
 
-umount $RAMDISK
+sleep 4
+if ! umount $RAMDISK;
+	echo "ERROR: Failed to umount $RAMDISK, processes using it:"
+	fstat $RAMDISK
+fi

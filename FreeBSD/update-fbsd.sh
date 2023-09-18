@@ -22,7 +22,8 @@ cat > /etc/src.conf <<EOF
 # Disable debugging assertions in LLVM
 WITHOUT_LLVM_ASSERTIONS=yes
 # Only build the required LLVM target support
-WITHOUT_LLVM_TARGET_ALL=yes
+# (prevent to cross-build, needed for my build-benches perf)
+#WITHOUT_LLVM_TARGET_ALL=yes
 # Disable assertions and statistics gathering in malloc(3)
 WITH_MALLOC_PRODUCTION=yes
 # Disable asserstion about pthread
