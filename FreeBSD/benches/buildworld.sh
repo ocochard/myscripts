@@ -161,7 +161,7 @@ set style fill solid 1.0 border -1
 set style histogram errorbars gap 2 lw 2
 set boxwidth 0.9 relative
 
-set title noenhanced "Job numbers' impact on 'make TARGET_ARCH=riscv64 buildworld' execution time\n$MODEL (cores: $CORES, thread per core: $TPC, Total CPUs: $CPUS) with $RAM GB RAM"
+set title noenhanced "Job numbers' impact on 'make TARGET_ARCH=riscv64 buildworld' execution time\n$MODEL (cores: $CORES, thread per core: $TPC, Total CPUs: $CPUS) with $RAM GB RAM\n src and obj on tmpfs"
 set xlabel font "Gill Sans,16"
 set xlabel noenhanced "FreeBSD/$MACHINE $VERSION ($VERSIONU) building main sources cloned at $GITREV ($GITDATE)"
 set ylabel "Time to build in seconds, median of 3 benches"
