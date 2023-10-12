@@ -118,6 +118,20 @@ echo "Building ports..."
 if ! poudriere bulk -j builder -f ${script_dir}/packages.list; then
 	echo "[WARNING] Some packages fails to build"
 fi
+
+# Adding this new repo to the system
+if ! [ -r /usr/local/etc/pkg/repos/local.conf ]; then
+	cat > /usr/local/etc/pkg/repos/local.conf <<EOF
+local: {
+  url: "file:////usr/local/poudriere/data/packages/builder-default/.latest",
+  signature_type: "none",
+  assume_always_yes: true,
+  priority: 1,
+  enabled: yes
+}
+EOF
+fi
+
 cd /usr/src
 # Don't want to fail upgrade if some packages refuse to install, so don't upgrade package at the same step
 env NO_PKG_UPGRADE=YES /usr/src/tools/build/beinstall.sh -j ${JOBS}

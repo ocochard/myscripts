@@ -43,7 +43,7 @@ shift $(( OPTIND - 1 ))
 get_deps $1
 echo "List of dependencies and their size:"
 for i in $(sort $tmpfile | uniq); do
-	size=$(pkg rquery -r local %sb $i | head -1)
+	size=$(pkg rquery -r FreeBSD %sb $i | head -1)
 	echo "$i : $size bytes"
 	total_size=$(( total_size + size ))
 done
