@@ -29,6 +29,8 @@ WITH_MALLOC_PRODUCTION=yes
 # Disable asserstion about pthread
 # https://cgit.freebsd.org/src/commit/?id=642cd511028b8839db2c89a44cf7807d80664f38
 WITHOUT_PTHREADS_ASSERTIONS=yes
+# Disable regression tests (and ATF)
+WITHOUT_TESTS=yes
 EOF
 
 if [ -f /etc/src-env.conf ]; then
@@ -39,11 +41,11 @@ if [ -f /etc/src-env.conf ]; then
 fi
 
 if [ -f /etc/make.conf ]; then
-	if ! grep -q BBR /etc/make.conf; then
+	if ! grep -q GENERIC-NODEBUG /etc/make.conf; then
 		mv /etc/make.conf /etc/make.conf.bak
 		cat > /etc/make.conf <<EOF
-# Use a custom kernel configuration file
-KERNCONF=BBR
+# Use the -NODEBUG kernel configuration file
+KERNCONF=GENERIC-NODEBUG
 # run stage-qa automatically when building ports
 DEVELOPER=yes
 EOF
@@ -66,15 +68,15 @@ else
 	cd /usr/src
 fi
 
-cat > /usr/src/sys/$ARCH/conf/BBR <<EOF
-include GENERIC-NODEBUG
-ident			BBR
-options			KDB_UNATTENDED
-makeoptions		WITH_EXTRA_TCP_STACKS=1 # Enable RACK & BBR
-options			TCPHPTS		# Need high precision timer for rackh & bbr
-options			RATELIMIT	# RACK depends on some constants
-options			CC_NEWRENO	# RACK depends on some constants
-EOF
+#cat > /usr/src/sys/$ARCH/conf/BBR <<EOF
+#include GENERIC-NODEBUG
+#ident			BBR
+#options			KDB_UNATTENDED
+#makeoptions		WITH_EXTRA_TCP_STACKS=1 # Enable RACK & BBR
+#options			TCPHPTS		# Need high precision timer for rackh & bbr
+#options			RATELIMIT	# RACK depends on some constants
+#options			CC_NEWRENO	# RACK depends on some constants
+#EOF
 
 echo "Building world and kernel..."
 make buildworld-jobs buildkernel-jobs
