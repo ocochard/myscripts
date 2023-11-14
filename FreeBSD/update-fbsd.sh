@@ -94,6 +94,8 @@ else
 	poudriere ports -c
 fi
 
+cp /etc/src.conf /usr/local/etc/poudriere.d/builder-src.conf
+
 if poudriere jail -ln | grep -q builder; then
 	# Warning: Upgrading the jail will force a rebuild of all ports each time!
 	# But could be mandatory in case of video modules than need to be synced with kernel
