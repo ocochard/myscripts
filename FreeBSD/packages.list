@@ -101,6 +101,7 @@ sysutils/pfetch
 sysutils/smartmontools
 sysutils/syslog-ng
 sysutils/tmux
+sysutils/u-boot-bhyve-arm64
 sysutils/edk2@bhyve
 sysutils/vm-bhyve
 sysutils/zfs-stats-lite
