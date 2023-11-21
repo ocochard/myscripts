@@ -41,12 +41,10 @@ if [ -f /etc/src-env.conf ]; then
 fi
 
 if [ -f /etc/make.conf ]; then
-	if ! grep -q TCPHPTS /etc/make.conf; then
+	if ! grep -q GENERIC-NODEBUG /etc/make.conf; then
 		mv /etc/make.conf /etc/make.conf.bak
 		cat > /etc/make.conf <<EOF
-# Use the custom kernel configuration file (waiting TCPHPTS be included in
-# GENERIC)
-KERNCONF=TCPHPTS
+KERNCONF=GENERIC-NODEBUG
 # run stage-qa automatically when building ports
 DEVELOPER=yes
 EOF
@@ -69,12 +67,12 @@ else
 	cd /usr/src
 fi
 
-cat > /usr/src/sys/$ARCH/conf/TCPHPTS <<EOF
-include GENERIC-NODEBUG
-ident			TCPHPTS
-options			TCPHPTS		# Need high precision timer for rack & bbr
+#cat > /usr/src/sys/$ARCH/conf/TCPHPTS <<EOF
+#include GENERIC-NODEBUG
+#ident			TCPHPTS
+#options			TCPHPTS		# Need high precision timer for rack & bbr
 #options			RATELIMIT	# RACK depends on some constants
-EOF
+#EOF
 
 echo "Building world and kernel..."
 make buildworld-jobs buildkernel-jobs
