@@ -115,7 +115,7 @@ if ! grep -q llvm /usr/local/etc/poudriere.conf; then
 fi
 
 echo "Building ports..."
-if ! poudriere bulk -j builder -f ${script_dir}/packages.list; then
+if ! poudriere bulk -b latest -j builder -f ${script_dir}/packages.list; then
 	echo "[WARNING] Some packages fails to build"
 fi
 
