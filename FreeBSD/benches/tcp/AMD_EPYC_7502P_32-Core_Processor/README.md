@@ -3,7 +3,8 @@
 Dummy iperf2/iperf3 benches using localhost interface (client -> server), no latency neither drop emulated,
 server bind to one cpu and client to another. So should expect equivalent result.
 -  TCP stacks available: freebsd,rack,bbr
--  CC Algos available: cubic htcp cdg chd dctcp vegas newreno,
+-  CC Algos available: cubic htcp cdg chd dctcp vegas newreno
+Units in Gbits/sec, results of 3 runs
 ## System info
 ### FreeBSD kernel
 ```

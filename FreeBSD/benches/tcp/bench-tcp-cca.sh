@@ -237,6 +237,7 @@ gen_report () {
 	echo "server bind to one cpu and client to another. So should expect equivalent result."
 	echo "-  TCP stacks available: $(echo ${avail_tcp} | tr ' ' ',')"
 	echo "-  CC Algos available: $(echo ${avail_cca} | tr '\n' ',')"
+	echo "Units in Gbits/sec, results of ${run} runs"
 	echo "## System info"
 	echo "### FreeBSD kernel"
 	echo '```'
