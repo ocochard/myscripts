@@ -343,6 +343,7 @@ if [ $# -eq 1 ]; then
 else
 	tmpdir=$(mktemp -t tcpbench -d || die "Can't generate tmp dir")
 	mkdir -p ${tmpdir}/log
+	report=${tmpdir}/README.md
 fi
 
 cd ${tmpdir}
