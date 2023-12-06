@@ -14,6 +14,35 @@ FreeBSD 15.0-CURRENT #8 main-n266813-4b92c7721dee: Mon Dec  4 20:34:36 CET 2023
 ### CPU
 model: AMD EPYC 7502P 32-Core Processor
 32 cores, 2 threads per core, 64 total CPUs
+### iperf versions and arguments
+#### iperf3
+Version:
+```
+iperf 3.15 (cJSON 1.7.15)
+FreeBSD bigone 15.0-CURRENT FreeBSD 15.0-CURRENT #8 main-n266813-4b92c7721dee: Mon Dec  4 20:34:36 CET 2023     root@bigone:/usr/obj/usr/src/amd64.amd64/sys/GENERIC-NODEBUG amd64
+Optional features available: CPU affinity setting, SCTP, TCP congestion algorithm setting, sendfile / zerocopy, socket pacing, authentication, support IPv4 don't fragment
+```
+Server arguments:
+```
+iperf3 --server --bind 127.0.0.1 --port 5002 --one-off --daemon --format g --affinity 0
+```
+Client arguments:
+```
+iperf3 --client 127.0.0.1 --port 5002 --time 5 --format g --affinity 2 --zerocopy
+```
+#### iperf2
+Version:
+```
+iperf version 2.1.9 (14 March 2023) pthreads
+```
+Server arguments:
+```
+cpuset -c -l 0 iperf --server --bind 127.0.0.1 --port 5002 --enhanced --daemon --format g
+```
+Client arguments:
+```
+cpuset -c -l 2 iperf --client 127.0.0.1 --port 5002 --enhanced --time 5 --format g
+```
 ### Verbose
 [sysinfo](sysinfo.md)
 ## Comparing impact of Congestion Control Algorithms (same TCP stack)
@@ -52,7 +81,7 @@ No difference proven at 95.0% confidence
 O   3          37.6          38.1          37.7          37.8    0.26457513
 No difference proven at 95.0% confidence
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.freebsd.cdg
 + iperf.freebsd.chd
@@ -241,7 +270,7 @@ No difference proven at 95.0% confidence
 O   3            23          24.5          23.9          23.8    0.75498344
 No difference proven at 95.0% confidence
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.rack.cdg
 + iperf.rack.chd
@@ -415,7 +444,7 @@ No difference proven at 95.0% confidence
 O   3          2.05          2.18          2.07           2.1          0.07
 No difference proven at 95.0% confidence
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.bbr.cdg
 + iperf.bbr.chd
@@ -575,7 +604,7 @@ Difference at 95.0% confidence
 	1077.32% +/- 131.165%
 	(Student's t, pooled s = 1.08339)
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.bbr.cubic
 + iperf.freebsd.cubic
@@ -625,7 +654,7 @@ Difference at 95.0% confidence
 	1123.88% +/- 146.016%
 	(Student's t, pooled s = 1.04353)
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.bbr.htcp
 + iperf.freebsd.htcp
@@ -674,7 +703,7 @@ Difference at 95.0% confidence
 	1112.62% +/- 179.18%
 	(Student's t, pooled s = 1.41779)
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.bbr.cdg
 + iperf.freebsd.cdg
@@ -724,7 +753,7 @@ Difference at 95.0% confidence
 	1036.22% +/- 21.2763%
 	(Student's t, pooled s = 0.178092)
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.bbr.chd
 + iperf.freebsd.chd
@@ -774,7 +803,7 @@ Difference at 95.0% confidence
 	1126.82% +/- 73.0068%
 	(Student's t, pooled s = 0.510947)
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.bbr.dctcp
 + iperf.freebsd.dctcp
@@ -823,7 +852,7 @@ Difference at 95.0% confidence
 	1033.33% +/- 83.5829%
 	(Student's t, pooled s = 0.536144)
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.bbr.vegas
 + iperf.freebsd.vegas
@@ -873,7 +902,7 @@ Difference at 95.0% confidence
 	1117.25% +/- 138.246%
 	(Student's t, pooled s = 1.1863)
 ```
-#### iperf
+#### iperf2
 ```
 x iperf.bbr.newreno
 + iperf.freebsd.newreno

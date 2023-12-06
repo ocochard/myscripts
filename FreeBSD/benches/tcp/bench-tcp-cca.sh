@@ -41,6 +41,15 @@ else
 	afc=0	# cpu client affinity
 fi
 
+iperf3_server_cmd="iperf3 --server --bind 127.0.0.1 --port $port --one-off --daemon \
+--format g --affinity $afs"
+iperf3_client_cmd="iperf3 --client 127.0.0.1 --port $port --time $time --format g \
+--affinity $afc --zerocopy"
+iperf_server_cmd="cpuset -c -l $afs iperf --server --bind 127.0.0.1 --port $port --enhanced \
+--daemon --format g"
+iperf_client_cmd="cpuset -c -l $afc iperf --client 127.0.0.1 --port $port --enhanced --time $time \
+--format g"
+
 die() {
 	echo -n "EXIT: " >&2
 	echo "$@" >&2
@@ -134,38 +143,28 @@ iperf_bench() {
 		die "[ERROR] Socket already listening before starting"
 	fi
 
-	if ! iperf3 --server --bind 127.0.0.1 --port $port --one-off --daemon \
-		--format g --affinity $afs; then
+	if ! ${iperf3_server_cmd}; then
 		die "[ERROR] starting iperf3 server"
 	fi
 
 	# Sometimes iperf3 need time to bind the socket
 	wait_socket_open
-	if ! iperf3 --client 127.0.0.1 --port $port --time $time --format g \
-		--affinity $afc --zerocopy --logfile ${tmpdir}/log/iperf3_client.$t.$c.$r.log; then
+	if ! ${iperf3_client_cmd} --logfile ${tmpdir}/log/iperf3_client.$t.$c.$r.log; then
 		echo "Error starting iperf3 client, log file:"
 		cat ${tmpdir}/log/iperf3_client.$t.$c.$r.log
-		echo "And for debug purpose, the server log file:"
-		cat ${tmpdir}/log/iperf3_server.$t.$c.$r.log
 		die "Can't continue"
-	fi
-	if [ -r ${tmpdir}/iperf3_server.pid ]; then
-		echo "Warning, client ended but iperf3 server is still running"
-		kill $(cat ${tmpdir}/iperf3_server.pid)
 	fi
 	wait_socket_close
 
 	# Iperf 2
-	sudo cpuset -c -l $afs iperf --server --bind 127.0.0.1 --port $port --enhanced \
-		--daemon --format g
+	# Need to use sudo for cpuset
+	sudo ${iperf_server_cmd}
 	wait_socket_open
 
-	sudo cpuset -c -l $afc iperf --client 127.0.0.1 --port $port --enhanced --time $time \
-		--format g --output ${tmpdir}/log/iperf_client.$t.$c.$r.log
+	sudo ${iperf_client_cmd} --output ${tmpdir}/log/iperf_client.$t.$c.$r.log
 	sudo pkill iperf || die "Error killing iperf server"
 
 	wait_socket_close
-
 }
 
 load_cca() {
@@ -206,14 +205,11 @@ gen_ministat () {
 	# Extract data from iperf's log files
 	for t in ${avail_tcp}; do
 		for c in ${avail_cca}; do
-			# data.* : contains list of results set (3 minimum)
+			# no extension : contains list of results set (3 minimum)
 			#                no ext, because filename diplayed by ministat
-			# .minmax contains Min, Max, Median, Avg, Stddev of .data set
-			# .ministat contains ministat graph output
+			# ministat.* contains ministat graph output
 			grep receive ${tmpdir}/log/iperf3_client.$t.$c.*.log | tr -s ' ' | cut -d ' ' -f 7 > ${tmpdir}/iperf3.$t.$c
-			#ministat -n iperf3.$t.$c.data > iperf3.$t.$c.minmax
 			tail -qn1 ${tmpdir}/log/iperf_client.$t.$c.*.log | tr -s ' ' | cut -d ' ' -f 7 > ${tmpdir}/iperf.$t.$c
-			#ministat -n iperf.$t.$c > iperf.$t.$c.minmax
 			# Comparing iperf2 vs iperf3
 			ministat -s iperf.$t.$c iperf3.$t.$c > ${tmpdir}/ministat.iperfvs.$t.$c
 		done # cca
@@ -224,8 +220,6 @@ gen_ministat () {
 		ministat -s $(ls iperf3.$t.*) > ${tmpdir}/ministat.iperf3.$t
 		ministat -s $(ls iperf.$t.*) > ${tmpdir}/ministat.iperf.$t
 	done
-	# grep -A2 'Difference at' iperfvs.rack.newreno.md | tail -1 | cut -f 2 | cut -d '+' -f 1
-	#ministat -s ${iperf3_ministat_args} >> ${tmpdir}/iperf3.$c.md
 	# Now we could compare TCP between them (using same CCA)
 	for c in ${avail_cca}; do
 		ministat -s $(ls iperf3.*.$c) >  ${tmpdir}/ministat.iperf3.$c
@@ -252,6 +246,33 @@ gen_report () {
 	echo model: $(sysctl -n hw.model)
 	echo $(sysctl -n kern.smp.cores) cores, $(sysctl -n kern.smp.threads_per_core)\
 	   	threads per core, $(sysctl -n kern.smp.cpus) total CPUs
+	echo "### iperf versions and arguments"
+	echo "#### iperf3"
+	echo "Version:"
+	echo '```'
+	iperf3 --version
+	echo '```'
+	echo "Server arguments:"
+	echo '```'
+	echo ${iperf3_server_cmd}
+	echo '```'
+	echo "Client arguments:"
+	echo '```'
+	echo ${iperf3_client_cmd}
+	echo '```'
+	echo "#### iperf2"
+	echo "Version:"
+	echo '```'
+	iperf --version
+	echo '```'
+	echo "Server arguments:"
+	echo '```'
+	echo ${iperf_server_cmd}
+	echo '```'
+	echo "Client arguments:"
+	echo '```'
+	echo ${iperf_client_cmd}
+	echo '```'
 	if [ -r sysinfo.md ];then
 		echo "### Verbose"
 		echo "[sysinfo](sysinfo.md)"
@@ -288,7 +309,7 @@ gen_report () {
 		echo '```'
 		cat  ministat.iperf3.$c
 		echo '```'
-		echo "#### iperf"
+		echo "#### iperf2"
 		echo '```'
 		cat ministat.iperf.$c
 		echo '```'
