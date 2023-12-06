@@ -78,10 +78,6 @@ sys_info() {
 	#maker=$(kenv smbios.system.maker)
 	(
 		echo "# System info"
-		echo "## OS version"
-		echo '```'
-		uname -a
-		echo '```'
 		echo "## dmesg"
 		echo '```'
 		cat /var/run/dmesg.boot
@@ -91,10 +87,6 @@ sys_info() {
 		sysctl net.inet.tcp
 		echo '```'
 	) > ${tmpdir}/sysinfo.md
-	(
-		echo "## System info"
-		echo "[sysinfo](sysinfo.md)"
-	) >> $report
 }
 
 socket_listening() {
@@ -179,7 +171,7 @@ iperf_bench() {
 load_cca() {
 	# Load all congestion control algorithms kernel modules
 	for i in ${expect_cca}; do
-		sudo kldload cc_$i || true
+		sudo kldload cc_$i > /dev/null 2>&1 || true
 	done
 }
 
@@ -197,100 +189,147 @@ bench_tcp() {
 		sudo sysctl net.inet.tcp.functions_default=$t > /dev/null 2>&1
 		bench_cca $t
 	done
-	if [ $(echo "${avail_tcp}" | wc -w) -gt 1 ]; then
-		echo "## Comparing impact of TCP stacks (same Congestion Control Algorithm)" >> $report
-		cd $tmpdir
-		for c in ${avail_cca}; do
-			iperf3_ministat_args=""
-			iperf_ministat_args=""
-			for t in ${avail_tcp}; do
-				# Prevent to display full dir in ministat report (so ministat need
-				# to start from $tmpdir)
-				iperf3_ministat_args="${iperf3_ministat_args} iperf3.$t.$c"
-				iperf_ministat_args="${iperf_ministat_args} iperf.$t.$c"
-			done
-			echo '```' >> ${tmpdir}/iperf3.$c.md
-			ministat -s ${iperf3_ministat_args} >> ${tmpdir}/iperf3.$c.md
-			echo '```' >> ${tmpdir}/iperf3.$c.md
-			echo '```' >> ${tmpdir}/iperf.$c.md
-			ministat -s ${iperf_ministat_args} >> ${tmpdir}/iperf.$c.md
-			echo '```' >> ${tmpdir}/iperf.$c.md
-			(
-			echo "- CCA: $c, Congestion Control Algos impact:"
-			echo "  - [iperf 3](iperf3.$c.md)"
-			echo "  - [iperf 2](iperf.$c.md)"
-			) >> $report
-		done
-	fi
-	echo "## Comparing iperf 2 vs 3 (same TCP and CCA)" >> $report
-	for tcp; do
-		echo
-	done
 }
 
 bench_cca() {
 	local tcp=$1	# TCP stack
-	iperf3_ministat_args=""
-	iperf_ministat_args=""
 	cd $tmpdir
 	for c in ${avail_cca}; do
 		sudo sysctl net.inet.tcp.cc.algorithm=$c > /dev/null
 		bench $tcp $c
-		# iperf3
-		grep receive ${tmpdir}/log/iperf3_client.$tcp.$c.*.log | tr -s ' ' | cut -d ' ' -f 7 >> ${tmpdir}/iperf3.$tcp.$c
-		iperf3_ministat_args="${iperf3_ministat_args} iperf3.$tcp.$c"
-		echo '```' >> ${tmpdir}/iperf3.$tcp.$c.md
-		ministat -n iperf3.$tcp.$c >> ${tmpdir}/iperf3.$tcp.$c.md
-		echo '```' >> ${tmpdir}/iperf3.$tcp.$c.md
-		# iperf
-		tail -qn1 ${tmpdir}/log/iperf_client.$tcp.$c.*.log | tr -s ' ' | cut -d ' ' -f 7 >> ${tmpdir}/iperf.$tcp.$c
-		iperf_ministat_args="${iperf_ministat_args} ${tmpdir}/iperf.$tcp.$c"
-		echo '```' >> ${tmpdir}/iperf.$tcp.$c.md
-		ministat -n iperf.$tcp.$c >> ${tmpdir}/iperf.$tcp.$c.md
-		echo '```' >> ${tmpdir}/iperf.$tcp.$c.md
-		# iperf2 vs iperf3
-		echo '```' >> ${tmpdir}/iperfvs.$tcp.$c.md
-		ministat -s iperf.$tcp.$c iperf3.$tcp.$c > ${tmpdir}/iperfvs.$tcp.$c.md
-		echo '```' >> ${tmpdir}/iperfvs.$tcp.$c.md
 	done
-	# compare CCAs for each TCP stack
-	echo "## Comparing impact of Congestion Control Algorithms (same TCP stack)" >> $report
-	echo '```' >> ${tmpdir}/iperf3.$tcp.md
-	ministat -s ${iperf3_ministat_args} >> ${tmpdir}/iperf3.$tcp.md
-	echo '```' >> ${tmpdir}/iperf3.$tcp.md
-	echo '```' >> ${tmpdir}/iperf.$tcp.md
-	ministat -s ${iperf_ministat_args} >> ${tmpdir}/iperf.$tcp.ministat
-	echo '```' >> ${tmpdir}/iperf.$tcp.md
+}
+
+gen_ministat () {
+	cd $tmpdir
+	# XXX Should avoid re-using avail_tcp and avail_cca here and use ls
+	# Extract data from iperf's log files
+	for t in ${avail_tcp}; do
+		for c in ${avail_cca}; do
+			# data.* : contains list of results set (3 minimum)
+			#                no ext, because filename diplayed by ministat
+			# .minmax contains Min, Max, Median, Avg, Stddev of .data set
+			# .ministat contains ministat graph output
+			grep receive ${tmpdir}/log/iperf3_client.$t.$c.*.log | tr -s ' ' | cut -d ' ' -f 7 > ${tmpdir}/iperf3.$t.$c
+			#ministat -n iperf3.$t.$c.data > iperf3.$t.$c.minmax
+			tail -qn1 ${tmpdir}/log/iperf_client.$t.$c.*.log | tr -s ' ' | cut -d ' ' -f 7 > ${tmpdir}/iperf.$t.$c
+			#ministat -n iperf.$t.$c > iperf.$t.$c.minmax
+			# Comparing iperf2 vs iperf3
+			ministat -s iperf.$t.$c iperf3.$t.$c > ${tmpdir}/ministat.iperfvs.$t.$c
+		done # cca
+	done # tcp
+	# Now that we have data, we could play with them
+	for t in ${avail_tcp}; do
+		# Comparing CCA between them (same TCP stack)
+		ministat -s $(ls iperf3.$t.*) > ${tmpdir}/ministat.iperf3.$t
+		ministat -s $(ls iperf.$t.*) > ${tmpdir}/ministat.iperf.$t
+	done
+	# grep -A2 'Difference at' iperfvs.rack.newreno.md | tail -1 | cut -f 2 | cut -d '+' -f 1
+	#ministat -s ${iperf3_ministat_args} >> ${tmpdir}/iperf3.$c.md
+	# Now we could compare TCP between them (using same CCA)
+	for c in ${avail_cca}; do
+		ministat -s $(ls iperf3.*.$c) >  ${tmpdir}/ministat.iperf3.$c
+		ministat -s $(ls iperf.*.$c) >  ${tmpdir}/ministat.iperf.$c
+	done
+}
+
+gen_report () {
+	# Generate Markdown formated report
+	cd $tmpdir
 	(
-		echo "- TCP stack: $tcp, Congestion Control Algos impact:"
-		echo "  - [iperf 3](iperf3.$tcp.md)"
-		echo "  - [iperf 2](iperf.$tcp.md)"
-		echo "  - [iperf 2 vs iperf 3](iperfvs.$tcp.$c.md)"
+	echo "# Impact of TCP stacks and Congestion Control Algo mix"
+	echo "## Concept"
+	echo "Dummy iperf2/iperf3 benches using localhost interface (client -> server), no latency neither drop emulated,"
+	echo "server bind to one cpu and client to another. So should expect equivalent result."
+	echo "-  TCP stacks available: $(echo ${avail_tcp} | tr ' ' ',')"
+	echo "-  CC Algos available: $(echo ${avail_cca} | tr '\n' ',')"
+	echo "## System info"
+	echo "### FreeBSD kernel"
+	echo '```'
+	sysctl -n kern.version
+	echo '```'
+	echo "### CPU"
+	echo model: $(sysctl -n hw.model)
+	echo $(sysctl -n kern.smp.cores) cores, $(sysctl -n kern.smp.threads_per_core)\
+	   	threads per core, $(sysctl -n kern.smp.cpus) total CPUs
+	if [ -r sysinfo.md ];then
+		echo "### Verbose"
+		echo "[sysinfo](sysinfo.md)"
+	fi
 	) >> $report
+	echo "## Comparing impact of Congestion Control Algorithms (same TCP stack)" >> $report
+	for t in ${avail_tcp}; do
+		(
+		echo "### TCP stack: $t"
+		echo "#### iperf3"
+		echo '```'
+		cat  ministat.iperf3.$t
+		echo '```'
+		echo "#### iperf"
+		echo '```'
+		cat ministat.iperf.$t
+		echo '```'
+		echo "#### iperf2 vs iperf3"
+		echo '```'
+		) >> $report
+		for c in  ${avail_cca}; do
+			(
+			echo "##### CCA: $c"
+			echo '```'
+			cat ministat.iperfvs.$t.$c
+			echo '```'
+			) >> $report
+		done
+	done # For each TCP stack
+	echo "## Comparing impact of TCP stacks (same Congestion Control Algorithms)" >> $report
+	for c in ${avail_cca}; do
+		(
+		echo "### CCA stack: $c"
+		echo "#### iperf3"
+		echo '```'
+		cat  ministat.iperf3.$c
+		echo '```'
+		echo "#### iperf"
+		echo '```'
+		cat ministat.iperf.$c
+		echo '```'
+		) >> $report
+	done # For each CCA
+	# cleanup
+	rm ${tmpdir}/ministat.*
+	rm ${tmpdir}/iperf*
 }
 
 #### main
+
 prev_tcp=$(sysctl -n net.inet.tcp.functions_default)
 prev_cc=$(sysctl -n net.inet.tcp.cc.algorithm)
-sys_check
-load_cca
-tmpdir=$(mktemp -t tcpbench -d || die "Can't generate tmp dir")
-mkdir -p ${tmpdir}/log
-report=${tmpdir}/README.md
-cd ${tmpdir}
-(
-	echo "# Impact of TCP stacks and Congestion Control Algo mix"
-	echo "## Concept"
-	echo "Dummy iperf2/iperf3 benches using localhost interface, no latency/drop emulated, so should get equivalent result"
-) >> $report
-sys_info
 
 avail_tcp=$(sysctl -n net.inet.tcp.functions_available | awk 'NF>0 && NR>2 {print $1;next}')
-# Need to remove rack and bbr from this list, they are instable on head
-avail_tcp=$(echo ${avail_tcp} | sed 's/rack//g;s/bbr//g')
+avail_tcp=$(echo ${avail_tcp})
 avail_cca=$(sysctl -n net.inet.tcp.cc.available | awk 'NF>0 && NR>2 {print $1;next}')
-echo "TCP stacks available: ${avail_tcp}" >> $report
-echo "CC Algos available: ${avail_cca}" >> $report
+
+if [ $# -eq 1 ]; then
+	echo "Directory given, generate report only"
+	if ! [ -d "$1"/log ]; then
+		die "$1 is not a directory"
+	fi
+	tmpdir=$1
+	report=${tmpdir}/README.md
+	rm -f $report
+	gen_ministat
+	gen_report
+	exit 0
+else
+	tmpdir=$(mktemp -t tcpbench -d || die "Can't generate tmp dir")
+	mkdir -p ${tmpdir}/log
+fi
+
+cd ${tmpdir}
+
+sys_check
+load_cca
+sys_info
 
 # Duration estimation
 nt=$(echo ${avail_tcp} | wc -w)
@@ -299,13 +338,15 @@ nc=$(echo ${avail_cca} | wc -w)
 nc=$(echo $nc)	# remove space
 benches=$(( nt * nc ))
 tduration=$(( (nt * nc * time * 2 ) / 60 ))
-msg="Running a total of $benches runs: $nt TCP stacks * $nc CCAs * 2 (iperf3 and iperf2) * $time seconds for an estimated duration of $tduration minutes"
-echo "$msg" | tee -a $report
+echo "Running a total of $benches runs: $nt TCP stacks * $nc CCAs * 2 (iperf3 and iperf2) * $time seconds for an estimated duration of $tduration minutes"
 
 # Run
 bench_tcp
-echo "Done, results in $report"
+gen_ministat
+gen_report
 
 # restore previous default TCP and CCA
 sudo sysctl net.inet.tcp.functions_default=${prev_tcp} > /dev/null 2>&1
 sudo sysctl net.inet.tcp.cc.algorithm=${prev_cc} > /dev/null 2>&1
+
+echo "Done, results in $report"
