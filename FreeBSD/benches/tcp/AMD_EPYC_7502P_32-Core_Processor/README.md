@@ -87,7 +87,6 @@ O   3          41.1          41.9          41.6     41.533333    0.40414519
 No difference proven at 95.0% confidence
 ```
 #### iperf2 vs iperf3
-```
 ##### CCA: cubic
 ```
 x iperf.freebsd.cubic
@@ -277,7 +276,6 @@ O   3            23          24.1          23.6     23.566667    0.55075705
 No difference proven at 95.0% confidence
 ```
 #### iperf2 vs iperf3
-```
 ##### CCA: cubic
 ```
 x iperf.rack.cubic
@@ -452,7 +450,6 @@ O   3          2.04          2.13          2.06     2.0766667   0.047258156
 No difference proven at 95.0% confidence
 ```
 #### iperf2 vs iperf3
-```
 ##### CCA: cubic
 ```
 x iperf.bbr.cubic

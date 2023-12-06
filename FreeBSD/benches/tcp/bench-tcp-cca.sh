@@ -265,12 +265,11 @@ gen_report () {
 		echo '```'
 		cat  ministat.iperf3.$t
 		echo '```'
-		echo "#### iperf"
+		echo "#### iperf2"
 		echo '```'
 		cat ministat.iperf.$t
 		echo '```'
 		echo "#### iperf2 vs iperf3"
-		echo '```'
 		) >> $report
 		for c in  ${avail_cca}; do
 			(
