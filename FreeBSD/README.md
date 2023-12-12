@@ -84,6 +84,17 @@ root@broken:~ # bectl umount 14.0-CURRENT-20230116.182721
 root@broken:~ # shutdown -r now "I've fixed my mess!"
 ```
 
+## Ports
+
+### Build with DEBUG symbols
+
+```
+echo 'WITH_DEBUG_PORTS=devel/clinfo' >> /etc/make.conf
+```
+Or if using poudriere with jail named 'builder':
+```
+echo 'WITH_DEBUG_PORTS=devel/clinfo' >> /usr/local/etc/poudriere.d/builder-make.conf
+```
 ## Extra
 
 ### dmesgd.nycbug.org

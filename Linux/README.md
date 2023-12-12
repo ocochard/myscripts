@@ -47,7 +47,7 @@ Generic linux tooling needed:
 About the package build dependencies, file debian/control should be the one, but the dpkg-buildpackage will display
 all missings deps.
 
-#### Example by repuilding existing util-linux packages
+#### Example by rebuilding existing util-linux packages
 
 Do not (download original sources)[https://www.kernel.org/pub/linux/utils/util-linux/], but the Ubuntu repository fork.
 
@@ -283,6 +283,22 @@ $ nvidia-smi
 ```
 
 # Base
+
+## swap
+
+It creates a swap file in the /:
+```
+ubuntu:/# swapon -show
+Filename				Type		Size		Used		Priority
+/swap.img                               file		8388604		0		-2
+```
+
+To disable it:
+```
+swapoff /swap.img
+rm /swap.img
+sed -i '/swap.img/d' /etc/fstab
+```
 
 ## Systemd
 

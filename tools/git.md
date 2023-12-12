@@ -70,6 +70,12 @@ git checkout BSDRP
 git pull --rebase upstream/main ?, this one is equivalent to git fetch + git rebase origin/master
 git push
 ```
+
+Or sync WIP branch with the main:
+```
+git checkout WIP
+git rebase master WIP
+```
 # https://stackoverflow.com/questions/42861353/git-pull-after-git-rebase/42862404
 
 # Cherry pick
