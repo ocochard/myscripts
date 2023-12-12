@@ -4,8 +4,6 @@
 git clone https://github.com/ggerganov/llama.cpp.git
 cd llama.cpp
 make (Linux & MacOS) or gmake (FreeBSD)
-cd models
-fetch https://huggingface.co/TheBloke/openchat_3.5-GGUF/resolve/main/openchat_3.5.Q5_K_M.gguf
-cd ..
-./server --model models/openchat_3.5.Q5_K_M.gguf
+curl --output-dir models -LO https://huggingface.co/TheBloke/Starling-LM-7B-alpha-GGUF/resolve/main/starling-lm-7b-alpha.Q4_K_M.gguf
+./server --model models/starling-lm-7b-alpha.Q4_K_M.gguf
 ```
