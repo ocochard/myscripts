@@ -85,7 +85,7 @@ sysutils/atop
 sysutils/bhyve-firmware
 sysutils/bsdstats
 sysutils/cdrkit
-sysutils/devcpu-data
+sysutils/cpu-microcode
 sysutils/fastfetch@lite
 sysutils/flashrom
 sysutils/fusefs-smbnetfs

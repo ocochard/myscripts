@@ -2,7 +2,9 @@
 
 To do: Convert my [Desktop install webpage tips](https://olivier.cochard.me/bidouillage/installation-et-configuration-de-freebsd-comme-poste-de-travail) here
 
-## Custom install media
+## Building
+
+### Custom install media
 
 Once world & kernel are built:
 ```
@@ -11,7 +13,7 @@ make -DNOPORTS -DNODOC -DNOSRC memstick
 dd if=/usr/obj/usr/src/amd64.amd64/release/memstick.img of=/dev/your-usb-stick bs=1M
 ```
 
-## Build from a builder, clients on NFS
+### Build from a builder, clients on NFS
 
 Process:
 - Builder is buildworld buildkernel, beinstall, testing
@@ -50,6 +52,19 @@ If still alive, finish it with an `etcupdate -B`, if not:
 On a ZFS BE, it is resume as:
 ```
 LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall.sh
+```
+
+### Build from MacOS (ARM M3 pro)
+
+Great [user guide](https://docs.freebsd.org/en/books/handbook/cutting-edge/#building-on-non-freebsd-hosts).
+
+```
+brew install llvm
+git clone https://git.freebsd.org/src.git freebsd
+mkdir ~/freebsd.obj
+cd freebsd
+tools/build/make.py --help
+MAKEOBJDIRPREFIX=~/freebsd.obj tools/build/make.py -j $(sysctl -n hw.ncpu) TARGET=arm64 TARGET_ARCH=aarch64 buildworld buildkernel
 ```
 
 ## ZFS
