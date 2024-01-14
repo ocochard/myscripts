@@ -16,14 +16,76 @@ Prevent password request without modifying default configuration file:
 echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/$USER
 ```
 
+## Ubuntu
+
 ### SSHd
+On desktop, sshd not installed by default:
 
 ```
 sudo apt install openssh-server
 sudo systemctl enable ssh
 ```
 
-## Ubuntu
+### LVM
+
+LVM concept in order:
+1. File systems
+2. Logical volumes (LVs)
+3. Volume groups (VGs)
+4. Physical volumes (PVs) (ie: usually same as partition)
+5. Partitons
+6. Disk
+
+Install of Ubuntu server with default option on a 128G disk VM result in only
+64G for the /, and missing 64G:
+
+```
+$ df -h
+Filesystem                         Size  Used Avail Use% Mounted on
+tmpfs                              784M  700K  783M   1% /run
+/dev/mapper/ubuntu--vg-ubuntu--lv   62G  6.6G   52G  12% /
+tmpfs                              3.9G     0  3.9G   0% /dev/shm
+tmpfs                              5.0M     0  5.0M   0% /run/lock
+/dev/vda2                          2.0G  141M  1.7G   8% /boot
+/dev/vda1                          1.1G  6.4M  1.1G   1% /boot/efi
+tmpfs                              784M  4.0K  784M   1% /run/user/1000
+
+$ lsblk
+NAME                      MAJ:MIN RM   SIZE RO TYPE MOUNTPOINTS
+sda                         8:0    0   1.9G  1 disk
+├─sda1                      8:1    0   1.9G  1 part
+└─sda2                      8:2    0   5.8M  1 part
+vda                       252:0    0   128G  0 disk
+├─vda1                    252:1    0     1G  0 part /boot/efi
+├─vda2                    252:2    0     2G  0 part /boot
+└─vda3                    252:3    0 124.9G  0 part
+  └─ubuntu--vg-ubuntu--lv 253:0    0  62.5G  0 lvm  /
+
+$ sudo lvdisplay | grep Size
+  LV Size                62.47 GiB
+
+```
+
+=> vda3 part is 125G, but lvm uses only 63G
+Confirmed by the Volume group "Free space":
+```
+$ sudo vgdisplay | grep Free
+  Free  PE / Size       15993 / 62.47 GiB
+```
+
+So need to extend it:
+```
+sudo lvextend -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
+$ sudo lvdisplay | grep Size
+  LV Size                <124.95 GiB
+```
+
+And the filesystem too:
+```
+sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
+$ df -h | grep ubuntu
+/dev/mapper/ubuntu--vg-ubuntu--lv  123G  6.6G  111G   6% /
+```
 
 ### Debian package creation
 
@@ -77,7 +139,6 @@ DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
 -b, --build=binary          binary-only, no source files.
 env nocheck: avoid running regression test
 ```
-
 
 # Remove Ubuntu apt SPAM and closed-source snap
 
@@ -134,6 +195,7 @@ sudo resolvectl flush-caches
 ## Hardware inventory
 
 ```
+lsblk
 sudo lshw
 lshw -c video
 lspci
@@ -322,6 +384,11 @@ Options:
   -P purge (remove config file)
   -l list
   --force-all
+
+From which package this file belong to ?
+```
+dpkg -S /usr/bin/m4
+```
 
 ### Alternatives
 
