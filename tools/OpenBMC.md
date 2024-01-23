@@ -7,6 +7,13 @@ Globals variable used:
 bmc=bmc.ip.ad.dress
 token=$(curl -k -H "Content-Type: application/json" -X POST https://$bmc/login -d '{"username" :  "root", "password" :  "0penBmc"}' | awk -F'"' '/token/ {print $4;}')
 ```
+
+Or [pure Redfish](https://www.dmtf.org/sites/default/files/Redfish_School-Sessions.pdf):
+
+```
+curl -k -H "Content-Type: application/json" -X GET https://$bmc/redfish/v1/ | jq '.SessionService'
+```
+
 You can use the user/pass way:
 
 ```

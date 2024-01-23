@@ -18,8 +18,9 @@
 
 set -eux
 
+# Small modification with the LFS book
+# LFS is still the rootfs directory, but it will not be used to store sources and obj directory (waste of space)
 LFS=${LFS:="${HOME}/lfs"}
-
 src="${LFS}/sources"
 logs="${HOME}/lfs.log"
 
@@ -42,7 +43,8 @@ CONFIG_SITE=$LFS/usr/share/config.site
 #export LFS LC_ALL LFS_TGT PATH CONFIG_SITE
 
 nproc=$(nproc)
-
+# glibc: smallest version of the Linux kernel the generated library is expected to support. The higher the version number is, the less compatibility code is added, and the faster the code gets.
+min_kern_ver=4.14
 ## Sources Tools chain and all packages
 
 die() {
@@ -75,6 +77,7 @@ get_source_dir() {
 }
 
 fetch_extract() {
+	die "NO MORE USED"
 	url=$1
 	filename=$(basename $url)
 	if ! [ -r ${LFS}/sources/${filename} ]; then
@@ -87,6 +90,7 @@ fetch_extract() {
 }
 
 git_clone() {
+	die "NO MORE USED"
 	# $1 ver
 	# $2 url
 	repo=$(echo $2 | awk -F/ '{print $NF}' | sed 's/.git$//')
@@ -187,7 +191,7 @@ host_syscheck() {
 }
 
 # Chapter 3
-build_deps_install() {
+host_build_deps_install() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter03/introduction.html
 	echo "XXX Installing build dependencies on host..."
 	#echo "sudo apt-get install build-essential autoconf automake libtool bison texinfo"
@@ -228,7 +232,7 @@ versions_set() {
 }
 
 # chapter 5
-binutils_build_pass1() {
+cct_binutils_pass1() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter05/binutils-pass1.html
 	# It is important that Binutils be the first package compiled because both
 	# Glibc and GCC perform various tests on the available linker and assembler to
@@ -244,13 +248,13 @@ binutils_build_pass1() {
 			--target=$LFS_TGT   \
 			--disable-nls       \
 			--enable-gprofng=no \
-			--disable-werror > ${logs}/binutils_build_pass1.log
-		make -j ${nproc} >> ${logs}/binutils_build_pass1.log
-		make -j ${nproc} install >> ${logs}/binutils_build_pass1.log
+			--disable-werror > ${logs}/cct_binutils_pass1.log
+		make -j ${nproc} >> ${logs}/cct_binutils_pass1.log
+		make -j ${nproc} install >> ${logs}/cct_binutils_pass1.log
 	fi
 }
 
-gcc_build_pass1() {
+cct_gcc_pass1() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter05/gcc-pass1.html
 	if [ ! -f $LFS/tools/bin/${LFS_TGT}-gcc ]; then
 		echo "[Toolchain] Building and installing gcc (pass1)..."
@@ -302,9 +306,9 @@ gcc_build_pass1() {
 			--disable-libssp          \
 			--disable-libvtv          \
 			--disable-libstdcxx       \
-			--enable-languages=c,c++ > ${logs}/gcc_build_pass1.log
-		make -j ${nproc} >> ${logs}/gcc_build_pass1.log
-		make -j ${nproc} install >> ${logs}/gcc_build_pass1.log
+			--enable-languages=c,c++ > ${logs}/cct_gcc_pass1.log
+		make -j ${nproc} >> ${logs}/cct_gcc_pass1.log
+		make -j ${nproc} install >> ${logs}/cct_gcc_pass1.log
 		# Generate full version of header limits.h (will be needed later)
 		cd ..
 		cat gcc/limitx.h gcc/glimits.h gcc/limity.h > \
@@ -312,20 +316,20 @@ gcc_build_pass1() {
 	fi
 }
 
-linux_api_headers() {
+cct_linux_api_headers() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter05/linux-headers.html
 	if [ ! -d $LFS/usr/include ]; then
 		echo "[Toolchain] Building and installing linux API headers..."
 		srcdir=$(get_source_dir '/linux')
 		cd ${srcdir}
-		make -j ${nproc} mrproper > ${logs}/linux_api_headers.log
-		make -j ${nproc} headers >> ${logs}/linux_api_headers.log
+		make -j ${nproc} mrproper > ${logs}/cct_linux_api_headers.log
+		make -j ${nproc} headers >> ${logs}/cct_linux_api_headers.log
 		find usr/include -type f ! -name '*.h' -delete
 		cp -r usr/include $LFS/usr
 	fi
 }
 
-glibc_build() {
+cct_glibc() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter05/glibc.html
 	if [ ! -f ${LFS}/usr/lib/libc.so  ]; then
 		echo "[Toolchain] Building and installing glibc..."
@@ -350,9 +354,9 @@ glibc_build() {
 		 	--build=$(../scripts/config.guess) \
 		 	--enable-kernel=${linux_min_ver}               \
 		 	--with-headers=$LFS/usr/include    \
-		 	libc_cv_slibdir=/usr/lib > {logs}/glibc_build.log
-		make -j ${nproc} >> ${logs}/glibc_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/glibc_build.log
+		 	libc_cv_slibdir=/usr/lib > {logs}/cct_glibc.log
+		make -j ${nproc} >> ${logs}/cct_glibc.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cct_glibc.log
 		sed '/RTLDLIST=/s@/usr@@g' -i $LFS/usr/bin/ldd
 		echo "Testing glibc install:"
 		echo 'int main(){}' | $LFS_TGT-gcc -xc -
@@ -361,7 +365,7 @@ glibc_build() {
 	fi
 }
 
-libstdcpp_build() {
+cct_libstdcpp() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter05/gcc-libstdc++.html
 	if [ ! -d ${LFS}/tools/${LFS_TGT}/include/c++ ]; then
 		echo "[Toolchain] Building and installing libstdc++..."
@@ -377,9 +381,9 @@ libstdcpp_build() {
 			--disable-multilib              \
 			--disable-nls                   \
 			--disable-libstdcxx-pch         \
-			--with-gxx-include-dir=/tools/$LFS_TGT/include/c++/${gcc_ver} > ${logs}/libstdpp_build.log
-		make -j ${nproc} >> ${logs}/libstdpp_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/libstdpp_build.log
+			--with-gxx-include-dir=/tools/$LFS_TGT/include/c++/${gcc_ver} > ${logs}/cct_libstdpp.log
+		make -j ${nproc} >> ${logs}/cct_libstdpp.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cct_libstdpp.log
 		rm $LFS/usr/lib/lib{stdc++,stdc++fs,supc++}.la
 	fi
 }
@@ -402,17 +406,17 @@ toolchain_build() {
 	# echo "ld:"
 	# readelf -l /bin/bash | grep interpreter
 	#[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
-	binutils_build_pass1
+	cct_binutils_pass1
 	# Build limited gcc (no Libstdc++ support, because no glibc)
-	gcc_build_pass1
-	linux_api_headers
-	glibc_build
-	libstdcpp_build
+	cct_gcc_pass1
+	cct_linux_api_headers
+	cct_glibc
+	cct_libstdcpp
 }
 
 # chapter 6
 
-cc_temp_build_ncurse() {
+cc_temp_ncurse() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/ncurses.html
 	if [ ! -f $LFS/lib/libncurses.so ]; then
 		echo "Building and installing ncurse..."
@@ -422,9 +426,9 @@ cc_temp_build_ncurse() {
 		mkdir -p build
 		cd build
 		# tic build on host
-		../configure > ${logs}/ncurse_build.log
-		make -j ${nproc} -C include >> ${logs}/ncurse_build.log
-		make -j ${nproc} -C progs tic >> ${logs}/ncurse_build.log
+		../configure > ${logs}/cc_temp_ncurse.log
+		make -j ${nproc} -C include >> ${logs}/cc_temp_ncurse.log
+		make -j ${nproc} -C progs tic >> ${logs}/cc_temp_ncurse.log
 		cd ..
 		./configure --prefix=/usr                \
 			--host=$LFS_TGT              \
@@ -437,17 +441,17 @@ cc_temp_build_ncurse() {
 			--without-debug              \
 			--without-ada                \
 			--disable-stripping          \
-			--enable-widec >> ${logs}/ncurse_build.log
-		make -j ${nproc} >> ${logs}/ncurse_build.log
+			--enable-widec >> ${logs}/cc_temp_ncurse.log
+		make -j ${nproc} >> ${logs}/cc_temp_ncurse.log
 		# need to pass the path of the newly built tic that runs on the building machine,
 		# so the terminal database can be created without errors.
-		make -j ${nproc} DESTDIR=$LFS TIC_PATH=$(pwd)/build/progs/tic install >> ${logs}/ncurse_build.log
+		make -j ${nproc} DESTDIR=$LFS TIC_PATH=$(pwd)/build/progs/tic install >> ${logs}/cc_temp_ncurse.log
 		# The libncurses.so library is needed by a few packages we will build soon. We create this small linker script
 		echo "INPUT(-lncursesw)" > $LFS/usr/lib/libncurses.so
 	fi
 }
 
-cc_temp_build_bash() {
+cc_temp_bash() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/bash.html
 	if [ ! -f $LFS/usr/bin/bash ]; then
 		echo "Building and installing bash..."
@@ -458,15 +462,15 @@ cc_temp_build_bash() {
 		./configure --prefix=/usr                      \
 			--build=$(sh support/config.guess) \
 			--host=$LFS_TGT                    \
-			--without-bash-malloc > ${logs}/bash_build.log
-		make -j ${nproc} >> ${logs}/bash_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/bash_build.log
+			--without-bash-malloc > ${logs}/cc_temp_bash.log
+		make -j ${nproc} >> ${logs}/cc_temp_bash.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_bash.log
 		# Make a link for the programs that use sh for a shell
 		ln -s bash $LFS/bin/sh
 	fi
 }
 
-cc_temp_build_coreutils() {
+cc_temp_coreutils() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/coreutils.html
 	if [ ! -f $LFS/usr/bin/hostname ]; then
 		echo "Building and installing coreutils..."
@@ -477,9 +481,9 @@ cc_temp_build_coreutils() {
 			--host=$LFS_TGT                   \
 			--build=$(build-aux/config.guess) \
 			--enable-install-program=hostname \
-			--enable-no-install-program=kill,uptime > ${logs}/coreutils_build.log
-		make -j ${nproc} >> ${logs}/coreutils_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/coreutils_build.log
+			--enable-no-install-program=kill,uptime > ${logs}/cc_temp_coreutils.log
+		make -j ${nproc} >> ${logs}/cc_temp_coreutils.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_coreutils.log
 		# Move programs to their final expected locations.
 		# Although this is not necessary in this temporary environment, we must do so because some programs hardcode executable locations
 		mv $LFS/usr/bin/chroot $LFS/usr/sbin
@@ -489,7 +493,7 @@ cc_temp_build_coreutils() {
 	fi
 }
 
-cc_temp_build_diffutils() {
+cc_temp_diffutils() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/diffutils.html
 	if [ ! -f $LFS/usr/bin/cmp ]; then
 		echo "Building and installing diffutils..."
@@ -497,13 +501,13 @@ cc_temp_build_diffutils() {
 		cd ${srcdir}
 		./configure --prefix=/usr   \
 			--host=$LFS_TGT \
-			--build=$(./build-aux/config.guess) > ${logs}/diffutils_build.log
-		make -j ${nproc} >> ${logs}/diffutils_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/diffutils_build.log
+			--build=$(./build-aux/config.guess) > ${logs}/cc_temp_diffutils.log
+		make -j ${nproc} >> ${logs}/cc_temp_diffutils.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_diffutils.log
 	fi
 }
 
-cc_temp_build_file() {
+cc_temp_file() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/file.html
 	if [ ! -f $LFS/usr/bin/file ]; then
 		echo "Building and installing file..."
@@ -520,18 +524,18 @@ cc_temp_build_file() {
 		../configure --disable-bzlib      \
 			--disable-libseccomp \
 			--disable-xzlib      \
-			--disable-zlib > ${logs}/file_build.log
-		make -j ${nproc} >> ${logs}/file_build.log
+			--disable-zlib > ${logs}/cc_temp_file.log
+		make -j ${nproc} >> ${logs}/cc_temp_file.log
 		cd ..
-		./configure --prefix=/usr --host=$LFS_TGT --build=$(./config.guess) >> ${logs}/file_build.log
-		make FILE_COMPILE=$(pwd)/build/src/file >> ${logs}/file_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/file_build.log
+		./configure --prefix=/usr --host=$LFS_TGT --build=$(./config.guess) >> ${logs}/cc_temp_file.log
+		make FILE_COMPILE=$(pwd)/build/src/file >> ${logs}/cc_temp_file.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_file.log
 		# Remove the libtool archive file because it is harmful for cross compilation:
 		rm $LFS/usr/lib/libmagic.la
 	fi
 }
 
-cc_temp_build_findutils() {
+cc_temp_findutils() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/findutils.html
 	if [ ! -f $LFS/usr/bin/find ]; then
 		echo "Building and installing findutils..."
@@ -540,13 +544,13 @@ cc_temp_build_findutils() {
 		./configure --prefix=/usr                   \
 			--localstatedir=/var/lib/locate \
 			--host=$LFS_TGT                 \
-			--build=$(build-aux/config.guess) > ${logs}/findutils_build.log
-		make -j ${nproc} >> ${logs}/findutils_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/findutils_build.log
+			--build=$(build-aux/config.guess) > ${logs}/cc_temp_findutils.log
+		make -j ${nproc} >> ${logs}/cc_temp_findutils.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_findutils.log
 	fi
 }
 
-cc_temp_build_gawk() {
+cc_temp_gawk() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/gawk.html
 	if [ ! -f $LFS/usr/bin/gawk ]; then
 		echo "Building and installing gawk..."
@@ -556,26 +560,26 @@ cc_temp_build_gawk() {
 		sed -i 's/extras//' Makefile.in
 		./configure --prefix=/usr   \
 			--host=$LFS_TGT \
-			--build=$(build-aux/config.guess) > ${logs}/gawk_build.log
-		make -j ${nproc} >> ${logs}/gawk_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/gawk_build.log
+			--build=$(build-aux/config.guess) > ${logs}/cc_temp_gawk.log
+		make -j ${nproc} >> ${logs}/cc_temp_gawk.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_gawk.log
 	fi
 }
 
-cc_temp_build_gzip() {
+cc_temp_gzip() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/gzip.html
 	if [ ! -f $LFS/usr/bin/gzip ]; then
 		echo "Building and installing gzip..."
 		srcdir=$(get_source_dir gzip)
 		cd ${srcdir}
 		./configure --prefix=/usr   \
-			--host=$LFS_TGT > ${logs}/gzip_build.log
-		make -j ${nproc} >> ${logs}/gzip_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/gzip_build.log
+			--host=$LFS_TGT > ${logs}/cc_temp_gzip.log
+		make -j ${nproc} >> ${logs}/cc_temp_gzip.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_gzip.log
 	fi
 }
 
-cc_temp_build_make() {
+cc_temp_make() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/make.html
 	if [ ! -f $LFS/usr/bin/make ]; then
 		echo "Building and installing make..."
@@ -586,9 +590,9 @@ cc_temp_build_make() {
 		./configure --prefix=/usr   \
 			--without-guile \
 			--host=$LFS_TGT \
-			--build=$(build-aux/config.guess) > ${logs}/make_build.log
-		make -j ${nproc} >> ${LFS}/make_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/make_build.log
+			--build=$(build-aux/config.guess) > ${logs}/cc_temp_make.log
+		make -j ${nproc} >> ${LFS}/cc_temp_make.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_make.log
 	fi
 }
 
@@ -602,13 +606,13 @@ cc_temp_build() {
 		cd ${srcdir}
 		./configure --prefix=/usr   \
 			--host=$LFS_TGT \
-			--build=$(build-aux/config.guess) > ${logs}/${name}_build.log
-		make -j ${nproc} >> ${logs}/${name}_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/${name}_build.log
+			--build=$(build-aux/config.guess) > ${logs}/cc_temp_${name}.log
+		make -j ${nproc} >> ${logs}/cc_temp_${name}.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_${name}.log
 	fi
 }
 
-cc_temp_build_xz() {
+cc_temp_xz() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/xz.html
 	if [ ! -f $LFS/usr/bin/xz ]; then
 		echo "Building and installing xz..."
@@ -618,15 +622,15 @@ cc_temp_build_xz() {
 			--host=$LFS_TGT \
 			--disable-static                  \
 			--docdir=/usr/share/doc/xz-5.4.5 \
-			--build=$(build-aux/config.guess) > ${logs}/patch_build.log
-		make -j ${nproc} >> ${logs}/patch_build.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/patch_build.log
+			--build=$(build-aux/config.guess) > ${logs}/cc_temp_xz.log
+		make -j ${nproc} >> ${logs}/cc_temp_xz.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_xz.log
 		# Remove the libtool archive file because it is harmful for cross compilation:
 		rm -v $LFS/usr/lib/liblzma.la
 	fi
 }
 
-cc_temp_build_binutils() {
+cc_temp_binutils() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/binutils-pass2.html
 	if [ ! -d $LFS/usr/${LFS_TGT}/lib/ldscripts ]; then
 		echo "Building and installing binutils (pass2)..."
@@ -643,15 +647,15 @@ cc_temp_build_binutils() {
 		    --enable-gprofng=no        \
 		    --disable-werror           \
     		--enable-64-bit-bfd        \
-    		--enable-default-hash-style=gnu > ${logs}/binutils_build_pass2.log
-		make -j ${nproc} >> ${logs}/binutils_build_pass2.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/binutils_build_pass2.log
+    		--enable-default-hash-style=gnu > ${logs}/cc_temp_binutils_pass2.log
+		make -j ${nproc} >> ${logs}/cc_temp_binutils_pass2.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_binutils_pass2.log
 		# Remove the libtool archive files because they are harmful for cross compilation, and remove unnecessary static libraries:
 		rm $LFS/usr/lib/lib{bfd,ctf,ctf-nobfd,opcodes,sframe}.{a,la}
 	fi
 }
 
-cc_temp_build_gcc() {
+cc_temp_gcc() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter06/gcc-pass2.html
 	if [ ! -f $LFS/usr/bin/gcc ]; then
 		echo "Building and installing gcc (pass2)..."
@@ -705,9 +709,9 @@ cc_temp_build_gcc() {
 			--disable-libsanitizer	\
 			--disable-libssp          \
 			--disable-libvtv          \
-			--enable-languages=c,c++ > ${logs}/gcc_build_pass2.log
-		make -j ${nproc} >> ${logs}/gcc_build_pass2.log
-		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/gcc_build_pass2.log
+			--enable-languages=c,c++ > ${logs}/cc_temp_gcc_pass2.log
+		make -j ${nproc} >> ${logs}/cc_temp_gcc_pass2.log
+		make -j ${nproc} DESTDIR=$LFS install >> ${logs}/cc_temp_gcc_pass2.log
 		ln -sv gcc $LFS/usr/bin/cc
 	fi
 }
@@ -719,22 +723,23 @@ cross_compil_temp_tools() {
 	# in a way that isolates them from the host distribution
 
 	cc_temp_build m4
-	cc_temp_build_ncurse
-	cc_temp_build_bash
-	cc_temp_build_coreutils
-	cc_temp_build_diffutils
-	cc_temp_build_file
-	cc_temp_build_findutils
-	cc_temp_build_gawk
+	cc_temp_ncurse
+	cc_temp_bash
+	cc_temp_coreutils
+	cc_temp_diffutils
+	cc_temp_file
+	cc_temp_findutils
+	cc_temp_gawk
 	cc_temp_build grep
-	cc_temp_build_gzip
-	cc_temp_build_make
+	cc_temp_gzip
+	cc_temp_make
 	cc_temp_build patch
 	cc_temp_build sed
 	cc_temp_build tar
-	cc_temp_build_xz
- 	cc_temp_build_binutils
-	cc_temp_build_gcc
+	cc_temp_xz
+ 	cc_temp_binutils
+	cc_temp_gcc
+
 }
 
 grub_build() {
@@ -783,6 +788,164 @@ rootfs_populate() {
 	mkdir -pv $LFS/tools
 }
 
+CR() {
+	# Run in chroot
+	sudo chroot "$LFS" /usr/bin/env -i   \
+		HOME=/root                  \
+		TERM="$TERM"                \
+		PS1='(lfs chroot) \u:\w\$ ' \
+		PATH=/usr/bin:/usr/sbin     \
+		MAKEFLAGS="-j $nproc"      \
+		TESTSUITEFLAGS="-j$nproc" \
+		/bin/bash -xc "$*"
+}
+
+cc_temp_build_chroot_gettext() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/gettext.html
+
+	# We do not need to install any of the shared Gettext libraries at this time, therefore there is no need to build them.
+	if ! [ -f ${LFS}/usr/bin/xgettext ]; then
+		src=$(get_source_dir gettext)
+		src_rel=${src/#$LFS}
+		cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+./configure --disable-shared
+make
+cp -v gettext-tools/src/{msgfmt,msgmerge,xgettext} /usr/bin
+EOF
+		CR "bash ./build.sh" > ${logs}/cc_temp_chroot_gettext.log
+	fi
+}
+
+cc_temp_build_chroot() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/*.html
+	name=$1
+	if ! [ -e ${LFS}/usr/bin/$name -o -e ${LFS}/usr/lib/$name -o -e ${LFS}/usr/share/$name ]; then
+		src=$(get_source_dir $name)
+		src_rel=${src/#$LFS}
+		cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+./configure --prefix=/usr
+make
+make install
+EOF
+		if [ "${name}" = "texinfo" ]; then
+			# It seems texinfo doesn’t fully install, but not a problem
+			sed -i 's/install/install | true/' ${LFS}/build.sh
+		fi
+		CR "bash ./build.sh" > ${logs}/cc_temp_chroot_$name.log 2>&1
+	fi
+}
+
+cc_temp_build_chroot_perl() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/perl.html
+
+	if ! [ -e ${LFS}/usr/bin/perl ]; then
+		src=$(get_source_dir perl)
+		src_rel=${src/#$LFS}
+		cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+sh Configure -des                                        \
+             -Dprefix=/usr                               \
+             -Dvendorprefix=/usr                         \
+             -Duseshrplib                                \
+             -Dprivlib=/usr/lib/perl5/5.38/core_perl     \
+             -Darchlib=/usr/lib/perl5/5.38/core_perl     \
+             -Dsitelib=/usr/lib/perl5/5.38/site_perl     \
+             -Dsitearch=/usr/lib/perl5/5.38/site_perl    \
+             -Dvendorlib=/usr/lib/perl5/5.38/vendor_perl \
+             -Dvendorarch=/usr/lib/perl5/5.38/vendor_perl
+make
+make install
+EOF
+		CR "bash ./build.sh" > ${logs}/cc_temp_chroot_perl.log 2>&1
+	fi
+}
+
+cc_temp_build_chroot_python() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/python.html
+
+	if ! [ -e ${LFS}/usr/bin/python3 ]; then
+		src=$(get_source_dir Python)
+		src_rel=${src/#$LFS}
+		cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+./configure --prefix=/usr   \
+            --enable-shared \
+            --without-ensurepip
+make
+make install
+EOF
+		CR "bash ./build.sh" > ${logs}/cc_temp_chroot_python.log 2>&1
+	fi
+}
+cc_temp_build_chroot_util-linux () {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/util-linux.html
+	if ! [ -e ${LFS}/usr/bin/mount ]; then
+		src=$(get_source_dir util-linux)
+		src_rel=${src/#$LFS}
+		cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+mkdir -p /var/lib/hwclock
+cd ${src_rel}
+./configure --libdir=/usr/lib	\
+	--runstatedir=/run			\
+	--disable-chfn-chsh			\
+	--disable-login				\
+	--disable-nologin			\
+	--disable-su				\
+	--disable-setpriv			\
+	--disable-runuser			\
+	--disable-pylibmount		\
+	--disable-static			\
+	--without-python			\
+	ADJTIME_PATH=/var/lib/hwclock/adjtime \
+	--docdir=/usr/share/doc/util-linux-2.39.3
+make
+make install
+EOF
+		CR "bash ./build.sh" > ${logs}/cc_temp_chroot_util-linux.log 2>&1
+	fi
+
+
+}
+
+mount_vfs() {
+
+	# Preparing Virtual Kernel File Systems
+
+	sudo mkdir -p ${LFS}/{dev,proc,sys,run}
+	# host-agnostic way to populate the $LFS/dev directory is by bind
+	# mounting the host system's /dev directory and not using devtmpfs
+   	mountpoint -q ${LFS}/dev || sudo mount --bind /dev $LFS/dev
+	mountpoint -q ${LFS}/dev/pts || sudo mount --bind /dev/pts $LFS/dev/pts
+	mountpoint -q ${LFS}/proc || sudo mount -t proc proc $LFS/proc
+	mountpoint -q ${LFS}/sys || sudo mount -t sysfs sysfs $LFS/sys
+	mountpoint -q ${LFS}/run || sudo mount -t tmpfs tmpfs $LFS/run
+
+	if [ -h $LFS/dev/shm ]; then
+		(cd $LFS/dev; mkdir $(readlink shm))
+	else
+		sudo mount -t tmpfs -o nosuid,nodev tmpfs $LFS/dev/shm
+	fi
+}
+
+umount_vfs() {
+	# Umount VFS
+	sudo mountpoint -q $LFS/dev/shm && sudo umount $LFS/dev/shm
+	sudo umount $LFS/dev/pts
+	sudo umount $LFS/{sys,proc,run,dev}
+}
+
 chroot_cc_temp_tools() {
 	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/introduction.html
 	# Build the last missing bits of the temporary system:
@@ -794,9 +957,6 @@ chroot_cc_temp_tools() {
 	# Stage 3: entering the chroot environment (which further improves host isolation) and constructing the remaining tools needed to build the final system
 
 	#
-	echo "DEBUG"
-	sudo echo LFS: $LFS
-	exit 1
 
 	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/changingowner.html
 	sudo chown -R root:root $LFS/{usr,lib,var,etc,bin,sbin,tools}
@@ -806,55 +966,126 @@ chroot_cc_temp_tools() {
 	esac
 
 	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/kernfs.html
-
-	# Preparing Virtual Kernel File Systems
-
-	sudo mkdir -p $LFS/{dev,proc,sys,run}
-	# xxx need to check if not mounted first
-	# host-agnostic way to populate the $LFS/dev directory is by bind
-	# mounting the host system's /dev directory and not using devtmpfs
-	if !grep -q "${LFS}/dev" /proc/mounts; then
-		sudo mount --bind /dev $LFS/dev
-	fi
-
-	if !grep -q "${LFS}/dev/pts" /proc/mounts; then
-		sudo mount --bind /dev/pts $LFS/dev/pts
-	fi
-	if !grep -q "${LFS}/proc" /proc/mounts; then
-		sudo mount -t proc proc $LFS/proc
-	fi
-	if !grep -q "${LFS}/sys" /proc/mounts; then
-		sudo mount -t sysfs sysfs $LFS/sys
-	fi
-	if !grep -q "${LFS}/run" /proc/mounts; then
-		sudo mount -t tmpfs tmpfs $LFS/run
-	fi
-
-	if [ -h $LFS/dev/shm ]; then
-		(cd $LFS/dev; mkdir $(readlink shm))
-	else
-		sudo mount -t tmpfs -o nosuid,nodev tmpfs $LFS/dev/shm
-	fi
+	mount_vfs
 
 	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/chroot.html
+	# cf CR()
 
-	chroot "$LFS" /usr/bin/env -i   \
-    HOME=/root                  \
-    TERM="$TERM"                \
-    PS1='(lfs chroot) \u:\w\$ ' \
-    PATH=/usr/bin:/usr/sbin     \
-    MAKEFLAGS="-j$(nproc)"      \
-    TESTSUITEFLAGS="-j$(nproc)" \
-    /bin/bash --login
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/creatingdirs.html
 
+	CR "mkdir -p /{boot,home,mnt,opt,srv}"
+	CR "mkdir -p /etc/{opt,sysconfig}"
+	CR "mkdir -p /lib/firmware"
+	CR "mkdir -p /media/{floppy,cdrom}"
+	CR "mkdir -p /usr/{,local/}{include,src}"
+	CR "mkdir -p /usr/local/{bin,lib,sbin}"
+	CR "mkdir -p /usr/{,local/}share/{color,dict,doc,info,locale,man}"
+	CR "mkdir -p /usr/{,local/}share/{misc,terminfo,zoneinfo}"
+	CR "mkdir -p /usr/{,local/}share/man/man{1..8}"
+	CR "mkdir -p /var/{cache,local,log,mail,opt,spool}"
+	CR "mkdir -p /var/lib/{color,misc,locate}"
+
+	CR "ln -sf /run /var/run"
+	CR "ln -sf /run/lock /var/lock"
+
+	CR "install -d -m 0750 /root"
+	CR "install -d -m 1777 /tmp /var/tmp"
+
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/createfiles.html
+
+	CR "ln -fs /proc/self/mounts /etc/mtab"
+
+	cat << EOF | sudo tee ${LFS}/etc/hosts
+127.0.0.1  localhost $(hostname)
+::1        localhost
+EOF
+
+	cat << "EOF" | sudo tee ${LFS}/etc/passwd
+root:x:0:0:root:/root:/bin/bash
+bin:x:1:1:bin:/dev/null:/usr/bin/false
+daemon:x:6:6:Daemon User:/dev/null:/usr/bin/false
+messagebus:x:18:18:D-Bus Message Daemon User:/run/dbus:/usr/bin/false
+uuidd:x:80:80:UUID Generation Daemon User:/dev/null:/usr/bin/false
+nobody:x:65534:65534:Unprivileged User:/dev/null:/usr/bin/false
+EOF
+
+	cat << "EOF" | sudo tee ${LFS}/etc/group
+root:x:0:
+bin:x:1:daemon
+sys:x:2:
+kmem:x:3:
+tape:x:4:
+tty:x:5:
+daemon:x:6:
+floppy:x:7:
+disk:x:8:
+lp:x:9:
+dialout:x:10:
+audio:x:11:
+video:x:12:
+utmp:x:13:
+cdrom:x:15:
+adm:x:16:
+messagebus:x:18:
+input:x:24:
+mail:x:34:
+kvm:x:61:
+uuidd:x:80:
+wheel:x:97:
+users:x:999:
+nogroup:x:65534:
+EOF
+
+	if ! grep -q tester ${LFS}/etc/passwd; then
+		CR "echo 'tester:x:101:101::/home/tester:/bin/bash' >> /etc/passwd"
+		CR "echo 'tester:x:101:' >> /etc/group"
+		CR "install -o tester -d /home/tester"
+	fi
+
+	CR "touch /var/log/{btmp,lastlog,faillog,wtmp}"
+	CR "chgrp -v utmp /var/log/lastlog"
+	CR "chmod -v 664  /var/log/lastlog"
+	CR "chmod -v 600  /var/log/btmp"
+
+	cc_temp_build_chroot_gettext
+	cc_temp_build_chroot bison
+	cc_temp_build_chroot_perl
+	cc_temp_build_chroot_python
+	cc_temp_build_chroot texinfo
+	cc_temp_build_chroot_util-linux
+
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter07/cleanup.html
+
+	# Cleaning
+
+	CR 'rm -rf /usr/share/{info,man,doc}/*'
+	CR 'find /usr/{lib,libexec} -name \*.la -delete'
+	CR 'rm -rf /tools'
+
+	rm ${LFS}/build.sh
+
+	# Backup
+	if ! [ -f $HOME/lfs-temp-tools-r12.0-139.tar.xz ]; then
+		umount_vfs
+		cd $LFS
+		tar -cJpf $HOME/lfs-temp-tools-r12.0-139.tar.xz .
+	fi
 }
 
-
-build_user() {
+host_add_user() {
 	# https://www.linuxfromscratch.org/lfs/view/stable/chapter04/addinguser.html
 	echo "XXX Need to use $USER"
 }
 
+system_build() {
+	# https://www.linuxfromscratch.org/lfs/view/development/part4.html
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/introduction.html
+
+	mount_vfs
+	echo DEBUG END
+	exit 1
+
+}
 #### Main ####
 
 # Building the LFS Cross Toolchain and Temporary Tools
@@ -871,15 +1102,15 @@ mkdir -p ${logs}
 # Do we have all requiered tools on the host ?
 host_syscheck
 # Fetching sources
-build_deps_install
+host_build_deps_install
 fetch_sources
+# Extract some important version from the downloaded sources
 versions_set
 rootfs_populate
-build_user
+host_add_user
 toolchain_build
 cross_compil_temp_tools
-# XXX chroot mean to cross-compil?!
-chroot_cc_temp_tools
+system_build
 #grub_build
 #disk_image_create
 #grub_install
