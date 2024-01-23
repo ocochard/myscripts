@@ -1,7 +1,6 @@
 # Stable diffusion
 
-Official instruction:
-https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Installation-on-Apple-Silicon
+[Official instruction to install automatic1111 on MacOS](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Installation-on-Apple-Silicon)
 
 ```
 brew install cmake protobuf rust python@3.10 git wget
@@ -13,16 +12,4 @@ curl -LO stable-diffusion-webui/models/Stable-diffusion/Protogen_Infinity.ckpt "
 
 # Models
 
-Some populars:
-Stable Diffusion Waifu Diffusion
-Realistic Vision
-MeinaMix
-Anything V3
-DreamShaper
-Protogen
-Elldreths Retro Mix
-Protogen
-Modelshoot
-AbyssOrangeMix3 (AOM3)
-Deliberate
-OpenJourney
+Some [populars list](https://openaijourney.com/best-stable-diffusion-models/).
