@@ -31,6 +31,7 @@ logs="${HOME}/lfs.log"
 umask 022
 LC_ALL=POSIX
 LFS_TGT=$(uname -m)-lfs-linux-gnu
+# aarch64-lfs-linux-gnu
 PATH=/usr/bin
 if [ ! -L /bin ]; then
 	# If /bin is not a symbolic link, it must be added to the PATH variable.
@@ -42,9 +43,12 @@ PATH=$LFS/tools/bin:$PATH
 CONFIG_SITE=$LFS/usr/share/config.site
 #export LFS LC_ALL LFS_TGT PATH CONFIG_SITE
 
+# In order to factorize build function, let's try to pass custom configure arguments
+CONF_ARGS=""
+CONF_ENV=""
+
 nproc=$(nproc)
 # glibc: smallest version of the Linux kernel the generated library is expected to support. The higher the version number is, the less compatibility code is added, and the faster the code gets.
-min_kern_ver=4.14
 ## Sources Tools chain and all packages
 
 die() {
@@ -54,25 +58,25 @@ die() {
 
 extract_file() {
 	local name=$1
-	n=$(find ${LFS}/sources -maxdepth 1 -type f -regex ".*${name}.*tar.*" | wc -l)
+	n=$(find ${LFS}/sources -maxdepth 1 -type f -regex ".*/${name}.*tar.*" | wc -l)
 	if [ "$n" -gt 1 ]; then
 		die "Multiples matchs regarding source archive name for ${name}"
 	elif [ "$n" -eq 0 ]; then
 		die "Did not find ${name} file"
 	fi
-	file=$(find ${LFS}/sources -maxdepth 1 -type f -regex ".*${name}.*tar.*")
+	file=$(find ${LFS}/sources -maxdepth 1 -type f -regex ".*/${name}.*tar.*")
 	tar -C ${LFS}/sources -xf ${file}
 }
 
 get_source_dir() {
 	name=$1
-	n=$(find ${LFS}/sources -maxdepth 1 -type d -regex  ".*${name}.*" | wc -l)
+	n=$(find ${LFS}/sources -maxdepth 1 -type d -regex  ".*/${name}.*" | wc -l)
 	if [ "$n" -gt 1 ]; then
 		die "Multipe matchs regarding source directory for ${name}"
 	elif [ "$n" -eq 0 ]; then
 		extract_file ${name}
 	fi
-	dir=$(find ${LFS}/sources -maxdepth 1 -type d -regex ".*${name}.*")
+	dir=$(find ${LFS}/sources -maxdepth 1 -type d -regex ".*/${name}.*")
 	echo $dir
 }
 
@@ -120,6 +124,7 @@ host_ver_check() {
 
 host_ver_kernel() {
    	# https://www.linuxfromscratch.org/lfs/view/stable/chapter02/hostreqs.html
+	# XXX NOT USED
 	kver=$(uname -r | grep -E -o '^[0-9\.]+')
 	if printf '%s\n' $1 $kver | sort --version-sort --check &>/dev/null; then
 		printf "OK:    Linux Kernel $kver >= $1\n"; return 0;
@@ -161,7 +166,7 @@ host_syscheck() {
 	host_ver_check Texinfo        texi2any 5.0
 	host_ver_check Xz             xz       5.0.0
 	host_ver_check Wget           wget     1.0
-	host_ver_kernel 4.14
+	#host_ver_kernel ${linux_min_ver}
 
 	if mount | grep -q 'devpts on /dev/pts' && [ -e /dev/ptmx ]; then
 		echo "OK:    Linux Kernel supports UNIX 98 PTY"
@@ -322,7 +327,9 @@ cct_linux_api_headers() {
 		echo "[Toolchain] Building and installing linux API headers..."
 		srcdir=$(get_source_dir '/linux')
 		cd ${srcdir}
+		# Make sure there are no stale files embedded in the package
 		make -j ${nproc} mrproper > ${logs}/cct_linux_api_headers.log
+		# Extract the user-visible kernel headers from the source
 		make -j ${nproc} headers >> ${logs}/cct_linux_api_headers.log
 		find usr/include -type f ! -name '*.h' -delete
 		cp -r usr/include $LFS/usr
@@ -345,9 +352,10 @@ cct_glibc() {
 		if ! grep -q '/var/lib/nss_db' nss/db-Makefile;	then
 			patch -Np1 -i ../glibc-${glibc_ver}-fhs-1.patch
 		fi
-		mkdir -p build
-		cd build
+		mkdir -p cct_build
+		cd cct_build
 		echo "rootsbindir=/usr/sbin" > configparms
+		# https://www.gnu.org/software/autoconf/manual/autoconf-2.69/html_node/Hosts-and-Cross_002dCompilation.html
 		../configure                         \
 			--prefix=/usr                      \
 		 	--host=$LFS_TGT                    \
@@ -402,12 +410,21 @@ toolchain_build() {
 
 	# echo "Host:"
 	# XXX need to check all binaries installed first
+	# Displaying host triplet
 	# gcc -dumpmachine
 	# echo "ld:"
 	# readelf -l /bin/bash | grep interpreter
 	#[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+	# How to know if already installed bin is a temp|stage1 or a final stage3?
+	# reatelf -a:
+	# Section headers name? .hash vs .gnu.hash
+	# Segments section ? .note.gnu
+	# Dynamic section ? Flags: PIE
+	# Version symbols section '.gnu.version' contains 125
+	# Displaying notes found in: .note.gnu.build-id
+	# OS: Linux, ABI: 3.7.0  vs ABI: 4.14.0
 	cct_binutils_pass1
-	# Build limited gcc (no Libstdc++ support, because no glibc)
+	# Build limited gcc (no Libstdc++ support, because no glibc)
 	cct_gcc_pass1
 	cct_linux_api_headers
 	cct_glibc
@@ -922,8 +939,9 @@ EOF
 mount_vfs() {
 
 	# Preparing Virtual Kernel File Systems
-
-	sudo mkdir -p ${LFS}/{dev,proc,sys,run}
+	if ! [ -d  ${LFS}/dev ]; then
+		sudo mkdir -p ${LFS}/{dev,proc,sys,run}
+	fi
 	# host-agnostic way to populate the $LFS/dev directory is by bind
 	# mounting the host system's /dev directory and not using devtmpfs
    	mountpoint -q ${LFS}/dev || sudo mount --bind /dev $LFS/dev
@@ -1077,12 +1095,289 @@ host_add_user() {
 	echo "XXX Need to use $USER"
 }
 
+build_chroot() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/*.html
+	name=$1
+	file_already_installed=$2
+	if [ -e ${LFS}${file_already_installed} ]; then
+		return 0
+	fi
+	src=$(get_source_dir $name)
+	src_rel=${src/#$LFS}
+	cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+if [ -x configure ]; then
+	${CONF_ENV} ./configure --prefix=/usr ${CONF_ARGS}
+fi
+make
+make install
+EOF
+	CR "bash ./build.sh" > ${logs}/build_chroot_$name.log 2>&1
+}
+
+install_chroot() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/*.html
+	local name=$1
+	local src=$(get_source_dir $name)
+	local src_rel=${src/#$LFS}
+	cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+make prefix=/usr install
+EOF
+	CR "bash ./build.sh" > ${logs}/install_chroot_$name.log 2>&1
+}
+
+build_chroot_glibc() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/glibc.html
+	if [ -e ${LFS}/usr/lib/libnss_files.so.2 ]; then
+		return 0
+	fi
+	name=glibc
+	src=$(get_source_dir $name)
+	src_rel=${src/#$LFS}
+	cd ${src}
+	if patch --dry-run -Np1 -i ../glibc-${glibc_ver}-upstream_fixes-3.patch; then
+		patch -Np1 -i ../glibc-${glibc_ver}-upstream_fixes-3.patch
+	fi
+	mkdir -p build
+	cd build
+	cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}/build
+echo "rootsbindir=/usr/sbin" > configparms
+../configure --prefix=/usr                            \
+             --disable-werror                         \
+             --enable-kernel=${linux_min_ver}          \
+             --enable-stack-protector=strong          \
+             --with-headers=/usr/include              \
+             --disable-nscd                           \
+             libc_cv_slibdir=/usr/lib
+make
+touch /etc/ld.so.conf
+sed '/test-installation/s@\$(PERL)@echo not running@' -i ../Makefile
+make install
+sed '/RTLDLIST=/s@/usr@@g' -i /usr/bin/ldd
+mkdir -pv /usr/lib/locale
+localedef -i C -f UTF-8 C.UTF-8
+localedef -i en_GB -f ISO-8859-1 en_GB
+localedef -i en_GB -f UTF-8 en_GB.UTF-8
+localedef -i en_US -f ISO-8859-1 en_US
+localedef -i en_US -f UTF-8 en_US.UTF-8
+EOF
+	CR "bash ./build.sh" > ${logs}/build_chroot_$name.log 2>&1
+
+	# Configuring Glibc
+	cat << "EOF" | sudo tee ${LFS}/etc/nsswitch.conf
+# Begin /etc/nsswitch.conf
+
+passwd: files
+group: files
+shadow: files
+
+hosts: files dns
+networks: files
+
+protocols: files
+services: files
+ethers: files
+rpc: files
+
+# End /etc/nsswitch.conf
+EOF
+
+	# Adding Time Zone Data
+	# Will be to just afte as another package
+
+	# Configuring the Dynamic Loader
+	cat << "EOF" | sudo tee ${LFS}/etc/ld.so.conf
+# Begin /etc/ld.so.conf
+/usr/local/lib
+/opt/lib
+# Add an include directory
+include /etc/ld.so.conf.d/\*.conf
+EOF
+
+	sudo mkdir -p ${LFS}/etc/ld.so.conf.d
+}
+
+build_chroot_tzdata() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/*.html
+	if [ -d ${LFS}/usr/share/zoneinfo ]; then
+		return 0
+	fi
+	name=tzdata
+	src=$(get_source_dir $name)
+	src_rel=${src/#$LFS}
+	cat << "EOF" | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+ZONEINFO=/usr/share/zoneinfo
+mkdir -p \${ZONEINFO}/{posix,right}
+
+for tz in etcetera southamerica northamerica europe africa antarctica  \
+          asia australasia backward; do
+    zic -L /dev/null   -d \${ZONEINFO}       \${tz}
+    zic -L /dev/null   -d \${ZONEINFO}/posix \${tz}
+    zic -L leapseconds -d \${ZONEINFO}/right \${tz}
+done
+
+cp zone.tab zone1970.tab iso3166.tab \${ZONEINFO}
+zic -d \${ZONEINFO} -p America/New_York
+EOF
+
+	CR "bash ./build.sh" > ${logs}/build_chroot_$name.log 2>&1
+}
+
+build_chroot_bzip2() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/bzip2.html
+	if [ -e ${LFS}/usr/bin/bzip2 ]; then
+		return 0
+	fi
+	name=bzip2
+	src=$(get_source_dir $name)
+	src_rel=${src/#$LFS}
+	cd ${src}
+	if patch --dry-run -Np1 -i ../bzip2-1.0.8-install_docs-1.patch; then
+		patch -Np1 -i ../bzip2-1.0.8-install_docs-1.patch
+	fi
+	sed -i 's@\(ln -s -f \)$(PREFIX)/bin/@\1@' Makefile
+	sed -i "s@(PREFIX)/man@(PREFIX)/share/man@g" Makefile
+	cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+make -f Makefile-libbz2_so
+make clean
+make
+make PREFIX=/usr install
+cp -a libbz2.so.* /usr/lib
+ln -s libbz2.so.1.0.8 /usr/lib/libbz2.so
+cp bzip2-shared /usr/bin/bzip2
+for i in /usr/bin/{bzcat,bunzip2}; do
+  ln -sf bzip2 \$i
+done
+rm -fv /usr/lib/libbz2.a
+EOF
+	CR "bash ./build.sh" > ${logs}/build_chroot_$name.log 2>&1
+}
+
+build_chroot_zstd() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/zstd.html
+	name=zstd
+	file_already_installed=/usr/bin/zstd
+	if [ -e ${LFS}${file_already_installed} ]; then
+		return 0
+	fi
+	src=$(get_source_dir $name)
+	src_rel=${src/#$LFS}
+	cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+make prefix=/usr
+make prefix=/usr install
+rm /usr/lib/libzstd.a
+EOF
+	CR "bash ./build.sh" > ${logs}/build_chroot_$name.log 2>&1
+}
+
+build_chroot_readline() {
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/readline.html
+	name=readline
+	file_already_installed=/usr/lib/libreadline.so
+	if [ -e ${LFS}${file_already_installed} ]; then
+		return 0
+	fi
+	src=$(get_source_dir $name)
+	src_rel=${src/#$LFS}
+	cat << EOF | sudo tee ${LFS}/build.sh
+#!/bin/bash
+set -eux
+cd ${src_rel}
+# Prevent the old libraries to be moved to <libraryname>.old
+sed -i '/MV.*old/d' Makefile.in
+sed -i '/{OLDSUFF}/c:' support/shlib-install
+# fix a problem identified upstream
+patch -Np1 -i ../readline-8.2-upstream_fixes-2.patch
+./configure --prefix=/usr    \
+            --disable-static \
+            --with-curses    \
+            --docdir=/usr/share/doc/readline-8.2
+# forces Readline to link against the libncursesw library
+make SHLIB_LIBS="-lncursesw"
+make SHLIB_LIBS="-lncursesw" install
+install -m644 doc/*.{ps,pdf,html,dvi} /usr/share/doc/readline-8.2
+EOF
+	CR "bash ./build.sh" > ${logs}/build_chroot_$name.log 2>&1
+}
+
 system_build() {
 	# https://www.linuxfromscratch.org/lfs/view/development/part4.html
 	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/introduction.html
 
 	mount_vfs
-	echo DEBUG END
+
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/man-pages.html
+	if ! [ -e ${LFS}/usr/share/man/man2/inl.2 ]; then
+		rm -f ${LFS}/man3/crypt*
+		install_chroot man-pages
+	fi
+
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/iana-etc.html
+	local src=$(get_source_dir iana-etc)
+	sudo cp ${src}/services ${src}/protocols ${LFS}/etc
+
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/glibc.html
+
+	build_chroot_glibc
+	build_chroot_tzdata
+	build_chroot zlib /usr/lib/libz.so
+	sudo rm -f ${LFS}/usr/lib/libz.a
+
+	build_chroot_bzip2
+
+	# xz was already builded and install during "Cross Compiling Temporary Tools" step (with a specific --host)
+	# The difference is tempo binary doesn't have '.hash' or (HASH) in its Segment section
+	if ! readelf -l ${LFS}/usr/bin/xz | grep ' \.hash'; then
+		CONF_ARGS="--disable-static --docdir=/usr/share/doc/xz-5.4.5"
+		build_chroot xz /usr/bin/xz
+		CONF_ARGS=""
+	fi
+
+	build_chroot_zstd /usr/bin/zstd
+
+	# Here only the tempo binary has the .hash (XXX: opposite to xz????)
+	if readelf -l ${LFS}/usr/bin/file | grep ' \.hash'; then
+		build_chroot file /usr/bin/file
+	fi
+
+	build_chroot_readline
+
+	build_chroot m4 /usr/bin/m4
+
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/bc.html
+	CONF_ARGS="-G -O3 -r"
+	CONF_ENV="CC=gcc"
+	build_chroot bc /usr/bin/bc
+	CONF_ARGS=""
+	CONF_ENV=""
+
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/flex.html
+	CONF_ARGS="--disable-static --docdir=/usr/share/doc/flex-2.6.4"
+	build_chroot flex /usr/bin/flex
+	CONF_ARGS=""
+	if ! [ -L ${LFS}/usr/bin/lex ]; then
+		ln -s flex ${LFS}/usr/bin/lex
+		ln -s flex.1 ${LFS}/usr/share/man/man1/lex.1
+	fi
+
+
+	echo EXPECTED END
 	exit 1
 
 }

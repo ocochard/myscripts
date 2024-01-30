@@ -2,6 +2,7 @@
 
 - [find](find.md)
 - [git](git.md)
+- [IPMI](IPMI.md)
 - [hashcat](hashcat.md)
 - [OpenBMC](OpenBMC.md)
 - [Large Language Models](LLM.md)
