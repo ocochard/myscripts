@@ -38,7 +38,7 @@ ftp/curl
 ftp/wget
 games/flightgear
 graphics/drm-kmod
-graphics/drm-510-kmod
+graphics/drm-61-kmod
 graphics/gimp
 graphics/mesa-demos
 lang/expect
