@@ -18,6 +18,6 @@ set ylabel "Time to build in seconds, median of 3 benches"
 
 set xtics 1
 set key on inside top right
-plot "AMD.Epyc.7502P/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AMD EPYC 7502P (1 package, 32 cores = 64 threads total)",   ''using 0:( $2 + 80 ):2 with labels notitle, \
-  "Ampere.Altra.Mt.Collins/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "Ampere Altra (2 packages X 80 cores = 160 cores total)",   ''using 0:( $2 + 80 ):2 with labels notitle
-
+plot  "Ampere.Altra.Mt.Collins/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "Ampere Altra (2 packages X 80 cores = 160 cores total)",   ''using 0:( $2 + 80 ):2 with labels notitle, \
+  "AMD.Epyc.7502P/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AMD EPYC 7502P (1 package, 32 cores = 64 threads total)",   ''using 0:( $2 + 80 ):2 with labels notitle, \
+  "AMD.Ryzen.7.7735HS/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AMD Ryzen 7 7735HS (1 packages, 8 cores = 16 threads total)",   ''using 0:( $2 + 80 ):2 with labels notitle
