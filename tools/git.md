@@ -22,7 +22,25 @@ Date:   Wed May 24 19:13:34 2023 +0000
       blah.
 ```
 
+When was that file detele?
+
+```
+git log --all -1 -- path/to/file
+```
+
 ## Notes
+
+## Keeping working branch up-to-date with main
+
+```
+git switch branch
+git fetch origin
+git rebase
+```
+=> resolve conflict (and commit it!) then git rebase --continue
+```
+git push
+```
 
 ## Forking FreeBSD port
  From git webui: Fork freebsd/freebsd-ports

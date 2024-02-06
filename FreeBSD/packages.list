@@ -41,6 +41,7 @@ graphics/drm-kmod
 graphics/drm-61-kmod
 graphics/gimp
 graphics/mesa-demos
+graphics/mesa-devel
 lang/expect
 lang/go
 lang/python
@@ -52,7 +53,7 @@ multimedia/vlc
 multimedia/webcamd
 net-mgmt/netdata
 net/bird2@netlink
-net/frr8
+net/frr9
 net/mrtparse
 net/py-speedtest-cli
 net/read_bbrlog
