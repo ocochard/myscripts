@@ -7,18 +7,21 @@ GTT=true
 ministat=false
 time=30
 raw=""
+radeontop=""	# need radeontop (optional)
+host=""			# Shelly plug S could be used for external power measurement
 
 die() { echo -n "EXIT: " >&2; echo "$@" >&2; exit 1; }
 
 usage() {
-	echo "$0 [-m] [-g] [-h]"
-	echo "-m : ministat mode, display avg values after 30 seconds of run"
+	echo "$0 [-m] [-g] [-h] [-s hostname]"
 	echo "-g : disable GPU GTT stats"
 	echo "-h : display this message"
+	echo "-m : ministat mode, display avg values after 30 seconds of run"
+	echo "-s hostname: Get powe usage from a Shelly plug S"
 	exit 0
 }
 
-while getopts "ghm" arg; do
+while getopts "ghms:" arg; do
 	case "${arg}" in
 		g)
 			GTT=false
@@ -29,6 +32,11 @@ while getopts "ghm" arg; do
 		m)
 			ministat=true
 			raw=$(mktemp -p /tmp sysload.XXX)
+			;;
+		s)	host=$OPTARG
+			;;
+		:)
+			die "Option -$OPTARG requires an argument." >&2
 			;;
 		*)
 			die "Bad argument, cf help (-h)"
@@ -57,12 +65,11 @@ fi
 headers="${headers}, ${scalingHeaders}, mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%)"
 
 if which radeontop >/dev/null; then
+	# XXX Need to check if some data are missing ? (like PPT)
 	radeontop=", GPU usage (%), GPU Temp (°C), Package Power Tracking (Watt), GPU VRAM (mb), GPU VRAM usage (mb), GPU VRAM usage (%)"
 	if $GTT; then
 		radeontop="$radeontop, GPU GTT (mb), GPU GTT usage (mb), GPU GTT usage (%)"
 	fi
-else
-	radeontop=""
 fi
 
 if [ -n "$radeontop" ]; then
@@ -74,17 +81,33 @@ if [ -n "$radeontop" ]; then
 	fi
 fi
 
+# Check if it a shelly plug
+if [ -n "$host" ]; then
+	ping -c 3 -q $host >/dev/null || die "Could not ping shelly plug"
+	url="http://${host}/meter/0/"
+	if ! curl -s ${url} > /tmp/curl.txt; then
+		die "There is something wrong while trying to reach ${url}"
+	fi
+	if cut -d ',' -f 1 /tmp/curl.txt | grep -q power; then
+		shelly=", wattmeter"
+	else
+		die "Didn't find 'power' keyword in http reply"
+	fi
+else
+	shelly=""
+fi
 
-echo "${headers}${radeontop}"
+echo "${headers}${radeontop}${shelly}"
 
 if $ministat; then
-	echo "${headers}${radeontop}" > $raw
+	echo "${headers}${radeontop}${shelly}" > $raw
 fi
 
 while true; do
 	OLDIFS=$IFS
 	IFS=$'\n'
 	mapfile top < <(top -bn1)
+
 	# 2nd line: CPU usage
 	# 3rd line: mem usage
 	# Bug warning because parsing of id is not easy
@@ -111,17 +134,24 @@ while true; do
 	else
 		output="$cpuUsage, $memTot, $memFree, $memUsed, $memUsedPercent"
 	fi
+
 	if [ -n "$radeontop" ]; then
 		# XXX need to detect card id if multiples card used
+		# Need to detecd if hwmon2 or hwmon4
+		if [ -d /sys/class/drm/card0/device/hwmon/hwmon2 ]; then
+			hwmon=hwmon2
+		elif [ -d /sys/class/drm/card0/device/hwmon/hwmon4 ]; then
+			hwmon=hwmon4
+		fi
 		# unit: 36000 for 36°C
-		if [ -r /sys/class/drm/card0/device/hwmon/hwmon2/temp1_input ]; then
-			let gpuTemp=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/temp1_input)/1000
+		if [ -r /sys/class/drm/card0/device/hwmon/${hwmon}/temp1_input ]; then
+			let gpuTemp=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/temp1_input)/1000
 		else
 			gpuTemp=0
 		fi
 		# MicroWatt
-		if [ -r /sys/class/drm/card0/device/hwmon/hwmon2/power1_average ]; then
-			gpuUwatt=$(cat /sys/class/drm/card0/device/hwmon/hwmon2/power1_average)
+		if [ -r /sys/class/drm/card0/device/hwmon/${hwmon}/power1_average ]; then
+			gpuUwatt=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/power1_average)
 			gpuWatt=$(awk "BEGIN { printf(\"%.1f\n\", $gpuUwatt / 1000000)}")
 		else
 			gpuWatt=0
@@ -142,7 +172,13 @@ while true; do
 			[ -z "${gpuGTTUsed}" ] && echo "[BUG] gpuGTTUsed empty"
 			output="$output, $gpuGTTTot, $gpuGTTUsed, $gpuGTTUsedPercent"
 		fi
+	fi # radeontop
+
+	if [ -n "$shelly" ]; then
+		watt=$(curl -s ${url} | cut -d ',' -f 1 | cut -d ':' -f 2)
+		output="$output, $watt"
 	fi
+
 	echo $output
 	if $ministat; then
 		if [ $time -ne 0 ]; then

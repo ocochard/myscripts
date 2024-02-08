@@ -37,7 +37,7 @@ LVM concept in order:
 6. Disk
 
 Install of Ubuntu server with default option on a 128G disk VM result in only
-64G for the /, and missing 64G:
+64G for the /, and missing 64G (lv* need lvm2 package):
 
 ```
 $ df -h
