@@ -3,29 +3,27 @@
 # It could collect data for a period of time, and generate average/median using ministat
 set -eu
 
-GTT=true
 ministat=false
 time=30
 raw=""
-radeontop=""	# need radeontop (optional)
+headers=""
+scaling=""
 host=""			# Shelly plug S could be used for external power measurement
+timestamp=false
 
 die() { echo -n "EXIT: " >&2; echo "$@" >&2; exit 1; }
 
 usage() {
 	echo "$0 [-m] [-g] [-h] [-s hostname]"
-	echo "-g : disable GPU GTT stats"
 	echo "-h : display this message"
 	echo "-m : ministat mode, display avg values after 30 seconds of run"
 	echo "-s hostname: Get powe usage from a Shelly plug S"
+	echo "-t : Add timestamp (Epoc)"
 	exit 0
 }
 
-while getopts "ghms:" arg; do
+while getopts "hms:t" arg; do
 	case "${arg}" in
-		g)
-			GTT=false
-			;;
 		h)
 			usage
 			;;
@@ -34,6 +32,8 @@ while getopts "ghms:" arg; do
 			raw=$(mktemp -p /tmp sysload.XXX)
 			;;
 		s)	host=$OPTARG
+			;;
+		t)	timestamp=true
 			;;
 		:)
 			die "Option -$OPTARG requires an argument." >&2
@@ -49,47 +49,102 @@ if $ministat; then
 	fi
 fi
 
-headers="CPU usage (%)"
+if $timestamp; then
+	headers="Epoc, CPU usage (%), "
+else
+	headers="CPU usage (%), "
+fi
 
 if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq ]; then
 	scalingFreqMax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq)
 	scalingFreqMin=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)
 	cores=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq | wc -l)
 	let scalingFreqTotalMax=scalingFreqMax*cores
-	let scalingFreqTotalMin=scalingFreqMin*cores
-	scalingHeaders="CPU avg scaling freq (MHz), CPU max freq reached (%)"
+	#let scalingFreqTotalMin=scalingFreqMin*cores
+	scalingHeaders="CPU avg scaling freq (MHz), CPU max freq reached (%), "
 else
 	scalingHeaders=""
 fi
 
-headers="${headers}, ${scalingHeaders}, mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%)"
-
-if which radeontop >/dev/null; then
-	# XXX Need to check if some data are missing ? (like PPT)
-	radeontop=", GPU usage (%), GPU Temp (°C), Package Power Tracking (Watt), GPU VRAM (mb), GPU VRAM usage (mb), GPU VRAM usage (%)"
-	if $GTT; then
-		radeontop="$radeontop, GPU GTT (mb), GPU GTT usage (mb), GPU GTT usage (%)"
-	fi
+headers="${headers}${scalingHeaders}mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%), "
+hwmon=""
+if [ -d /sys/class/drm/card0/device/hwmon/hwmon2 ]; then
+	hwmon=hwmon2
+elif [ -d /sys/class/drm/card0/device/hwmon/hwmon4 ]; then
+	hwmon=hwmon4
 fi
-
-if [ -n "$radeontop" ]; then
-	gpuVRAMTot=$(sudo dmesg | awk '/VRAM memory ready/ {print substr($5, 1, length($5)-1)}')
-	[ -z "${gpuVRAMTot}" ] && gpuVRAMTot=0
-	if $GTT; then
-		gpuGTTTot=$(sudo dmesg | awk '/GTT memory ready/ {print substr($5, 1, length($5)-1)}')
-		[ -z "${gpuGTTTot}" ] && gpuGTTTot=0
+if [ "$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/name)" = "amdgpu" ]; then
+	if [ -r /sys/class/drm/card0/device/hwmon/${hwmon}/power1_average ]; then
+		APU_PPT_support=true
+		label=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/power1_label)
+		if [ ${label} != "PPT" ]; then
+			echo "Non expected drivers: power1 label is ${label}"
+		fi
+		amdgpu="Package Power Tracking (Watt), "
+	else
+		APU_PPT_support=false
+		amdpgu=""
 	fi
+
+	if [ -r /sys/class/drm/card0/device/hwmon/${hwmon}/subsystem/hwmon2/temp1_input ]; then
+		K10_support=true
+		label=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/subsystem/hwmon2/name)
+		if [ ${label} != "k10temp" ]; then
+			echo "Non expected temperature probe name: ${label}"
+		fi
+		amdgpu="${amdgpu}CPU Temp (°C), "
+	else
+		K10_support=false
+	fi
+
+	if [ -r /sys/class/drm/card0/device/gpu_busy_percent ]; then
+		GPU_BUSY_support=true
+		amdgpu="${amdgpu}GPU usage (%), "
+	else
+		GPU_BUSY_support=false
+	fi
+
+	if [ -r /sys/class/drm/card0/device/mem_info_vram_total ]; then
+		APU_VRAM_support=true
+		gpuVRAMTot=$(cat /sys/class/drm/card0/device/mem_info_vram_total)
+		gpuVRAMTot=$(( gpuVRAMTot / 1024 / 1024 ))
+		amdgpu="${amdgpu}GPU VRAM (mb), GPU VRAM usage (mb), GPU VRAM usage (%), "
+	else
+		APU_VRAM_support=false
+	fi
+
+	if [ -r /sys/class/drm/card0/device/mem_info_gtt_total ]; then
+		APU_GTT_support=true
+		gpuGTTTot=$(cat /sys/class/drm/card0/device/mem_info_gtt_total)
+		gpuGTTTot=$(( gpuGTTTot / 1024 / 1024 ))
+		amdgpu="${amdgpu}GPU GTT (mb), GPU GTT usage (mb), GPU GTT usage (%), "
+	else
+		APU_GTT_support=false
+	fi
+
+else
+	amdgpu=""
 fi
 
 # Check if it a shelly plug
 if [ -n "$host" ]; then
+	# Need to have curl|wget|fetch
+	if which wget >/dev/null; then
+		fetch_cmd="wget -q --output-document - "
+	elif which curl >/dev/null; then
+		fetch_cmd="curl -s "
+	elif which fetch >/dev/null; then
+		fetch_cmd="fetch -qo - "
+	else
+		die "Didn’t found wget, curl neither fetch"
+	fi
 	ping -c 3 -q $host >/dev/null || die "Could not ping shelly plug"
 	url="http://${host}/meter/0/"
-	if ! curl -s ${url} > /tmp/curl.txt; then
+	if ! ${fetch_cmd} ${url} > /tmp/curl.txt; then
 		die "There is something wrong while trying to reach ${url}"
 	fi
 	if cut -d ',' -f 1 /tmp/curl.txt | grep -q power; then
-		shelly=", wattmeter"
+		shelly="wattmeter (W)"
 	else
 		die "Didn't find 'power' keyword in http reply"
 	fi
@@ -97,17 +152,22 @@ else
 	shelly=""
 fi
 
-echo "${headers}${radeontop}${shelly}"
+echo "${headers}${amdgpu}${shelly}"
 
 if $ministat; then
-	echo "${headers}${radeontop}${shelly}" > $raw
+	echo "${headers}${amdgpu}${shelly}" > $raw
 fi
 
 while true; do
 	OLDIFS=$IFS
 	IFS=$'\n'
 	mapfile top < <(top -bn1)
-
+	if $timestamp; then
+		time=$(date +%s)
+		output="${time}, "
+	else
+		output=""
+	fi
 	# 2nd line: CPU usage
 	# 3rd line: mem usage
 	# Bug warning because parsing of id is not easy
@@ -117,6 +177,7 @@ while true; do
 	cpuIdle=$(echo ${top[2]} | cut -d ',' -f 4 | awk '{print $1}')
 	# Using only awk and not depending on bc for floating point
 	cpuUsage=$(awk "BEGIN { printf(\"%.1f\n\", 100 - $cpuIdle)}")
+	output="${output}${cpuUsage}, "
 	memTot=$(echo ${top[3]} | awk '/MiB Mem/ {print $4}')
 	memFree=$(echo ${top[3]} | awk '/MiB Mem/ {print $6}')
 	memUsed=$(echo ${top[3]} | awk '/MiB Mem/ {print $8}')
@@ -130,53 +191,45 @@ while true; do
 		done
 		scalingFreqAvg=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $cores)}")
 		scalingFreqPercent=$(awk "BEGIN { printf(\"%.1f\n\", $scalingFreqSum / $scalingFreqTotalMax * 100)}")
-		output="$cpuUsage, $scalingFreqAvg, $scalingFreqPercent, $memTot, $memFree, $memUsed, $memUsedPercent"
-	else
-		output="$cpuUsage, $memTot, $memFree, $memUsed, $memUsedPercent"
+		scaling="$scalingFreqAvg, $scalingFreqPercent, "
+	fi
+	output="${output}${scaling}$memTot, $memFree, $memUsed, $memUsedPercent, "
+
+	# XXX need to detect card id if multiples card used
+	# Need to detecd if hwmon2 or hwmon4
+	# MicroWatt
+	if ${APU_PPT_support}; then
+		gpuUwatt=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/power1_average)
+		gpuWatt=$(awk "BEGIN { printf(\"%.1f\n\", $gpuUwatt / 1000000)}")
+		output="${output}${gpuWatt}, "
 	fi
 
-	if [ -n "$radeontop" ]; then
-		# XXX need to detect card id if multiples card used
-		# Need to detecd if hwmon2 or hwmon4
-		if [ -d /sys/class/drm/card0/device/hwmon/hwmon2 ]; then
-			hwmon=hwmon2
-		elif [ -d /sys/class/drm/card0/device/hwmon/hwmon4 ]; then
-			hwmon=hwmon4
-		fi
-		# unit: 36000 for 36°C
-		if [ -r /sys/class/drm/card0/device/hwmon/${hwmon}/temp1_input ]; then
-			let gpuTemp=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/temp1_input)/1000
-		else
-			gpuTemp=0
-		fi
-		# MicroWatt
-		if [ -r /sys/class/drm/card0/device/hwmon/${hwmon}/power1_average ]; then
-			gpuUwatt=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/power1_average)
-			gpuWatt=$(awk "BEGIN { printf(\"%.1f\n\", $gpuUwatt / 1000000)}")
-		else
-			gpuWatt=0
-		fi
-		read -a radeon < <(radeontop -d - -l 1 -t 30| tail -n 1)
-		# 1682538215.325064: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 3.19% 260.28mb, gtt 0.15% 17.50mb, mclk 55.76% 1.338ghz, sclk 18.86% 0.415ghz
-		gpuUsage=$(echo ${radeon[4]} | cut -d '%' -f 1)
-		[ -z "${gpuUsage}" ] && echo "[BUG] gpuUsage empty"
-		gpuVRAMUsedPercent=$(echo ${radeon[26]} | cut -d '%' -f 1)
-		[ -z "${gpuVRAMUsedPercent}" ] && echo "[BUG] gpuVRAMUsedPercent empty"
-		gpuVRAMUsed=$(echo ${radeon[27]} | cut -d 'm' -f 1)
-		[ -z "${gpuVRAMUsed}" ] && echo "[BUG] gpuVRAMUsed empty"
-		output="$output, $gpuUsage, $gpuTemp, $gpuWatt, $gpuVRAMTot, $gpuVRAMUsed, $gpuVRAMUsedPercent"
-		if $GTT; then
-			gpuGTTUsedPercent=$(echo ${radeon[29]} | cut -d '%' -f 1)
-			[ -z "${gpuGTTUsedPercent}" ] && echo "[BUG] gpuGTTUsedPercent empty"
-			gpuGTTUsed=$(echo ${radeon[30]} | cut -d 'm' -f 1)
-			[ -z "${gpuGTTUsed}" ] && echo "[BUG] gpuGTTUsed empty"
-			output="$output, $gpuGTTTot, $gpuGTTUsed, $gpuGTTUsedPercent"
-		fi
-	fi # radeontop
+	# unit: 36000 for 36°C
+	if ${K10_support}; then
+		let CPUTemp=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/subsystem/hwmon2/temp1_input)/1000
+		output="${output}${CPUTemp}, "
+	fi
+
+	if ${GPU_BUSY_support}; then
+		gpuUsage=$(cat /sys/class/drm/card0/device/gpu_busy_percent)
+		output="${output}${gpuUsage}, "
+	fi
+	if ${APU_VRAM_support}; then
+		gpuVRAMUsed=$(cat /sys/class/drm/card0/device/mem_info_vram_used)
+		gpuVRAMUsed=$(( gpuVRAMUsed / 1024 / 1024 ))
+		gpuVRAMUsedPercent=$(awk "BEGIN { printf(\"%.1f\n\", $gpuVRAMUsed / $gpuVRAMTot)}")
+		output="${output}${gpuVRAMTot}, ${gpuVRAMUsed}, ${gpuVRAMUsedPercent}, "
+	fi
+	if ${APU_GTT_support}; then
+		gpuGTTUsed=$(cat /sys/class/drm/card0/device/mem_info_gtt_used)
+		gpuGTTUsed=$(( gpuGTTUsed / 1024 / 1024 ))
+		gpuGTTUsedPercent=$(awk "BEGIN { printf(\"%.1f\n\", $gpuGTTUsed / $gpuGTTTot)}")
+		output="${output}${gpuGTTTot}, ${gpuGTTUsed}, ${gpuGTTUsedPercent}, "
+	fi
 
 	if [ -n "$shelly" ]; then
-		watt=$(curl -s ${url} | cut -d ',' -f 1 | cut -d ':' -f 2)
-		output="$output, $watt"
+		watt=$(${fetch_cmd} ${url} | cut -d ',' -f 1 | cut -d ':' -f 2)
+		output="${output}$watt"
 	fi
 
 	echo $output
