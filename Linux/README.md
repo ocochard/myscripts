@@ -347,6 +347,120 @@ $ nvidia-smi
 
 # Base
 
+## initramfs
+
+### ALERT! UUID=1db6b810-d625-4e9a-aced-32b48f6a8d5b does not exist
+
+Last action: shrink the Windows NTFS volume, and expanded the Linux ext4fs rootfs volume.
+System was working great, but after the first reboot it refuse to boot.
+
+```
+(initramfs) blkid
+/dev/nvme0n1p3: UUID=xxxx TYPE="ntfs" PARTLABEL="Basic data partiton"
+/dev/nvme0n1p1: UUID=yyyy LABEL="SYSTEM" TYPE="vfat" PARTLABEL="EFI"
+/dev/nvme0n1p4: UUID=zzzz LABEL="Recovery" TYPE="nts"
+/dev/nvme0n1p2: UUID=wwww, PARTLABEL="Microsotf reserver partition"
+```
+
+(same for an `ls /dev/disk/by-uuid/`)
+
+Here, it is a dual boot Windows/Ubuntu, but where is my extfs partition ??
+```
+(initramfs) ls /dev/nvme0n"*
+/dev/nvme0n1
+/dev/nvme0n1p1
+/dev/nvme0n1p2
+/dev/nvme0n1p3
+/dev/nvme0n1p4
+/dev/nvme0n1p5
+```
+
+Partition 5 is missing from the blkid output, let’s force an fsck:
+```
+fsck.ext4 /dev/nvme0n1p5
+```
+fsck doesn’t report any errror, but why no UUID displayed by blkid ?
+Let’s try to run tunefs, but it is on the broken partition:
+```
+(initramfs) mkdir /mnt
+(initramfs) mount /dev/nvme0n1p5 /mnt
+(initramfs) /mnt/sbin/tune2fs -l /dev/nvme0n1p5 | grep UUID
+Filesystem UUID:	1db6b810-d625-4e9a-aced-32b48f6a8d5
+```
+
+What ?? It is here!
+Ok, let’s replace the UUID usage by the disk name in /etc/fstab:
+```
+(initramfs) mount --bind /dev /mnt/dev
+(initramfs) mount --bind /proc /mnt/proc
+(initramfs) chroot /mnt
+root@(none):/# vi /etc/fstab
+```
+
+Here I’ve replaced the entry `/dev/disk/by-uuid/1dd...` by `/dev/nvme0n1p5`
+Now upgrading all bootloader and initramfs then reboot:
+```
+root@(none):/# update-grub
+root@(none):/# update-initramfs -u
+root@(none):/# exit
+(initramfs) umount /mnt/proc
+(initramfs) umount /mnt/dev
+(initramfs) umount /mnt
+(initramfs) reboot -f
+```
+
+And still not able to find the now /dev/nvme0n1p5 during boot.
+Let’s try to pass a longer rootdelay in Linux kernel by updating grub.
+Remount and re-chroot into your rootfs, then set a 10 seconds delay to wait to detect this disk:
+
+```
+vi /etc/default/grub
+GRUB_CMDLINE_LINUX="rootdelay=10"
+```
+
+Then redo the same update-grub+exit+umount+reboot steps as previously.
+But... still nothing. So booting with an USB live CD:
+
+```
+fdisk -l /dev/nvme0n1
+```
+All partitons display, including p5 as "Linux filesystem" type
+```
+blkid /dev/nvme0n1p5
+```
+Empty reply, let’s probe it:
+```
+sudo blkid --probe --match-types ext4 /dev/nvme0n1p5
+/dev/nvme0n1p5: UUID="1dd..."
+```
+
+Let’s check if partprobe error:
+```
+sudo partprobe /dev/nvme0n1p5
+```
+No error displayed but still nothing, so let’s change the UUID:
+```
+sudo tune2fs -U random /dev/nvme0n1p5
+Setting the UUID on this filesystem could take some time.
+Proceed anyway (or wait 5 seconds to proceed) ? (y,N)
+```
+
+Still not fix, so let’s change the disk partition number (p4 position if after p5, so should change p5 as p4 and p4 as p5):
+```
+sudo fdisk /dev/nvme0n1
+p (print partition table)
+x (extra functionnality)
+f (fix partition order)
+r (return to main menu)
+p (print partition table to check new order)
+w (write and exit)
+```
+
+Now time to mount disk and chroot into it to update /etc/fstab with new partition id.
+While here I’ve noticed this error message "couldn’t identify filesystem type for fsck hook, ignoring" from update-initramfs.
+It was not able to automatically detected this partition.
+Solution: reformating.
+
 ## swap
 
 It creates a swap file in the /:
