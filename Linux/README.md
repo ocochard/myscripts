@@ -1,6 +1,6 @@
 # Scripts
 
- - [sysload](sysload): Display CPU/MEM/GPU (amd only) usage in CSV format
+ - [sysload](sysload/README.md): Display CPU/MEM/GPU (amd only) usage in CSV format
  - [lfs](lfs.sh): Build Linux From Scratch
 
 # Notes

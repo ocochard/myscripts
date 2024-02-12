@@ -46,6 +46,7 @@ CONFIG_SITE=$LFS/usr/share/config.site
 # In order to factorize build function, let's try to pass custom configure arguments
 CONF_ARGS=""
 CONF_ENV=""
+PATCH_FILE=""
 
 nproc=$(nproc)
 # glibc: smallest version of the Linux kernel the generated library is expected to support. The higher the version number is, the less compatibility code is added, and the faster the code gets.
@@ -1108,6 +1109,9 @@ build_chroot() {
 #!/bin/bash
 set -eux
 cd ${src_rel}
+if [ -f ../"${PATCH_FILE}" ]; then
+	patch -Np1 -i ../${PATCH_FILE}
+fi
 if [ -x configure ]; then
 	${CONF_ENV} ./configure --prefix=/usr ${CONF_ARGS}
 fi
@@ -1372,10 +1376,25 @@ system_build() {
 	build_chroot flex /usr/bin/flex
 	CONF_ARGS=""
 	if ! [ -L ${LFS}/usr/bin/lex ]; then
-		ln -s flex ${LFS}/usr/bin/lex
-		ln -s flex.1 ${LFS}/usr/share/man/man1/lex.1
+		sudo ln -s flex ${LFS}/usr/bin/lex
+		sudo ln -s flex.1 ${LFS}/usr/share/man/man1/lex.1
 	fi
 
+	# Used for regression tests, so skip them
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/tcl.html
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/expect.html
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/dejagnu.html
+
+	# https://www.linuxfromscratch.org/lfs/view/development/chapter08/pkgconf.html
+	PATCH_FILE="pkgconf-2.1.0-upstream_fix-1.patch"
+	CONF_ARGS="--disable-static --docdir=/usr/share/doc/pkgconf-2.1.0"
+	build_chroot pkgconf /usr/bin/pkgconf
+	CONF_ARGS=""
+	PATCH_FILE=""
+	if ! [ -L ${LFS}/usr/bin/pkg-config ]; then
+		sudo ln -s pkgconf   ${LFS}/usr/bin/pkg-config
+		sudo ln -s pkgconf.1 ${LFS}/usr/share/man/man1/pkg-config.1
+	fi
 
 	echo EXPECTED END
 	exit 1
