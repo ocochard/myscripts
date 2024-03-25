@@ -110,6 +110,16 @@ Or if using poudriere with jail named 'builder':
 ```
 echo 'WITH_DEBUG_PORTS=devel/clinfo' >> /usr/local/etc/poudriere.d/builder-make.conf
 ```
+
+### Build cmake with DEBUG symbols
+
+```
+~/ipc-bench $ mkdir debug
+~/ipc-bench $ cd debug/
+~/ipc-bench/debug $ cmake -DCMAKE_BUILD_TYPE=Debug ..
+~/ipc-bench/debug $ make
+```
+
 ## Extra
 
 ### dmesgd.nycbug.org
