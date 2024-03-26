@@ -79,6 +79,13 @@ frr1_ifb=epair112
 frr1_ifb_p=a
 frr1_daemons="zebra bgpd bfdd"
 mkdir -p /var/run/frr/frr1
+cat > /var/run/frr/frr1/ipsec.conf <<EOF
+flush ;
+add 192.168.12.1 192.168.12.2 tcp 0x1000 -A tcp-md5 "abigpassword" ;
+add 192.168.12.2 192.168.12.1 tcp 0x1001 -A tcp-md5 "abigpassword" ;
+add -6 2001:db8:12::1 2001:db8:12::2 tcp 0x1002 -A tcp-md5 "abigpassword" ;
+add -6 2001:db8:12::2 2001:db8:12::1 tcp 0x1003 -A tcp-md5 "abigpassword" ;
+EOF
 cat > /var/run/frr/frr1/frr.conf <<EOF
 log file /var/run/frr/frr1/frr.log
 !
@@ -94,8 +101,10 @@ router bgp 12
  bgp router-id 192.168.10.1
  neighbor 192.168.12.2 remote-as 12
  neighbor 192.168.12.2 bfd
+ neighbor 192.168.12.2 password abigpassword
  neighbor 2001:db8:12::2 remote-as 12
  neighbor 2001:db8:12::2 bfd
+ neighbor 2001:db8:12::2 password abigpassword
  !
  address-family ipv4 unicast
   network 192.168.10.0/24
@@ -125,6 +134,13 @@ frr2_ifb=epair123
 frr2_ifb_p=a
 frr2_daemons="zebra bgpd bfdd ripd ripngd"
 mkdir -p /var/run/frr/frr2
+cat > /var/run/frr/frr2/ipsec.conf <<EOF
+flush ;
+add 192.168.12.2 192.168.12.1 tcp 0x1000 -A tcp-md5 "abigpassword" ;
+add 192.168.12.1 192.168.12.2 tcp 0x1001 -A tcp-md5 "abigpassword" ;
+add -6 2001:db8:12::2 2001:db8:12::1 tcp 0x1002 -A tcp-md5 "abigpassword" ;
+add -6 2001:db8:12::1 2001:db8:12::2 tcp 0x1003 -A tcp-md5 "abigpassword" ;
+EOF
 cat > /var/run/frr/frr2/frr.conf <<EOF
 log file /var/run/frr/frr2/frr.log
 !
@@ -159,8 +175,10 @@ router bgp 12
  bgp router-id 192.168.10.2
  neighbor 192.168.12.1 remote-as 12
  neighbor 192.168.12.1 bfd
+ neighbor 192.168.12.1 password abigpassword
  neighbor 2001:db8:12::1 remote-as 12
  neighbor 2001:db8:12::1 bfd
+ neighbor 2001:db8:12::1 password abigpassword
  !
  address-family ipv4 unicast
   network 192.168.12.0/24
@@ -426,6 +444,12 @@ create_jail () {
 		mkdir -p /var/run/frr/frr${id}.sock
 		chown frr /var/run/frr/frr${id}.sock
 		touch /var/run/frr/frr${id}/vtysh.conf
+		if [ -f /var/run/frr/frr${id}/ipsec.conf ]; then
+			echo "Loading ipsec.conf for jail frr${id}"
+			kldstat -qm ipsec || kldload ipsec
+			kldstat -qm tcpmd5 || kldload tcpmd5
+			jexec frr${id} setkey -vf /var/run/frr/frr${id}/ipsec.conf
+		fi
 		for daemon in \$frr${id}_daemons; do
 			jexec frr${id} \$daemon -d -i /var/run/frr/frr${id}_\$daemon.pid --vty_socket /var/run/frr/frr${id}.sock
 		done
@@ -438,6 +462,7 @@ destroy_jail () {
 	# $1: jail id
 	iflist=$(jexec frr$1 ifconfig -l | sed 's/lo0//')
 	jail -R frr$1 || true
+	sleep 2
 	for iftodestroy in $iflist; do
 		ifconfig $iftodestroy destroy || true
 	done

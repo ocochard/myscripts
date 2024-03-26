@@ -86,6 +86,7 @@ bird1_ifb=epair112
 bird1_ifb_p=a
 bird1_ifb_inet="192.168.12.1/24"
 bird1_ifb_inet6="2001:db8:12::1/64"
+touch /var/run/bird/bird1.ipsec
 cat > /var/run/bird/bird1.conf <<EOF
 # Configure logging
 log syslog all;
@@ -119,7 +120,9 @@ protocol direct {
 
 protocol bgp bgp4 {
         local as 12;
+	source address 192.168.12.1;
         neighbor 192.168.12.2 as 12;
+	password "abigpassword";
         ipv4 {
             import all;
             export all;
@@ -128,7 +131,9 @@ protocol bgp bgp4 {
 
 protocol bgp bgp6 {
         local as 12;
+	source address 2001:db8:12::1;
         neighbor 2001:db8:12::2 as 12;
+	password "abigpassword";
         ipv6 {
             import all;
             export all;
@@ -146,6 +151,7 @@ bird2_ifb=epair123
 bird2_ifb_p=a
 bird2_ifb_inet="192.168.23.2/24"
 bird2_ifb_inet6="2001:db8:23::2/64"
+touch /var/run/bird/bird2.ipsec
 cat > /var/run/bird/bird2.conf <<EOF
 # Configure logging
 log syslog all;
@@ -179,7 +185,9 @@ protocol direct {
 
 protocol bgp bgp4 {
         local as 12;
-        neighbor 192.168.12.1 as 12;
+       	source address 192.168.12.2;
+	neighbor 192.168.12.1 as 12;
+	password "abigpassword";
         ipv4 {
             import all;
             export all;
@@ -189,7 +197,9 @@ protocol bgp bgp4 {
 
 protocol bgp bgp6 {
         local as 12;
+	source address 2001:db8:12::2;
         neighbor 2001:db8:12::1 as 12;
+	password "abigpassword";
         ipv6 {
             import all;
             export all;
@@ -465,6 +475,11 @@ create_jail () {
 		echo "https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981"
 		exit 1
 	fi
+	if [ -f /var/run/bird/bird${id}.ipsec ]; then
+		# Should be autoloaded by bird, but not sure under a jail
+		kldstat -qm ipsec || kldload ipsec
+		kldstat -qm tcpmd5 || kldload tcpmd5
+	fi
 	eval "
 		if [ -z "\$bird${id}_ifa_p" ] || [ "\$bird${id}_ifa_p" != b ]; then
 			ifconfig \$bird${id}_ifa create group bird
@@ -489,6 +504,7 @@ destroy_jail () {
 	# $1: jail id
 	iflist=$(jexec bird$1 ifconfig -l | sed 's/lo0//')
 	jail -R bird$1 || true
+	sleep 2
 	for iftodestroy in $iflist; do
 		ifconfig $iftodestroy destroy || true
 	done
