@@ -68,6 +68,7 @@ fi
 
 headers="${headers}${scalingHeaders}mem Tot (MiB), mem Free (MiB), mem Used (MiB), mem Used (%), "
 hwmon=""
+amdgpu=""
 if [ -d /sys/class/drm/card0/device/hwmon/hwmon2 ]; then
 	hwmon=hwmon2
 elif [ -d /sys/class/drm/card0/device/hwmon/hwmon4 ]; then
@@ -83,15 +84,18 @@ if [ "$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/name)" = "amdgpu" ]; then
 		amdgpu="Package Power Tracking (Watt), "
 	else
 		APU_PPT_support=false
-		amdpgu=""
 	fi
 
 	if [ -r /sys/class/drm/card0/device/hwmon/${hwmon}/subsystem/hwmon2/temp1_input ]; then
 		K10_support=true
 		label=$(cat /sys/class/drm/card0/device/hwmon/${hwmon}/subsystem/hwmon2/name)
-		if [ ${label} != "k10temp" ]; then
-			echo "Non expected temperature probe name: ${label}"
-		fi
+		case $label in
+			k10temp);;
+			amdgpu);;
+			*)
+			  echo "Non expected temperature probe name: ${label}"
+			  ;;
+		esac
 		amdgpu="${amdgpu}CPU Temp (°C), "
 	else
 		K10_support=false
