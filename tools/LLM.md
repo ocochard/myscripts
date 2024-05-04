@@ -32,7 +32,7 @@ $ rocminfo | grep '^  Name:'
 ```
 
 To compile llama.cpp to support this feature, you need:
-- Official AMD ROCm drivers and libraries (using Ubuntu 22.04 LTS here);
+- Official AMD ROCm drivers and libraries (here: 6.1.0) using Ubuntu (here: 22.04 LTS);
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
 - enable HIP UMA (LLAMA_HIP_UMA).
 
@@ -100,10 +100,10 @@ llama_print_timings:        eval time =  151965.13 ms /   399 runs   (  380.86 m
 llama_print_timings:       total time =  155113.16 ms /   418 tokens
 ```
 
-The performance was worse with the GPU: From 5.33 tokens per second it lower down to 2.63.
-
-rocm-smi was showing a 100% GPU usage, but the VRAM and GTT are still not used!
-With a desktop running of the background the VRAM usage was 214MB, GTT 29MB and RAM available about 60GB.
+Now the GPU compute power is used (rocm-smi is reporting a 100% utilization) but
+the performance was worse with the GPU: From 5.33 tokens per second it lower down to 2.63.
+And the VRAM and GTT are still not used!
+With an idle desktop environment running on the background the VRAM usage was 214MB, GTT 29MB and RAM available about 60GB.
 While llama.cpp was running only VRAM usage increased a little (arround 250MB), but I was
 expecting the full 30GB of this model loaded in VRAM+GTT section (and not in RAM):
 ```
@@ -121,6 +121,10 @@ Let’s try with different value of n-gpu-layers with the same model:
 - 8: 3.63 tokens per second
 - 16: 3.26 tokens per second
 - 33: 2.63 tokens per second
+
+Performance with a smaller model like mistral-7b-instruct-v0.1.Q5_K_M.gguf:
+- 0 (CPU only): 9.20 tokens per second
+- 33: 4.63 tokens per second
 
 ## Usage
 
