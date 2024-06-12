@@ -60,6 +60,7 @@ net/read_bbrlog
 net/realtek-re-kmod
 net/rsync
 net/samba416
+net/scapy
 net/tcplog_dumper
 net/tcprtt
 net/tightvnc
@@ -93,6 +94,7 @@ sysutils/fusefs-smbnetfs
 sysutils/grub2-bhyve
 sysutils/ipmitool
 sysutils/hw-probe
+sysutils/htop
 sysutils/monit
 sysutils/mstflint
 sysutils/neofetch
