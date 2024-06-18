@@ -139,3 +139,60 @@ For big (32G) unsencored model:
 ```
 curl --output-dir models -LO -C - https://huggingface.co/TheBloke/Mixtral-8x7B-v0.1-GGUF/resolve/main/mixtral-8x7b-v0.1.Q5_K_M.gguf
 ```
+
+Text summarization example, using the output of whisper audio transcript:
+```
+cat <<EOF >prompt.txt
+### Instruction:
+
+Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+Write a detailed summary of the presentation in the input.
+
+### Input:
+EOF
+
+cat ../Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav.txt  >> prompt.txt
+cat <<EOF >>prompt.txt
+
+### Response:
+EOF
+./main -c 6000 --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m models/starling-lm-7b-alpha.Q4_K_M.gguf
+
+```
+# whisper.cpp
+
+## Generic install
+
+```
+git clone https://github.com/ggerganov/whisper.cpp.git
+cd whisper.cpp
+cmake -D WHISPER_SUPPORT_SDL2=ON .
+make
+```
+
+## Usage
+
+Download a model:
+```
+bash ./models/download-ggml-model.sh base.en
+```
+
+Transcode your mp3 in wav:
+```
+ffmpeg -i FreeBSD\ Foundation\ Update\ -\ May\ 2024\ FreeBSD\ Developer\ Summit.mp3  -ar 16000 -ac 1 -c:a pcm_s16le FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav
+```
+
+Generate a txt file (-otxt) or other like srt (-osrt):
+
+```
+bin/main -np -otxt -f ../FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav
+  8
+  9 [00:00:00.000 --> 00:00:10.000]   [BLANK_AUDIO]
+ 10 [00:00:10.000 --> 00:00:14.440]   Hi everyone, I'm Deb Goodkin, and I'm the Executive Director of
+ 11 [00:00:14.440 --> 00:00:16.520]   the Free BFC Foundation.
+ 12 [00:00:16.520 --> 00:00:22.960]   And welcome everyone, it's so nice to get out of my home office.
+ 13 [00:00:22.960 --> 00:00:26.360]   I mean, I love my home office, but it's great to get out and
+ 14 [00:00:26.360 --> 00:00:30.940]   be with our community and see people in person.
+(etc.)
+```
