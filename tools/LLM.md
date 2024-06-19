@@ -173,6 +173,9 @@ make
 
 ## Usage
 
+
+### One speaker only
+
 Download a model:
 ```
 bash ./models/download-ggml-model.sh base.en
@@ -194,5 +197,22 @@ bin/main -np -otxt -f ../FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Su
  12 [00:00:16.520 --> 00:00:22.960]   And welcome everyone, it's so nice to get out of my home office.
  13 [00:00:22.960 --> 00:00:26.360]   I mean, I love my home office, but it's great to get out and
  14 [00:00:26.360 --> 00:00:30.940]   be with our community and see people in person.
+(etc.)
+```
+
+### Multi speakers (Speaker diarization)
+
+Need a stereo source (so with ffmpeg use -ac 2) and a tdrz model:
+
+```
+ffmpeg -i BSDNow.558.Worlds.of.telnet.mp3  -ar 16000 -ac 2 -c:a pcm_s16le BSDNow.558.Worlds.of.telnet.wav
+cd whisper
+bash ./models/download-ggml-model.sh small.en-tdrz
+bin/main -m models/ggml-small.en-tdrz.bin -otxt -np -di -f ../BSDNow.558.Worlds.of.telnet.wav
+(etc.)
+[00:00:00.640 --> 00:00:29.620]  (speaker ?) This week on the show we cover NetBSD 9.4 and what's exciting in that release. Then we have free B_S_D_'s S_S_T_F_ attestation to support the cyber security compliance. The lost worlds of Telnet are interesting for the nostalgics among us. How to alter file ownership and permissions with feedback Parallel. raw I_P_ input coming to Open B_S_D_. Open B_S_D_ routers on ALI express mini P_C_s and free B_S_D_ for devs in this week's episode of B_S_D_.
+[00:00:30.020 --> 00:00:30.580]  (speaker ?) Now.
+[00:00:47.280 --> 00:01:17.280]  (speaker ?) B_S_D_ now, episode five hundred fifty eight, Worlds of Telnet. Recorded on the first of May twenty twenty four. There was something on that special date, I don't know what. This episode of B_S_D_ now was made possible because of you. Thank you for supporting B_S_D_ now Um. hi, I'm your host Eric Greuschling. Hello, welcome to this week's episode. We hope you have a nice day so far and we hope that we can make it a bit interesting, a bit more interesting than it already
+[00:01:17.280 --> 00:01:33.240]  (speaker ?) is with some news from the B_S_D_ space and uh starting off with headlines of course, like always like all the other five hundred fifty eight or fifty seven uh episodes started before, let B_S_D_ nine dot four is it this time.
 (etc.)
 ```
