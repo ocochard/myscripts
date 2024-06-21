@@ -8,6 +8,47 @@ cd llama.cpp
 make (Linux & MacOS) or gmake (FreeBSD)
 ```
 
+## Usage
+
+### Start Web UI with specific model
+
+Download a model then instruct llama to start using that model.
+To find what is the up-to-date efficient model try the [https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard](Open LLM Leaderboard)
+
+```
+curl --output-dir models -LO -C - https://huggingface.co/TheBloke/Starling-LM-7B-alpha-GGUF/resolve/main/starling-lm-7b-alpha.Q4_K_M.gguf
+./llama-server --model models/starling-lm-7b-alpha.Q4_K_M.gguf
+```
+
+For big (32G) model (large context size):
+```
+curl --output-dir models -LO -C - https://huggingface.co/MaziyarPanahi/Mixtral-8x22B-v0.1-GGUF/resolve/main/Mixtral-8x22B-v0.1.IQ1_S.gguf
+```
+
+### Using prompt for text summarization
+
+Text summarization, by using long text input like 1 hour conference transcription as example, need a model supporting large (16K or 32k context size).
+Here I’m using a Mixtral-8x22B model (up to 64K context for this one).
+```
+cat <<EOF >prompt.txt
+### Instruction:
+
+Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+Write a detailed summary of the presentation in the input.
+
+### Input:
+EOF
+
+cat ../Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav.txt  >> prompt.txt
+cat <<EOF >>prompt.txt
+
+### Response:
+EOF
+./llama-cli --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m models/Mixtral-8x22B-v0.1.IQ1_S.gguf
+
+```
+
 ## Specific AMD GPU with Unified Memory Architecture (Work-in-progress)
 
 The RAM is shared by GPU, which mean the GPU could use all the RAM for its usage.
@@ -125,41 +166,6 @@ Let’s try with different value of n-gpu-layers with the same model:
 Performance with a smaller model like mistral-7b-instruct-v0.1.Q5_K_M.gguf:
 - 0 (CPU only): 9.20 tokens per second
 - 33: 4.63 tokens per second
-
-## Usage
-
-Download a model then instruct llama to start using that model:
-
-```
-curl --output-dir models -LO -C - https://huggingface.co/TheBloke/Starling-LM-7B-alpha-GGUF/resolve/main/starling-lm-7b-alpha.Q4_K_M.gguf
-./server --model models/starling-lm-7b-alpha.Q4_K_M.gguf
-```
-
-For big (32G) unsencored model:
-```
-curl --output-dir models -LO -C - https://huggingface.co/TheBloke/Mixtral-8x7B-v0.1-GGUF/resolve/main/mixtral-8x7b-v0.1.Q5_K_M.gguf
-```
-
-Text summarization example, using the output of whisper audio transcript:
-```
-cat <<EOF >prompt.txt
-### Instruction:
-
-Below is an instruction that describes a task. Write a response that appropriately completes the request.
-
-Write a detailed summary of the presentation in the input.
-
-### Input:
-EOF
-
-cat ../Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav.txt  >> prompt.txt
-cat <<EOF >>prompt.txt
-
-### Response:
-EOF
-./main -c 6000 --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m models/starling-lm-7b-alpha.Q4_K_M.gguf
-
-```
 # whisper.cpp
 
 ## Generic install
@@ -172,7 +178,6 @@ make
 ```
 
 ## Usage
-
 
 ### One speaker only
 
@@ -189,7 +194,7 @@ ffmpeg -i FreeBSD\ Foundation\ Update\ -\ May\ 2024\ FreeBSD\ Developer\ Summit.
 Generate a txt file (-otxt) or other like srt (-osrt):
 
 ```
-bin/main -np -otxt -f ../FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav
+bin/main -t 16 -otxt -f ../FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav
   8
   9 [00:00:00.000 --> 00:00:10.000]   [BLANK_AUDIO]
  10 [00:00:10.000 --> 00:00:14.440]   Hi everyone, I'm Deb Goodkin, and I'm the Executive Director of
@@ -200,15 +205,21 @@ bin/main -np -otxt -f ../FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Su
 (etc.)
 ```
 
+While using larger model, it could repeats same sentence multiple times: Increase entropy threshold ,`-et 2.8` to reduce this problem.
+
 ### Multi speakers (Speaker diarization)
 
+There are 2 methods:
+- Stereo diarization (-di), adding '(speaker ?)' in front of each sentence, need a stereo source (so use '-ac 2' with ffmpeg)
+- And simple tinydiarization (-trdz), that adds [SPEAKER_TURN] after each speaker turn
 Need a stereo source (so with ffmpeg use -ac 2) and a tdrz model:
 
+Example with stereo mode:
 ```
-ffmpeg -i BSDNow.558.Worlds.of.telnet.mp3  -ar 16000 -ac 2 -c:a pcm_s16le BSDNow.558.Worlds.of.telnet.wav
+ffmpeg -i BSDNow.558.Worlds.of.telnet.mp3 -ar 16000 -ac 2 -c:a pcm_s16le BSDNow.558.Worlds.of.telnet.wav
 cd whisper
 bash ./models/download-ggml-model.sh small.en-tdrz
-bin/main -m models/ggml-small.en-tdrz.bin -otxt -np -di -f ../BSDNow.558.Worlds.of.telnet.wav
+bin/main -t 16 -m models/ggml-small.en-tdrz.bin -otxt -np -di -f ../BSDNow.558.Worlds.of.telnet.wav
 (etc.)
 [00:00:00.640 --> 00:00:29.620]  (speaker ?) This week on the show we cover NetBSD 9.4 and what's exciting in that release. Then we have free B_S_D_'s S_S_T_F_ attestation to support the cyber security compliance. The lost worlds of Telnet are interesting for the nostalgics among us. How to alter file ownership and permissions with feedback Parallel. raw I_P_ input coming to Open B_S_D_. Open B_S_D_ routers on ALI express mini P_C_s and free B_S_D_ for devs in this week's episode of B_S_D_.
 [00:00:30.020 --> 00:00:30.580]  (speaker ?) Now.
