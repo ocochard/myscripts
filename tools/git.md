@@ -112,10 +112,20 @@ git tag -a v1.992 -m "Releasing version v1.992"
 git push origin v1.992
 ```
 
-# Deleting a branch
+# Branch
+
+## Deleting
 
 Local and remote:
 ```
 git branch -d branch-name
 git push origin -d branch-name
+```
+
+## Reset all local change and replace with remote
+
+@{u} is shorthand for upstream branch
+
+```
+git reset --hard @{u}
 ```
