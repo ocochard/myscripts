@@ -86,6 +86,32 @@ sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
 $ df -h | grep ubuntu
 /dev/mapper/ubuntu--vg-ubuntu--lv  123G  6.6G  111G   6% /
 ```
+### Network
+
+A mess between the Network-manager (nmcli) and systemd-resolve.
+
+Interface status:
+```
+nmcli device status
+```
+
+Displaying DHCP info:
+```
+nmcli -f DHCP4
+nmcli device show enp2s0
+```
+
+What is the DHCP server IP address ?
+```
+nmcli -f DHCP4 connection show "Wired connection 1"
+```
+
+What is the DNS server ?
+```
+resolvectl status
+```
+
+Static IP configuration in `/etc/netplan/02-netconfig.yaml`
 
 ### Debian package creation
 
