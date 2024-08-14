@@ -3,6 +3,14 @@
 ## Sources
 https://docs.freebsd.org/en/articles/committers-guide/#git-primer
 
+## Diff
+
+Diff from a specific hash:
+
+```
+git diff b97a47e94662^!
+```
+
 ## Find date
 
 When was the branch branched ?
