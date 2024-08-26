@@ -1,0 +1,24 @@
+[color]
+        diff = auto
+        status = auto
+        branch = auto
+[push]
+        default = simple
+[core]
+        pager = less -r
+	editor = vim
+[pull]
+	ff = only
+	rebase = true
+[safe]
+	directory = *
+[rerere]
+	enabled = 1
+[alias]
+	logline = log --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
+[diff]
+	noprefix = true
+[log]
+	date = iso
+[branch]
+	sort = -committerdate

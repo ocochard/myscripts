@@ -108,6 +108,7 @@ sysutils/u-boot-bhyve-arm64
 sysutils/edk2@bhyve
 sysutils/vm-bhyve
 sysutils/zfs-stats-lite
+textproc/bat
 textproc/jq
 www/chromium
 www/mohawk
