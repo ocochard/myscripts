@@ -75,11 +75,17 @@ echo
 jail_create switch $if1a $if2a
 jail_create host $if1b $if2b
 
-# XXX test
-
-echo "Need to have default gateway configured"
+echo "#### Status report ####"
 sleep 2
-jexec host ifconfig -v
+
+echo "## Switch view ##"
+echo "### Lagg interface status ###"
+jexec switch ifconfig -v lagg0
+
+echo "## Host view ##"
+echo "### Lagg interface status ###"
+jexec host ifconfig -v lagg0
+echo "### Routing table (need to have default entry) ###"
 jexec host netstat -rn4
 
 # cleanup
