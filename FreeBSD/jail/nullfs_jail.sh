@@ -71,7 +71,6 @@ defaultrouter="2.2.2.2"
 static_routes="defaultgw"
 EOF
 
-echo
 jail_create switch $if1a $if2a
 jail_create host $if1b $if2b
 
