@@ -57,8 +57,7 @@ hostname=switch
 ifconfig_$if1a="up"
 ifconfig_$if2a="up"
 cloned_interfaces="lagg0"
-cloned_interfaces="lagg0"
-ifconfig_lagg0="laggproto lacp laggport $if1a laggport $if2a inet 2.2.2.2/32"
+ifconfig_lagg0="laggproto lacp laggport $if1a laggport $if2a 2.2.2.2/32"
 EOF
 
 cat <<EOF > $wrkdir/host/etc/rc.conf
@@ -66,7 +65,7 @@ hostname=host
 ifconfig_$if1b="up"
 ifconfig_$if2b="up"
 cloned_interfaces="lagg0"
-ifconfig_lagg0="laggproto lacp laggport $if1b laggport $if2b inet 1.1.1.1/32"
+ifconfig_lagg0="laggproto lacp laggport $if1b laggport $if2b 1.1.1.1/32"
 route_defaultgw="-host 2.2.2.2 -link -interface lagg0"
 defaultrouter="2.2.2.2"
 static_routes="defaultgw"
@@ -79,6 +78,7 @@ jail_create host $if1b $if2b
 # XXX test
 
 echo "Need to have default gateway configured"
+sleep 2
 jexec host ifconfig -v
 jexec host netstat -rn4
 
