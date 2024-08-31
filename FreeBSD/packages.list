@@ -116,6 +116,7 @@ www/nginx
 www/node
 www/npm
 www/p5-WWW-Curl
+www/w3m-img
 x11-drivers/xf86-video-nv
 x11-drivers/xf86-video-scfb
 x11-drivers/xf86-video-vesa

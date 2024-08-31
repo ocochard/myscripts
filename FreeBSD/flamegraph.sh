@@ -9,6 +9,7 @@ die() {
   echo "$@" >&2
   exit 1
 }
+
 if [ "$(id -u)" != "0" ]; then
   die "Need to be root for runnig pmcstat"
 fi
@@ -31,22 +32,23 @@ case "${cpu}" in
     die "Unknow CPU (${cpu})"
 esac
 
-# Load Hardware Performance Monitoring Counter module
-kldstat -q -m hwpmc || kldload hwpmc
+echo "${cpu} detected, using ${counter} PMC counter"
 
-# Delete existing log files
-for f in /tmp/pmc.*.log /tmp/flamegraph.svg; do
-  rm -rf "${f}"
-done
+if ! kldstat -q -m hwpmc; then
+  echo "Loading Hardware Peformance Monitoring Counter (hwpmc) kernel module..."
+  kldload hwpmc
+fi
 
-# Collect system stats
-pmcstat -z ${graphdepth} -l ${seconds} -S ${counter} -O /tmp/pmc.raw.log
-# Generate system-wide profile with callgraphs
-pmcstat -z ${graphdepth} -R /tmp/pmc.raw.log -G /tmp/pmc.callgraph.log
+tmpdir=$(mktemp -d -t flame)
 
-whereis -q stackcollapse-pmc.pl || die "Missing flamegraph package"
-# fold stack samples into single lines.
-stackcollapse-pmc.pl /tmp/pmc.callgraph.log > /tmp/pmc.folded.log
-# Generate flamegraph
-flamegraph.pl --title "counter: ${counter}" /tmp/pmc.folded.log > flamegraph.svg
-echo "Done: flamegraph generated as /tmp/flamegraph.svg"
+echo "Collecting hwpmc for ${seconds} seconds..."
+pmcstat -z ${graphdepth} -l ${seconds} -S ${counter} -O ${tmpdir}/pmc.raw.log
+echo "Generate system-wide profile with callgraphs..."
+pmcstat -z ${graphdepth} -R ${tmpdir}/pmc.raw.log -G /${tmpdir}/pmc.callgraph.log
+
+whereis -q stackcollapse-pmc.pl || die "Missing benchmarks/flamegraph package"
+echo "Fold stack samples into single lines..."
+stackcollapse-pmc.pl ${tmpdir}/pmc.callgraph.log > ${tmpdir}/pmc.folded.log
+echo "Generating flamegraph svg..."
+flamegraph.pl --title "counter: ${counter}" ${tmpdir}/pmc.folded.log > ${tmpdir}/flamegraph.svg
+echo "Done: flamegraph generated as ${tmpdir}/flamegraph.svg"
