@@ -24,3 +24,12 @@ Remove comment in sudo_local_template:
 sudo cp /etc/pam.d/sudo_local.template /etc/pam.d/sudo_local
 sudo sed -i '' 's/#auth/auth/' /etc/pam.d/sudo_local
 ```
+
+## dd
+
+```
+diskutil list
+sudo diskutil unmountDisk disk4
+xzcat file.img.xz | sudo dd of=/dev/rdisk4 bs=1m
+sudo sync
+```

@@ -5,7 +5,7 @@ set nocompatible
 " Sources
 " https://vimawesome.com/
 " https://blog.jez.io/vim-as-an-ide/
-" 
+"
 " --- Pluging manager: https://github.com/junegunn/vim-plug
 " mkdir -p ~/.vim/autoload/
 " fetch -o ~/.vim/autoload/plug.vim https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
@@ -38,8 +38,11 @@ if has("autocmd")
 endif
 "Disable mouse
 set mouse=
+
 "Disable automatic tab when pasting
 set noai
+"Not enough, still doing it so enable past mode by default
+set paste
 "Enable syntax highlight
 syntax enable
 "Display line number
