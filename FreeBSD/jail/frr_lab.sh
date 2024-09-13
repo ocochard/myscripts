@@ -77,7 +77,7 @@ frr1_ifa=lo110
 frr1_ifa_p=""
 frr1_ifb=epair112
 frr1_ifb_p=a
-frr1_daemons="zebra bgpd bfdd"
+frr1_daemons="mgmtd zebra bgpd bfdd"
 mkdir -p /var/run/frr/frr1
 cat > /var/run/frr/frr1/ipsec.conf <<EOF
 flush ;
@@ -132,7 +132,7 @@ frr2_ifa=epair112
 frr2_ifa_p=b
 frr2_ifb=epair123
 frr2_ifb_p=a
-frr2_daemons="zebra bgpd bfdd ripd ripngd"
+frr2_daemons="mgmtd zebra bgpd bfdd ripd ripngd"
 mkdir -p /var/run/frr/frr2
 cat > /var/run/frr/frr2/ipsec.conf <<EOF
 flush ;
@@ -209,7 +209,7 @@ frr3_ifa=epair123
 frr3_ifa_p=b
 frr3_ifb=epair134
 frr3_ifb_p=a
-frr3_daemons="zebra ospfd ospf6d ripd ripngd bfdd"
+frr3_daemons="mgmtd zebra ospfd ospf6d ripd ripngd bfdd"
 mkdir -p /var/run/frr/frr3
 cat > /var/run/frr/frr3/frr.conf <<EOF
 log file /var/run/frr/frr3/frr.log
@@ -271,7 +271,7 @@ frr4_ifa=epair134
 frr4_ifa_p=b
 frr4_ifb=epair145
 frr4_ifb_p=a
-frr4_daemons="zebra ospfd ospf6d isisd bfdd"
+frr4_daemons="mgmtd zebra ospfd ospf6d isisd bfdd"
 mkdir -p /var/run/frr/frr4
 cat > /var/run/frr/frr4/frr.conf <<EOF
 log file /var/run/frr/frr4/frr.log
@@ -325,7 +325,7 @@ frr5_ifa=epair145
 frr5_ifa_p=b
 frr5_ifb=epair156
 frr5_ifb_p=a
-frr5_daemons="zebra babeld isisd"
+frr5_daemons="mgmtd zebra babeld isisd"
 mkdir -p /var/run/frr/frr5
 cat > /var/run/frr/frr5/frr.conf <<EOF
 log file /var/run/frr/frr5/frr.log
@@ -363,7 +363,7 @@ frr6_ifa=epair156
 frr6_ifa_p=b
 frr6_ifb=epair167
 frr6_ifb_p=a
-frr6_daemons="zebra babeld staticd"
+frr6_daemons="mgmtd zebra staticd babeld"
 mkdir -p /var/run/frr/frr6
 cat > /var/run/frr/frr6/frr.conf <<EOF
 log file /var/run/frr/frr6/frr.log
@@ -392,7 +392,7 @@ frr7_ifa=epair167
 frr7_ifa_p=b
 frr7_ifb=lo170
 frr7_ifb_p=""
-frr7_daemons="zebra staticd"
+frr7_daemons="mgmtd zebra staticd"
 mkdir -p /var/run/frr/frr7
 cat > /var/run/frr/frr7/frr.conf <<EOF
 log file /var/run/frr/frr7/frr.log
@@ -463,8 +463,8 @@ destroy_jail () {
 	iflist=$(jexec frr$1 ifconfig -l | sed 's/lo0//')
 	jail -R frr$1 || true
 	sleep 2
-	for iftodestroy in $iflist; do
-		ifconfig $iftodestroy destroy || true
+	for i in $iflist; do
+		ifconfig $i destroy || true
 	done
 }
 
@@ -491,6 +491,15 @@ stop () {
 		destroy_jail $i
 		rm -rf /var/run/frr/frr${i}
 		rm -f /var/run/frr/frr${i}_*
+	done
+	# There are some long-dying jail that could prevent deleteing all epairs
+	for i in epair112 epair123 epair134 epair145 epair156 epair167; do
+		for j in a b; do
+			ifconfig $i$j destroy || true
+		done
+	done
+	for i in lo110 lo170; do
+		ifconfig $i destroy || true
 	done
 }
 
