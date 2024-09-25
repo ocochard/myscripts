@@ -13,11 +13,16 @@ set boxwidth 0.9 relative
 
 set title noenhanced "Job numbers' impact on 'make TARGET_ARCH=riscv64 buildworld' execution time\n src and obj on tmpfs"
 set xlabel font "Gill Sans,16"
-set xlabel noenhanced "FreeBSD/amd64 15.0-CURRENT (1500001) building main sources cloned at b57df6fbc (2023-09-18 19:01:17 +0200)"
+set xlabel noenhanced "FreeBSD/arm64 15.0-CURRENT (1500023) building main sources cloned at d2c2d5f49 (2024-09-25 19:14:36 +0200)
 set ylabel "Time to build in seconds, median of 3 benches"
+
+# dx = 1/(2 * (numberOfTorres + gap))
+dx = 1/12.0
 
 set xtics 1
 set key on inside top right
-plot  "Ampere.Altra.Mt.Collins/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "Ampere Altra (2 packages X 80 cores = 160 cores total)",   ''using 0:( $2 + 80 ):2 with labels notitle, \
-  "AMD.Epyc.7502P/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AMD EPYC 7502P (1 package, 32 cores = 64 threads total)",   ''using 0:( $2 + 80 ):2 with labels notitle, \
-  "AMD.Ryzen.7.7735HS/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AMD Ryzen 7 7735HS (1 packages, 8 cores = 16 threads total)",   ''using 0:( $2 + 80 ):2 with labels notitle
+plot  "Ampere.Altra.Mt.Collins/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "Ampere Altra (2 packages, 80 cores = 160 cores)",   ''using 0:( $2 + 40 ):2 with labels offset -5,1 notitle, \
+  "AMD.Epyc.7502P/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AMD EPYC 7502P (1 package, 32 cores = 64 threads)",   ''using 0:( $2 + 40 ):2 with labels offset -1,1 notitle, \
+  "Graviton3.c7gd.16xlarge/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS Graviton 3 c7gd.16xlarge (1 package, 64 cores)",   ''using 0:( $2 + 40 ):2 with labels offset 2,1 notitle, \
+"Graviton4.r8g.16xlarge/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS Graviton 4 r8g.16xlarge (1 package, 64 cores)",   ''using 0:( $2 + 40 ):2 with labels offset 5,1 notitle
+

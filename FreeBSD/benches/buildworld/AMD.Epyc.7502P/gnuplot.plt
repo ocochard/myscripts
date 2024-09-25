@@ -11,9 +11,9 @@ set style fill solid 1.0 border -1
 set style histogram errorbars gap 2 lw 2
 set boxwidth 0.9 relative
 
-set title noenhanced "Job numbers' impact on 'make TARGET_ARCH=riscv64 buildworld' execution time\nAMD EPYC 7502P 32-Core Processor (cores: 32, thread per core: 2, Total CPUs: 64) with 255 GB RAM"
+set title noenhanced "Job numbers' impact on 'make TARGET_ARCH=riscv64 buildworld' execution time\nAMD EPYC 7502P 32-Core Processor (cores: 32, thread per core: 2, Total CPUs: 64) with 255 GB RAM\n src and obj on tmpfs"
 set xlabel font "Gill Sans,16"
-set xlabel noenhanced "FreeBSD/amd64 15.0-CURRENT (1500001) building main sources cloned at b57df6fbc (2023-09-18 19:01:17 +0200)"
+set xlabel noenhanced "FreeBSD/amd64 15.0-CURRENT (1500023) building main sources cloned at d2c2d5f49 (2024-09-25 19:14:36 +0200)"
 set ylabel "Time to build in seconds, median of 3 benches"
 
 set xtics 1

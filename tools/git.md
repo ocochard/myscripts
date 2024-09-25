@@ -36,18 +36,47 @@ When was that file detele?
 git log --all -1 -- path/to/file
 ```
 
-## Notes
-
-## Keeping working branch up-to-date with main
+## Keeping working branch up-to-date with origin
 
 ```
-git switch branch
+git switch branch-name
 git fetch origin
 git rebase
 ```
 => resolve conflict (and commit it!) then git rebase --continue
 ```
 git push
+```
+
+## Squash multiples commit in one
+
+Display all last commits to be squashed:
+```
+git log --pretty=oneline
+```
+
+Let’s use an example of 5 last commits here:
+```
+git rebase -i HEAD~5
+```
+First text editor that open:
+- first line, kept the 'pick' keyword
+- all others 4 lines: Replace 'pick' by 's' (squash)
+=> save & exit
+- Adapt the squashed commit message
+=> save & exit
+
+Now push back your rebase:
+```
+git push origin +branch-name
+```
+
+## Revert a rebase
+
+You’ve squashed a wrong commit, so your rebase need to be reverted.
+
+```
+git reset --hard origin/branch-name
 ```
 
 ## Forking FreeBSD port
@@ -85,9 +114,10 @@ git push
 # Need to start with the main branch, then the BSDRP
 ```
 git checkout main
-git fetch upstream
-git rebase upstream/main
-git push
+git pull
+git checkout branch-name
+git rebase main
+git push -f
 ```
 # => Now, local main is up-to-date with upstream
 ```
