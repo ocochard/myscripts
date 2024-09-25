@@ -15,9 +15,10 @@ die() {
 
 if [ $(id -u) -ne 0 ]; then
 	if which -s sudo; then
-	sudo="sudo -E"
-else
-	die "Need to start as root because sudo not found"
+		sudo="sudo -E"
+	else
+		die "Need to start as root because sudo not found"
+	fi
 fi
 
 if which -s nproc; then
