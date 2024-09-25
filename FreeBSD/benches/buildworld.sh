@@ -4,36 +4,44 @@
 # So, using a cross-compilation target of RISCV, avoiding local target optimisation
 
 set -eu
+sudo=""
 
-# Variables definitions
+# Function definitions
+die() {
+	echo -n "EXIT: " >&2
+	echo "$@" >&2
+	exit 1
+}
+
+if [ $(id -u) -ne 0 ]; then
+	if which -s sudo; then
+	sudo="sudo -E"
+else
+	die "Need to start as root because sudo not found"
+fi
 
 if which -s nproc; then
-	CPUS=$(nproc)
+	cpus=$(nproc)
 else
 	# Deprecated
-	CPUS=$(sysctl -n kern.smp.cpus)
+	cpus=$(sysctl -n kern.smp.cpus)
 fi
 
 # Initial number of jobs
 # - AMD Epyc has 32c and 64t
-# - Ampere has 160 (80 x 2) cores
+# - Ampere MtCollins has 160 (80 x 2) cores
 # To be able to compare them, we need:
 # 1. to start using the same number
 # 2. but not a so small number
-if [ $CPUS -ge 32 ]; then
-	JOBS=16
+if [ ${cpus} -ge 32 ]; then
+	job=16
 else
-   JOBS=4
+   job=4
 fi
 
-RUNS=3						# Number of iteration for each bench
-RAMDISK="/usr/obj/ramdisk"	# RAM disk (tmpfs) directory
-SRCDIR="$RAMDISK/src"		# FreeBSD source directory
-
-# Function definitions
-
-# A usefull function (from: http://code.google.com/p/sh-die/)
-die() { echo -n "EXIT: " >&2; echo "$@" >&2; exit 1; }
+runs=3				# Number of iteration for each bench
+ramdisk="/usr/obj/ramdisk"	# RAM disk (tmpfs) directory
+srcdir="${ramdisk}/src"		# FreeBSD source directory
 
 ### System check ###
 
@@ -55,54 +63,53 @@ if [ $PHYSMEM -lt 17105900000 ]; then
 	# XXX Or switch to non-tmpfs
 fi
 
-mkdir -p $RAMDISK
+mkdir -p ${ramdisk}
 
-#TMPDIR=$(mktemp -d /tmp/buildbench.XXXXXX)
 TMPDIR=/tmp/buildbench.$(date -u '+%Y%m%d%H%M')
 mkdir -p $TMPDIR
 
-if mount | grep -q $RAMDISK; then
+if mount | grep -q ${ramdisk}; then
 	# Previous run detection
-	echo "WARNING: Detected already mounted $RAMDISK"
+	echo "WARNING: Detected already mounted ${ramdisk}"
 	echo "Don't forget to unmount it next time!"
 else
 	# Build in a tmpfs, avoid benching hard disk i/o
-	# XXX How to avoid swap usage ?
-	mount -t tmpfs tmpfs $RAMDISK
+	# XXX How to avoid swap usage ? Should we disable it
+	${sudo} mount -t tmpfs tmpfs ${ramdisk}
 fi
 
 # --depth 1 should imply --single-branch by default
 # Consume about 1.2G of space
-if ! [ -d $SRCDIR ]; then
-	mkdir -p $SRCDIR
-	git clone --depth 1 --branch main --single-branch https://git.freebsd.org/src.git $SRCDIR
+if ! [ -d ${srcdir} ]; then
+	mkdir -p ${srcdir}
+	git clone --depth 1 --branch main --single-branch https://git.freebsd.org/src.git ${srcdir}
 else
 	echo "WARNING: Already source directory"
 fi
 
-cd $SRCDIR
-GITREV=$(git rev-parse --short HEAD)
-GITDATE=$(git log -1 --format=%ai)
+cd ${srcdir}
+gitrev=$(git rev-parse --short HEAD)
+gitdate=$(git log -1 --format=%ai)
 
 # Init gnuplot data file
 for i in real user sys; do
 	echo "#index median minimum maximum" > $TMPDIR/gnuplot.$i.data
 done
 
-while [ $JOBS -le $((CPUS * 2)) ]; do
-	for j in $(seq $RUNS); do
-		echo "Jobs: $JOBS, run: $j/$RUNS"
+while [ ${job} -le $((cpus * 2)) ]; do
+	for j in $(seq ${runs}); do
+		echo "Jobs: ${job}, run: $j/${runs}"
 		# Forcing GENERIC kernel, no custom MAKE_CONF/SRCCONF/SRC_ENV_CONF
 		echo "Cleanup..."
-		env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK TARGET_ARCH=riscv64 \
+		env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=${ramdisk} TARGET_ARCH=riscv64 \
 			make SRCCONF=/dev/null clean > /dev/null 2>&1
 		echo "Build..."
 		# Write log into ram disk to avoid benching local disk speed
-		if ! env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=$RAMDISK TARGET_ARCH=riscv64 \
-			time -ao $TMPDIR/buildbench.$JOBS.time make -j $JOBS \
-				SRCCONF=/dev/null buildworld > $RAMDISK/buildbench.$JOBS.$j.log; then
+		if ! env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=${ramdisk} TARGET_ARCH=riscv64 \
+			time -ao $TMPDIR/buildbench.${job}.time make -j ${job} \
+				SRCCONF=/dev/null buildworld > ${ramdisk}/buildbench.${job}.$j.log; then
 			echo "ERROR, last log line:"
-			tail -n 100 $RAMDISK/buildbench.$JOBS.$j.log
+			tail -n 100 ${ramdisk}/buildbench.${job}.$j.log
 			exit 1
 		fi
 	done # for j
@@ -114,38 +121,38 @@ while [ $JOBS -le $((CPUS * 2)) ]; do
 	timepos=2
 
 	for t in real user sys; do
-		cut -w -f $timepos $TMPDIR/buildbench.$JOBS.time > $TMPDIR/buildbench.$JOBS.$t
+		cut -w -f $timepos $TMPDIR/buildbench.${job}.time > $TMPDIR/buildbench.${job}.$t
 		timepos=$((timepos + 2))
 
-		ministat -qn $TMPDIR/buildbench.$JOBS.$t > $TMPDIR/buildbench.$JOBS.$t.ministat
+		ministat -qn $TMPDIR/buildbench.${job}.$t > $TMPDIR/buildbench.${job}.$t.ministat
 		# ministat output example:
 		#    N           Min           Max        Median           Avg        Stddev
 		#x   3       4230.49       4243.08        4231.5     4235.0233     6.9955295
 		# Min is 3, Max is 4, Median is 5
-		min=$(cut -w -f 3 $TMPDIR/buildbench.$JOBS.$t.ministat)
-		max=$(cut -w -f 4 $TMPDIR/buildbench.$JOBS.$t.ministat)
-		med=$(cut -w -f 5 $TMPDIR/buildbench.$JOBS.$t.ministat)
-		echo "$JOBS $med $min $max" >> $TMPDIR/gnuplot.$t.data
+		min=$(cut -w -f 3 $TMPDIR/buildbench.${job}.$t.ministat)
+		max=$(cut -w -f 4 $TMPDIR/buildbench.${job}.$t.ministat)
+		med=$(cut -w -f 5 $TMPDIR/buildbench.${job}.$t.ministat)
+		echo "${job} $med $min $max" >> $TMPDIR/gnuplot.$t.data
 	done # for t
 
 	# multiply job per 2
-	JOBS=$(( JOBS * 2 ))
-done # while JOBS
+	job=$(( job * 2 ))
+done # while $job
 
 # Gnuplot example file
 
-MACHINE=$(uname -m)
-VERSION=$(uname -r)
-VERSIONU=$(uname -U)
-MODEL=$(sysctl -n hw.model)
+machine=$(uname -m)
+version=$(uname -r)
+versionU=$(uname -U)
+model=$(sysctl -n hw.model)
 # Number of physical cores online
-CORES=$(sysctl -n kern.smp.cores)
+cores=$(sysctl -n kern.smp.cores)
 # Number of SMT threads online per core
-TPC=$(sysctl -n kern.smp.threads_per_core)
+tpc=$(sysctl -n kern.smp.threads_per_core)
 # Number of CPUs online
-CPUS=$(sysctl -n kern.smp.cpus)
-RAM=$(sysctl -n hw.physmem)
-RAM=$((RAM / 1024 / 1024 / 1024))	# convert byte into GB
+cpus=$(sysctl -n kern.smp.cpus)
+ram=$(sysctl -n hw.physmem)
+ram=$((ram / 1024 / 1024 / 1024))	# convert byte into GB
 
 cat > $TMPDIR/gnuplot.plt <<EOF
 # Gnuplot script file for plotting data from bench lab
@@ -161,9 +168,9 @@ set style fill solid 1.0 border -1
 set style histogram errorbars gap 2 lw 2
 set boxwidth 0.9 relative
 
-set title noenhanced "Job numbers' impact on 'make TARGET_ARCH=riscv64 buildworld' execution time\n$MODEL (cores: $CORES, thread per core: $TPC, Total CPUs: $CPUS) with $RAM GB RAM\n src and obj on tmpfs"
+set title noenhanced "Job numbers' impact on 'make TARGET_ARCH=riscv64 buildworld' execution time\n${model} (cores: ${cores}, thread per core: ${tpc}, Total CPUs: ${cpus}) with ${ram} GB RAM\n src and obj on tmpfs"
 set xlabel font "Gill Sans,16"
-set xlabel noenhanced "FreeBSD/$MACHINE $VERSION ($VERSIONU) building main sources cloned at $GITREV ($GITDATE)"
+set xlabel noenhanced "FreeBSD/${machine} ${version} (${versionU}) building main sources cloned at ${gitrev} (${gitdate})"
 set ylabel "Time to build in seconds, median of 3 benches"
 
 set xtics 1
@@ -179,7 +186,7 @@ echo "cd $TMPDIR"
 echo "gnuplot gnuplot.plt"
 
 sleep 4
-if ! umount $RAMDISK; then
-	echo "ERROR: Failed to umount $RAMDISK, processes using it:"
-	fstat $RAMDISK
+if ! ${sudo} umount ${ramdisk}; then
+	echo "ERROR: Failed to umount ${ramdisk}, processes using it:"
+	fstat ${ramdisk}
 fi
