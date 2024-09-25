@@ -58,16 +58,17 @@ which -s git || die "git not available (used to download FreeBSD sources)"
 # => 16G minimum to build from RAM, or more if ZFS in use?
 # ZFS cache could render useless the storage of sources in RAM
 
-PHYSMEM=$(sysctl -n hw.physmem)
-if [ $PHYSMEM -lt 17105900000 ]; then
+physmem=$(sysctl -n hw.physmem)
+if [ ${physmem} -lt 17105900000 ]; then
 	die "Need a minimum of 16G RAM"
 	# XXX Or switch to non-tmpfs
 fi
 
-mkdir -p ${ramdisk}
+${sudo} mkdir -p ${ramdisk}
+${sudo} chown ${USER} ${ramdisk}
 
-TMPDIR=/tmp/buildbench.$(date -u '+%Y%m%d%H%M')
-mkdir -p $TMPDIR
+tmpdir=/tmp/buildbench.$(date -u '+%Y%m%d%H%M')
+mkdir -p ${tmpdir}
 
 if mount | grep -q ${ramdisk}; then
 	# Previous run detection
@@ -94,7 +95,7 @@ gitdate=$(git log -1 --format=%ai)
 
 # Init gnuplot data file
 for i in real user sys; do
-	echo "#index median minimum maximum" > $TMPDIR/gnuplot.$i.data
+	echo "#index median minimum maximum" > ${tmpdir}/gnuplot.$i.data
 done
 
 while [ ${job} -le $((cpus * 2)) ]; do
@@ -107,7 +108,7 @@ while [ ${job} -le $((cpus * 2)) ]; do
 		echo "Build..."
 		# Write log into ram disk to avoid benching local disk speed
 		if ! env __MAKE_CONF=/dev/null SRC_ENV_CONF=/dev/null MAKEOBJDIRPREFIX=${ramdisk} TARGET_ARCH=riscv64 \
-			time -ao $TMPDIR/buildbench.${job}.time make -j ${job} \
+			time -ao ${tmpdir}/buildbench.${job}.time make -j ${job} \
 				SRCCONF=/dev/null buildworld > ${ramdisk}/buildbench.${job}.$j.log; then
 			echo "ERROR, last log line:"
 			tail -n 100 ${ramdisk}/buildbench.${job}.$j.log
@@ -122,18 +123,18 @@ while [ ${job} -le $((cpus * 2)) ]; do
 	timepos=2
 
 	for t in real user sys; do
-		cut -w -f $timepos $TMPDIR/buildbench.${job}.time > $TMPDIR/buildbench.${job}.$t
+		cut -w -f $timepos ${tmpdir}/buildbench.${job}.time > ${tmpdir}/buildbench.${job}.$t
 		timepos=$((timepos + 2))
 
-		ministat -qn $TMPDIR/buildbench.${job}.$t > $TMPDIR/buildbench.${job}.$t.ministat
+		ministat -qn ${tmpdir}/buildbench.${job}.$t > ${tmpdir}/buildbench.${job}.$t.ministat
 		# ministat output example:
 		#    N           Min           Max        Median           Avg        Stddev
 		#x   3       4230.49       4243.08        4231.5     4235.0233     6.9955295
 		# Min is 3, Max is 4, Median is 5
-		min=$(cut -w -f 3 $TMPDIR/buildbench.${job}.$t.ministat)
-		max=$(cut -w -f 4 $TMPDIR/buildbench.${job}.$t.ministat)
-		med=$(cut -w -f 5 $TMPDIR/buildbench.${job}.$t.ministat)
-		echo "${job} $med $min $max" >> $TMPDIR/gnuplot.$t.data
+		min=$(cut -w -f 3 ${tmpdir}/buildbench.${job}.$t.ministat)
+		max=$(cut -w -f 4 ${tmpdir}/buildbench.${job}.$t.ministat)
+		med=$(cut -w -f 5 ${tmpdir}/buildbench.${job}.$t.ministat)
+		echo "${job} $med $min $max" >> ${tmpdir}/gnuplot.$t.data
 	done # for t
 
 	# multiply job per 2
@@ -155,7 +156,7 @@ cpus=$(sysctl -n kern.smp.cpus)
 ram=$(sysctl -n hw.physmem)
 ram=$((ram / 1024 / 1024 / 1024))	# convert byte into GB
 
-cat > $TMPDIR/gnuplot.plt <<EOF
+cat > ${tmpdir}/gnuplot.plt <<EOF
 # Gnuplot script file for plotting data from bench lab
 
 set yrange [0:*]
@@ -183,7 +184,7 @@ EOF
 echo "Benches done"
 echo "You can generate a graph.png with gnuplot:"
 echo "pkg install gnuplot"
-echo "cd $TMPDIR"
+echo "cd ${tmpdir}"
 echo "gnuplot gnuplot.plt"
 
 sleep 4
