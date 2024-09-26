@@ -223,11 +223,13 @@ echo "pkg install gnuplot"
 echo "cd ${tmpdir}"
 echo "gnuplot gnuplot.plt"
 
-sleep 4
+sleep 5
 if [ -n "${physmem}" ]; then
   # physmem set only for tmpfs usage
   if ! ${sudo} umount ${ramdisk}; then
     echo "ERROR: Failed to umount ${ramdisk}, processes using it:"
     fstat ${ramdisk}
   fi
+else
+  echo "Workdir ${ramdisk} could be deleted now"
 fi
