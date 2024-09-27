@@ -21,9 +21,10 @@ dx = 1/12.0
 
 set xtics 1
 set key on inside top right
-plot  "Ampere.Altra.Mt.Collins/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "Ampere Altra Mt. Collins (2 packages, 80 cores = 160 cores)",   ''using 0:( $2 + 40 ):2 with labels offset -6,1 notitle, \
-  "AMD.Epyc.7502P/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AMD EPYC 7502P (1 package, 32 cores = 64 threads)",   ''using 0:( $2 + 40 ):2 with labels offset -3,1 notitle, \
-  "Graviton2.c6gd.16xlarge/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS Graviton 2 c6gd.16xlarge (1 package, 64 cores)",   ''using 0:( $2 + 40 ):2 with labels offset 0,1 notitle, \
-  "Graviton3.c7gd.16xlarge/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS Graviton 3 c7gd.16xlarge (1 package, 64 cores)",   ''using 0:( $2 + 40 ):2 with labels offset 3,1 notitle, \
-"Graviton4.r8g.16xlarge/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS Graviton 4 r8g.16xlarge (1 package, 64 cores)",   ''using 0:( $2 + 40 ):2 with labels offset 6,1 notitle
+plot  "<head -5 Ampere.Altra.Mt.Collins/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "Ampere Altra Mt. Collins (2 packages, 80 cores = 160 cores)",   ''using 0:( $2 + 10 ):2 with labels offset -7,0.5 notitle, \
+  "AMD.Epyc.7502P/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AMD EPYC 7502P (1 package, 32 cores = 64 threads)",   ''using 0:( $2 + 10 ):2 with labels offset -4,-2 notitle, \
+  "m5d.metal/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS m5d.metal, Intel Xeon 8259CL (2 packages, 24 cores, 2 hw threads = 96 threads)",   ''using 0:( $2 + 10 ):2 with labels offset -2,2 notitle, \
+  "Graviton2.c6gd.16xlarge/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS Graviton 2 c6gd.16xlarge (1 package, 64 cores)",   ''using 0:( $2 + 10 ):2 with labels offset 2,1.5 notitle, \
+  "Graviton3.c7gd.16xlarge/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS Graviton 3 c7gd.16xlarge (1 package, 64 cores)",   ''using 0:( $2 + 10 ):2 with labels offset 5,1 notitle, \
+"Graviton4.r8g.16xlarge/gnuplot.real.data" using 2:3:4:xticlabels(1) with histogram title "AWS Graviton 4 r8g.16xlarge (1 package, 64 cores)",   ''using 0:( $2 + 10 ):2 with labels offset 7,0.5 notitle
 
