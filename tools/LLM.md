@@ -66,36 +66,30 @@ EOF
 
 ```
 
-## Specific AMD GPU with Unified Memory Architecture (Work-in-progress)
+## Unified Memory Architecture with AMD iGPU
 
-The RAM is shared by GPU, which mean the GPU could use all the RAM for its usage.
-This feature is now called Unified Memory Architecture (UMA).
-Tested on Ubuntu 24.04.1 LTS.
-Example on an APU (AMD Ryzen 7 7735HS with Radeon Graphics) with 64GB RAM:
+Laptops and miniPC are using APU (SoC that include CPU and iGPU with RAM shared between both).
+This feature is called Unified Memory Architecture (UMA).
+Does it mean we could load big models and using the iGPU ?
+
+Example on an APU (AMD Ryzen 7 7735HS with Radeon Graphics) with 64GB RAM and Ubuntu 24.04.1 LTS:
 ```
 $ grep MemTotal /proc/meminfo
 MemTotal:       61439400 kB
-$ echo VRAM total in MB: $(( $(cat /sys/class/drm/card1/device/mem_info_vram_total) / 1024 / 1024 ))
+$ echo VRAM total in MB: $(( $(cat /sys/class/drm/card0/device/mem_info_vram_total) / 1024 / 1024 ))
 VRAM total in MB: 4096
-$ echo GTT total in MB:  $(( $(cat /sys/class/drm/card1/device/mem_info_gtt_total) / 1024 / 1024 ))
+$ echo GTT total in MB:  $(( $(cat /sys/class/drm/card0/device/mem_info_gtt_total) / 1024 / 1024 ))
 GTT total in MB: 29999
 ```
 Here, the system reserved 4GB for GPU usage (this is the maximum value allowed in the EFI settings of
 this computer) but it allows to use about 30GB of RAM for GPU usage in case of need by the system.
 
-Then check rocminfo is able to detect your GPU:
-```
-$ rocminfo | grep '^  Name:'
-  Name:                    AMD Ryzen 7 7735HS with Radeon Graphics
-  Name:                    gfx1035
-```
-
 To compile llama.cpp to support this feature, you need:
-- [Official AMD ROCm drivers and libraries (version 6.2.2 here)](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/native-install/ubuntu.html);
+- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/native-install/ubuntu.html) (version 6.2.2 used here);
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
-- enable HIP UMA (LLAMA_HIP_UMA).
+- Enable HIP UMA (LLAMA_HIP_UMA).
 
-This mobile GPU (gfx1035) is not officialy supported by available ROCm libraries:
+This iGPU (gfx1035) is not officialy supported by the ROCm libraries:
 There is no file /opt/rocm/lib/rocblas/library/ for gfx1035 as example.
 So we need to trick it to use same library as the closest GPU which is the gfx1030.
 And the gfx1030 is from Navi 21 family, which belongs to RNDA 2.0 architecture.
@@ -106,14 +100,9 @@ So wee need to:
 
 Once rocm installed, check your GPU correctly detected:
 ```
-$ rocminfo | grep Name
+$ rocminfo | grep '^  Name:'
   Name:                    AMD Ryzen 7 7735HS with Radeon Graphics
-  Marketing Name:          AMD Ryzen 7 7735HS with Radeon Graphics
-  Vendor Name:             CPU
   Name:                    gfx1035
-  Marketing Name:          AMD Radeon Graphics
-  Vendor Name:             AMD
-      Name:                    amdgcn-amd-amdhsa--gfx1035
 ```
 
 Then compile llama.cpp, example using make:
@@ -128,7 +117,7 @@ HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" HSA_OVERRIDE_GFX_VERSI
     && cmake --build build --config Release -- -j $(nproc)
 
 ```
-Then it should be able to detect the GPU and running:
+Then it should be able to detect the iGPU by this test:
 ```
 ~/llama.cpp$ HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/llama-cli -m models/starling-lm-7b-alpha.Q4_K_M.gguf \
 -p "I believe the meaning of life is" -n 128
@@ -159,9 +148,10 @@ llm_load_tensors: offloading 0 repeating layers to GPU
 llama.cpp doesn’t offload to the GPU, so let’s force offloading all layers
 by adding `--n-gpu-layers 99` option to the command line:
 ```
-$ sudo HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/main -ngl 33 -m models/starling-lm-7b-alpha.Q4_K_M.gguf...
+$ sudo HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/main -ngl 99 -m models/starling-lm-7b-alpha.Q4_K_M.gguf...
 (...)
-llm_load_tensors: offloading 32 repeating layers to GPU                                                                       llm_load_tensors: offloading non-repeating layers to GPU
+llm_load_tensors: offloading 32 repeating layers to GPU
+llm_load_tensors: offloading non-repeating layers to GPU
 llm_load_tensors: offloaded 33/33 layers to GPU
 llm_load_tensors:      ROCm0 buffer size =  4095.06 MiB
 llm_load_tensors:        CPU buffer size =    70.32 MiB
@@ -172,36 +162,45 @@ llama_perf_context_print: prompt eval time =     272.94 ms /     8 tokens (   34
 llama_perf_context_print:       total time =   10263.81 ms /   135 tokens
 ```
 
-Now the GPU compute power is used (rocm-smi is reporting a 100% utilization) but
-the performance was worse with the GPU: From 5.33 tokens per second it lower down to 2.63.
-And the VRAM and GTT are still not used (is it able to detectd UMA so avoid to use it?).
+Now the GPU compute power is used (rocm-smi is reporting a 100% utilization).
+VRAM and GTT counters still doesn’t increase, but this is peraps due to the awarness of HIP UMA.
 
-Some benches (notice the llama-bench doesn’t need the -ngl parameters to use the GPU):
+Some benches (notice the llama-bench is using -ngl 99 by default) with 2 models:
 ```
-/llama.cpp$ HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf
+/llama.cpp$ HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/llama-bench \
+-m models/starling-lm-7b-alpha.Q4_K_M.gguf \
+-m models/mixtral-8x7b-v0.1.Q5_K_M.gguf
 (...)
 ggml_cuda_init: found 1 ROCm devices:
   Device 0: AMD Radeon Graphics, compute capability 10.3, VMM: no
-| model                  |     size | params | backend | ngl |   test |           t/s |
-| ---------------------- |--------: |------: | ------- | --: | -----: | ------------: |
-| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CUDA    |  99 |  pp512 | 168.60 ± 0.51 |
-| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CUDA    |  99 |  tg128 |  12.47 ± 0.07 |
-
+| model                    |      size |  params | backend | ngl |   test |           t/s |
+| ------------------------ |---------: |-------: | ------- | --: | -----: | ------------: |
+| llama 7B Q4_K - Medium   | 4.07 GiB  |  7.24 B | CUDA    |  99 |  pp512 | 168.60 ± 0.51 |
+| llama 7B Q4_K - Medium   | 4.07 GiB  |  7.24 B | CUDA    |  99 |  tg128 |  12.47 ± 0.07 |
+| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CUDA    |  99 |  pp512 |  90.47 ± 0.60 |
+| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CUDA    |  99 |  tg128 |   5.96 ± 0.01 |
 build: d5cb8684 (3891)
 ```
 
 Comparing to CPU backend:
 ```
-/llama.cpp$ build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf -t $(nproc)
-| model                  |     size | params | backend | threads |  test |          t/s |
-| ---------------------- | -------: | -----: | ------- | ------: | ----: | -----------: |
-| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CPU     |      16 | pp512 | 32.15 ± 0.07 |
-| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CPU     |      16 | tg128 | 10.97 ± 0.10 |
+/llama.cpp$ build/bin/llama-bench -t $(nproc) \
+-m models/starling-lm-7b-alpha.Q4_K_M.gguf \
+-m models/mixtral-8x7b-v0.1.Q5_K_M.gguf
+(...)
+| model                    |      size |  params | backend | threads |  test |          t/s |
+| ------------------------ | --------: | ------: | ------- | ------: | ----: | -----------: |
+| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      16 | pp512 | 32.15 ± 0.07 |
+| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      16 | tg128 | 10.97 ± 0.10 |
+| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      16 | pp512 | 13.19 ± 0.00 |
+| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      16 | tg128 |  5.29 ± 0.01 |
 
 build: d5cb8684 (3891)
 ```
 
-## Specific Intel GPU (Arc)
+Conclusion: It is indeed able to load big model and using the iGPU
+
+## Intel iGPU (Arc graphices)
 
 Testing on Intel NUC 165H with this SOC:
 - Intel Core Ultra 7 165H (6 Pcores, 8 Ecores, 22 threads)
