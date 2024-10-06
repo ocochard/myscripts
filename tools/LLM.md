@@ -174,11 +174,12 @@ Some benches (notice the llama-bench is using -ngl 99 by default) with 2 models:
 ggml_cuda_init: found 1 ROCm devices:
   Device 0: AMD Radeon Graphics, compute capability 10.3, VMM: no
 | model                    |      size |  params | backend | ngl |   test |           t/s |
-| ------------------------ |---------: |-------: | ------- | --: | -----: | ------------: |
+| ------------------------ | --------: | ------: | ------- | --: | -----: | ------------: |
 | llama 7B Q4_K - Medium   | 4.07 GiB  |  7.24 B | CUDA    |  99 |  pp512 | 168.60 ± 0.51 |
 | llama 7B Q4_K - Medium   | 4.07 GiB  |  7.24 B | CUDA    |  99 |  tg128 |  12.47 ± 0.07 |
 | llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CUDA    |  99 |  pp512 |  90.47 ± 0.60 |
 | llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CUDA    |  99 |  tg128 |   5.96 ± 0.01 |
+
 build: d5cb8684 (3891)
 ```
 
@@ -202,10 +203,12 @@ Conclusion: It is indeed able to load big model and using the iGPU
 
 ## Intel iGPU (Arc graphices)
 
+Doing the same as with AMD iGPU is doable on on Intel iGPU.
+
 Testing on Intel NUC 165H with this SOC:
 - Intel Core Ultra 7 165H (6 Pcores, 8 Ecores, 22 threads)
 - Intel Arc graphics
-- Intel AI Boost NPU
+- Intel AI Boost NPU (didn’t use need)
 
 Backend supported for Intel GPU support are:
 - BLAS
@@ -232,7 +235,8 @@ Then build llamacpp using SYSCL and check it detects your GPU:
 And start a bench (remember to load OneAPI vars for each new session):
 ```
 source /opt/intel/oneapi/setvars.sh
-~/llama.cpp$ build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf
+~/llama.cpp$ build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf \
+-m models/mixtral-8x7b-v0.1.Q5_K_M.gguf
 ggml_sycl_init: GGML_SYCL_FORCE_MMQ:   no
 ggml_sycl_init: SYCL_USE_XMX: yes
 found 1 SYCL devices:
@@ -242,23 +246,29 @@ found 1 SYCL devices:
 |--|-------------------|------------------------|-------|-------|--------|-----|-------|---------------|
 | 0| [level_zero:gpu:0]| Intel Graphics [0x7d55]|    1.3|    128|    1024|   32| 94336M|      1.3.27642|
 [SYCL] call ggml_check_sycl
+get_memory_info: [warning] ext_intel_free_memory is not supported (export/set ZES_ENABLE_SYSMAN=1 to support), use total memory as free memory
 ggml_check_sycl: GGML_SYCL_DEBUG: 0
 ggml_check_sycl: GGML_SYCL_F16: yes
-| model                  |     size |  params | backend | ngl |  test |           t/s |
-| ---------------------- | -------: | ------: | ------- | --: | ----: |-------------: |
-| llama 7B Q4_K - Medium | 4.07 GiB |  7.24 B | SYCL    |  99 | pp512 | 199.25 ± 5.53 |
-| llama 7B Q4_K - Medium | 4.07 GiB |  7.24 B | SYCL    |  99 | tg128 |   6.10 ± 0.01 |
+| model                    |      size |  params | backend | ngl |  test |           t/s |
+| ------------------------ | --------: | ------: | ------- | --: | ----: |-------------: |
+| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | SYCL    |  99 | pp512 | 204.51 ± 5.79 |
+| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | SYCL    |  99 | tg128 |   6.13 ± 0.02 |
+| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | SYCL    |  99 | pp512 |  59.67 ± 0.19 |
+| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | SYCL    |  99 | tg128 |   2.42 ± 0.01 |
 
 build: d5cb8684 (3891)
 ```
 
 To be compared with CPU only usage:
 ```
-$ bin/llama-bench -m ~/llama.cpp/models/starling-lm-7b-alpha.Q4_K_M.gguf -t $(nproc)
-| model                  |     size | params | backend | threads |  test |          t/s |
-| ---------------------- | -------: |------: | --------| ------: | ----: | -----------: |
-| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CPU     |      22 | pp512 | 24.47 ± 0.49 |
-| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CPU     |      22 | tg128 |  9.22 ± 0.07 |
+~/llama.cpp$ build/bin/llama-bench -t $(nproc) -m models/starling-lm-7b-alpha.Q4_K_M.gguf \
+ -m models/mixtral-8x7b-v0.1.Q5_K_M.gguf
+| model                    |      size |  params | backend | threads |  test |          t/s |
+| ------------------------ | --------: | ------: | --------| ------: | ----: | -----------: |
+| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      22 | pp512 | 24.47 ± 0.49 |
+| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      22 | tg128 |  9.22 ± 0.07 |
+| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      22 | pp512 | 10.11 ± 0.02 |
+| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      22 | tg128 |  4.51 ± 0.01 |
 ```
 
 # whisper.cpp
