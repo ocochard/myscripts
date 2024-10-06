@@ -1,11 +1,28 @@
 # llama.cpp
 
-## Generic install
+## Generic build instructions
 
+[Official doc is very good for that](https://github.com/ggerganov/llama.cpp/blob/master/docs/build.md).
 ```
 git clone https://github.com/ggerganov/llama.cpp.git
 cd llama.cpp
-make (Linux & MacOS) or gmake (FreeBSD)
+```
+
+On Linux (Ubuntu) using cmake:
+```
+sudo apt install -y build-essential cmake
+cmake -B build
+cmake --build build --config Release -- -j $(nproc)
+```
+
+Or Linux/MacOS using make:
+```
+make
+```
+Or FreeBSD with gmake:
+```
+pkg install -y gmake
+gmake
 ```
 
 ## Usage
@@ -53,13 +70,14 @@ EOF
 
 The RAM is shared by GPU, which mean the GPU could use all the RAM for its usage.
 This feature is now called Unified Memory Architecture (UMA).
+Tested on Ubuntu 24.04.1 LTS.
 Example on an APU (AMD Ryzen 7 7735HS with Radeon Graphics) with 64GB RAM:
 ```
 $ grep MemTotal /proc/meminfo
 MemTotal:       61439400 kB
-$ echo VRAM total in MB: $(( $(cat /sys/class/drm/card0/device/mem_info_vram_total) / 1024 / 1024 ))
+$ echo VRAM total in MB: $(( $(cat /sys/class/drm/card1/device/mem_info_vram_total) / 1024 / 1024 ))
 VRAM total in MB: 4096
-$ echo GTT total in MB:  $(( $(cat /sys/class/drm/card0/device/mem_info_gtt_total) / 1024 / 1024 ))
+$ echo GTT total in MB:  $(( $(cat /sys/class/drm/card1/device/mem_info_gtt_total) / 1024 / 1024 ))
 GTT total in MB: 29999
 ```
 Here, the system reserved 4GB for GPU usage (this is the maximum value allowed in the EFI settings of
@@ -73,12 +91,12 @@ $ rocminfo | grep '^  Name:'
 ```
 
 To compile llama.cpp to support this feature, you need:
-- Official AMD ROCm drivers and libraries (here: 6.1.0) using Ubuntu (here: 22.04 LTS);
+- [Official AMD ROCm drivers and libraries (version 6.2.2 here)](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/native-install/ubuntu.html);
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
 - enable HIP UMA (LLAMA_HIP_UMA).
 
 This mobile GPU (gfx1035) is not officialy supported by available ROCm libraries:
-There is no file /opt/rocm-6.1.0/lib/rocblas/library/ for gfx1035 as example.
+There is no file /opt/rocm/lib/rocblas/library/ for gfx1035 as example.
 So we need to trick it to use same library as the closest GPU which is the gfx1030.
 And the gfx1030 is from Navi 21 family, which belongs to RNDA 2.0 architecture.
 
@@ -86,86 +104,164 @@ So wee need to:
 1. During compilation time, force GPU target to gfx1030 (AMDGPU_TARGETS=gfx1030)
 1. During compilation AND run time force ROCm to use Navi21 binary (HSA_OVERRIDE_GFX_VERSION=10.3.0)
 
+Once rocm installed, check your GPU correctly detected:
+```
+$ rocminfo | grep Name
+  Name:                    AMD Ryzen 7 7735HS with Radeon Graphics
+  Marketing Name:          AMD Ryzen 7 7735HS with Radeon Graphics
+  Vendor Name:             CPU
+  Name:                    gfx1035
+  Marketing Name:          AMD Radeon Graphics
+  Vendor Name:             AMD
+      Name:                    amdgcn-amd-amdhsa--gfx1035
+```
+
+Then compile llama.cpp, example using make:
 ```
 $ HSA_OVERRIDE_GFX_VERSION=10.3.0 make -j$(nproc) LLAMA_HIPBLAS=1 LLAMA_HIP_UMA=1 AMDGPU_TARGETS=gfx1030
 ```
 
+or with cmake:
+```
+HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" HSA_OVERRIDE_GFX_VERSION=10.3.0\
+    cmake -S . -B build -DGGML_HIPBLAS=ON -DGGML_HIP_UMA=ON -DAMDGPU_TARGETS=gfx1030 -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -- -j $(nproc)
+
+```
 Then it should be able to detect the GPU and running:
 ```
-$ HSA_OVERRIDE_GFX_VERSION=10.3.0 ./main -m models/mixtral-8x7b-v0.1.Q5_K_M.gguf ...
-(etc.)
-llm_load_print_meta: model type       = 8x7B
-llm_load_print_meta: model ftype      = Q5_K - Medium
-llm_load_print_meta: model params     = 46.70 B
-llm_load_print_meta: model size       = 30.02 GiB (5.52 BPW)
-llm_load_print_meta: general.name     = mistralai_mixtral-8x7b-v0.1
-(etc.)
-ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes                                                                                ggml_cuda_init: found 1 ROCm devices:
+~/llama.cpp$ HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/llama-cli -m models/starling-lm-7b-alpha.Q4_K_M.gguf \
+-p "I believe the meaning of life is" -n 128
+(...)
+ggml_cuda_init: GGML_CUDA_FORCE_MMQ:    no
+ggml_cuda_init: GGML_CUDA_FORCE_CUBLAS: no
+ggml_cuda_init: found 1 ROCm devices:
   Device 0: AMD Radeon Graphics, compute capability 10.3, VMM: no
-llm_load_tensors: ggml ctx size =    0.42 MiB
+(...)
+llm_load_tensors: ggml ctx size =    0.14 MiB
 llm_load_tensors: offloading 0 repeating layers to GPU
-llm_load_tensors: offloaded 0/33 layers to GPU                                                                            llm_load_tensors:  ROCm_Host buffer size = 30735.49 MiB
-(etc.)
-llama_print_timings:        load time =   41353.87 ms
-llama_print_timings:      sample time =      14.11 ms /   400 runs   (    0.04 ms per token, 28344.67 tokens per second)
-llama_print_timings: prompt eval time =    1451.22 ms /    19 tokens (   76.38 ms per token,    13.09 tokens per second)
-llama_print_timings:        eval time =   74833.32 ms /   399 runs   (  187.55 ms per token,     5.33 tokens per second)
-llama_print_timings:       total time =   76376.50 ms /   418 tokens
-Log end
+llm_load_tensors: offloaded 0/33 layers to GPU
+llm_load_tensors:        CPU buffer size =  4165.38 MiB
+(...)
+llama_perf_sampler_print:    sampling time =       4.35 ms /   136 runs   (    0.03 ms per token, 31285.94 tokens per second)
+llama_perf_context_print:        load time =     882.78 ms
+llama_perf_context_print: prompt eval time =     241.44 ms /     8 tokens (   30.18 ms per token,    33.13 tokens per second)
+llama_perf_context_print:        eval time =   11283.17 ms /   127 runs   (   88.84 ms per token,    11.26 tokens per second)
+llama_perf_context_print:       total time =   11533.05 ms /   135 tokens
 ```
 
-ntop, radeontop and rocm-smi demonstrate my system is still using only its CPU, and GPU VRAM/GTT are not used!
+This first output shows some ROCm usage, BUT ntop, radeontop and rocm-smi demonstrate my system is still using only its CPU, and GPU VRAM/GTT are not used!
 Notice this important line in the llama.cpp log:
 ```
 llm_load_tensors: offloading 0 repeating layers to GPU
 ```
 
-llama.cpp doesn’t offload to the GPU, so let’s force offloading all 33 layers
-by adding `--n-gpu-layers 33` option to the command line:
+llama.cpp doesn’t offload to the GPU, so let’s force offloading all layers
+by adding `--n-gpu-layers 99` option to the command line:
 ```
-$ sudo HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/main -ngl 33 -m models/mixtral-8x7b-v0.1.Q5_K_M.gguf ...
-(etc.)
-gml_cuda_init: found 1 ROCm devices:
-  Device 0: AMD Radeon Graphics, compute capability 10.3, VMM: no
-llm_load_tensors: ggml ctx size =    0.83 MiB
-llm_load_tensors: offloading 32 repeating layers to GPU
-llm_load_tensors: offloading non-repeating layers to GPU
+$ sudo HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/main -ngl 33 -m models/starling-lm-7b-alpha.Q4_K_M.gguf...
+(...)
+llm_load_tensors: offloading 32 repeating layers to GPU                                                                       llm_load_tensors: offloading non-repeating layers to GPU
 llm_load_tensors: offloaded 33/33 layers to GPU
-llm_load_tensors:      ROCm0 buffer size = 30649.55 MiB
-llm_load_tensors:  ROCm_Host buffer size =    85.94 MiB
-(etc.)
-llama_print_timings:        load time =  108333.74 ms
-llama_print_timings:      sample time =      11.83 ms /   400 runs   (    0.03 ms per token, 33826.64 tokens per second)
-llama_print_timings: prompt eval time =    3029.96 ms /    19 tokens (  159.47 ms per token,     6.27 tokens per second)
-llama_print_timings:        eval time =  151965.13 ms /   399 runs   (  380.86 ms per token,     2.63 tokens per second)
-llama_print_timings:       total time =  155113.16 ms /   418 tokens
+llm_load_tensors:      ROCm0 buffer size =  4095.06 MiB
+llm_load_tensors:        CPU buffer size =    70.32 MiB
+(...)
+llama_perf_sampler_print:    sampling time =       4.40 ms /   136 runs   (    0.03 ms per token, 30944.25 tokens per second)
+llama_perf_context_print:        load time =    2143.15 ms
+llama_perf_context_print: prompt eval time =     272.94 ms /     8 tokens (   34.12 ms per token,    29.31 tokens per second) llama_perf_context_print:        eval time =    9983.51 ms /   127 runs   (   78.61 ms per token,    12.72 tokens per second)
+llama_perf_context_print:       total time =   10263.81 ms /   135 tokens
 ```
 
 Now the GPU compute power is used (rocm-smi is reporting a 100% utilization) but
 the performance was worse with the GPU: From 5.33 tokens per second it lower down to 2.63.
-And the VRAM and GTT are still not used!
-With an idle desktop environment running on the background the VRAM usage was 214MB, GTT 29MB and RAM available about 60GB.
-While llama.cpp was running only VRAM usage increased a little (arround 250MB), but I was
-expecting the full 30GB of this model loaded in VRAM+GTT section (and not in RAM):
+And the VRAM and GTT are still not used (is it able to detectd UMA so avoid to use it?).
+
+Some benches (notice the llama-bench doesn’t need the -ngl parameters to use the GPU):
 ```
-$ echo VRAM used in MB: $(( $(cat /sys/class/drm/card0/device/mem_info_vram_used) / 1024 / 1024 ))
-VRAM used in MB: 583
-$ echo GTT used in MB: $(( $(cat /sys/class/drm/card0/device/mem_info_gtt_used) / 1024 / 1024 ))
-GTT used in MB: 29
-$ grep MemAvail /proc/meminfo
-MemAvailable:   28255772 kB
+/llama.cpp$ HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf
+(...)
+ggml_cuda_init: found 1 ROCm devices:
+  Device 0: AMD Radeon Graphics, compute capability 10.3, VMM: no
+| model                  |     size | params | backend | ngl |   test |           t/s |
+| ---------------------- |--------: |------: | ------- | --: | -----: | ------------: |
+| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CUDA    |  99 |  pp512 | 168.60 ± 0.51 |
+| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CUDA    |  99 |  tg128 |  12.47 ± 0.07 |
+
+build: d5cb8684 (3891)
 ```
 
-Let’s try with different value of n-gpu-layers with the same model:
-- 0 (CPU only): 5.33 tokens per second
-- 1: 4.57 tokens per second
-- 8: 3.63 tokens per second
-- 16: 3.26 tokens per second
-- 33: 2.63 tokens per second
+Comparing to CPU backend:
+```
+/llama.cpp$ build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf -t $(nproc)
+| model                  |     size | params | backend | threads |  test |          t/s |
+| ---------------------- | -------: | -----: | ------- | ------: | ----: | -----------: |
+| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CPU     |      16 | pp512 | 32.15 ± 0.07 |
+| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CPU     |      16 | tg128 | 10.97 ± 0.10 |
 
-Performance with a smaller model like mistral-7b-instruct-v0.1.Q5_K_M.gguf:
-- 0 (CPU only): 9.20 tokens per second
-- 33: 4.63 tokens per second
+build: d5cb8684 (3891)
+```
+
+## Specific Intel GPU (Arc)
+
+Testing on Intel NUC 165H with this SOC:
+- Intel Core Ultra 7 165H (6 Pcores, 8 Ecores, 22 threads)
+- Intel Arc graphics
+- Intel AI Boost NPU
+
+Backend supported for Intel GPU support are:
+- BLAS
+- BLIS
+- SYSCL
+- Vulkan
+
+[Some benches seems to show that SYSCL performs better than Vulkan](https://www.reddit.com/r/IntelArc/comments/1enunga/llamacpp_benchmarks_of_llama318b_on_arc_a770/) so let’t try the [SYSCL backend](https://github.com/ggerganov/llama.cpp/blob/master/docs/backend/SYCL.md).
+
+First step is to [install OneAPI on Ubntu](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html?operatingsystem=linux&linux-install-type=apt).
+Follows instructions and check it works, sycl-ls need to report one "level_zero:gpu":
+```
+$ sycl-ls
+[opencl:cpu][opencl:0] Intel(R) OpenCL, Intel(R) Core(TM) Ultra 7 165H OpenCL 3.0 (Build 0) [2024.18.7.0.11_160000]
+[opencl:gpu][opencl:1] Intel(R) OpenCL Graphics, Intel(R) Graphics [0x7d55] OpenCL 3.0 NEO  [23.43.027642]
+[level_zero:gpu][level_zero:0] Intel(R) Level-Zero, Intel(R) Graphics [0x7d55] 1.3 [1.3.27642]
+```
+
+Then build llamacpp using SYSCL and check it detects your GPU:
+```
+~/llama.cpp$ ./examples/sycl/build.sh
+```
+
+And start a bench (remember to load OneAPI vars for each new session):
+```
+source /opt/intel/oneapi/setvars.sh
+~/llama.cpp$ build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf
+ggml_sycl_init: GGML_SYCL_FORCE_MMQ:   no
+ggml_sycl_init: SYCL_USE_XMX: yes
+found 1 SYCL devices:
+|  |                   |                        |       |Max    |        |Max  |Global |               |
+|  |                   |                        |       |compute|Max work|sub  |mem    |               |
+|ID|        Device Type|                    Name|Version|units  |group   |group|size   | Driver version|
+|--|-------------------|------------------------|-------|-------|--------|-----|-------|---------------|
+| 0| [level_zero:gpu:0]| Intel Graphics [0x7d55]|    1.3|    128|    1024|   32| 94336M|      1.3.27642|
+[SYCL] call ggml_check_sycl
+ggml_check_sycl: GGML_SYCL_DEBUG: 0
+ggml_check_sycl: GGML_SYCL_F16: yes
+| model                  |     size |  params | backend | ngl |  test |           t/s |
+| ---------------------- | -------: | ------: | ------- | --: | ----: |-------------: |
+| llama 7B Q4_K - Medium | 4.07 GiB |  7.24 B | SYCL    |  99 | pp512 | 199.25 ± 5.53 |
+| llama 7B Q4_K - Medium | 4.07 GiB |  7.24 B | SYCL    |  99 | tg128 |   6.10 ± 0.01 |
+
+build: d5cb8684 (3891)
+```
+
+To be compared with CPU only usage:
+```
+$ bin/llama-bench -m ~/llama.cpp/models/starling-lm-7b-alpha.Q4_K_M.gguf -t $(nproc)
+| model                  |     size | params | backend | threads |  test |          t/s |
+| ---------------------- | -------: |------: | --------| ------: | ----: | -----------: |
+| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CPU     |      22 | pp512 | 24.47 ± 0.49 |
+| llama 7B Q4_K - Medium | 4.07 GiB | 7.24 B | CPU     |      22 | tg128 |  9.22 ± 0.07 |
+```
+
 # whisper.cpp
 
 ## Generic install
