@@ -30,7 +30,7 @@ gmake
 ### Start Web UI with specific model
 
 Download a model then instruct llama to start using that model.
-To find what is the up-to-date efficient model try the [https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard](Open LLM Leaderboard)
+To find what is the up-to-date efficient model, check the latest [Open LLM Leaderboard](https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard) benchmarks.
 
 ```
 curl --output-dir models -LO -C - https://huggingface.co/TheBloke/Starling-LM-7B-alpha-GGUF/resolve/main/starling-lm-7b-alpha.Q4_K_M.gguf
@@ -201,7 +201,7 @@ build: d5cb8684 (3891)
 
 Conclusion: It is indeed able to load big model and using the iGPU
 
-## Intel iGPU (Arc graphices)
+## Intel iGPU (Arc graphics)
 
 Doing the same as with AMD iGPU is doable on on Intel iGPU.
 
