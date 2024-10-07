@@ -32,6 +32,8 @@ gmake
 Download a model then instruct llama to start using that model.
 To find what is the up-to-date efficient model, check the latest [Open LLM Leaderboard](https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard) benchmarks.
 
+And choose weighted/imatrix quants (should have `-i1` in filename) over [static quants files](https://newsletter.maartengrootendorst.com/p/a-visual-guide-to-quantization).
+
 ```
 curl --output-dir models -LO -C - https://huggingface.co/TheBloke/Starling-LM-7B-alpha-GGUF/resolve/main/starling-lm-7b-alpha.Q4_K_M.gguf
 ./llama-server --model models/starling-lm-7b-alpha.Q4_K_M.gguf
@@ -232,11 +234,12 @@ Then build llamacpp using SYSCL and check it detects your GPU:
 ~/llama.cpp$ ./examples/sycl/build.sh
 ```
 
-And start a bench (remember to load OneAPI vars for each new session):
+And start a bench (remember to load OneAPI vars for each new session), and with 96MB of RAM, we could try big models:
 ```
-source /opt/intel/oneapi/setvars.sh
+~/llama.cpp$ source /opt/intel/oneapi/setvars.sh
 ~/llama.cpp$ build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf \
--m models/mixtral-8x7b-v0.1.Q5_K_M.gguf
+-m models/mixtral-8x7b-v0.1.Q5_K_M.gguf \
+-m models/calme-2.4-rys-78b.i1-Q4_K_S.gguf
 ggml_sycl_init: GGML_SYCL_FORCE_MMQ:   no
 ggml_sycl_init: SYCL_USE_XMX: yes
 found 1 SYCL devices:
@@ -255,6 +258,8 @@ ggml_check_sycl: GGML_SYCL_F16: yes
 | llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | SYCL    |  99 | tg128 |   6.13 ± 0.02 |
 | llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | SYCL    |  99 | pp512 |  59.67 ± 0.19 |
 | llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | SYCL    |  99 | tg128 |   2.42 ± 0.01 |
+| qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | SYCL    |  99 | pp512 |  15.47 ± 0.15 |
+| qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | SYCL    |  99 | tg128 |   0.60 ± 0.01 |
 
 build: d5cb8684 (3891)
 ```
@@ -269,6 +274,10 @@ To be compared with CPU only usage:
 | llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      22 | tg128 |  9.22 ± 0.07 |
 | llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      22 | pp512 | 10.11 ± 0.02 |
 | llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      22 | tg128 |  4.51 ± 0.01 |
+| qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | CPU     |      22 | pp512 |  1.97 ± 0.02 |
+| qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | CPU     |      22 | tg128 |  1.19 ± 0.00 |
+
+build: d5cb8684 (3891)
 ```
 
 # whisper.cpp
