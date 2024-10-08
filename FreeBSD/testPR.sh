@@ -1,4 +1,5 @@
 #!/bin/sh
+# Automatically download patch from PR and test it
 set -eu
 
 PORTDIR="/usr/ports"
