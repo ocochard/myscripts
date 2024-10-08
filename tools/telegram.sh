@@ -1,6 +1,12 @@
 #!/bin/sh
 # Send message to your telegram ID using the bot API
-# Ultimate server monitoring messages
+# Usage example: Server monitoring
+# 1. First create your bot and get its token:
+#    https://core.telegram.org/bots/tutorial#obtain-your-bot-token
+# 2. Send send a dummy message to this new bot-user
+# 3. Use this getUpdates call to receive updates from your bot, and extract
+#    your user chat id from this message.
+# 4. Ready to use!
 
 set -eu
 
