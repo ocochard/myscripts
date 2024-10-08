@@ -3,6 +3,7 @@
 - [find](find.md)
 - [git](git.md)
 - [IPMI](IPMI.md)
+- [Telegram send message script](telegram.sh)
 - [hashcat](hashcat.md)
 - [OpenBMC](OpenBMC.md)
 - [Large Language Models](LLM.md)
