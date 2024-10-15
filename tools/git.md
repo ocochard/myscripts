@@ -11,6 +11,14 @@ Diff from a specific hash:
 git diff b97a47e94662^!
 ```
 
+## Apply git patch
+
+Preserving original author name, and tunning commit if it needs:
+```
+git am file.patch
+git commit --amend
+```
+
 ## Find date
 
 When was the branch branched ?

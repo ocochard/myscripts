@@ -49,7 +49,7 @@ If still alive, finish it with an `etcupdate -B`, if not:
 - Restart the `make installworld`
 - `etcupdate -B`
 
-On a ZFS BE, it is resume as:
+On a ZFS BE, the upgrade command is:
 ```
 LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall.sh
 ```
@@ -97,6 +97,11 @@ Successfully mounted 14.0-CURRENT-20230116.182721 at /mnt/
 root@broken:~ # cp /mnt/lib/libc.so.7.bak /mnt/lib/libc.so.7
 root@broken:~ # bectl umount 14.0-CURRENT-20230116.182721
 root@broken:~ # shutdown -r now "I've fixed my mess!"
+```
+
+To cleanup all unused BE (warning: Try no destructive method first):
+```
+bectl list | grep -v 'NR\|default\|BE' | cut -d ' ' -f 1 | xargs -L1 bectl destroy
 ```
 
 ## Ports
