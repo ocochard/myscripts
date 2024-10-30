@@ -54,6 +54,11 @@ On a ZFS BE, the upgrade command is:
 LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall.sh
 ```
 
+or with a missing libmd.so.7:
+```
+LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libmd/libmd.so.7 tools/buil/beinstall.sh
+```
+
 ### Build from MacOS (ARM M3 pro)
 
 Great [user guide](https://docs.freebsd.org/en/books/handbook/cutting-edge/#building-on-non-freebsd-hosts).
@@ -131,4 +136,11 @@ echo 'WITH_DEBUG_PORTS=devel/clinfo' >> /usr/local/etc/poudriere.d/builder-make.
 
 ```
 curl -v -d "nickname=$USER" -d "email=$USER@$(hostname)" -d "description=FreeBSD/$(uname -m) on $(kenv smbios.system.maker) $(kenv smbios.system.product)" -d "do=addd" --data-urlencode 'dmesg@/var/run/dmesg.boot' http://dmesgd.nycbug.org/index.cgi
+```
+
+### date
+
+Convert time zone, with 06:15 UTC, which hours in Los Angeles:
+```
+TZ=UTC date -z America/Los_Angeles -j 0615
 ```
