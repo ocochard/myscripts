@@ -34,6 +34,8 @@ emulators/wine-devel
 emulators/wine-proton
 emulators/winetricks
 emulators/xcpc
+filesystems/smbnetfs
+filesystems/zfs-stats-lite
 french/libreoffice
 ftp/curl
 ftp/wget
@@ -91,7 +93,6 @@ sysutils/cdrkit
 sysutils/cpu-microcode
 sysutils/fastfetch
 sysutils/flashrom
-sysutils/fusefs-smbnetfs
 sysutils/grub2-bhyve
 sysutils/ipmitool
 sysutils/hw-probe
@@ -108,7 +109,6 @@ sysutils/tmux
 sysutils/u-boot-bhyve-arm64
 sysutils/edk2@bhyve
 sysutils/vm-bhyve
-sysutils/zfs-stats-lite
 textproc/bat
 textproc/jq
 www/chromium
