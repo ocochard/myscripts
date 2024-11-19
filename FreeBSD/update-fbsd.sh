@@ -60,6 +60,7 @@ fi
 if [ -e /usr/src/.git ]; then
 	cd /usr/src
 	echo "Updating source tree..."
+  git checkout main
 	git pull --ff-only
 else
 	echo "Cloning main source tree..."
@@ -102,16 +103,20 @@ else
 fi
 
 # Fixing licenses that need user confirmation
+# Force rebuild Kernel modules if kernel was upgraded
 if [ ! -f /usr/local/etc/poudriere.d/builder-make.conf ]; then
 	(
 	echo "DISABLE_LICENSES=yes"
+  echo 'PORTS_MODULES=net/realtek-re-kmod graphics/drm-kmod graphics/drm-61-kmod graphics/gpu-firmware-kmod'
 	) > /usr/local/etc/poudriere.d/builder-make.conf
 fi
 
 # Improving build speed for some ports (warning, could consume a lot of RAM/CPU)
 if ! grep -q llvm /usr/local/etc/poudriere.conf; then
 	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
-  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb llvm* libreoffice qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* webkit2-gtk3 pytorch onednn qt5-base qt6-base qt6-declarative osg wine-devel wine-proton nginx protobuf' >> /usr/local/etc/poudriere.conf
+  (
+  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb llvm* libreoffice qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* webkit2-gtk3 pytorch onednn qt5-base qt6-base qt6-declarative osg wine-devel wine-proton nginx protobuf'
+  )  >> /usr/local/etc/poudriere.conf
 fi
 
 echo "Building ports..."

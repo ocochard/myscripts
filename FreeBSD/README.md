@@ -129,6 +129,12 @@ echo 'WITH_DEBUG_PORTS=devel/clinfo' >> /usr/local/etc/poudriere.d/builder-make.
 ~/ipc-bench/debug $ cmake -DCMAKE_BUILD_TYPE=Debug ..
 ~/ipc-bench/debug $ make
 ```
+### Pkg
+
+From which package this file came from ?
+```
+pkg which /usr/local/lib/libtinfo.so.6
+```
 
 ## Extra
 

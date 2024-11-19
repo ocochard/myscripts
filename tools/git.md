@@ -11,6 +11,11 @@ Diff from a specific hash:
 git diff b97a47e94662^!
 ```
 
+Create a patch from a specific hash:
+```
+git format-patch b5711fa4a98^!
+```
+
 ## Apply git patch
 
 Preserving original author name, and tunning commit if it needs:
@@ -46,8 +51,22 @@ git log --all -1 -- path/to/file
 
 ## Keeping working branch up-to-date with origin
 
+Create a new branch:
 ```
-git switch branch-name
+git checkout -b new-branch
+```
+
+hack....
+
+push changes:
+```
+git push origin -u new-branch
+```
+
+But now, need to get new commit from the origin:
+
+```
+git switch new-name
 git fetch origin
 git rebase
 ```

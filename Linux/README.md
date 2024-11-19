@@ -88,6 +88,18 @@ $ df -h | grep ubuntu
 ```
 ### Network
 
+Warning: Ubuntu uses netplan and this mess uses:
+- NetworkManager on Ubuntu Desktop
+- (systemd) networkd on Ubuntu Server
+So stick to netplan (/etc/netplan/01-netcfg.yaml) on those.
+If this file is missing, create it:
+```
+netplan gen > /etc/netplan/01-netcfg.yaml
+chmod 600 /etc/netplan/01-netcfg.yaml
+```
+And edit the renderer line to the installed API (switching back to networkd if
+you’ve upgraded a server to desktop without installing NetworkManager as example).
+
 A mess between the Network-manager (nmcli) and systemd-resolve.
 
 Interface status:
@@ -230,6 +242,16 @@ lspci
 listing devices that need a drivers:
 ```
 ubuntu-drivers devices
+```
+
+If error:
+```
+$ ubuntu-drivers devices
+ERROR:root:aplay command not found
+```
+Then install alsa-utils:
+```
+sudo apt-get install -y alsa-utils
 ```
 
 ## Drivers in use (mesa)
@@ -563,7 +585,7 @@ docker run hello-world
 Where are image stored:
 ```
 $ docker info
-... 
+...
 Storage Driver: overlay2
  Docker Root Dir: /var/lib/docker
 ```
@@ -650,6 +672,16 @@ Dumping to -, until termination.
 ```
 
 ## Wayland
+
+### Default graphical mode
+
+```
+systemctl get-default
+```
+If it displays multi-user.target (text) switch it to graphical:
+```
+sudo systemctl set-default graphical.target
+```
 
 ### Disabling
 
