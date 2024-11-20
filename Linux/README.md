@@ -261,6 +261,10 @@ sudo apt install -y mesa-utils
 DISPLAY=:0 glxinfo -B
 ```
 
+If error:
+```
+Error: unable to open display :0
+```
 ## Intel GPU
 
 [Official Intel doc](https://dgpu-docs.intel.com/driver/client/overview.html)

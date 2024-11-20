@@ -1,6 +1,8 @@
-# GPU benchmark
+# Benchmarks
 
-## Prerequisite
+## GPU
+
+### Prerequisite
 
 Vulkan and OpenGL need to work:
 
