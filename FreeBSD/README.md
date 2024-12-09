@@ -6,11 +6,22 @@ To do: Convert my [Desktop install webpage tips](https://olivier.cochard.me/bido
 
 ### Custom install media
 
-Once world & kernel are built:
+Start to build world&kernel:
+```
+cd /usr/src
+make buildworld-jobs buildkernel-jobs
+```
+
+The generate the release media:
 ```
 cd /usr/src/release
 make -DNOPORTS -DNODOC -DNOSRC memstick
 dd if=/usr/obj/usr/src/amd64.amd64/release/memstick.img of=/dev/your-usb-stick bs=1M
+```
+
+Or VM image:
+```
+make WITH_VMIMAGES=yes VMFORMATS=raw VMSIZE=6g vm-image
 ```
 
 ### Build from a builder, clients on NFS

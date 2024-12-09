@@ -44,7 +44,7 @@ if [ -f /etc/make.conf ]; then
 	if ! grep -q GENERIC-NODEBUG /etc/make.conf; then
 		mv /etc/make.conf /etc/make.conf.bak
 		cat > /etc/make.conf <<EOF
-KERNCONF=GENERIC-NODEBUG
+KERNCONF="GENERIC-NODEBUG GENERIC"
 # run stage-qa automatically when building ports
 DEVELOPER=yes
 EOF
@@ -115,7 +115,7 @@ fi
 if ! grep -q llvm /usr/local/etc/poudriere.conf; then
 	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
   (
-  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb llvm* libreoffice qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* webkit2-gtk3 pytorch onednn qt5-base qt6-base qt6-declarative osg wine-devel wine-proton nginx protobuf'
+  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb llvm* libreoffice qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* webkit2-gtk3 pytorch onednn qt5-base qt6-base qt6-declarative osg wine-devel wine-proton nginx protobuf wireshark hs-pandoc'
   )  >> /usr/local/etc/poudriere.conf
 fi
 

@@ -1,5 +1,17 @@
 # Benchmarks
 
+## CPU
+
+```
+stress-ng --matrix 0 -t 10y
+```
+
+## RAM
+
+```
+sudo memtester 80G
+```
+
 ## GPU
 
 ### Prerequisite

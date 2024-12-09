@@ -1,21 +1,21 @@
 #!/bin/sh
 # Quick and Dirty script to create a light nullfs jail/vnet
-# Purpose is to reproduce lagg/crazy-routing setup:
-# https://lists.freebsd.org/archives/freebsd-net/2024-August/005406.html
 
 set -eu
-wrkdir=/tmp/lab
+wrkdir=/tmp/jails
+to_be_unmounted=""
 
 jail_populate() {
   local name=$1
   for d in etc dev tmp; do
+    # empty directory
     mkdir -p $wrkdir/$name/$d
   done
-  mount -t unionfs -o below /etc $wrkdir/$name/etc
   for i in root bin sbin lib libexec usr; do
     mkdir -p $wrkdir/$name/$i
     mount -t nullfs /$i $wrkdir/$name/$i
   done
+  mount -t unionfs -o below /etc $wrkdir/$name/etc
 }
 
 jail_create() {
