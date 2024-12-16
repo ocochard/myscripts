@@ -24,7 +24,9 @@ git am file.patch
 git commit --amend
 ```
 
-## Find date
+## Find data
+
+### date
 
 When was the branch branched ?
 
@@ -48,6 +50,12 @@ When was that file detele?
 ```
 git log --all -1 -- path/to/file
 ```
+
+What version was patched:
+```
+git -C /usr/src rev-list --count --first-parent HEAD
+```
+patch?
 
 ## Keeping working branch up-to-date with origin
 

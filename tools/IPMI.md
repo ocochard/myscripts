@@ -14,7 +14,7 @@ Channel 0x4 info:
 ```
 If not, need to known IP, login and password, so it will use the 802.3 LAN channel:
 ```
-$ ipmitool -H 172.16.16 -U admin -P admin -I lanplus channel info
+$ ipmitool -H 172.16.16.16 -U admin -P admin -I lanplus channel info
 Channel 0x8 info:
   Channel Medium Type   : 802.3 LAN
   Channel Protocol Type : IPMB-1.0
@@ -36,9 +36,9 @@ On this output we get the channel number (8) assigned to this LAN interface.
 
 ## IP address
 
-Display existing IPv4 setup:
+Display existing IPv4 setup on channel 8:
 ```
-$ ipmitool lan print
+$ ipmitool lan print 8
 (etc.)
 IP Address Source       : DHCP Address
 (etc.
@@ -71,6 +71,11 @@ Here it is SLAAC retreived.
 To configure a static IPv6 (using the static address entry 0) on our LAN interface (channel 8 in our case):
 ```
 ipmitool lan6 set 8 nolock static_addr 0 enable xxx:xxxx:xxxx:xxx::yyyy 64
+```
+
+To configure a DHCP client on channel 1:
+```
+ipmitool lan set 1 ipsrc dhcp
 ```
 
 ## Users

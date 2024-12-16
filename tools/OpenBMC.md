@@ -1,6 +1,8 @@
 # OpenBMC
 
-# [Redfish](https://github.com/openbmc/docs/blob/master/REDFISH-cheatsheet.md)
+## Using
+
+### [Redfish](https://github.com/openbmc/docs/blob/master/REDFISH-cheatsheet.md)
 
 Globals variable used:
 ```
@@ -44,7 +46,7 @@ curl -k -H "X-Auth-Token: $token" -i -d '{"ResetType": "GracefulRestart"}' https
 sleep 10; ping -o $bmc && echo BMC rebooted
 ```
 
-# From BMC shell
+### From BMC shell
 
 ```
 root@s8030:/etc# cat /etc/os-release
@@ -58,7 +60,7 @@ BUILD_ID="20240105223010"
 OPENBMC_TARGET_MACHINE="s8030"
 ```
 
-## Entity-manager
+#### Entity-manager
 
 Troubleshooting the Entity-manager.
 Used to apply differents paramter to differents motherboard type
@@ -71,3 +73,20 @@ Configuration files here as example:
 ```
 /usr/share/entity-manager/configurations/s8030-Baseboard.json
 ```
+
+## Building
+
+Need about 100G free disk space.
+From a Ubuntu 24.04:
+```
+echo "Fix permission error on Ubuntu 24.04: https://bugs.launchpad.net/ubuntu/+source/apparmor/+bug/2056555"
+sudo apparmor_parser -R /etc/apparmor.d/unprivileged_userns
+
+git clone https://github.com/openbmc/openbmc.git
+cd openbmc
+. setup s8036
+bitbake obmc-phosphor-image
+```
+
+At the file, file in `build/s8036/tmp/deploy/images/s8036/image-bmc`
+
