@@ -202,3 +202,21 @@ git push origin -d branch-name
 ```
 git reset --hard @{u}
 ```
+
+## Create a branch from a tag
+
+```
+git checkout -b newbranch tags/v1.0
+```
+
+ Copying file between branch
+
+```
+git checkout otherbranch myfile.txt
+```
+
+Or:
+
+```
+git restore --source otherbranch path/to/myfile.txt
+```
