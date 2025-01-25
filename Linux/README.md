@@ -94,7 +94,7 @@ Warning: Ubuntu uses netplan and this mess uses:
 So stick to netplan (/etc/netplan/01-netcfg.yaml) on those.
 If this file is missing, create it:
 ```
-netplan gen > /etc/netplan/01-netcfg.yaml
+netplan generate > /etc/netplan/01-netcfg.yaml
 chmod 600 /etc/netplan/01-netcfg.yaml
 ```
 And edit the renderer line to the installed API (switching back to networkd if

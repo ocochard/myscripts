@@ -8,21 +8,12 @@ git clone https://github.com/ggerganov/llama.cpp.git
 cd llama.cpp
 ```
 
-On Linux (Ubuntu) using cmake:
+Then build it using cmake:
 ```
-sudo apt install -y build-essential cmake
+test -f /etc/issue && sudo apt install -y build-essential cmake
+test -f /bin/freebsd-version && sudo pkg install -y cmake
 cmake -B build
 cmake --build build --config Release -- -j $(nproc)
-```
-
-Or Linux/MacOS using make:
-```
-make
-```
-Or FreeBSD with gmake:
-```
-pkg install -y gmake
-gmake
 ```
 
 ## Usage
@@ -67,6 +58,20 @@ EOF
 build/bin/llama-cli --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m models/Mixtral-8x22B-v0.1.IQ1_S.gguf
 
 ```
+
+### Coding with vim
+
+Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master):
+First start the llama server
+```
+curl --output-dir models -LO -C - https://huggingface.co/ggml-org/Qwen2.5-Coder-7B-Q8_0-GGUF/resolve/main/qwen2.5-coder-7b-q8_0.gguf
+build/bin/llama-server \
+    --model models/qwen2.5-coder-7b-q8_0.gguf \
+    --port 8012 -ngl 99 -fa -ub 1024 -b 1024 -dt 0.1 \
+    --ctx-size 0 --cache-reuse 256
+```
+
+Then install the plugin and start coding :-)
 
 ## Unified Memory Architecture with AMD iGPU
 
