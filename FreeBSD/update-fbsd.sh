@@ -68,13 +68,6 @@ else
 	cd /usr/src
 fi
 
-#cat > /usr/src/sys/$ARCH/conf/TCPHPTS <<EOF
-#include GENERIC-NODEBUG
-#ident			TCPHPTS
-#options			TCPHPTS		# Need high precision timer for rack & bbr
-#options			RATELIMIT	# RACK depends on some constants
-#EOF
-
 echo "Building world and kernel..."
 make buildworld-jobs buildkernel-jobs
 if poudriere ports -ln | grep -q 'default'; then
@@ -115,7 +108,7 @@ fi
 if ! grep -q llvm /usr/local/etc/poudriere.conf; then
 	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
   (
-  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb llvm* libreoffice qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* webkit2-gtk3 pytorch onednn qt5-base qt6-base qt6-declarative osg wine-devel wine-proton nginx protobuf wireshark hs-pandoc z3'
+  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb llvm* libreoffice qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* webkit2-gtk* pytorch onednn qt5-base qt6-base qt6-declarative osg wine-devel wine-proton nginx protobuf wireshark hs-pandoc z3'
   )  >> /usr/local/etc/poudriere.conf
 fi
 

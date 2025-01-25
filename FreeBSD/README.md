@@ -67,7 +67,7 @@ LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall
 
 or with a missing libmd.so.7:
 ```
-LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libmd/libmd.so.7 tools/buil/beinstall.sh
+LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libmd/libmd.so.7 tools/build/beinstall.sh
 ```
 
 ### Build from MacOS (ARM M3 pro)
