@@ -108,7 +108,7 @@ fi
 if ! grep -q llvm /usr/local/etc/poudriere.conf; then
 	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
   (
-  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb llvm* libreoffice qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* webkit2-gtk* pytorch onednn qt5-base qt6-base qt6-declarative osg wine-devel wine-proton nginx protobuf wireshark hs-pandoc z3'
+  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb llvm* libreoffice mesa-devel qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* qt6-multimedia webkit2-gtk* pytorch onednn qt5-base qt6-base qt6-declarative opencv osg wine-devel wine-proton nginx protobuf wireshark hs-pandoc z3'
   )  >> /usr/local/etc/poudriere.conf
 fi
 
