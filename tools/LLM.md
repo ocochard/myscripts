@@ -10,8 +10,9 @@ cd llama.cpp
 
 Then build it using cmake:
 ```
-test -f /etc/issue && sudo apt install -y build-essential cmake
-test -f /bin/freebsd-version && sudo pkg install -y cmake
+which -s apt && sudo apt install -y build-essential cmake
+test $(uname)=FreeBSD && sudo pkg install -y cmake
+test $(uname)=Darwin && alias nproc="sysctl -n hw.physicalcpu"
 cmake -B build
 cmake --build build --config Release -- -j $(nproc)
 ```
