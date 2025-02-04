@@ -4,7 +4,9 @@
 
 [Official documentation](https://learn.microsoft.com/en-us/windows-server/storage/disk-management/shrink-a-basic-volume)
 
-Change volume size
+### Change volume size
+
+Reducing partition size:
 ```
 C:\>diskpart
 DISKPART> list disk
@@ -15,6 +17,8 @@ DISKPART> shrink desired=4000 (in MB)
 DISKPART> shrink minimum=2000 (in MB)
 DISKPART> extend size=8000
 ```
+
+### Create manually Windows partition scheme
 
 Create [Windows boot drive](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions?view=windows-11) using this scheme:
 - EFI
