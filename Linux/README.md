@@ -26,6 +26,11 @@ sudo apt install openssh-server
 sudo systemctl enable ssh
 ```
 
+Viewing log:
+```
+sudo journalctl -u ssh --grep Accepted
+```
+
 ### LVM
 
 LVM concept in order:
