@@ -120,6 +120,22 @@ To cleanup all unused BE (warning: Try no destructive method first):
 bectl list | grep -v 'NR\|default\|BE' | cut -d ' ' -f 1 | xargs -L1 bectl destroy
 ```
 
+### Encrypted dataset
+
+Create a dataset named 'work' of your 'zroot' pool, mount it in /work, enable compression and encryption using a passphrase:
+```
+zfs create -o encryption=on -o compression=zstd keyformat=passphrase -o mountpoint=/work zroot/work
+```
+
+After a reboot to mount it:
+```
+zfs mount -l zroot/work
+```
+To unmount and unload the key:
+```
+zfs unmount -u /work
+```
+
 ## Ports
 
 ### Build with DEBUG symbols
