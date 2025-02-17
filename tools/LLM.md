@@ -60,15 +60,14 @@ build/bin/llama-cli --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m mo
 
 ```
 
-### Coding with vim
+### Coding with vim, vs-code, etc.
 
-Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master):
+Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master) or a [vs-code[(https://marketplace.visualstudio.com/items?itemName=ggml-org.llama-vscode):
 First start the llama server
 ```
-curl --output-dir models -LO -C - https://huggingface.co/ggml-org/Qwen2.5-Coder-7B-Q8_0-GGUF/resolve/main/qwen2.5-coder-7b-q8_0.gguf
-build/bin/llama-server \
-    --model models/qwen2.5-coder-7b-q8_0.gguf \
-    --port 8012 -ngl 99 -fa -ub 1024 -b 1024 -dt 0.1 \
+llama-server \
+    -hf ggml-org/Qwen2.5-Coder-7B-Q8_0-GGUF \
+    --port 8012 -ngl 99 -fa -ub 1024 -b 1024 \
     --ctx-size 0 --cache-reuse 256
 ```
 

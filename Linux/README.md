@@ -574,11 +574,18 @@ update-alternatives --config gcc
 
 ### Disabling autoupgrade
 
+#### apt
+
 Switch the 1 to 0 here:
 ```
 sudo vi /etc/apt/apt.conf.d/20auto-upgrades
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
+```
+
+#### snap
+```
+sudo snap refresh --hold
 ```
 
 # Tooling
