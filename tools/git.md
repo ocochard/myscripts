@@ -2,6 +2,7 @@
 
 ## Sources
 https://docs.freebsd.org/en/articles/committers-guide/#git-primer
+https://blog.gitbutler.com/how-git-core-devs-configure-git/
 
 ## Diff
 
@@ -14,6 +15,11 @@ git diff b97a47e94662^!
 Create a patch from a specific hash:
 ```
 git format-patch b5711fa4a98^!
+```
+
+Diff from the last commit:
+```
+git diff HEAD^ HEAD
 ```
 
 ## Apply git patch
