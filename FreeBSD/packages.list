@@ -41,7 +41,7 @@ ftp/curl
 ftp/wget
 games/flightgear
 graphics/drm-kmod
-graphics/drm-61-kmod
+graphics/drm-66-kmod
 graphics/gimp
 graphics/mesa-demos
 graphics/mesa-devel

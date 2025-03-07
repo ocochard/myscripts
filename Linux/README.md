@@ -171,16 +171,24 @@ sudo apt install bison libaudit-dev libcap-ng-dev libcrypt-dev libcryptsetup-dev
 
 Then running (it will display the exact list of missing build dependencies too):
 
-DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b
-
-
-DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
-
 ```
+DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b
+DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
 -us, --unsigned-source      unsigned source package.
 -uc, --unsigned-changes     unsigned .buildinfo and .changes file.
 -b, --build=binary          binary-only, no source files.
 env nocheck: avoid running regression test
+```
+
+Other:
+```
+# uncommented the relevant deb-src lines in /e/a/sources.list
+apt update
+apt install dpkg-dev
+apt source ipmitool
+apt build-dep ipmitool
+cd ipmitool-1.8.18
+debuild -us -uc
 ```
 
 # Remove Ubuntu apt SPAM and closed-source snap
