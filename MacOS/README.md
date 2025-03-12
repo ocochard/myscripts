@@ -33,3 +33,13 @@ sudo diskutil unmountDisk disk4
 xzcat file.img.xz | sudo dd of=/dev/rdisk4 bs=1m
 sudo sync
 ```
+
+# Bugs
+
+## Floating App icons
+
+A years old bug, with a simple bad mouse movement in the Launchpad, the icon of the app will stay on the screen:
+```
+killall Dock
+```
+
