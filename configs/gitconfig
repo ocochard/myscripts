@@ -1,6 +1,7 @@
 [alias]
 	logline = log --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit
 [branch]
+	# Sort list of git branches ordered by most recent commit
 	sort = -committerdate
 [color]
 	diff = auto
@@ -9,41 +10,64 @@
 [column]
 	ui = auto
 [commit]
+	# Disply a `git diff` while editing git commit message
 	verbose = true
 [core]
+	# -r: causes "raw" control characters to be displayed
     pager = less -r
 	editor = vim
 [diff]
+	# Remove the a/ and b/ in git diff
 	noprefix = true
+	# This algo seems generating more readable diff
 	algorithm = histogram
+	# Color moved line
 	colorMoved = plain
+	# using i/ and w/ in place of a/ and b/, but I’ve disabled them
 	mnemonicPrefix = true
 	renames = true
 [fetch]
+	# Remove any remote-tracking references that no longer exist on the remote
 	prune = true
+	# Remove any local tags that no longer exist on the remote
 	pruneTags = true
+	# Fetch all remotes
 	all = true
 [init]
+	# Default branch name
 	defaultBranch = main
 [help]
+	# Propose to autocorrect commands lik `git statsu`
 	autocorrect = prompt
 [log]
+	# Display more common format
 	date = iso
 [pull]
+	# Only update to the new history if there is no divergent local history
 	ff = only
+	# Rebase the current branch on top of the upstream branch after fetching
 	rebase = true
 [push]
+	# Push the current branch with the same name on the remote
 	default = simple
+	# Assume --set-upstream on default push when no upstream tracking exists
 	autoSetupRemote = true
+	# Push all the refs that would be pushed without this option
 	followTags = true
 [safe]
 	directory = *
 [tag]
+	# tag names are treated as versions
 	sort = version:refname
 [rebase]
+	# Automatically squash commits with specially formatted messages into previous commits being rebased.
 	autoSquash = true
+	# Automatically create a temporary stash entry before the operation begins, and apply it after the operation ends
 	autoStash = true
+	# Automatically force-update any branches that point to commits that are being rebased
 	updateRefs = true
 [rerere]
+	# Reuse recorded resolution of conflicted merge
+	# Avoid to resolve same conflict over and over
 	enabled = true
 	autoupdate = true
