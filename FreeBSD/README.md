@@ -163,6 +163,11 @@ From which package this file came from ?
 pkg which /usr/local/lib/libtinfo.so.6
 ```
 
+Which are the run dependencies of this package:
+```
+pkg info -dF ../locust/py311-pyzmq-25.0.2_2.pkg
+```
+
 ## Extra
 
 ### dmesgd.nycbug.org

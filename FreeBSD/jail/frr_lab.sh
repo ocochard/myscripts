@@ -147,8 +147,6 @@ log file /var/run/frr/frr2/frr.log
 key chain rippass
  key 1
   key-string rippassword
- key 1
-  key-string rippassword
 !
 interface epair112b
  ip address 192.168.12.2/24
@@ -215,8 +213,6 @@ cat > /var/run/frr/frr3/frr.conf <<EOF
 log file /var/run/frr/frr3/frr.log
 !
 key chain rippass
- key 1
-  key-string rippassword
  key 1
   key-string rippassword
 !
