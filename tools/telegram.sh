@@ -41,14 +41,14 @@ tg_api() {
 
 usage () {
   echo "Usage:"
-  echo "1. First create your bot and get its token:"
+  echo "1. First, create your bot and obtain its token:"
   echo "   https://core.telegram.org/bots/tutorial#obtain-your-bot-token"
-  echo "   And copy it to set variable TG_BOT_TOKEN"
-  echo "2. Send send a dummy message to this new bot-user"
-  echo "3. Extract your sender user id by using getUpdates"
+  echo "   Define the variable TG_BOT_TOKEN with your bot's token."
+  echo "2. Send a dummy message to this new bot user from your user account (the one on which you want to receive messages)."
+  echo "3. Extract your user ID by using getUpdates:"
   echo "   TG_BOT_TOKEN=\"123:AABBB_CCC...\" $0 getUpdates"
-  echo "   And copy it to set variable TG_CHAT_ID"
-  echo "4. Send message:"
+  echo "   Define the variable TG_CHAT_ID with your own user's ID."
+  echo "4. Send message to your account:"
   echo "   TG_BOT_TOKEN=\"123:AABBB_...\" TG_CHAT_ID=\"123\" $0 sendMessage \"message\""
 }
 
