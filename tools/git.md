@@ -22,6 +22,11 @@ Diff from the last commit:
 git diff HEAD^ HEAD
 ```
 
+Between a mann and a feature branch:
+```
+git diff origin/main origin/feature
+```
+
 ## Apply git patch
 
 Preserving original author name, and tunning commit if it needs:

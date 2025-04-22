@@ -285,7 +285,7 @@ To be compared with CPU only usage:
 build: d5cb8684 (3891)
 ```
 
-# whisper.cpp
+# whisper.cpp (Voice to text)
 
 ## Generic install
 

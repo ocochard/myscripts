@@ -547,6 +547,21 @@ reverse mode:
 sudo journalctl -r
 ```
 
+Kernel, show the boot list:
+```
+journalctl --list-boots
+IDX BOOT ID                          FIRST ENTRY                 LAST ENTRY
+ -3 8726d12ba21a4b32bf07154da5ad82f1 Mon 2025-03-31 21:39:44 UTC Mon 2025-03-31 21:50:23 UTC
+ -2 9364d619961c49c2ba39096ae4dcd59c Mon 2025-03-31 21:50:47 UTC Mon 2025-04-21 14:28:34 UTC
+ -1 e7ae7ed5387f416b98a35c7809061c8a Mon 2025-04-21 17:16:54 UTC Mon 2025-04-21 18:05:59 UTC
+  0 c0e214ddf10b43708e990088bb531f7f Mon 2025-04-21 18:06:22 UTC Tue 2025-04-22 12:55:01 UTC
+```
+
+Then display the messages from boot session you are looking for:
+```
+journalctl -k -b -3
+```
+
 # Packages management
 
 ### dpkg
