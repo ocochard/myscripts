@@ -63,6 +63,7 @@ git log --all -1 -- path/to/file
 ```
 
 What version was patched:
+
 ```
 git -C /usr/src rev-list --count --first-parent HEAD
 ```
@@ -126,13 +127,12 @@ git reset --hard origin/branch-name
 ```
 
 ## Forking FreeBSD port
- From git webui: Fork freebsd/freebsd-ports
-# clone forked
-git clone git@github.com:ocochard/freebsd-ports.git
-# git clone git@github.com:ocochard/freebsd-src.git
-cd freebsd-ports
-# Add upstream
+From git webui: Fork freebsd/freebsd-ports
+
 ```
+git clone git@github.com:ocochard/freebsd-ports.git
+git clone git@github.com:ocochard/freebsd-src.git
+cd freebsd-ports
 git remote add upstream git@github.com:freebsd/freebsd-ports
 ```
 
@@ -142,13 +142,16 @@ Therminology:
  - main = name of the main branch (was called 'master' previously)
 
 # Creating a BSDRP branch
-# https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-and-Merging
+
+From https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-and-Merging
 ```
 git checkout -b BSDRP
 => hack
 git commit
 ```
+
 # Sending this local-only branch to upstream, need to create it remotely the first time:
+
 ```
 git push -u origin BSDRP
 => hack
@@ -158,6 +161,7 @@ git push
 
 # keeping BSDRP branch with main up-to-date
 # Need to start with the main branch, then the BSDRP
+
 ```
 git checkout main
 git pull
