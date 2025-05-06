@@ -4,7 +4,8 @@
 "This script test geoip2 python port"
 
 # Once downloaded the database, testing with:
-# python ./geoip.test.py ~/GeoLite2-Country_20250328/GeoLite2-Country.mmdb 2.2.2.2
+# xzcat db.data.xz > db.data
+# python ./geoip.test.py db.data 2.2.2.2
 # Country for 2.2.2.2 is Sweden
 
 import argparse
