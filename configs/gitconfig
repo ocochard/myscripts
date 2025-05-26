@@ -42,6 +42,8 @@
 [log]
 	# Display more common format
 	date = iso
+	# Display short commit id
+	abbrevcommit = true
 [pull]
 	# Only update to the new history if there is no divergent local history
 	ff = only
