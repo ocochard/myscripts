@@ -126,6 +126,14 @@ You’ve squashed a wrong commit, so your rebase need to be reverted.
 git reset --hard origin/branch-name
 ```
 
+## Revert a commit with no log
+
+To be done on working branch only, not main:
+```
+git reset --hard last-hash-to-kept
+git push -f
+```
+
 ## Forking FreeBSD port
 From git webui: Fork freebsd/freebsd-ports
 
