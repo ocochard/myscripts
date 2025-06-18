@@ -37,3 +37,15 @@ To be downloaded in `stable-diffusion-webui/extensions/sd-webui-controlnet/model
 The guides:
 - [How to use image prompt in Stable Diffusion](https://stable-diffusion-art.com/image-prompt/)
 
+## Ultimate SD upscale
+
+Extension -> Available -> Load From (to update the list) -> Go to Ultimate SD upscale and click install -> Installed -> Apply and reload
+
+## ComfyUI
+
+Extension -> Available -> ComfyUI
+
+ComfyUI -> install comfyui
+
+Extension -> Available -> Apply and reload
+Allows to create 

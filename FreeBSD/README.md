@@ -168,6 +168,14 @@ Which are the run dependencies of this package:
 pkg info -dF ../locust/py311-pyzmq-25.0.2_2.pkg
 ```
 
+Manually extracting the content of a pkg file:
+```
+mkdir /tmp/pkg
+tar -C /tmp/pkg -xvf libcbor-0.12.0.pkg
+mkdir /tmp/libcbor
+cd /tmp/libcbor
+ar -x /tmp/pkg/usr/local/lib/libcbor.a
+```
 ## Extra
 
 ### dmesgd.nycbug.org

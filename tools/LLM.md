@@ -13,7 +13,7 @@ Then build it using cmake:
 which -s apt && sudo apt install -y build-essential cmake
 test $(uname)=FreeBSD && sudo pkg install -y cmake
 test $(uname)=Darwin && alias nproc="sysctl -n hw.physicalcpu"
-cmake -B build
+cmake --fresh -B build
 cmake --build build --config Release -- -j $(nproc)
 ```
 
@@ -283,6 +283,16 @@ To be compared with CPU only usage:
 | qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | CPU     |      22 | tg128 |  1.19 ± 0.00 |
 
 build: d5cb8684 (3891)
+```
+
+## Vision
+
+Reading picture:
+```
+$ curl --output /tmp/fbsd.png  https://www.freebsd.org/images/banner-red.png
+$ build/bin/llama-mtmd-cli -hf ggml-org/gemma-3-4b-it-GGUF --image /tmp/fbsd.png -p "Describe this image"
+(etc..)
+$ build/bin/llama-mtmd-cli -hf ggml-org/gemma-3-4b-it-GGUF --image ~/Downloads/iKVM_capture_dump.jpg -p "you are an OCR machine, write text on the picture"
 ```
 
 # whisper.cpp (Voice to text)
