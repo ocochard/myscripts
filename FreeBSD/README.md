@@ -136,6 +136,50 @@ To unmount and unload the key:
 zfs unmount -u /work
 ```
 
+## NFS
+
+### NFSv4
+
+Example with 100G link between server and client:
+
+On server:
+```
+mkdir /tmp/nfs
+mount -t tmpfs tmpfs /tmp/nfs
+chmod 777 /tmp/nfs/
+cat > /etc/exports <<EOF
+V4: /tmp
+/tmp/nfs -network 1.1.1.0/24
+EOF
+sysrc nfs_server_enable=YES
+sysrc nfsv4_server_enable=YES
+sysrc nfsv4_server_only=YES
+service nfsd start
+```
+
+On client, don’t forget the nconnect=16 option:
+```
+# mkdir /tmp/nfs
+# sysrc nfs_client_enable=YES
+# service nfsclient start
+# mount -t nfs -o noatime,nfsv4 1.1.1.30:/nfs /tmp/nfs/
+# netstat -an -f inet -p tcp | grep 2049 | wc -l
+       1
+# dd if=/dev/zero of=/tmp/nfs/test bs=1G count=10
+10+0 records in
+10+0 records out
+10737418240 bytes transferred in 8.526794 secs (1259256159 bytes/sec)
+# rm /tmp/nfs/test
+# umount /tmp/nfs
+# mount -t nfs -o noatime,nfsv4,nconnect=16 1.1.1.30:/nfs /tmp/nfs/
+# dd if=/dev/zero of=/tmp/nfs/test bs=1G count=10
+10+0 records in
+10+0 records out
+10737418240 bytes transferred in 8.633871 secs (1243638980 bytes/sec)
+# netstat -an -f inet -p tcp | grep 2049 | wc -l
+      16
+```
+
 ## Ports
 
 ### Build with DEBUG symbols

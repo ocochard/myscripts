@@ -2,6 +2,8 @@
 
 set -eu
 # Default values
+# uses https://github.com/first20hours/google-10000-english/raw/refs/heads/master/google-10000-english.txt
+# for more common words
 DICT="/usr/share/dict/words"
 NUM_WORDS=3
 
