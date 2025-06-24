@@ -15,7 +15,7 @@ if [ -f ${config_file} ]; then
     *) echo "Unsuported os ($os)" && exit 1;;
   esac
   if [ "${perm}" -ne 600 ]; then
-    echo "Permission on file /etc/rc.conf (${perm}) should be restricted to 600"
+    echo "Permission on file ${config_file} (${perm}) should be restricted to 600"
   fi
 . ${config_file}
 fi
