@@ -140,88 +140,104 @@ zfs unmount -u /work
 
 ### NFSv4
 
-Example with 100G link between server and client:
+Tuning NFSv4 server and client (here with a 100G link):
 
-On server:
+First TCP and NFS on both client and servers:
+```
+cat >> /boot/loader.conf <<EOF
+# Maximum size of a buffer cache block, default: 65536
+# x 16
+vfs.maxbcachebuf="1048576"
+EOF
+cat >> /etc/sysctl.conf <<EOF
+# TCP x 16 all default values
+# Maximum socket buffer size
+kern.ipc.maxsockbuf=33554432
+# Max size of automatic receive buffer
+net.inet.tcp.recvbuf_max=33554432
+# Max size of automatic send buffer
+net.inet.tcp.sendbuf_max=33554432
+# Initial receive socket buffer size
+net.inet.tcp.recvspace=1048576
+# Initial send socket buffer size
+net.inet.tcp.sendspace=524288
+EOF
+shutdown -r now "Need a reboot to apply vfs.maxbcachebuf"
+```
+
+On the server side:
 ```
 mkdir /tmp/nfs
-mount -t tmpfs tmpfs /tmp/nfs
 chmod 777 /tmp/nfs/
 cat > /etc/exports <<EOF
 V4: /tmp
 /tmp/nfs -network 1.1.1.0/24
 EOF
+cat >> /etc/sysctl.conf <<EOF
+# Max number of nfsiod kthreads, default: 20
+vfs.nfs.iodmax=64
+EOF
 sysrc nfs_server_enable=YES
 sysrc nfsv4_server_enable=YES
 sysrc nfsv4_server_only=YES
+sysrc nfs_server_maxio=1048576
 service nfsd start
 ```
 
-On client:
+Testing server local write speed, will be our reference value for the NFS client:
+```
+root@server:~ # dd if=/dev/zero of=/tmp/nfs/data bs=1M count=20480
+20480+0 records in
+20480+0 records out
+21474836480 bytes transferred in 3.477100 secs (6176076082 bytes/sec)
+root@server:~ # units -t '6176076082 bytes' gigabit
+49.408609
+```
+
+The goal will be to reach about 49Gb/s (disk speed) on the NFS client.
+About the maximum TCP speed between client and server:
+```
+root@client:~ # iperf3 -c 1.1.1.30 --parallel 16
+[SUM]   0.00-10.00  sec  99.1 GBytes  85.1 Gbits/sec  81693  sender
+```
+
+Client setup with tunned NFS mount:
+- nconnect=16 : Use 16 TCP sessions, to load-share them with the NIC multi-queue and CPU
+- readahead=8 : determines how many blocks will be read ahead when a large file is being read sequentially
+- nocto: Disable a safety by avoid purging the data cache if they do not match attributes cached by the client
+- wcommitsize=67108864 (64MB): maximum amount of pending write data that the NFS client is willing to cache for each file
 ```
 # mkdir /tmp/nfs
 # sysrc nfs_client_enable=YES
 # service nfsclient start
+# mount -t nfs -o noatime,nfsv4,nconnect=16,wcommitsize=67108864,readahead=8,nocto 1.1.1.30:/nfs /tmp/nfs/
 ```
 
-Now mount the NFS and do some bench:
+Now check the negociated rsize/wsize (depend of vfs.maxbcachebuf), nconnect, readahead and wcommitsize values
+:
 ```
-# mount -t nfs -o noatime,nfsv4 1.1.1.30:/nfs /tmp/nfs/
-# netstat -an -f inet -p tcp | grep 2049 | wc -l
-       2
-# dd if=/dev/zero of=/tmp/nfs/test bs=1G count=10
-10+0 records in
-10+0 records out
-10737418240 bytes transferred in 8.526794 secs (1259256159 bytes/sec)
-# sysctl dev.mce.0 | awk '/txstat.*\.bytes/ && $NF != 0'
-dev.mce.0.txstat20tc0.bytes: 74
-dev.mce.0.txstat16tc0.bytes: 120
-dev.mce.0.txstat3tc0.bytes: 308
-dev.mce.0.txstat2tc0.bytes: 11278618644
-dev.mce.0.txstat0tc0.bytes: 134
 # nfsstat -m
 1.1.1.30:/nfs on /tmp/nfs
-nfsv4,minorversion=2,tcp,resvport,nconnect=1,hard,cto,sec=sys,acdirmin=3,acdirmax=60,acregmin=5,acregmax=60,nametimeo=60,negnametimeo=60,rsize=65536,wsize=65536,readdirsize=65536,readahead=1,wcommitsize=16777216,timeout=120,retrans=2147483647
-# rm /tmp/nfs/test
-# umount /tmp/nfs
+nfsv4,minorversion=2,tcp,resvport,nconnect=16,hard,nocto,sec=sys,acdirmin=3,acdirmax=60,acregmin=5,acregmax=60,nametimeo=60,negnametimeo=60,rsize=1048576,wsize=1048576,readdirsize=1048576,readahead=8,wcommitsize=67108864,timeout=120,retrans=2147483647
+# dd if=/dev/zero of=/tmp/nfs/data bs=1M count=20480
+20480+0 records in
+20480+0 records out
+21474836480 bytes transferred in 7.574187 secs (2835266137 bytes/sec)
+# units -t '2835266137 bytes' gigabit
+22.682129
+# umount /tmp/nfs/
+# echo umounting to clear the buffer cache
+# mount -t nfs -o noatime,nfsv4,nconnect=16,wcommitsize=67108864,readahead=8,nocto 1.1.1.30:/nfs /tmp/nfs/
+root@client:~ # dd of=/dev/zero if=/tmp/nfs/data bs=1M count=20480
+20480+0 records in
+20480+0 records out
+21474836480 bytes transferred in 4.168176 secs (5152094642 bytes/sec)
+# units -t '5152094642 bytes' gigabit
+41.216757
 ```
 
-Let’s try again with multiple parallel TCP sessions:
-```
-# mount -t nfs -o noatime,nfsv4,nconnect=16 1.1.1.30:/nfs /tmp/nfs/
-# dd if=/dev/zero of=/tmp/nfs/test bs=1G count=10
-10+0 records in
-10+0 records out
-10737418240 bytes transferred in 8.633871 secs (1243638980 bytes/sec)
-# netstat -an -f inet -p tcp | grep 2049 | wc -l
-      16
-# sysctl dev.mce.0 | awk '/txstat.*\.bytes/ && $NF != 0'
-dev.mce.0.txstat39tc0.bytes: 751634268
-dev.mce.0.txstat35tc0.bytes: 74
-dev.mce.0.txstat34tc0.bytes: 74
-dev.mce.0.txstat31tc0.bytes: 751634268
-dev.mce.0.txstat30tc0.bytes: 751634202
-dev.mce.0.txstat29tc0.bytes: 751565698
-dev.mce.0.txstat24tc0.bytes: 74
-dev.mce.0.txstat23tc0.bytes: 1503269006
-dev.mce.0.txstat22tc0.bytes: 751565390
-dev.mce.0.txstat20tc0.bytes: 148
-dev.mce.0.txstat18tc0.bytes: 74
-dev.mce.0.txstat17tc0.bytes: 74
-dev.mce.0.txstat16tc0.bytes: 120
-dev.mce.0.txstat15tc0.bytes: 1503268948
-dev.mce.0.txstat14tc0.bytes: 74
-dev.mce.0.txstat13tc0.bytes: 751634202
-dev.mce.0.txstat11tc0.bytes: 751565456
-dev.mce.0.txstat10tc0.bytes: 74
-dev.mce.0.txstat9tc0.bytes: 222
-dev.mce.0.txstat7tc0.bytes: 751634276
-dev.mce.0.txstat6tc0.bytes: 751565390
-dev.mce.0.txstat3tc0.bytes: 308
-dev.mce.0.txstat2tc0.bytes: 11278809868
-dev.mce.0.txstat1tc0.bytes: 751565596
-dev.mce.0.txstat0tc0.bytes: 751634336
-```
+We reach 22Gb/s of writting speed and about 41Gb/s of reading speed.
+There are still room for improvement.
 
 ## Ports
 
