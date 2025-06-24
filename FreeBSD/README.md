@@ -157,20 +157,37 @@ sysrc nfsv4_server_only=YES
 service nfsd start
 ```
 
-On client, don’t forget the nconnect=16 option:
+On client:
 ```
 # mkdir /tmp/nfs
 # sysrc nfs_client_enable=YES
 # service nfsclient start
+```
+
+Now mount the NFS and do some bench:
+```
 # mount -t nfs -o noatime,nfsv4 1.1.1.30:/nfs /tmp/nfs/
 # netstat -an -f inet -p tcp | grep 2049 | wc -l
-       1
+       2
 # dd if=/dev/zero of=/tmp/nfs/test bs=1G count=10
 10+0 records in
 10+0 records out
 10737418240 bytes transferred in 8.526794 secs (1259256159 bytes/sec)
+# sysctl dev.mce.0 | awk '/txstat.*\.bytes/ && $NF != 0'
+dev.mce.0.txstat20tc0.bytes: 74
+dev.mce.0.txstat16tc0.bytes: 120
+dev.mce.0.txstat3tc0.bytes: 308
+dev.mce.0.txstat2tc0.bytes: 11278618644
+dev.mce.0.txstat0tc0.bytes: 134
+# nfsstat -m
+1.1.1.30:/nfs on /tmp/nfs
+nfsv4,minorversion=2,tcp,resvport,nconnect=1,hard,cto,sec=sys,acdirmin=3,acdirmax=60,acregmin=5,acregmax=60,nametimeo=60,negnametimeo=60,rsize=65536,wsize=65536,readdirsize=65536,readahead=1,wcommitsize=16777216,timeout=120,retrans=2147483647
 # rm /tmp/nfs/test
 # umount /tmp/nfs
+```
+
+Let’s try again with multiple parallel TCP sessions:
+```
 # mount -t nfs -o noatime,nfsv4,nconnect=16 1.1.1.30:/nfs /tmp/nfs/
 # dd if=/dev/zero of=/tmp/nfs/test bs=1G count=10
 10+0 records in
@@ -178,6 +195,32 @@ On client, don’t forget the nconnect=16 option:
 10737418240 bytes transferred in 8.633871 secs (1243638980 bytes/sec)
 # netstat -an -f inet -p tcp | grep 2049 | wc -l
       16
+# sysctl dev.mce.0 | awk '/txstat.*\.bytes/ && $NF != 0'
+dev.mce.0.txstat39tc0.bytes: 751634268
+dev.mce.0.txstat35tc0.bytes: 74
+dev.mce.0.txstat34tc0.bytes: 74
+dev.mce.0.txstat31tc0.bytes: 751634268
+dev.mce.0.txstat30tc0.bytes: 751634202
+dev.mce.0.txstat29tc0.bytes: 751565698
+dev.mce.0.txstat24tc0.bytes: 74
+dev.mce.0.txstat23tc0.bytes: 1503269006
+dev.mce.0.txstat22tc0.bytes: 751565390
+dev.mce.0.txstat20tc0.bytes: 148
+dev.mce.0.txstat18tc0.bytes: 74
+dev.mce.0.txstat17tc0.bytes: 74
+dev.mce.0.txstat16tc0.bytes: 120
+dev.mce.0.txstat15tc0.bytes: 1503268948
+dev.mce.0.txstat14tc0.bytes: 74
+dev.mce.0.txstat13tc0.bytes: 751634202
+dev.mce.0.txstat11tc0.bytes: 751565456
+dev.mce.0.txstat10tc0.bytes: 74
+dev.mce.0.txstat9tc0.bytes: 222
+dev.mce.0.txstat7tc0.bytes: 751634276
+dev.mce.0.txstat6tc0.bytes: 751565390
+dev.mce.0.txstat3tc0.bytes: 308
+dev.mce.0.txstat2tc0.bytes: 11278809868
+dev.mce.0.txstat1tc0.bytes: 751565596
+dev.mce.0.txstat0tc0.bytes: 751634336
 ```
 
 ## Ports
