@@ -102,6 +102,7 @@ else
 	if [ "$type" = "server" ] ; then
 		echo "Mounting 30G tmpfs in $WRK_DIR"
 		mount -t tmpfs -o rw,size=30g tmpfs $WRK_DIR
+		chmod 777 $WRK_DIR
 	fi
 fi
 
@@ -118,7 +119,7 @@ if [ "$type" = "server" ] ; then
 	else
 		echo "Creating /etc/exports"
 		(
-			echo "V4: $WRK_DIR"
+			echo "V4: /tmp"
 			echo "$WRK_DIR -network 1.1.1.0/24"
 		) > /etc/exports
 		sysrc nfs_server_enable=YES
@@ -170,6 +171,10 @@ if [ "$type" = "server" ] ; then
 	echo "Press Enter when client finished its benches"
 	read dummy
 	service nfsd stop
+	sysrc -x nfs_server_enable
+	sysrc -x nfsv4_server_enable
+	sysrc -x nfsv4_server_only
+	rm /etc/exports
 else
 	echo "Now, on the server, press Enter to continue to next loop"
 	read dummy
@@ -178,6 +183,7 @@ else
 		mount -t nfs -o noatime,nfsv4,$i $SRV_IP:$WRK_DIR $WRK_DIR/
 		bench_client
 	done
+	sysrc -x nfs_client_enable
 fi
 
 echo "Benchmark completed for $type"

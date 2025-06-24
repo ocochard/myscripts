@@ -276,8 +276,26 @@ DISPLAY=:0 glxinfo -B
 
 If error:
 ```
+Authorization required, but no authorization protocol specified
+
 Error: unable to open display :0
 ```
+
+Because started remotly from ssh that need env:
+```
+mkdir -p ~/bin
+cat > ~/bin/wayenv <<EOF
+#!/bin/env bash
+set -o allexport
+XDG_RUNTIME_DIR="/run/user/\$(id -u)"
+eval "\$(systemctl --user show-environment)"
+exec "\$@"
+EOF
+chmod +x ~/bin/wayenv
+source ~/.profile
+wayenv glxinfo -B
+```
+
 ## Intel GPU
 
 [Official Intel doc](https://dgpu-docs.intel.com/driver/client/overview.html)
