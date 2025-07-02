@@ -29,8 +29,6 @@ else
 	echo "WARNING: Need a reboot to enable kernl crash dumps"
 fi
 echo "You need to configure auto-login and disable all screen lock"
-export XAUTHORITY=$(ls /run/user/$(id -u)/.* | grep auth)
-export DISPLAY=:0
 
 if [ ! -d ~/GravityMark_1.89_linux/bin ]; then
 	if [ ! -f ~/GravityMark_1.89.run ]; then
@@ -99,6 +97,8 @@ fi
 tmux send-keys -t 0 "${cpu_cmd}" C-m
 tmux send-keys -t 1 "${disk_cmd}" C-m
 tmux send-keys -t 2 "${ram_cmd}" C-m
+tmux send-keys -t 3 "export XAUTHORITY=$(ls /run/user/$(id -u)/.* | grep auth)" C-m
+tmux send-keys -t 3 "export DISPLAY=:0" C-m
 tmux send-keys -t 3 "${gpu_cmd}" C-m
 sudo monit reload
 tmux -2 -u attach-session -t $TMUX_SESSION:0
