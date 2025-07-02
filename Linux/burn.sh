@@ -80,7 +80,9 @@ if [ ! -f ${HOME}/bin/telegram ]; then
 fi
 cpu_cmd="stress-ng --matrix 0 -t 10y"
 disk_cmd="fio --filename=~/fio.bench --size=50GB --direct=1 --rw=randrw --bs=4k --ioengine=libaio --iodepth=256 --numjobs=4 --time_based -runtime=365d --group_reporting --name=iops-burn --eta-newline=1"
-ram_cmd="sudo memtester 80G"
+# Estimate 90% of RAM (/proc/meminfo unit in KB)
+percent_ram=$(awk '/MemTotal/ {printf "%.0f\n", ($2 * 0.9)}' /proc/meminfo)
+ram_cmd="sudo memtester ${percent_ram}K"
 gpu_cmd="cd ~/GravityMark_1.89_linux/bin; ./GravityMark.x64 -vk -width 1920 -height 1080 -ta 1 -a 200000 -fps 1 -info 1 -sensors 1 -benchmark 1"
 
 if ! tmux -2 -u attach-session -t $TMUX_SESSION:0; then
