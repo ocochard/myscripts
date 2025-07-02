@@ -7,17 +7,34 @@
 # - GPU: gravitymark
 set -eu
 TMUX_SESSION=burn
-# Need to disable all upgrades (Don’t want upgrade while running benches)
 # apt and snap
 #sudo apt update
 #sudo apt -y upgrade
-sudo apt install -y stress-ng memtester fio tmux wget monit
+sudo apt install -y stress-ng memtester fio tmux curl monit linux-crashdump kdump-tools htop
+echo "Disabling SNAP updates (we don’t want firefox upgraded while running GravityMark)"
+sudo snap refresh --hold
+echo "Disabling apt unattend upgrade (we don’t want any drivers, libs upgrade during burn tests"
+if [ -f /etc/apt/apt.conf.d/20auto-upgrades ]; then
+	(
+	echo 'APT::Periodic::Update-Package-Lists "0";'
+	echo 'APT::Periodic::Unattended-Upgrade "0";'
+	) | sudo tee /etc/apt/apt.conf.d/20auto-upgrade
+fi
+echo "Disabling unattended-upgrade service"
+sudo systemctl disable --now unattended-upgrades
+
+if kdump-config  status | grep ready; then
+	echo "System correctly configured to store kernel crash dumps"
+else
+	echo "WARNING: Need a reboot to enable kernl crash dumps"
+fi
+echo "You need to configure auto-login and disable all screen lock"
 export XAUTHORITY=$(ls /run/user/$(id -u)/.* | grep auth)
 export DISPLAY=:0
 
 if [ ! -d ~/GravityMark_1.89_linux/bin ]; then
 	if [ ! -f ~/GravityMark_1.89.run ]; then
-		wget https://tellusim.com/download/GravityMark_1.89.run
+		curl -o ~/GravityMark_1.89.run https://tellusim.com/download/GravityMark_1.89.run
 	fi
 	chmod +x ~/GravityMark_1.89.run
 	~/GravityMark_1.89.run --noexec
@@ -37,10 +54,11 @@ else
     exit 0
 fi
 EOF
+	chmod +x ${HOME}/bin/check_kernel_errors
 fi
 
 if [ ! -f /etc/monit/conf.d/burn ]; then
-	cat > /etc/monit/conf.d/burn <<EOF
+	cat <<EOF | sudo tee /etc/monit/conf.d/burn
 check process memtester matching "memtester"
   if not exist then exec "${HOME}/bin/telegram sendMessage '${HOSTNAME} memtester crashed'"
 check process stress-ng matching "stress-ng"
@@ -56,8 +74,7 @@ EOF
 fi
 
 if [ ! -f ${HOME}/bin/telegram ]; then
-	wget https://raw.githubusercontent.com/ocochard/myscripts/refs/heads/master/tools/telegram.sh
-	mv telegram.sh ${HOME}/bin/telegram
+	curl -o ${HOME}/bin/telegram https://raw.githubusercontent.com/ocochard/myscripts/refs/heads/master/tools/telegram.sh
 	chmod +x ${HOME}/bin/telegram
 	echo "Monit will send messages to your telegram account, but you need to read instructions in ${HOME}/bin/telegram to configure it first"
 fi

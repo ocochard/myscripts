@@ -142,7 +142,7 @@ zfs unmount -u /work
 
 Tuning NFSv4 server and client (here with a 100G link):
 
-First TCP and NFS on both client and servers:
+First TCP and NFS tuning on both client and servers:
 ```
 cat >> /boot/loader.conf <<EOF
 # Maximum size of a buffer cache block, default: 65536

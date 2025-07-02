@@ -73,8 +73,10 @@ set shiftwidth=4
 set tabstop=4
 
 " Display insecable space (side effect of using bépo)
-highlight NbSp ctermbg=lightgray guibg=lightred
-match NbSp /\%xa0/
+"highlight NbSp ctermbg=lightgray guibg=lightred
+"match NbSp /\%xa0/
+" Seems not working only for nbsp, use a different way:
+set list listchars=tab:\ \ ,nbsp:␣
 "highlight EdSp ctermbg=lightgray guibg=lightred
 "match EdSp /\s\+$/
 " Display unwanted space
