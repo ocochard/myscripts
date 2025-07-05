@@ -5,12 +5,14 @@
 # - RAM: memtester
 # - Disk: fio
 # - GPU: gravitymark
+# Then install monit with a simple telegram script to send alert
 set -eu
 TMUX_SESSION=burn
 # apt and snap
 #sudo apt update
 #sudo apt -y upgrade
-sudo apt install -y stress-ng memtester fio tmux curl monit linux-crashdump kdump-tools htop
+sudo apt install -y stress-ng memtester fio tmux curl monit linux-crashdump \
+	kdump-tools htop lm-sensors
 echo "Disabling SNAP updates (we don’t want firefox upgraded while running GravityMark)"
 sudo snap refresh --hold
 echo "Disabling apt unattend upgrade (we don’t want any drivers, libs upgrade during burn tests"
