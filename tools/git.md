@@ -4,6 +4,19 @@
 https://docs.freebsd.org/en/articles/committers-guide/#git-primer
 https://blog.gitbutler.com/how-git-core-devs-configure-git/
 
+## Definition
+
+### merge
+
+Here is a fork of this other repository that contains some changes.
+Now record the changes from the upstream to my fork.
+
+### rebase
+
+Here is a fork of this other repository that contains some changes.
+Now remove all my changes, fetch all changes from upstream, then re-apply my changes
+on top of this up-to-date fork.
+
 ## Diff
 
 Diff from a specific hash:
@@ -148,6 +161,12 @@ Therminology:
  - Origin = own fork
  - upstream = FreeBSD official
  - main = name of the main branch (was called 'master' previously)
+
+Keeping fork up-to-date with upstream:
+```
+git checkout main
+git pull --rebase upstream master
+```
 
 # Creating a BSDRP branch
 
