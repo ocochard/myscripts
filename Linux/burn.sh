@@ -40,7 +40,10 @@ if [ ! -d ~/GravityMark_1.89_linux/bin ]; then
 		curl -o ~/GravityMark_1.89.run https://tellusim.com/download/GravityMark_1.89.run
 	fi
 	chmod +x ~/GravityMark_1.89.run
-	~/GravityMark_1.89.run --noexec
+	(
+		cd ~/
+		~/GravityMark_1.89.run --noexec
+	)
 fi
 
 # Create/install small scripts
