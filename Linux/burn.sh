@@ -25,6 +25,9 @@ fi
 echo "Disabling unattended-upgrade service"
 sudo systemctl disable --now unattended-upgrades
 
+echo "Enabling core dump"
+sudo snap set system system.coredump.enable=true
+
 if kdump-config  status | grep ready; then
 	echo "System correctly configured to store kernel crash dumps"
 else

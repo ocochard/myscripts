@@ -611,6 +611,32 @@ sudo snap refresh --hold
 
 # Tooling
 
+## Core
+
+### kernel
+
+```
+sudo apt install linux-crashdump
+```
+
+reboot then check for option "crashkernel" on this output:
+```
+cat /proc/cmdline
+```
+Then memory reserved for crash:
+```
+sudo dmesg | grep -i crash
+```
+
+dump will be in /var/crash/
+
+### userland
+
+```
+sudo snap set system system.coredump.enable=true
+sudo coredumpctl
+```
+
 ## Profiling
 
 ```

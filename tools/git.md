@@ -100,8 +100,8 @@ But now, need to get new commit from the origin:
 
 ```
 git switch new-name
-git fetch origin
-git rebase
+git fetch origin master
+git rebase FETCH_HEAD
 ```
 => resolve conflict (and commit it!) then git rebase --continue
 ```

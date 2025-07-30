@@ -293,3 +293,12 @@ Convert time zone, with 06:15 UTC, which hours in Los Angeles:
 ```
 TZ=UTC date -z America/Los_Angeles -j 0615
 ```
+
+# iPXE boot backup
+
+```
+mkdir /boot/efi/EFI/xyz
+cd /boot/efi/EFI/xyz
+fetch boot.netboot.xyz/ipxe/netboot.xyz.efi
+efibootmgr --create --loader /boot/efi/EFI/netboot.xyz/netboot.xyz.efi --label "Netboot.xyz"
+```
