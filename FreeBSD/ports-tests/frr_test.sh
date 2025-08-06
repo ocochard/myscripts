@@ -3,6 +3,9 @@
 # https://bsdrp.net/documentation/examples/simple_bgp-rip-ospf_lab
 #
 set -eu
+
+SUDO=${SUDO:-sudo}
+
 cat > /tmp/topo.txt <<EOF
 ******************************************************************************
 *                 net/frr regression lab using vnet jails                    *
@@ -78,15 +81,15 @@ frr1_ifa_p=""
 frr1_ifb=epair112
 frr1_ifb_p=a
 frr1_daemons="mgmtd zebra bgpd bfdd"
-mkdir -p /var/run/frr/frr1
-cat > /var/run/frr/frr1/ipsec.conf <<EOF
+${SUDO} mkdir -p /var/run/frr/frr1
+${SUDO} tee /var/run/frr/frr1/ipsec.conf <<EOF
 flush ;
 add 192.168.12.1 192.168.12.2 tcp 0x1000 -A tcp-md5 "abigpassword" ;
 add 192.168.12.2 192.168.12.1 tcp 0x1001 -A tcp-md5 "abigpassword" ;
 add -6 2001:db8:12::1 2001:db8:12::2 tcp 0x1002 -A tcp-md5 "abigpassword" ;
 add -6 2001:db8:12::2 2001:db8:12::1 tcp 0x1003 -A tcp-md5 "abigpassword" ;
 EOF
-cat > /var/run/frr/frr1/frr.conf <<EOF
+${SUDO} tee /var/run/frr/frr1/frr.conf <<EOF
 log file /var/run/frr/frr1/frr.log
 !
 interface lo110
@@ -133,15 +136,15 @@ frr2_ifa_p=b
 frr2_ifb=epair123
 frr2_ifb_p=a
 frr2_daemons="mgmtd zebra bgpd bfdd ripd ripngd"
-mkdir -p /var/run/frr/frr2
-cat > /var/run/frr/frr2/ipsec.conf <<EOF
+${SUDO} mkdir -p /var/run/frr/frr2
+${SUDO} tee /var/run/frr/frr2/ipsec.conf <<EOF
 flush ;
 add 192.168.12.2 192.168.12.1 tcp 0x1000 -A tcp-md5 "abigpassword" ;
 add 192.168.12.1 192.168.12.2 tcp 0x1001 -A tcp-md5 "abigpassword" ;
 add -6 2001:db8:12::2 2001:db8:12::1 tcp 0x1002 -A tcp-md5 "abigpassword" ;
 add -6 2001:db8:12::1 2001:db8:12::2 tcp 0x1003 -A tcp-md5 "abigpassword" ;
 EOF
-cat > /var/run/frr/frr2/frr.conf <<EOF
+${SUDO} tee /var/run/frr/frr2/frr.conf <<EOF
 log file /var/run/frr/frr2/frr.log
 !
 key chain rippass
@@ -208,8 +211,8 @@ frr3_ifa_p=b
 frr3_ifb=epair134
 frr3_ifb_p=a
 frr3_daemons="mgmtd zebra ospfd ospf6d ripd ripngd bfdd"
-mkdir -p /var/run/frr/frr3
-cat > /var/run/frr/frr3/frr.conf <<EOF
+${SUDO} mkdir -p /var/run/frr/frr3
+${SUDO} tee /var/run/frr/frr3/frr.conf <<EOF
 log file /var/run/frr/frr3/frr.log
 !
 key chain rippass
@@ -268,8 +271,8 @@ frr4_ifa_p=b
 frr4_ifb=epair145
 frr4_ifb_p=a
 frr4_daemons="mgmtd zebra ospfd ospf6d isisd bfdd"
-mkdir -p /var/run/frr/frr4
-cat > /var/run/frr/frr4/frr.conf <<EOF
+${SUDO} mkdir -p /var/run/frr/frr4
+${SUDO} tee /var/run/frr/frr4/frr.conf <<EOF
 log file /var/run/frr/frr4/frr.log
 !
 interface epair134b
@@ -322,8 +325,8 @@ frr5_ifa_p=b
 frr5_ifb=epair156
 frr5_ifb_p=a
 frr5_daemons="mgmtd zebra babeld isisd"
-mkdir -p /var/run/frr/frr5
-cat > /var/run/frr/frr5/frr.conf <<EOF
+${SUDO} mkdir -p /var/run/frr/frr5
+${SUDO} tee /var/run/frr/frr5/frr.conf <<EOF
 log file /var/run/frr/frr5/frr.log
 !
 interface epair145b
@@ -360,8 +363,8 @@ frr6_ifa_p=b
 frr6_ifb=epair167
 frr6_ifb_p=a
 frr6_daemons="mgmtd zebra staticd babeld"
-mkdir -p /var/run/frr/frr6
-cat > /var/run/frr/frr6/frr.conf <<EOF
+${SUDO} mkdir -p /var/run/frr/frr6
+${SUDO} tee /var/run/frr/frr6/frr.conf <<EOF
 log file /var/run/frr/frr6/frr.log
 !
 ip route 192.168.70.0/24 192.168.67.7
@@ -389,8 +392,8 @@ frr7_ifa_p=b
 frr7_ifb=lo170
 frr7_ifb_p=""
 frr7_daemons="mgmtd zebra staticd"
-mkdir -p /var/run/frr/frr7
-cat > /var/run/frr/frr7/frr.conf <<EOF
+${SUDO} mkdir -p /var/run/frr/frr7
+${SUDO} tee /var/run/frr/frr7/frr.conf <<EOF
 log file /var/run/frr/frr7/frr.log
 !
 ip route 0.0.0.0/0 192.168.67.6
@@ -415,7 +418,6 @@ usage () {
 
 check_req () {
 	which vtysh > /dev/null 2>&1 || die "net/frr not installed: vtysh not found"
-	[ "$(id -u)" != "0" ] && die "Need to be root" || true
 }
 
 create_jail () {
@@ -427,47 +429,47 @@ create_jail () {
 	fi
 	eval "
 		if [ -z "\$frr${id}_ifa_p" ] || [ "\$frr${id}_ifa_p" != b ]; then
-			ifconfig \$frr${id}_ifa create group frr
+			${SUDO} ifconfig \$frr${id}_ifa create group frr
 		fi
 		if [ -z "\$frr${id}_ifb_p" ] || [ "\$frr${id}_ifb_p" != b ]; then
-			ifconfig \$frr${id}_ifb create group frr
+			${SUDO} ifconfig \$frr${id}_ifb create group frr
 		fi
-	    jail -c name=frr${id} host.hostname=frr${id} persist \
+	    ${SUDO} jail -c name=frr${id} host.hostname=frr${id} persist \
 			vnet vnet.interface=\$frr${id}_ifa\$frr${id}_ifa_p \
 			vnet vnet.interface=\$frr${id}_ifb\$frr${id}_ifb_p
-		jexec frr${id} sysctl net.inet.ip.forwarding=1
-		jexec frr${id} sysctl net.inet6.ip6.forwarding=1
-		mkdir -p /var/run/frr/frr${id}.sock
-		chown frr /var/run/frr/frr${id}.sock
-		touch /var/run/frr/frr${id}/vtysh.conf
+		${SUDO} jexec frr${id} sysctl net.inet.ip.forwarding=1
+		${SUDO} jexec frr${id} sysctl net.inet6.ip6.forwarding=1
+		${SUDO} mkdir -p /var/run/frr/frr${id}.sock
+		${SUDO} chown frr /var/run/frr/frr${id}.sock
+		${SUDO} touch /var/run/frr/frr${id}/vtysh.conf
 		if [ -f /var/run/frr/frr${id}/ipsec.conf ]; then
 			echo "Loading ipsec.conf for jail frr${id}"
-			kldstat -qm ipsec || kldload ipsec
-			kldstat -qm tcpmd5 || kldload tcpmd5
-			jexec frr${id} setkey -vf /var/run/frr/frr${id}/ipsec.conf
+			${SUDO} kldstat -qm ipsec || ${SUDO} kldload ipsec
+			${SUDO} kldstat -qm tcpmd5 || ${SUDO} kldload tcpmd5
+			${SUDO} jexec frr${id} setkey -vf /var/run/frr/frr${id}/ipsec.conf
 		fi
 		for daemon in \$frr${id}_daemons; do
-			jexec frr${id} \$daemon -d -i /var/run/frr/frr${id}_\$daemon.pid --vty_socket /var/run/frr/frr${id}.sock
+			${SUDO} jexec frr${id} \$daemon -d -i /var/run/frr/frr${id}_\$daemon.pid --vty_socket /var/run/frr/frr${id}.sock
 		done
-		jexec frr${id} vtysh -b --config_dir /var/run/frr/frr${id}/ --vty_socket /var/run/frr/frr${id}.sock || true
+		${SUDO} jexec frr${id} vtysh -b --config_dir /var/run/frr/frr${id}/ --vty_socket /var/run/frr/frr${id}.sock || true
 		"
 }
 
 destroy_jail () {
 	# FreeBSD bug https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=264981
 	# $1: jail id
-	iflist=$(jexec frr$1 ifconfig -l | sed 's/lo0//')
-	jail -R frr$1 || true
+	iflist=$(${SUDO} jexec frr$1 ifconfig -l | sed 's/lo0//')
+	${SUDO} jail -R frr$1 || true
 	sleep 2
 	for i in $iflist; do
-		ifconfig $i destroy || true
+		${SUDO} ifconfig $i destroy || true
 	done
 }
 
 start () {
 	echo start
 	check_req
-	chown -R frr /var/run/frr/
+	${SUDO} chown -R frr /var/run/frr/
 	for i in $(seq 7); do
 		create_jail $i
 	done
@@ -475,9 +477,9 @@ start () {
 	echo "Network topology:"
 	cat /tmp/topo.txt
 	echo "To run command from jail, some examples:"
-	echo "jexec frr1 ping -c 4 -S 192.168.10.1 192.168.70.7"
-	echo "jexec frr3 vtysh --vty_socket /var/run/frr/frr3.sock"
-	echo "jexec frr4"
+	echo "${SUDO} jexec frr1 ping -c 4 -S 192.168.10.1 192.168.70.7"
+	echo "${SUDO} jexec frr3 vtysh --vty_socket /var/run/frr/frr3.sock"
+	echo "${SUDO} jexec frr4"
 	exit 0
 }
 
@@ -485,17 +487,17 @@ stop () {
 	echo stop
 	for i in $(seq 7); do
 		destroy_jail $i
-		rm -rf /var/run/frr/frr${i}
-		rm -f /var/run/frr/frr${i}_*
+		${SUDO} rm -rf /var/run/frr/frr${i}
+		${SUDO} rm -f /var/run/frr/frr${i}_*
 	done
 	# There are some long-dying jail that could prevent deleteing all epairs
 	for i in epair112 epair123 epair134 epair145 epair156 epair167; do
 		for j in a b; do
-			ifconfig $i$j destroy || true
+			${SUDO} ifconfig $i$j destroy || true
 		done
 	done
 	for i in lo110 lo170; do
-		ifconfig $i destroy || true
+		${SUDO} ifconfig $i destroy || true
 	done
 }
 

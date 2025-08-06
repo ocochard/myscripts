@@ -136,6 +136,30 @@ To unmount and unload the key:
 zfs unmount -u /work
 ```
 
+## Basic setup
+
+### IPMI or serial
+
+To enable serial output on physical port, IPMI and graphical:
+Into /boot/loader.conf (or loader.conf.local):
+```
+boot_multicons="YES"
+console="eficom,efi"
+```
+
+Some emulated serial port with IPMI SoL doesn’t use the default 0x3f8, so
+search for the correct value with this command:
+```
+grep 'uart.*port' /var/run/dmesg.boot
+uart0: <16550 or compatible> port 0x3f8-0x3ff irq 4 flags 0x10 on acpi0
+uart1: <16550 or compatible> port 0x2f8-0x2ff irq 3 on acpi0
+```
+Here, the first (uart0) is the physical serial port and uart1 is the IPMI SoL.
+So to use SoL as default console, add this line:
+```
+comconsole_port="0x2f8"
+```
+
 ## NFS
 
 ### NFSv4
