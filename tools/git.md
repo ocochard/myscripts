@@ -10,12 +10,26 @@ https://blog.gitbutler.com/how-git-core-devs-configure-git/
 
 Here is a fork of this other repository that contains some changes.
 Now record the changes from the upstream to my fork.
+Merge commit add useless commit, always avoid that to prefer rebase.
 
 ### rebase
 
 Here is a fork of this other repository that contains some changes.
 Now remove all my changes, fetch all changes from upstream, then re-apply my changes
 on top of this up-to-date fork.
+
+In this order:
+1. Add the original-upstream repository as remote using "upstream" name
+2. Fetch all new data from this "upstream" repo
+3. Switch to your "main" branch
+4. Rebase your main branch with upstream
+
+```
+git remote add upstream https://github.com/freebsd-net/tcp-testsuite.git
+git fetch upstream
+git switch main
+git rebase upstream/main
+```
 
 ## Diff
 

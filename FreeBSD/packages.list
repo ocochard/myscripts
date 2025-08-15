@@ -6,6 +6,7 @@ benchmarks/linux-unigine-heaven
 benchmarks/linux-unigine-valley
 benchmarks/nuttcp
 benchmarks/wrk
+devel/ccache-static
 devel/R-cran-plyr
 devel/hs-ShellCheck
 devel/arcanist
@@ -48,6 +49,7 @@ graphics/mesa-devel
 lang/expect
 lang/go
 lang/python
+math/gnuplot
 multimedia/libva-utils
 multimedia/mpv
 multimedia/mplayer
