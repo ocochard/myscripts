@@ -82,6 +82,7 @@ security/keepassxc
 security/nmap
 security/openvpn
 security/py-certbot
+security/py-cryptography
 security/py-ssh-audit
 security/py-yubikey-manager
 security/sudo

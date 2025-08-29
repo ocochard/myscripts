@@ -33,6 +33,9 @@ Process:
 To avoid all "Read-only file system" message, don't forget to set MAKE_OBJDIR_CHECK_WRITABLE=0 in your env
 
 But in case of libc upgrade, the clients can't upgrade.
+
+First: Do all your commmands from root (su) because using sudo, there is higher chance of it not working during the process.
+
 Example on old-way that doesn't support ZFS BE:
 ```
 make installkernel
@@ -53,10 +56,13 @@ cp /usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 /root
 LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 make -j 4 installworld
 ```
 
-If still alive, finish it with an `etcupdate -B`, if not:
-- It will reboot in single-user mode (with lot of libc error)
-- from /rescue/sh copy the /root/libc.so.7 in /lib/
-- reboot
+In case of forcing some LD_PRELOAD, we can end-up in different state:
+- No impact: Finish the upgrade with an `etcupdate -B`.
+- Bad state: All commands end with "Bad system call", you’re good to force power cycle, to continue.
+- Very bad state (libc upgrade): still problem after the reboot:
+  - reboot in single-user mode (with lot of libc error)
+  - from /rescue/sh copy the /root/libc.so.7 in /lib/
+  - reboot
 - Restart the `make installworld`
 - `etcupdate -B`
 
@@ -321,8 +327,8 @@ TZ=UTC date -z America/Los_Angeles -j 0615
 # iPXE boot backup
 
 ```
-mkdir /boot/efi/EFI/xyz
-cd /boot/efi/EFI/xyz
+mkdir /boot/efi/efi/xyz
+cd /boot/efi/efi/xyz
 fetch http://boot.netboot.xyz/ipxe/netboot.xyz.efi
-efibootmgr --create --loader /boot/efi/EFI/netboot.xyz/netboot.xyz.efi --label "Netboot.xyz"
+efibootmgr --create --loader /boot/efi/efi/xyz/netboot.xyz.efi --label "Netboot.xyz"
 ```

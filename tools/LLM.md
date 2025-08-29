@@ -10,7 +10,7 @@ cd llama.cpp
 
 Then build it using cmake:
 ```
-which -s apt && sudo apt install -y build-essential cmake
+which -s apt && sudo apt install -y build-essential cmake libcurl4-openssl-dev
 test $(uname)=FreeBSD && sudo pkg install -y cmake
 test $(uname)=Darwin && alias nproc="sysctl -n hw.physicalcpu"
 cmake --fresh -B build
@@ -35,6 +35,13 @@ For big (32G) model (large context size):
 ```
 curl --output-dir models -LO -C - https://huggingface.co/MaziyarPanahi/Mixtral-8x22B-v0.1-GGUF/resolve/main/Mixtral-8x22B-v0.1.IQ1_S.gguf
 ```
+
+If builded with curl support, simply instruct it to download model, example with gpt-oss-20b:
+```
+lama-server -hf ggml-org/gpt-oss-20b-GGUF --ctx-size 0 --jinja -ub 2048 -b 2048 -ngl 99 -fa
+```
+
+[Offical tips to run gpt-oss](https://github.com/ggml-org/llama.cpp/discussions/15396)
 
 ### Using prompt for text summarization
 
