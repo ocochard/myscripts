@@ -1,3 +1,5 @@
+" vi configuration file
+" But vim will try to use it if no .vimrc file
 set showmode ruler
 set filec=^[
 set cedit=^[
