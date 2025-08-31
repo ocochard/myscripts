@@ -312,10 +312,8 @@ ar -x /tmp/pkg/usr/local/lib/libcbor.a
 
 ### Jails
 
-Light nullfs-jail example:
+[cf dedicated doc](jail/README.md)
 
-```
-```
 ## Extra
 
 ### dmesgd.nycbug.org
