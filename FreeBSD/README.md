@@ -309,6 +309,13 @@ mkdir /tmp/libcbor
 cd /tmp/libcbor
 ar -x /tmp/pkg/usr/local/lib/libcbor.a
 ```
+
+### Jails
+
+Light nullfs-jail example:
+
+```
+```
 ## Extra
 
 ### dmesgd.nycbug.org
