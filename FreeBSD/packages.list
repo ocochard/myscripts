@@ -6,6 +6,7 @@ benchmarks/linux-unigine-heaven
 benchmarks/linux-unigine-valley
 benchmarks/nuttcp
 benchmarks/wrk
+databases/mariadb118-server
 devel/ccache-static
 devel/R-cran-plyr
 devel/hs-ShellCheck
@@ -60,12 +61,13 @@ net-mgmt/netdata
 net/bird2@netlink
 net/frr9
 net/mrtparse
-net/py-speedtest-cli
+net/py-wsdd
 net/read_bbrlog
 net/realtek-re-kmod
 net/rsync
-net/samba416
+net/samba420
 net/scapy
+net/speedtest-go
 net/tcplog_dumper
 net/tcprtt
 net/tightvnc
