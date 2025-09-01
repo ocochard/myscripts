@@ -7,19 +7,19 @@ Lightest jail:
 - Use unionfs for read-write directory
 - A base.txz from your running release (to extract only its /etc)
 
-### File sharing
+### Example: Simple HTTP/SCP file sharing
 
-Example by read-only host file directory using:
-- Authenticated HTTP access (.htaccess database)
-- SFTP/SCP access (unix passwd)
-- Host’s directory to be shared: /srv/data
+Here is an example of read-only sharing host’s directories:
+- SFTP/SCP access (unix passwd database)
+- Existing host’s directory to be shared: /srv/data
 
-Start to populate the jail’s directories and a default configuration files:
+Start to populate the jail’s directories and the default configuration files:
 ```
 sudo mkdir -p /usr/jails/share
 cd /usr/jails/share
 sudo mkdir -p dev root bin sbin lib libexec usr/bin usr/libdata usr/share \
-      usr/libexec usr/sbin usr/local usr/include usr/lib srv/data
+      usr/libexec usr/sbin usr/local usr/include usr/lib tmp srv/data
+sudo chmod 777 tmp
 fetch -o /tmp/base.txz https://download.freebsd.org/snapshots/$(uname -p)/$(uname -r)/base.txz
 sudo tar -xvf /tmp/base.txz -C /usr/jails/share etc
 ```
@@ -75,13 +75,34 @@ cat <<'EOF' | sudo tee /etc/jail.conf.d/share.fstab
 EOF
 ```
 
-Now we can configure this jail with minimum setup:
+Now we can configure the minimal jail’rc.conf:
 ```
-(echo hostname=share;echo sshd_enable=yes;echo sshd_flags="-p 9022") | sudo tee /usr/jails/share/etc/rc.conf
+echo hostname=share | sudo tee /usr/jails/share/etc/rc.conf
 ```
 
 And start it:
 ```
 sudo service jail enable
 sudo service jail start share
+```
+
+Then log into the jail to finish its configuration:
+- Replace the sshd sftp subsystem by internal version
+- Configure sshd to chroot all users that belong to group 'sftp' in the shared dir
+- Create one user to test this setup
+
+```
+sudo service jail console share
+service sshd enable
+sysrc sshd_flags="-p 8022"
+sed -i '' 's|/usr/libexec/sftp-server|'
+cat <<EOF >>/etc/ssh/sshd_config
+Match Group sftp
+    ForceCommand internal-sftp
+    ChrootDirectory /srv/data
+EOF
+service sshd start
+adduser -D -g sftp -s nologin -w random
+pw groupadd -n sftp
+pw useradd -n jdoe -c "John Doe" -d /srv/data -s /usr/sbin/nologin -g sftp -w random
 ```
