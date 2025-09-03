@@ -41,6 +41,7 @@ filesystems/zfs-stats-lite
 french/libreoffice
 ftp/curl
 ftp/wget
+graphics/gpu-firmware-kmod
 graphics/drm-kmod
 graphics/drm-66-kmod
 graphics/gimp
