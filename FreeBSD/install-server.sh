@@ -5,8 +5,8 @@ set -eu
 OLDIFS=$IFS
 IFS="
 "
-# A usefull function (from: http://code.google.com/p/sh-die/) 
-die() { echo -n "EXIT: " >&2; echo "$@" >&2; exit 1; } 
+# A usefull function (from: http://code.google.com/p/sh-die/)
+die() { echo -n "EXIT: " >&2; echo "$@" >&2; exit 1; }
 
 check_and_add() {
 	# $1: Table of values
@@ -40,13 +40,16 @@ sysrc kld_list="ichsmb coretemp ichwd"
 service sendmail onestop
 
 cat >>/etc/periodic.conf <<EOF
-#disable some sendmail specific daily maintenance routines
-daily_clean_hoststat_enable="NO"
-daily_status_mail_rejects_enable="NO"
-daily_status_include_submit_mailq="NO"
-daily_submit_queuerun="NO"
+# log periodic output instead of receiving it as email
+daily_output="/var/log/daily.log"
+weekly_output="/var/log/weekly.log"
+monthly_output="/var/log/monthly.log"
+# only see important information
+daily_show_success=NO
+daily_show_info=NO
+daily_show_badconfig=NO
 EOF
-    
+
 CSH_CSHRC='
 setenv CLICOLOR
 set nobeep
