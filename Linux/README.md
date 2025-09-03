@@ -24,6 +24,7 @@ On desktop, sshd not installed by default:
 ```
 sudo apt install openssh-server
 sudo systemctl enable ssh
+sudo systemctl status ssh
 ```
 
 Viewing log:

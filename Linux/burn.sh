@@ -49,7 +49,7 @@ fi
 # Create/install small scripts
 mkdir -p ${HOME}/bin
 if [ ! -f  ${HOME}/bin/check_kernel_errors ]; then
-	cat > ${HOME}/bin/check_kernel_errors <<EOF
+	cat > ${HOME}/bin/check_kernel_errors <<'EOF'
 #!/bin/sh
 
 # Check for "ERROR" in the kernel journal in the last hour (adjust time as needed)

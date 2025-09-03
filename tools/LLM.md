@@ -48,7 +48,7 @@ lama-server -hf ggml-org/gpt-oss-20b-GGUF --ctx-size 0 --jinja -ub 2048 -b 2048 
 Text summarization, by using long text input like 1 hour conference transcription as example, need a model supporting large (16K or 32k context size).
 Here I’m using a Mixtral-8x22B model (up to 64K context for this one).
 ```
-cat <<EOF >prompt.txt
+cat <<'EOF' >prompt.txt
 ### Instruction:
 
 Below is an instruction that describes a task. Write a response that appropriately completes the request.

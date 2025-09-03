@@ -3,6 +3,7 @@
 # Idea from https://lists.freebsd.org/pipermail/freebsd-current/2018-October/071533.html
 maker=$(kenv smbios.system.maker)
 product=$(kenv smbios.system.product)
+family=$(kenv smbios.system.family)
 case ${maker} in
 	*NOT-FILLED*|""|'                                ')
 		maker=$(kenv smbios.planar.maker) ;;
@@ -20,7 +21,7 @@ if [ "$USER" = "olivier" ]; then
 else
 	email="$USER@$(hostname)"
 fi
-description="FreeBSD $(uname -r)/$(uname -m) on ${maker} ${product}"
+description="FreeBSD $(uname -r)/$(uname -m) on ${maker} ${family} ${product}"
 
 echo "USER = $USER"
 echo "email = $email"
