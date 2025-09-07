@@ -153,7 +153,13 @@ You’ve squashed a wrong commit, so your rebase need to be reverted.
 git reset --hard origin/branch-name
 ```
 
-## Revert a commit with no log
+## Revert last commit
+
+```
+git reset HEAD~1
+```
+
+## Revert a pushed commit with no log
 
 To be done on working branch only, not main:
 ```

@@ -58,6 +58,8 @@ multimedia/obs-studio
 multimedia/vlc
 multimedia/webcamd
 net-mgmt/netdata
+net/bwi-firmware-kmod
+net/bwn-firmware-kmod
 net/bird2@netlink
 net/frr9
 net/mrtparse

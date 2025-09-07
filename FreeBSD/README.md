@@ -68,12 +68,14 @@ In case of forcing some LD_PRELOAD, we can end-up in different state:
 
 On a ZFS BE, the upgrade command is:
 ```
-LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall.sh
+sudo LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 tools/build/beinstall.sh
 ```
 
-or with a missing libmd.so.7:
+or with a missing libmd.so.7 and missing libutil.so.10 (from 14.3-RELEASE to 15):
 ```
-LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libmd/libmd.so.7 tools/build/beinstall.sh
+sudo LD_PRELOAD="/usr/obj/usr/src/amd64.amd64/lib/libmd/libmd.so.7 \
+/usr/obj/usr/src/amd64.amd64/lib/libutil/libutil.so.10" \
+tools/build/beinstall.sh
 ```
 
 ### Build from MacOS (ARM M3 pro)
@@ -337,3 +339,12 @@ cd /boot/efi/efi/xyz
 fetch http://boot.netboot.xyz/ipxe/netboot.xyz.efi
 efibootmgr --create --loader /boot/efi/efi/xyz/netboot.xyz.efi --label "Netboot.xyz"
 ```
+And write down the boot entry number, but don’t use
+`--activate` because it could replace your FreeBSD entry).
+
+Test it as nexboot entry:
+```
+efibootmgr --bootnext --bootnum bootnum
+```
+
+Reboot, then show your boot menu (F12 on Dell) to double check you still have the FreeBSD menu and the new xyz entry.
