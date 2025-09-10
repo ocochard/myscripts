@@ -62,6 +62,7 @@ net/bwi-firmware-kmod
 net/bwn-firmware-kmod
 net/bird2@netlink
 net/frr9
+net/mosh
 net/mrtparse
 net/py-wsdd
 net/read_bbrlog

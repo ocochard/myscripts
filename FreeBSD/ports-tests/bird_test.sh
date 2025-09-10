@@ -2,6 +2,9 @@
 # bird regression lab using empty vnet jails
 # https://bsdrp.net/documentation/examples/simple_bgp-rip-ospf_lab_with_bird
 set -eu
+
+SUDO=${SUDO:-sudo}
+
 cat > /tmp/topo.txt <<EOF
 ******************************************************************************
 *                 net/bird regression lab using vnet jails                   *
@@ -86,8 +89,8 @@ bird1_ifb=epair112
 bird1_ifb_p=a
 bird1_ifb_inet="192.168.12.1/24"
 bird1_ifb_inet6="2001:db8:12::1/64"
-touch /var/run/bird/bird1.ipsec
-cat > /var/run/bird/bird1.conf <<EOF
+${SUDO} touch /var/run/bird/bird1.ipsec
+cat <<EOF | ${SUDO} tee /var/run/bird/bird1.conf
 # Configure logging
 log syslog all;
 log "/var/log/bird1.log" all;
@@ -151,8 +154,8 @@ bird2_ifb=epair123
 bird2_ifb_p=a
 bird2_ifb_inet="192.168.23.2/24"
 bird2_ifb_inet6="2001:db8:23::2/64"
-touch /var/run/bird/bird2.ipsec
-cat > /var/run/bird/bird2.conf <<EOF
+${SUDO} touch /var/run/bird/bird2.ipsec
+cat <<EOF | ${SUDO} tee /var/run/bird/bird2.conf
 # Configure logging
 log syslog all;
 log "/var/log/bird2.log" all;
@@ -229,7 +232,7 @@ bird3_ifb=epair134
 bird3_ifb_p=a
 bird3_ifb_inet="192.168.34.3/24"
 bird3_ifb_inet6="2001:db8:34::3/64"
-cat > /var/run/bird/bird3.conf <<EOF
+cat <<EOF | ${SUDO} tee /var/run/bird/bird3.conf
 # Configure logging
 log syslog all;
 log "/var/log/bird3.log" all;
@@ -296,7 +299,7 @@ bird4_ifb=epair145
 bird4_ifb_p=a
 bird4_ifb_inet="192.168.45.4/24"
 bird4_ifb_inet6="2001:db8:45::5/64"
-cat > /var/run/bird/bird4.conf <<EOF
+cat <<EOF | ${SUDO} tee /var/run/bird/bird4.conf
 # Configure logging
 log syslog all;
 log "/var/log/bird4.log" all;
@@ -359,7 +362,7 @@ bird5_ifb=epair156
 bird5_ifb_p=a
 bird5_ifb_inet="192.168.56.5/24"
 bird5_ifb_inet6="2001:db8:56::5/64"
-cat > /var/run/bird/bird5.conf <<EOF
+cat <<EOF | ${SUDO} tee /var/run/bird/bird5.conf
 # Configure logging
 log syslog all;
 log "/var/log/bird5.log" all;
@@ -415,7 +418,7 @@ bird6_ifb=lo160
 bird6_ifb_p=""
 bird6_ifb_inet="192.168.60.6/24"
 bird6_ifb_inet6="2001:db8:60::6/64"
-cat > /var/run/bird/bird6.conf <<EOF
+cat <<EOF | ${SUDO} tee /var/run/bird/bird6.conf
 # Configure logging
 log syslog all;
 log "/var/log/bird6.log" all;
@@ -465,7 +468,6 @@ usage () {
 
 check_req () {
 	which bird > /dev/null 2>&1 || die "net/bird2 not installed: bird not found"
-	[ "$(id -u)" != "0" ] && die "Need to be root" || true
 }
 
 create_jail () {
@@ -477,36 +479,36 @@ create_jail () {
 	fi
 	if [ -f /var/run/bird/bird${id}.ipsec ]; then
 		# Should be autoloaded by bird, but not sure under a jail
-		kldstat -qm ipsec || kldload ipsec
-		kldstat -qm tcpmd5 || kldload tcpmd5
+		kldstat -qm ipsec || ${SUDO} kldload ipsec
+		kldstat -qm tcpmd5 || ${SUDO} kldload tcpmd5
 	fi
 	eval "
 		if [ -z "\$bird${id}_ifa_p" ] || [ "\$bird${id}_ifa_p" != b ]; then
-			ifconfig \$bird${id}_ifa create group bird
+			${SUDO} ifconfig \$bird${id}_ifa create group bird
 		fi
 		if [ -z "\$bird${id}_ifb_p" ] || [ "\$bird${id}_ifb_p" != b ]; then
-			ifconfig \$bird${id}_ifb create group bird
+			${SUDO} ifconfig \$bird${id}_ifb create group bird
 		fi
-	    jail -c name=bird${id} host.hostname=bird${id} persist \
+	    ${SUDO} jail -c name=bird${id} host.hostname=bird${id} persist \
 			vnet vnet.interface=\$bird${id}_ifa\$bird${id}_ifa_p \
 			vnet vnet.interface=\$bird${id}_ifb\$bird${id}_ifb_p
-		jexec bird${id} sysctl net.inet.ip.forwarding=1
-		jexec bird${id} sysctl net.inet6.ip6.forwarding=1
-		jexec bird${id} ifconfig \$bird${id}_ifa\$bird${id}_ifa_p inet \$bird${id}_ifa_inet up
-		jexec bird${id} ifconfig \$bird${id}_ifa\$bird${id}_ifa_p inet6 \$bird${id}_ifa_inet6
-		jexec bird${id} ifconfig \$bird${id}_ifb\$bird${id}_ifb_p inet \$bird${id}_ifb_inet up
-		jexec bird${id} ifconfig \$bird${id}_ifb\$bird${id}_ifb_p inet6 \$bird${id}_ifb_inet6
-		jexec bird${id} bird -c /var/run/bird/bird${id}.conf -s /var/run/bird/bird${id}.ctl || true
+		${SUDO} jexec bird${id} sysctl net.inet.ip.forwarding=1
+		${SUDO} jexec bird${id} sysctl net.inet6.ip6.forwarding=1
+		${SUDO} jexec bird${id} ifconfig \$bird${id}_ifa\$bird${id}_ifa_p inet \$bird${id}_ifa_inet up
+		${SUDO} jexec bird${id} ifconfig \$bird${id}_ifa\$bird${id}_ifa_p inet6 \$bird${id}_ifa_inet6
+		${SUDO} jexec bird${id} ifconfig \$bird${id}_ifb\$bird${id}_ifb_p inet \$bird${id}_ifb_inet up
+		${SUDO} jexec bird${id} ifconfig \$bird${id}_ifb\$bird${id}_ifb_p inet6 \$bird${id}_ifb_inet6
+		${SUDO} jexec bird${id} bird -c /var/run/bird/bird${id}.conf -s /var/run/bird/bird${id}.ctl || true
 		"
 }
 
 destroy_jail () {
 	# $1: jail id
-	iflist=$(jexec bird$1 ifconfig -l | sed 's/lo0//')
-	jail -R bird$1 || true
+	iflist=$(${SUDO} jexec bird$1 ifconfig -l | sed 's/lo0//')
+	${SUDO} jail -R bird$1 || true
 	sleep 2
 	for iftodestroy in $iflist; do
-		ifconfig $iftodestroy destroy || true
+		${SUDO} ifconfig $iftodestroy destroy || true
 	done
 }
 
@@ -520,9 +522,9 @@ start () {
 	echo "Network topology:"
 	cat /tmp/topo.txt
 	echo "To run command from jail, some examples:"
-	echo "jexec bird1 ping -c 4 -S 192.168.10.1 192.168.60.6"
-	echo "jexec bird3 birdc -s /var/run/bird/bird3.ctl"
-	echo "jexec bird4"
+	echo "${SUDO} jexec bird1 ping -c 4 -S 192.168.10.1 192.168.60.6"
+	echo "${SUDO} jexec bird3 birdc -s /var/run/bird/bird3.ctl"
+	echo "${SUDO} jexec bird4"
 	exit 0
 }
 
@@ -530,9 +532,18 @@ stop () {
 	echo stoping...
 	for i in $(seq 6); do
 		destroy_jail $i
-		rm -f /var/run/bird/bird${i}.conf
-		rm -f /var/log/bird${i}.log
+		${SUDO} rm -f /var/run/bird/bird${i}.conf
+		${SUDO} rm -f /var/log/bird${i}.log
 	done
+  # There are some long-dying jail that could prevent deleteing all epairs
+  for i in epair112 epair123 epair134 epair145 epair156 epair167; do
+    for j in a b; do
+      ${SUDO} ifconfig $i$j destroy || true
+    done
+  done
+  for i in lo110 lo160; do
+    ${SUDO} ifconfig $i destroy || true
+  done
 }
 
 if [ $# -eq 0 ] ; then
