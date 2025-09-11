@@ -19,6 +19,5 @@ cshrc_cfg ${HOME}/.cshrc
 cp -n exrc ${HOME}/.exrc || true
 cp -n gitconfig ${HOME}/.gitconfig || true
 mkdir -p ${HOME}/.ssh || true
-cp -n ssh_rc ${HOME}/.ssh/rc || true
 cp -n tmux.conf ${HOME}/.tmux.conf || true
 vim_cfg
