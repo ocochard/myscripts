@@ -25,6 +25,16 @@ sudo cp /etc/pam.d/sudo_local.template /etc/pam.d/sudo_local
 sudo sed -i '' 's/#auth/auth/' /etc/pam.d/sudo_local
 ```
 
+To works with tmux it need a pam-reattach module.
+```
+brew install pam-reattach
+test -r /opt/homebrew/lib/pam/pam_reattach.so && echo "you can continue" || echo "stop here the pam_reattach.so is missing, you will break sudo"
+cat <<EOF | sudo tee /etc/pam.d/sudo_local
+auth       optional       /opt/homebrew/lib/pam/pam_reattach.so
+auth       sufficient     pam_tid.so
+EOF
+```
+
 ## dd
 
 ```
