@@ -83,7 +83,8 @@ echo hostname=share | sudo tee /usr/jails/share/etc/rc.conf
 And start it:
 ```
 sudo service jail enable
-sudo service jail start share
+sudo sysrc jail_list+=share
+sudo service jail start
 ```
 
 Then log into the jail to finish its configuration:
@@ -105,4 +106,9 @@ service sshd start
 adduser -D -g sftp -s nologin -w random
 pw groupadd -n sftp
 pw useradd -n jdoe -c "John Doe" -d /srv/data -s /usr/sbin/nologin -g sftp -w random
+```
+
+And testing it (forcing password here):
+```
+sftp -P 8022 -o "PreferredAuthentications=keyboard-interactive,password" jdoe@localhost
 ```

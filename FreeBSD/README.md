@@ -91,6 +91,10 @@ tools/build/make.py --help
 MAKEOBJDIRPREFIX=~/freebsd.obj tools/build/make.py -j $(sysctl -n hw.ncpu) TARGET=arm64 TARGET_ARCH=aarch64 buildworld buildkernel
 ```
 
+## Installation
+
+cf [Install with MS Windows](install-with-MS-Windows.md).
+
 ## ZFS
 
 With SSD disks or all trim compliant (off by default):
