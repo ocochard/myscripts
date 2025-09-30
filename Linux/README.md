@@ -16,6 +16,17 @@ Prevent password request without modifying default configuration file:
 echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/$USER
 ```
 
+### grub
+
+Reduce timeout:
+```
+sudo vi /etc/default/grub
+GRUB_TIMEOUT=2
+sudo update-grub
+```
+
+And it will destroy your customized rEFInd setup :-(
+
 ## Ubuntu
 
 ### SSHd
@@ -92,6 +103,12 @@ sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
 $ df -h | grep ubuntu
 /dev/mapper/ubuntu--vg-ubuntu--lv  123G  6.6G  111G   6% /
 ```
+
+### Resize GPT/ext4
+
+Use gparted from the Ubuntu LiveCD:
+Able to move and resize the / partition.
+
 ### Network
 
 Warning: Ubuntu uses netplan and this mess uses:

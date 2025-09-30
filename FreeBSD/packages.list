@@ -18,6 +18,7 @@ devel/git-lfs
 devel/p5-Cache-LRU
 devel/p5-POSIX-strptime
 devel/py-flake8
+devel/py-pytest
 devel/valgrind
 dns/dnsmasq
 dns/nextdns
@@ -47,6 +48,7 @@ graphics/drm-66-kmod
 graphics/gimp
 graphics/mesa-demos
 graphics/mesa-devel
+graphics/nomacs
 lang/expect
 lang/go
 lang/python

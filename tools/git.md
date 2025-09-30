@@ -34,9 +34,13 @@ git rebase upstream/main
 ## Diff
 
 Diff from a specific hash:
-
 ```
 git diff b97a47e94662^!
+```
+
+Create a patch from the last commit:
+```
+git format-patch HEAD^!
 ```
 
 Create a patch from a specific hash:

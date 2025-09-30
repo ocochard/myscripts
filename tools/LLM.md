@@ -1,6 +1,6 @@
 # llama.cpp
 
-## Generic build instructions
+## Generic build instructions (CPU only: no backend)
 
 [Official doc is very good for that](https://github.com/ggerganov/llama.cpp/blob/master/docs/build.md).
 ```
@@ -100,6 +100,7 @@ this computer) but it allows to use about 30GB of RAM for GPU usage in case of n
 
 To compile llama.cpp to support this feature, you need:
 - [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/native-install/ubuntu.html) (version 6.2.2 used here);
+- [Configure GPU access for your user](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/prerequisites.html#group-permissions)
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
 - Enable HIP UMA (LLAMA_HIP_UMA).
 
@@ -119,15 +120,12 @@ $ rocminfo | grep '^  Name:'
   Name:                    gfx1035
 ```
 
-Then compile llama.cpp, example using make:
-```
-$ HSA_OVERRIDE_GFX_VERSION=10.3.0 make -j$(nproc) LLAMA_HIPBLAS=1 LLAMA_HIP_UMA=1 AMDGPU_TARGETS=gfx1030
-```
+Then compile llama.cpp:
 
-or with cmake:
 ```
+sudo apt install -y libcurl4-gnutls-dev
 HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" HSA_OVERRIDE_GFX_VERSION=10.3.0\
-    cmake -S . -B build -DGGML_HIPBLAS=ON -DGGML_HIP_UMA=ON -DAMDGPU_TARGETS=gfx1030 -DCMAKE_BUILD_TYPE=Release \
+    cmake -S . --fresh -B build -DGGML_HIPBLAS=ON -DGGML_HIP_UMA=ON -DGPU_TARGETS=gfx1030 -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -- -j $(nproc)
 
 ```
@@ -304,13 +302,34 @@ $ build/bin/llama-mtmd-cli -hf ggml-org/gemma-3-4b-it-GGUF --image ~/Downloads/i
 
 # whisper.cpp (Voice to text)
 
+[More details in the official readme](https://github.com/ggml-org/whisper.cpp/blob/master/README.md)
+
 ## Generic install
 
+A simple install on FreeBSD with no special backend, only CPU:
 ```
 git clone https://github.com/ggerganov/whisper.cpp.git
 cd whisper.cpp
-cmake -D WHISPER_SUPPORT_SDL2=ON .
-make
+cmake --fresh -B build
+cmake --build build --config Release -j $(nproc)
+```
+
+## Advanced install
+
+Here an exmple with:
+- ffmpeg for embedded audio file conversion
+- Using the Vulkan library as backend for AMD GPU acceleration (HIP seems not available)
+- SDL2 for real-time (stream mode)
+
+```
+mkdir ~/vulkan
+cd ~/vulkan
+wget https://sdk.lunarg.com/sdk/download/1.4.321.1/linux/vulkansdk-linux-x86_64-1.4.321.1.tar.xz
+tar -xvf vulkansdk-linux-x86_64-1.4.321.1.tar.xz
+source ~/vulkan/1.4.321.1/setup-env.sh
+sudo apt install -y libsdl2-dev libavcodec-dev libavformat-dev libavutil-dev
+cmake --fresh -B build -DGGML_VULKAN=1 -DWHISPER_FFMPEG=yes
+cmake --build build --config Release -j $(nproc)
 ```
 
 ## Usage
@@ -319,18 +338,17 @@ make
 
 Download a model:
 ```
-bash ./models/download-ggml-model.sh base.en
+sh ./models/download-ggml-model.sh base.en
 ```
 
-Transcode your mp3 in wav:
+Transcode your mp3 in wav with ffmpeg (if compiled without ffmpeg):
 ```
 ffmpeg -i FreeBSD\ Foundation\ Update\ -\ May\ 2024\ FreeBSD\ Developer\ Summit.mp3  -ar 16000 -ac 1 -c:a pcm_s16le FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav
 ```
 
 Generate a txt file (-otxt) or other like srt (-osrt):
-
 ```
-bin/main -t 16 -otxt -f ../FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav
+build/bin/whisper-cli -t 16 -otxt ../FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav
   8
   9 [00:00:00.000 --> 00:00:10.000]   [BLANK_AUDIO]
  10 [00:00:10.000 --> 00:00:14.440]   Hi everyone, I'm Deb Goodkin, and I'm the Executive Director of
@@ -354,12 +372,19 @@ Example with stereo mode:
 ```
 ffmpeg -i BSDNow.558.Worlds.of.telnet.mp3 -ar 16000 -ac 2 -c:a pcm_s16le BSDNow.558.Worlds.of.telnet.wav
 cd whisper
-bash ./models/download-ggml-model.sh small.en-tdrz
-bin/main -t 16 -m models/ggml-small.en-tdrz.bin -otxt -np -di -f ../BSDNow.558.Worlds.of.telnet.wav
+sh ./models/download-ggml-model.sh small.en-tdrz
+build/bin/whisper-cli -t 16 -m models/ggml-small.en-tdrz.bin -otxt -np -di ../BSDNow.558.Worlds.of.telnet.wav
 (etc.)
 [00:00:00.640 --> 00:00:29.620]  (speaker ?) This week on the show we cover NetBSD 9.4 and what's exciting in that release. Then we have free B_S_D_'s S_S_T_F_ attestation to support the cyber security compliance. The lost worlds of Telnet are interesting for the nostalgics among us. How to alter file ownership and permissions with feedback Parallel. raw I_P_ input coming to Open B_S_D_. Open B_S_D_ routers on ALI express mini P_C_s and free B_S_D_ for devs in this week's episode of B_S_D_.
 [00:00:30.020 --> 00:00:30.580]  (speaker ?) Now.
 [00:00:47.280 --> 00:01:17.280]  (speaker ?) B_S_D_ now, episode five hundred fifty eight, Worlds of Telnet. Recorded on the first of May twenty twenty four. There was something on that special date, I don't know what. This episode of B_S_D_ now was made possible because of you. Thank you for supporting B_S_D_ now Um. hi, I'm your host Eric Greuschling. Hello, welcome to this week's episode. We hope you have a nice day so far and we hope that we can make it a bit interesting, a bit more interesting than it already
 [00:01:17.280 --> 00:01:33.240]  (speaker ?) is with some news from the B_S_D_ space and uh starting off with headlines of course, like always like all the other five hundred fifty eight or fifty seven uh episodes started before, let B_S_D_ nine dot four is it this time.
 (etc.)
+```
+
+### Stream mode
+
+When compiled with SDL2, the whisper-stream is available, here is how to transcribe audio from your microphone:
+```
+build/bin/whisper-stream -m models/ggml-large-v3-turbo-q8_0.bin
 ```

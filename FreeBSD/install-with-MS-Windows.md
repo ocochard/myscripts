@@ -19,7 +19,9 @@ Once entered, it will ask again this crazy-long-number a second time.
 
 Download FreeBSD, dd (Windows equivalent) to USB stick
 https://sourceforge.net/projects/refind/ and copy this zipped file into the FreeBSD USB stick EFI partiton
-
+```
+fetch -o refind-bin-0.14.2.zip https://sourceforge.net/projects/refind/files/0.14.2/refind-bin-0.14.2.zip/download
+```
 ## FreeBSD manual installation
 
 Boot the FreeBSD USB stick and select "live" mode.
