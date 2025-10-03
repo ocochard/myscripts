@@ -25,14 +25,11 @@ dns/nextdns
 editors/libreoffice
 editors/vim
 editors/vscode
-emulators/dolphin-emu
 emulators/dosbox
 emulators/fs-uae
 emulators/fs-uae-launcher
 emulators/hatari
-emulators/rpcs3
 emulators/qemu
-emulators/snes9x-gtk
 emulators/wine-devel
 emulators/wine-proton
 emulators/winetricks
@@ -53,6 +50,7 @@ lang/expect
 lang/go
 lang/python
 math/gnuplot
+misc/claude-code
 multimedia/libva-utils
 multimedia/mpv
 multimedia/mplayer
@@ -83,6 +81,9 @@ net/x11vnc
 net/xrdp
 net/wifibox
 net/wifibox-alpine
+net/wifi-firmware-kmod
+net/wifi-firmware-mt76-kmod
+net/wifi-firmware-mt7601u-kmod
 net-mgmt/nstat
 ports-mgmt/portlint
 ports-mgmt/poudriere-devel
@@ -122,6 +123,7 @@ sysutils/vm-bhyve
 textproc/bat
 textproc/jq
 www/chromium
+www/firefox
 www/mohawk
 www/nginx
 www/nginx-lite

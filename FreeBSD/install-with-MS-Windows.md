@@ -64,9 +64,9 @@ zpool set bootfs=zroot/ROOT/default zroot
 And installing the set:
 For pre-16, using .txz it is very easy:
 ```
-tar -C /xxx xvJf /usr/freebsd-dist/base.txz
-tar -C /xxx xvJf /usr/freebsd-dist/kernel.txz
-tar -C /xxx xvJf /usr/freebsd-dist/lib32.txz
+tar -C /mnt -xvJf /usr/freebsd-dist/base.txz
+tar -C /mnt -xvJf /usr/freebsd-dist/kernel.txz
+tar -C /mnt -xvJf /usr/freebsd-dist/lib32.txz
 ```
 For 16 and later is is more complex due to setting up pkg repository:
 ```

@@ -71,6 +71,8 @@ fi
 
 echo "Building world and kernel..."
 make buildworld-jobs buildkernel-jobs
+# make buildworld buildkernel update-packages to create pkg repo compliant
+# with upgrade mode
 if poudriere ports -ln | grep -q 'default'; then
 	ports_src=$(poudriere ports -lq | awk '/^default/ { print $5; exit; }')
 	# Backing up local patches
@@ -109,7 +111,7 @@ fi
 if ! grep -q llvm /usr/local/etc/poudriere.conf; then
 	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
   (
-  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb gimp-app llvm* libreoffice mesa-devel mariadb* qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* qt6-multimedia webkit2-gtk* pytorch onednn qt5-base qt6-base qt6-declarative opencv osg samba* wine-devel wine-proton nginx protobuf wireshark hs-pandoc z3'
+  echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg firefox electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb gimp-app llvm* libreoffice mesa-devel mariadb* qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* qt6-multimedia webkit2-gtk* pytorch onednn qt5-base qt6-base qt6-declarative opencv osg samba* wine-devel wine-proton nginx protobuf wireshark hs-pandoc z3'
   )  >> /usr/local/etc/poudriere.conf
 fi
 

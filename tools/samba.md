@@ -41,4 +41,9 @@ sudo service samba_server enable
 sudo service samba_server start
 ```
 
+To solve MS Windows 11 problem to access to those share, open a powershell "Run as administrator":
+```
+Set-SmbClientConfiguration -EnableInsecureGuestLogons $true -Force
+Set-SmbClientConfiguration -RequireSecuritySignature $false -Force
+```
 [Microsoft guide to allow guest access on Windows 10 and 11](https://docs.microsoft.com/en-us/troubleshoot/windows-server/networking/guest-access-in-smb2-is-disabled-by-default)
