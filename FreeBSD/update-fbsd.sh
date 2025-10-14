@@ -2,9 +2,22 @@
 # Update FreeBSD and ports, then install new environment using ZFS BE
 # To cleanup old BE:
 # bectl list | grep -v 'NR\|default\|BE' | cut -d ' ' -f 1 | xargs -L1 bectl destroy
+
 set -eu
 
-ARCH=$(uname -m)
+# Check if we need sudo and set up SUDO variable
+if [ "$(id -u)" -ne 0 ]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "Error: This script requires root privileges. Please install sudo or run as root."
+        exit 1
+    fi
+    SUDO="sudo"
+    echo "Running with sudo (not root user)"
+else
+    SUDO=""
+    echo "Running as root"
+fi
+
 if which -s nproc; then
 	JOBS=$(nproc)
 else
@@ -16,9 +29,9 @@ script=$(readlink -f $0)
 script_dir=$(dirname $script)
 echo "Setting up /etc/make.conf and kernel"
 if [ -f /etc/src.conf ]; then
-	mv /etc/src.conf /etc/src.conf.bak
+	$SUDO mv /etc/src.conf /etc/src.conf.bak
 fi
-cat > /etc/src.conf <<EOF
+$SUDO tee /etc/src.conf >/dev/null <<EOF
 # Disable debugging assertions in LLVM
 WITHOUT_LLVM_ASSERTIONS=yes
 # Only build the required LLVM target support
@@ -36,15 +49,15 @@ EOF
 
 if [ -f /etc/src-env.conf ]; then
 	if ! grep -q WITH_META_MODE /etc/src-env.conf; then
-		mv  /etc/src-env.conf  /etc/src-env.conf.bak
-		echo "WITH_META_MODE=yes" > /etc/src-env.conf
+		$SUDO mv  /etc/src-env.conf  /etc/src-env.conf.bak
+		echo "WITH_META_MODE=yes" | $SUDO tee /etc/src-env.conf >/dev/null
 	fi
 fi
 
-if [ -f /etc/make.conf ]; then
+if [ -w /etc/make.conf ]; then
 	if ! grep -q GENERIC-NODEBUG /etc/make.conf; then
-		mv /etc/make.conf /etc/make.conf.bak
-		cat > /etc/make.conf <<EOF
+		$SUDO mv /etc/make.conf /etc/make.conf.bak
+		$SUDO tee /etc/make.conf >/dev/null <<EOF
 KERNCONF="GENERIC-NODEBUG GENERIC"
 # run stage-qa automatically when building ports
 DEVELOPER=yes
@@ -53,49 +66,66 @@ EOF
 fi
 
 # Using META_MODE requiere filemon
-if ! kldstat -qm filemon; then
-	kldload filemon
-	sysrc kld_list+=" filemon"
+if ! $SUDO kldstat -qm filemon; then
+	$SUDO kldload filemon
+	$SUDO sysrc kld_list+=" filemon"
+fi
+
+# Enable ccache if installed
+if command -v ccache; then
+  echo "ccache installed, enabling it"
+  mkdir -p /var/cache/ccache
+  if [ ! -f /var/cache/ccache/ccache.conf ]; then
+    echo 'max_size = 30.0Gi' > /var/cache/ccache/ccache.conf
+  fi
+  if ! grep -q CCACHE /etc/make.conf; then
+$SUDO tee -a /etc/make.conf >/dev/null <<EOF
+# Improve next builds
+WITH_CCACHE_BUILD=yes
+CCACHE_DIR=/var/cache/ccache/
+EOF
+else
+  echo "Do not enable ccache (not installed)"
 fi
 
 if [ -e /usr/src/.git ]; then
 	cd /usr/src
 	echo "Updating source tree..."
-  git checkout main
-	git pull --ff-only
+  ${SUDO} git checkout main
+	${SUDO} git pull --ff-only
 else
 	echo "Cloning main source tree..."
-	git clone -b main --single-branch https://git.freebsd.org/src.git /usr/src
+	${SUDO} git clone -b main --single-branch https://git.freebsd.org/src.git /usr/src
 	cd /usr/src
 fi
 
 echo "Building world and kernel..."
-make buildworld-jobs buildkernel-jobs
+$SUDO make buildworld-jobs buildkernel-jobs
 # make buildworld buildkernel update-packages to create pkg repo compliant
 # with upgrade mode
-if poudriere ports -ln | grep -q 'default'; then
-	ports_src=$(poudriere ports -lq | awk '/^default/ { print $5; exit; }')
+if $SUDO poudriere ports -ln | grep -q 'default'; then
+	ports_src=$($SUDO poudriere ports -lq | awk '/^default/ { print $5; exit; }')
 	# Backing up local patches
 	cd ${ports_src}
 	git stash
 	# Updating port tree
-	poudriere ports -u
+	$SUDO poudriere ports -u
 	# Restoring local patches
 	git stash pop || true
 else
 	# Creating the port tree
-	poudriere ports -c
+	$SUDO poudriere ports -c
 fi
 
-cp /etc/src.conf /usr/local/etc/poudriere.d/builder-src.conf
+$SUDO cp /etc/src.conf /usr/local/etc/poudriere.d/builder-src.conf
 
-if poudriere jail -ln | grep -q builder; then
+if $SUDO poudriere jail -ln | grep -q builder; then
 	# Warning: Upgrading the jail will force a rebuild of all ports each time!
 	# But could be mandatory in case of video modules than need to be synced with kernel
-	poudriere jail -j builder -u -m src=/usr/src
+	$SUDO poudriere jail -j builder -u -m src=/usr/src
 else
 	# Create the builder jail
-	poudriere jail -j builder -c -m src=/usr/src
+	$SUDO poudriere jail -j builder -c -m src=/usr/src
 fi
 
 # Fixing licenses that need user confirmation
@@ -104,26 +134,26 @@ if [ ! -f /usr/local/etc/poudriere.d/builder-make.conf ]; then
 	(
 	echo "DISABLE_LICENSES=yes"
   echo 'PORTS_MODULES=net/realtek-re-kmod graphics/drm-kmod graphics/drm-61-kmod graphics/gpu-firmware-kmod'
-	) > /usr/local/etc/poudriere.d/builder-make.conf
+	) | $SUDO tee /usr/local/etc/poudriere.d/builder-make.conf >/dev/null
 fi
 
 # Improving build speed for some ports (warning, could consume a lot of RAM/CPU)
 if ! grep -q llvm /usr/local/etc/poudriere.conf; then
-	cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
+	$SUDO cp /usr/local/etc/poudriere.conf /usr/local/etc/poudriere.conf.bak
   (
   echo 'ALLOW_MAKE_JOBS_PACKAGES="pkg firefox electron* perl5 ccache cmake-core cbmc cvc5 rust gcc* gdb gimp-app llvm* libreoffice mesa-devel mariadb* qemu chromium node* ghc py* rpcs* ruby qt5-declarative qt5-webkit* qt6-multimedia webkit2-gtk* pytorch onednn qt5-base qt6-base qt6-declarative opencv osg samba* wine-devel wine-proton nginx protobuf wireshark hs-pandoc z3'
-  )  >> /usr/local/etc/poudriere.conf
+  ) | $SUDO tee -a /usr/local/etc/poudriere.conf >/dev/null
 fi
 
 echo "Building ports..."
 # -b latest: downlad latest package from repo to avoid building them
-if ! poudriere bulk -j builder -f ${script_dir}/packages.list; then
+if ! $SUDO poudriere bulk -j builder -f ${script_dir}/packages.list; then
 	echo "[WARNING] Some packages fails to build"
 fi
 
 # Adding this new repo to the system
 if ! [ -r /usr/local/etc/pkg/repos/local.conf ]; then
-	cat > /usr/local/etc/pkg/repos/local.conf <<EOF
+	$SUDO tee /usr/local/etc/pkg/repos/local.conf >/dev/null <<EOF
 local: {
   url: "file:////usr/local/poudriere/data/packages/builder-default/.latest",
   signature_type: "none",
@@ -136,6 +166,6 @@ fi
 
 cd /usr/src
 # Don't want to fail upgrade if some packages refuse to install, so don't upgrade package at the same step
-env NO_PKG_UPGRADE=YES /usr/src/tools/build/beinstall.sh -j ${JOBS}
+$SUDO env NO_PKG_UPGRADE=YES /usr/src/tools/build/beinstall.sh -j ${JOBS}
 echo "Base and kernel upgraded, time to reboot:"
 echo "shutdown -r now"
