@@ -28,7 +28,7 @@ And choose weighted/imatrix quants (should have `-i1` in filename) over [static 
 
 ```
 curl --output-dir models -LO -C - https://huggingface.co/TheBloke/Starling-LM-7B-alpha-GGUF/resolve/main/starling-lm-7b-alpha.Q4_K_M.gguf
-./llama-server --model models/starling-lm-7b-alpha.Q4_K_M.gguf
+./llama-server --host 0.0.0.0 --model models/starling-lm-7b-alpha.Q4_K_M.gguf
 ```
 
 For big (32G) model (large context size):
@@ -38,7 +38,7 @@ curl --output-dir models -LO -C - https://huggingface.co/MaziyarPanahi/Mixtral-8
 
 If builded with curl support, simply instruct it to download model, example with gpt-oss-20b:
 ```
-lama-server -hf ggml-org/gpt-oss-20b-GGUF --ctx-size 0 --jinja -ub 2048 -b 2048 -ngl 99 -fa
+lama-server --host 0.0.0.0 -hf ggml-org/gpt-oss-20b-GGUF --ctx-size 0 --jinja -ub 2048 -b 2048 -ngl 99 --flash-attn on
 ```
 
 [Offical tips to run gpt-oss](https://github.com/ggml-org/llama.cpp/discussions/15396)
@@ -84,131 +84,108 @@ Then install the plugin and start coding :-)
 
 Laptops and miniPC are using APU (SoC that include CPU and iGPU with RAM shared between both).
 This feature is called Unified Memory Architecture (UMA).
-Does it mean we could load big models and using the iGPU ?
 
-Example on an APU (AMD Ryzen 7 7735HS with Radeon Graphics) with 64GB RAM and Ubuntu 24.04.1 LTS:
+Example on an APU (AMD Ryzen AI MAX+ Pro 395 with Radeon 8060S) with 128GB RAM and Ubuntu 24.04.3 LTS:
 ```
 $ grep MemTotal /proc/meminfo
-MemTotal:       61439400 kB
-$ echo VRAM total in MB: $(( $(cat /sys/class/drm/card0/device/mem_info_vram_total) / 1024 / 1024 ))
-VRAM total in MB: 4096
-$ echo GTT total in MB:  $(( $(cat /sys/class/drm/card0/device/mem_info_gtt_total) / 1024 / 1024 ))
-GTT total in MB: 29999
+MemTotal:       98634464 kB
+$ echo VRAM total in MB: $(( $(cat /sys/class/drm/card*/device/mem_info_vram_total) / 1024 / 1024 ))
+VRAM total in MB: 32768
+$ echo GTT total in MB:  $(( $(cat /sys/class/drm/card*/device/mem_info_gtt_total) / 1024 / 1024 ))
+GTT total in MB: 48161
 ```
-Here, the system reserved 4GB for GPU usage (this is the maximum value allowed in the EFI settings of
-this computer) but it allows to use about 30GB of RAM for GPU usage in case of need by the system.
+Here, the system reserved 32GB for GPU usage (default value allowed in the EFI settings of this computer)
+but it allows to use about 48GB of RAM for GPU usage in case of need by the system.
 
 To compile llama.cpp to support this feature, you need:
-- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/native-install/ubuntu.html) (version 6.2.2 used here);
+- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) (version 7.0.2 used here);
 - [Configure GPU access for your user](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/prerequisites.html#group-permissions)
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
 - Enable HIP UMA (LLAMA_HIP_UMA).
 
-This iGPU (gfx1035) is not officialy supported by the ROCm libraries:
+Once rocm installed, check if your GPU correctly detected:
+```
+$ rocminfo | grep '^  Name:'
+  Name:                    AMD RYZEN AI MAX+ PRO 395 w/ Radeon 8060S
+  Name:                    gfx1151
+```
+
+If using older GPU, like an iGPU (gfx1035) is not officialy supported by the ROCm libraries:
 There is no file /opt/rocm/lib/rocblas/library/ for gfx1035 as example.
 So we need to trick it to use same library as the closest GPU which is the gfx1030.
 And the gfx1030 is from Navi 21 family, which belongs to RNDA 2.0 architecture.
 
-So wee need to:
+So in this special case you will have to:
 1. During compilation time, force GPU target to gfx1030 (AMDGPU_TARGETS=gfx1030)
 1. During compilation AND run time force ROCm to use Navi21 binary (HSA_OVERRIDE_GFX_VERSION=10.3.0)
 
-Once rocm installed, check your GPU correctly detected:
-```
-$ rocminfo | grep '^  Name:'
-  Name:                    AMD Ryzen 7 7735HS with Radeon Graphics
-  Name:                    gfx1035
-```
-
-Then compile llama.cpp:
+But this isn’t the case here here with the gfx1151,
+So to compile llama.cpp with HIP support (here we enable DGGML_USE_CPU for bench comparison later using the CPU only):
 
 ```
 sudo apt install -y libcurl4-gnutls-dev
-HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" HSA_OVERRIDE_GFX_VERSION=10.3.0\
-    cmake -S . --fresh -B build -DGGML_HIPBLAS=ON -DGGML_HIP_UMA=ON -DGPU_TARGETS=gfx1030 -DCMAKE_BUILD_TYPE=Release \
+HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+    cmake -S . --fresh -B build -DGGML_HIP=ON -DGPU_TARGETS=gfx1151 \
+    -DGGML_HIP_ROCWMMA_FATTN=ON -DGGML_USE_CPU=ON -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -- -j $(nproc)
+```
+Then force usage of UMA with the env var `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1` when starting llama.
+And run a quick test using the gpt-oss-20b model:
+```
+GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-cli -hf ggml-org/gpt-oss-20b-GGUF --flash-attn on --ctx-size 0 --jinja -ub 2048 -b 2048 -p "I believe the meaning of life is" -n 128 -no-cnv
+```
 
+Log should have those data:
 ```
-Then it should be able to detect the iGPU by this test:
-```
-~/llama.cpp$ HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/llama-cli -m models/starling-lm-7b-alpha.Q4_K_M.gguf \
--p "I believe the meaning of life is" -n 128
-(...)
 ggml_cuda_init: GGML_CUDA_FORCE_MMQ:    no
 ggml_cuda_init: GGML_CUDA_FORCE_CUBLAS: no
 ggml_cuda_init: found 1 ROCm devices:
-  Device 0: AMD Radeon Graphics, compute capability 10.3, VMM: no
+  Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32
 (...)
-llm_load_tensors: ggml ctx size =    0.14 MiB
-llm_load_tensors: offloading 0 repeating layers to GPU
-llm_load_tensors: offloaded 0/33 layers to GPU
-llm_load_tensors:        CPU buffer size =  4165.38 MiB
+llama_model_load_from_file_impl: using device ROCm0 (AMD Radeon Graphics) (0000:c3:00.0) - 47985 MiB free
+llama_model_loader: loaded meta data with 35 key-value pairs and 459 tensors from /home/olivier/.cache/llama.cpp/
+ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf (version GGUF V3 (latest))
 (...)
-llama_perf_sampler_print:    sampling time =       4.35 ms /   136 runs   (    0.03 ms per token, 31285.94 tokens per second)
-llama_perf_context_print:        load time =     882.78 ms
-llama_perf_context_print: prompt eval time =     241.44 ms /     8 tokens (   30.18 ms per token,    33.13 tokens per second)
-llama_perf_context_print:        eval time =   11283.17 ms /   127 runs   (   88.84 ms per token,    11.26 tokens per second)
-llama_perf_context_print:       total time =   11533.05 ms /   135 tokens
-```
-
-This first output shows some ROCm usage, BUT ntop, radeontop and rocm-smi demonstrate my system is still using only its CPU, and GPU VRAM/GTT are not used!
-Notice this important line in the llama.cpp log:
-```
-llm_load_tensors: offloading 0 repeating layers to GPU
-```
-
-llama.cpp doesn’t offload to the GPU, so let’s force offloading all layers
-by adding `--n-gpu-layers 99` option to the command line:
-```
-$ sudo HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/main -ngl 99 -m models/starling-lm-7b-alpha.Q4_K_M.gguf...
+load_tensors: offloading 24 repeating layers to GPU
+load_tensors: offloading output layer to GPU
+load_tensors: offloaded 25/25 layers to GPU
+load_tensors:        ROCm0 model buffer size = 10949.38 MiB
+load_tensors:   CPU_Mapped model buffer size =   586.82 MiB
 (...)
-llm_load_tensors: offloading 32 repeating layers to GPU
-llm_load_tensors: offloading non-repeating layers to GPU
-llm_load_tensors: offloaded 33/33 layers to GPU
-llm_load_tensors:      ROCm0 buffer size =  4095.06 MiB
-llm_load_tensors:        CPU buffer size =    70.32 MiB
+system_info: n_threads = 16 (n_threads_batch = 16) / 32 | ROCm : NO_VMM = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX_VNNI = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | AVX512 = 1 | AVX512_VBMI = 1 | AVX512_VNNI = 1 | AVX512_BF16 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 |
 (...)
-llama_perf_sampler_print:    sampling time =       4.40 ms /   136 runs   (    0.03 ms per token, 30944.25 tokens per second)
-llama_perf_context_print:        load time =    2143.15 ms
-llama_perf_context_print: prompt eval time =     272.94 ms /     8 tokens (   34.12 ms per token,    29.31 tokens per second) llama_perf_context_print:        eval time =    9983.51 ms /   127 runs   (   78.61 ms per token,    12.72 tokens per second)
-llama_perf_context_print:       total time =   10263.81 ms /   135 tokens
 ```
-
-Now the GPU compute power is used (rocm-smi is reporting a 100% utilization).
-VRAM and GTT counters still doesn’t increase, but this is peraps due to the awarness of HIP UMA.
 
 Some benches (notice the llama-bench is using -ngl 99 by default) with 2 models:
 ```
-/llama.cpp$ HSA_OVERRIDE_GFX_VERSION=10.3.0 build/bin/llama-bench \
--m models/starling-lm-7b-alpha.Q4_K_M.gguf \
--m models/mixtral-8x7b-v0.1.Q5_K_M.gguf
+$ GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-bench -m ~/.cache/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf --threads 1 --flash-attn 1 --batch-size 2048 --ubatch-size 2048 --n-prompt 2048,8192,16384,32768
 (...)
 ggml_cuda_init: found 1 ROCm devices:
-  Device 0: AMD Radeon Graphics, compute capability 10.3, VMM: no
-| model                    |      size |  params | backend | ngl |   test |           t/s |
-| ------------------------ | --------: | ------: | ------- | --: | -----: | ------------: |
-| llama 7B Q4_K - Medium   | 4.07 GiB  |  7.24 B | CUDA    |  99 |  pp512 | 168.60 ± 0.51 |
-| llama 7B Q4_K - Medium   | 4.07 GiB  |  7.24 B | CUDA    |  99 |  tg128 |  12.47 ± 0.07 |
-| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CUDA    |  99 |  pp512 |  90.47 ± 0.60 |
-| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CUDA    |  99 |  tg128 |   5.96 ± 0.01 |
+  Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32
+| model                 |      size |  params | back | ngl | thre | n_ubatch | fa |  test   |     t/s       |
+|                       |           |         | end  |     | ads  |          |    |         |               |
+| --------------------- | --------: | ------: | ---- | --: | ---: | -------: | -: | ------: | ------------: |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 | pp2048  | 514.35 ± 5.57 |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 | pp8192  | 455.70 ± 0.38 |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 | pp16384 | 388.89 ± 0.84 |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 | pp32768 | 297.21 ± 1.37 |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 |   tg128 |  54.52 ± 0.32 |
 
-build: d5cb8684 (3891)
+build: 8d8862829 (6842)
 ```
 
 Comparing to CPU backend:
 ```
-/llama.cpp$ build/bin/llama-bench -t $(nproc) \
--m models/starling-lm-7b-alpha.Q4_K_M.gguf \
--m models/mixtral-8x7b-v0.1.Q5_K_M.gguf
-(...)
-| model                    |      size |  params | backend | threads |  test |          t/s |
-| ------------------------ | --------: | ------: | ------- | ------: | ----: | -----------: |
-| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      16 | pp512 | 32.15 ± 0.07 |
-| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      16 | tg128 | 10.97 ± 0.10 |
-| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      16 | pp512 | 13.19 ± 0.00 |
-| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      16 | tg128 |  5.29 ± 0.01 |
+$ build/bin/llama-bench -m ~/.cache/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf  --device none --threads $(nproc) --flash-attn 1 --batch-size 2048 --ubatch-size 2048 --n-prompt 2048,8192,16384,32768
+| model                 |      size |  params | back | thre | n_ubatch | fa |   test  |       t/s       |
+|                       |           |         | end  | ads  |          |    |         |                 |
+| --------------------- | --------: | ------: | ---- | ---: | -------: | -: | ------: | --------------: |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | CPU  |   32 |     2048 |  1 |  pp2048 |   112.79 ± 0.41 |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | CPU  |   32 |     2048 |  1 |  pp8192 |    86.62 ± 0.15 |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | CPU  |   32 |     2048 |  1 | pp16384 |    64.52 ± 0.57 |
+| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | CPU  |   32 |     2048 |  1 |   tg128 |    30.45 ± 0.14 |
 
-build: d5cb8684 (3891)
+build: 8d8862829 (6842)
 ```
 
 Conclusion: It is indeed able to load big model and using the iGPU
