@@ -74,9 +74,9 @@ fi
 # Enable ccache if installed
 if command -v ccache; then
   echo "ccache installed, enabling it"
-  mkdir -p /var/cache/ccache
+  $SUDO mkdir -p /var/cache/ccache
   if [ ! -f /var/cache/ccache/ccache.conf ]; then
-    echo 'max_size = 30.0Gi' > /var/cache/ccache/ccache.conf
+    echo 'max_size = 30.0Gi' | $SUDO tee /var/cache/ccache/ccache.conf
   fi
   if ! grep -q CCACHE /etc/make.conf; then
 $SUDO tee -a /etc/make.conf >/dev/null <<EOF
@@ -84,9 +84,10 @@ $SUDO tee -a /etc/make.conf >/dev/null <<EOF
 WITH_CCACHE_BUILD=yes
 CCACHE_DIR=/var/cache/ccache/
 EOF
+  fi
 else
   echo "Do not enable ccache (not installed)"
-fi
+fi # no ccache
 
 if [ -e /usr/src/.git ]; then
 	cd /usr/src
