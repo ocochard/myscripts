@@ -108,11 +108,11 @@ if $SUDO poudriere ports -ln | grep -q 'default'; then
 	ports_src=$($SUDO poudriere ports -lq | awk '/^default/ { print $5; exit; }')
 	# Backing up local patches
 	cd ${ports_src}
-	git stash
+	$SUDO git stash
 	# Updating port tree
 	$SUDO poudriere ports -u
 	# Restoring local patches
-	git stash pop || true
+	$SUDO git stash pop || true
 else
 	# Creating the port tree
 	$SUDO poudriere ports -c
