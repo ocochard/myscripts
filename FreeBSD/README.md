@@ -9,15 +9,16 @@ To do: Convert my [Desktop install webpage tips](https://olivier.cochard.me/bido
 Start to build world&kernel:
 ```
 cd /usr/src
-make buildworld-jobs buildkernel-jobs
+sudo make buildworld-jobs buildkernel-jobs update-packages-jobs
 ```
+(add update-packages-jobs for pkgbase user)
 
 The generate the release media:
 ```
-cd /usr/src/release
-make -DNOPORTS -DNODOC -DNOSRC memstick
-dd if=/usr/obj/usr/src/amd64.amd64/release/memstick.img of=/dev/your-usb-stick bs=1M
+sudo make -C release -DNOPORTS -DNODOC -DNOSRC -DNOPKGBASE memstick -j $(nproc)
+sudo dd if=/usr/obj/usr/src/amd64.amd64/release/memstick.img of=/dev/your-usb-stick bs=1M
 ```
+(the -DNOPKGBASE is for traditionnal, no package base, installation type)
 
 Or VM image:
 ```
@@ -313,7 +314,7 @@ mkdir /tmp/pkg
 tar -C /tmp/pkg -xvf libcbor-0.12.0.pkg
 mkdir /tmp/libcbor
 cd /tmp/libcbor
-ar -x /tmp/pkg/usr/local/lib/libcbor.a
+tar -x /tmp/pkg/usr/local/lib/libcbor.a
 ```
 
 ### Jails

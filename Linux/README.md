@@ -3,20 +3,18 @@
  - [sysload](sysload/README.md): Display CPU/MEM/GPU (amd only) usage in CSV format
  - [lfs](lfs.sh): Build Linux From Scratch
 
-# Notes
+# Base
 
-Simple note for a Linux newbie
+Mainly for Ubuntu/Debian.
 
-## Base
-
-### sudo
+## sudo
 
 Prevent password request without modifying default configuration file:
 ```
 echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/$USER
 ```
 
-### grub
+## grub
 
 Reduce timeout:
 ```
@@ -27,10 +25,8 @@ sudo update-grub
 
 And it will destroy your customized rEFInd setup :-(
 
-## Ubuntu
-
-### SSHd
-On desktop, sshd not installed by default:
+## SSHd
+On a desktop install, sshd not installed by default:
 
 ```
 sudo apt install openssh-server
@@ -38,12 +34,12 @@ sudo systemctl enable ssh
 sudo systemctl status ssh
 ```
 
-Viewing log:
+Viewing log from unit 'ssh' matching "Accepted":
 ```
 sudo journalctl -u ssh --grep Accepted
 ```
 
-### LVM
+## LVM
 
 LVM concept in order:
 1. File systems
@@ -104,12 +100,12 @@ $ df -h | grep ubuntu
 /dev/mapper/ubuntu--vg-ubuntu--lv  123G  6.6G  111G   6% /
 ```
 
-### Resize GPT/ext4
+## Resize GPT/ext4
 
 Use gparted from the Ubuntu LiveCD:
 Able to move and resize the / partition.
 
-### Network
+## Network
 
 Warning: Ubuntu uses netplan and this mess uses:
 - NetworkManager on Ubuntu Desktop
@@ -148,14 +144,26 @@ resolvectl status
 
 Static IP configuration in `/etc/netplan/02-netconfig.yaml`
 
-### Debian package creation
+## Disabling or enabling GUI
+
+To disable autostart of the GUI:
+```
+sudo systemctl set-default multi-user
+```
+
+To re-enable it:
+```
+sudo systemctl set-default graphical
+```
+
+## Debian package creation
 
 Official docs:
 
  - [Chapter 4. Required files under the debian directory](https://www.debian.org/doc/manuals/maint-guide/dreq.en.html)
  - [Chapter 6. Building the package](https://www.debian.org/doc/manuals/maint-guide/build.en.html)
 
-#### Global concept
+### Global concept
 
 A debian packages is build with 3 files:
 - name_version.dsc (description text file)
@@ -171,7 +179,14 @@ Generic linux tooling needed:
 About the package build dependencies, file debian/control should be the one, but the dpkg-buildpackage will display
 all missings deps.
 
-#### Example by rebuilding existing util-linux packages
+### Examples
+
+#### A simple system customization
+
+Simple example with a package that install a dummy text file in /etc
+
+
+#### Rebuilding existing util-linux packages
 
 Do not (download original sources)[https://www.kernel.org/pub/linux/utils/util-linux/], but the Ubuntu repository fork.
 

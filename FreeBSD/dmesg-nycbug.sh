@@ -27,7 +27,10 @@ echo "USER = $USER"
 echo "email = $email"
 echo "description= ${description}"
 
-echo "Do you confirm those variable? (y/n)"
+# clean up /var/run/dmesg.boot from previous boot entries"
+awk '/---<<BOOT>>---/ { content = $0; next } { content = content "\n" $0 } END { if (content) print content }' /var/run/dmesg.boot > /tmp/dmesg.boot
+
+echo "Do you confirm those auto-set variables? (y/n)"
 user_confirm=""
 while [ "${user_confirm}" != "y" -a "${user_confirm}" != "n" ]; do
 	read user_confirm <&1
@@ -36,5 +39,5 @@ done
 
 curl -v -d "nickname=$USER" -d "email=$email" -d \
 "description=$description" -d \
-"do=addd" --data-urlencode 'dmesg@/var/run/dmesg.boot' \
+"do=addd" --data-urlencode 'dmesg@/tmp/dmesg.boot' \
 http://dmesgd.nycbug.org/index.cgi
