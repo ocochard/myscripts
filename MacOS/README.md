@@ -44,6 +44,24 @@ xzcat file.img.xz | sudo dd of=/dev/rdisk4 bs=1m
 sudo sync
 ```
 
+## Create Install Media
+
+Insert a 32GB USB stick and format it (default: GUID, Apple_HFS) with label "MacOS_Tahoe" for this example.
+Then download installer and prepare the USB stick with it.
+
+First display your disk id:
+```
+diskutil list
+```
+
+On this example we will consider it to be "disk4":
+```
+diskutil eraseDisk HFS+ MacOS_Tahoe disk4
+softwareupdate --list-full-installers
+softwareupdate --fetch-full-installer --full-installer-version 26.0.1
+sudo /Applications/Install\ macOS\ Tahoe.app/Contents/Resources/createinstallmedia --volume /Volumes/MacOS_Tahoe
+```
+
 # Bugs
 
 ## Floating App icons

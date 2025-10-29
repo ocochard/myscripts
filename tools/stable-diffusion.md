@@ -48,4 +48,31 @@ Extension -> Available -> ComfyUI
 ComfyUI -> install comfyui
 
 Extension -> Available -> Apply and reload
-Allows to create 
+
+# ComfyUI on Linux
+
+Ubuntu running on AMD Strix Halo.
+
+```
+sudo apt install python3-venv
+git clone https://github.com/comfyanonymous/ComfyUI.git
+cd ComfyUI
+python3 -m venv venv
+source venv/bin/activate
+pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+pip install -r requirements.txt
+python main.py --listen 0.0.0.0 --front-end-version Comfy-Org/ComfyUI_frontend@latest
+=> Prompt executed in 401.82 seconds
+
+```
+
+Open the URL into your browser and as example load the image_qwen_image workflow, then manually download requested files:
+```
+cd ComfyUI/models/diffusion_models
+wget https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors
+cd ../loras
+wget https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Lightning-8steps-V1.0.safetensors
+cd ../vae
+wget https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors
+cd ../text_encoders
+wget https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors

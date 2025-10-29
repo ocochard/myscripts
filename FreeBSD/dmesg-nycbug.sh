@@ -29,6 +29,10 @@ echo "description= ${description}"
 
 # clean up /var/run/dmesg.boot from previous boot entries"
 awk '/---<<BOOT>>---/ { content = $0; next } { content = content "\n" $0 } END { if (content) print content }' /var/run/dmesg.boot > /tmp/dmesg.boot
+if [ "$(grep -c '<<BOOT>>' /tmp/dmesg.boot)" -gt 1 ]; then
+  echo "Too many <<BOOT>> in /tmp/dmesg.boot"
+  exit 1
+fi
 
 echo "Do you confirm those auto-set variables? (y/n)"
 user_confirm=""
