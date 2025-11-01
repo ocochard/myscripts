@@ -6,8 +6,10 @@
 # Requiere a Windows 11 ISO as a first start
 # - Auto detect CPU (Intel/AMD)
 # - Auto detect and extract BIOS
-# - Create TPM emulator if no TPM device detected (but seems not working)
+# - Using a TPM emulator isn't enough to work with MS Windows
 #   https://github.com/stefanberger/swtpm/issues/1069
+#   same symptom: From the edk2 EFI setup, in Device Manager, there is no
+#   "TCG2 Configuration" menu
 set -eu
 SUDO=sudo
 vm_name=windows
@@ -72,7 +74,8 @@ bhyve_run() {
   if [ -c /dev/tpm0 ]; then
     tpm="-l tpm,passthru"
   else
-    tpm="-l tpm,swtpm,/var/run/swtpm/tpm"
+    tpm=""
+    #tpm="-l tpm,swtpm,/var/run/swtpm/tpm"
   fi
   trap bhyve_destroy INT EXIT
   bhyve_destroy
@@ -81,17 +84,19 @@ bhyve_run() {
   # -H Yield the virtual CPU thread when a HLT instruction is detected
   # -w Ignore accesses to unimplemented Model Specific Registers (MSRs)
   # -l tpm,passthru
-  # fbuf, vnc wait is important to catch the UEFI "Press any key to boot from CD or DVD..."
+  # fbuf, vnc wait is important to catch the Windows CD message:
+  # "Press any key to boot from CD or DVD..."
+  # - virtio-net devices can be in any slot
   ${SUDO} bhyve -DSHw \
     -c 8 -m 16g \
     -l bootrom,/usr/local/share/edk2-bhyve/BHYVE_UEFI_CODE.fd,${tmpdir}/BHYVE_UEFI_VARS.fd \
     -s 0,hostbridge \
-    -s 1,nvme,/dev/zvol/${vm_zvol} \
-    -s 2,ahci-cd,${win_iso} \
-    -s 3,ahci-cd,${virtio_iso} \
-    -s 4,virtio-net,tap0 \
-    -s 5:0,fbuf,tcp=0.0.0.0:5900,w=1920,h=1080,password=password,wait \
-    -s 7:0,passthru,${vgapci},rom=${rom_gpu} \
+    -s 1:0,passthru,${vgapci},rom=${rom_gpu} \
+    -s 2,nvme,/dev/zvol/${vm_zvol} \
+    -s 3,ahci-cd,${win_iso} \
+    -s 4,ahci-cd,${virtio_iso} \
+    -s 5,virtio-net,tap0 \
+    -s 6:0,fbuf,tcp=0.0.0.0:5900,w=1920,h=1080,password=password,wait \
     -s 30,xhci,tablet \
     ${tpm} \
     -s 31,lpc -l com1,/dev/nmdm1A \
@@ -211,15 +216,22 @@ fi
 # If this running host doesn't have a TPM, we will need to provide a
 # softwate emulation
 if ! [ -c /dev/tpm0 ]; then
-  echo "No TPM device found, need to emulate it with sysutils/swtpm"
-  if ! pkg info -q sysutils/swtpm; then
-    ${SUDO} pkg install -y sysutils/swtpm
-  fi
-  if ! service -q swtpm status; then
-    echo "Enable and start swtpm service"
-    ${SUDO} service swtpm enable
-    ${SUDO} service swtpm start
-  fi
+  echo "No TPM device found, and emulation with sysutils/swtpm not supported by MS Windows"
+  echo "So for your Windows installation, once in the first install menu (language):"
+  echo "Shift + F10, will open command line"
+  echo "regedit"
+  echo "HKEY_LOCAL_MACHINE\SYSTEM\Setup"
+  echo "Create a new key (folder) named LabConfig"
+  echo "Inside this LabConfig create a new Dword32bits named BypassTPMCheck and set it to 1"
+  echo "Save and exit command line"
+  #if ! pkg info -q sysutils/swtpm; then
+  #  ${SUDO} pkg install -y sysutils/swtpm
+  #fi
+  #if ! service -q swtpm status; then
+  #  echo "Enable and start swtpm service"
+  #  ${SUDO} service swtpm enable
+  #  ${SUDO} service swtpm start
+  #fi
 fi
 
 if kldstat -qm vmm; then
