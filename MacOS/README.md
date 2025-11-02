@@ -35,6 +35,51 @@ auth       sufficient     pam_tid.so
 EOF
 ```
 
+## Sending email from terminal (postfix)
+
+The mail(1) command use postfix (`/etc/postfix/main.cf`) on MacOS.
+Example with gmail SMTP server.
+
+Create an alias between your local username and email:
+```
+cat <<EOF | sudo tee -a /etc/postfix/main.cf
+relayhost = [smtp.gmail.com]:587
+# TLS
+smtp_use_tls = yes
+smtp_tls_security_level=encrypt
+# SASL auth
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd
+smtp_sasl_security_options = noanonymous
+smtp_sasl_mechanism_filter = plain
+EOF
+echo '[smtp.gmail.com]:587 GMAIL_USERNAME@gmail.com:MDP_Application' | sudo tee -a /etc/postfix/sasl_passwd
+```
+
+Configure email address mapping:
+```
+echo "$USER@$(hostname) GMAIL_USERNAME@gmail.com" | sudo tee -a /etc/postfix/generic
+```
+
+Restart postfix:
+```
+sudo chmod 400 /etc/postfix/sasl_passwd
+sudo postmap /etc/postfix/sasl_passwd
+sudo postmap /etc/postfix/generic
+sudo launchctl stop org.postfix.master
+sudo launchctl start org.postfix.master
+```
+
+Now test it, in one terminal star a live log:
+```
+log stream --predicate  '(process == "smtpd") || (process == "smtp")' --info
+```
+
+And in a second terminal session, send an email:
+```
+echo 'test' | mail -s "testing macos’s postfix" someone@domain
+```
+
 ## dd
 
 ```

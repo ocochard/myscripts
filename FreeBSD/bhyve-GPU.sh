@@ -15,14 +15,15 @@ SUDO=sudo
 vm_name=windows
 vm_cpus=8
 vm_ram=16         # in G
-vm_disk_size=150  # in G
-vm_zvol="zroot/vms/windows"
+vm_zvol_name="zroot/vm_windows"
+vm_zvol_size=150  # in G
 threads=$(nproc)
 tmpdir=/tmp/bhyve_gpu
 data=${tmpdir}/data
 vgapci=""
+rom_gpu=""
 
-# Need to load previous data
+# Need to load previous data (vgapci and rom_gpu)
 # As example, the GPU PCI detection can run only once
 # because once bind.sh is executed, thi PCI will be detached, so not visible
 if [ -r ${data} ]; then
@@ -72,7 +73,7 @@ bhyve_run() {
   fi
 
   if [ -c /dev/tpm0 ]; then
-    tpm="-l tpm,passthru"
+    tpm="-l tpm,passthru,/dev/tpm0"
   else
     tpm=""
     #tpm="-l tpm,swtpm,/var/run/swtpm/tpm"
@@ -92,7 +93,7 @@ bhyve_run() {
     -l bootrom,/usr/local/share/edk2-bhyve/BHYVE_UEFI_CODE.fd,${tmpdir}/BHYVE_UEFI_VARS.fd \
     -s 0,hostbridge \
     -s 1:0,passthru,${vgapci},rom=${rom_gpu} \
-    -s 2,nvme,/dev/zvol/${vm_zvol} \
+    -s 2,nvme,/dev/zvol/${vm_zvol_name} \
     -s 3,ahci-cd,${win_iso} \
     -s 4,ahci-cd,${virtio_iso} \
     -s 5,virtio-net,tap0 \
@@ -109,15 +110,16 @@ else
   win_iso=$1
 fi
 
+mkdir -p ${tmpdir}
 is_iso ${win_iso} || die "File ${win_iso} is not an ISO file"
 
 if [ -z "${vgapci}" ]; then
   # Detecting GPU PCI ID
   # From this line:
-  # $ pciconf -l | grep 'class=0x030000'
+  # $ pciconf -l | grep vgapci
   # vgapci0@pci0:1:0:0:     class=0x030000 rev=0xd5 hdr=0x00 vendor=0x1002 device=0x1900 subvendor=0x1002 subdevice=0x0124
   # Need to extract PCI in form of 1/0/1
-  vgapci=$(pciconf -l | awk '/class=0x030000/ {
+  vgapci=$(pciconf -l | awk '/vgapci/ {
     # Remove the prefix "vgapci0@pci0:"
     gsub(/^vgapci0@pci0:/, "", $1);
     # Remove the trailing ":"
@@ -134,9 +136,7 @@ if [ -z "${vgapci}" ]; then
 fi
 
 # BIOS extraction
-mkdir -p ${tmpdir}
-rom_gpu=${tmpdir}/vbios_1002_1900.bin
-if ! [ -f ${rom_gpu} ]; then
+if [ -z "${rom_gpu}" ]; then
   ${SUDO} pkg install -y acpica-tools
   cd ${tmpdir}
   # specifying a full path here because of a name collision in $PATH
@@ -146,6 +146,8 @@ if ! [ -f ${rom_gpu} ]; then
   fetch -o ${tmpdir}/vbios_vfct_file.c https://raw.githubusercontent.com/9vlc/ptnotes/refs/heads/main/progs/vbios_dump/vbios_vfct_file.c
   cc ${tmpdir}/vbios_vfct_file.c -o ${tmpdir}/vbios_vfct_file
   ${tmpdir}/vbios_vfct_file vfct.dat
+  rom_gpu=$(ls ${tmpdir}/*bin)
+  echo "rom_gpu=${rom_gpu}" >> ${tmpdir}/data
 fi
 
 if file -b ${rom_gpu} | grep -q BIOS; then
@@ -185,7 +187,7 @@ fi
 zpool=""
 zpool list -H -po name,free | while read -r pool_name pool_free; do
   echo "Looking for enough free space in ${pool_name}"
-  if [ "${pool_free}" -gt $(( vm_disk_size * 1073741824 )) ]; then
+  if [ "${pool_free}" -gt $(( vm_zvol_size * 1073741824 )) ]; then
     echo "Using ${pool_name} to store the VM"
     zpool=${pool_name}
     break
@@ -195,6 +197,10 @@ done
 #if [ -z "${zpool}" ]; then
 #  die "Failed to find a zpool (XXX: Need to switch to simple file)"
 #fi
+
+if ! zfs get -H -o value volsize ${vm_zvol_name}; then
+  ${SUDO} zfs create -V ${vm_zvol_size} ${vm_zvol_name}
+fi
 
 if [ ${vm_cpus} -gt ${threads} ]; then
   die "VM should not have more CPUs (${vm_cpus}) than availables threads (${threads})"
@@ -215,7 +221,7 @@ fi
 
 # If this running host doesn't have a TPM, we will need to provide a
 # softwate emulation
-if ! kldstat -qm tpm; then
+if ! kldstat -qn tpm.ko; then
   ${SUDO} kldload tpm
 fi
 if ! [ -c /dev/tpm0 ]; then
@@ -251,4 +257,4 @@ if ! kldstat -qm nmdm; then
 fi
 
 bhyve_run
-echo "Started, open a VNC to port 5900"
+echo "Started, open a VNC to port 5900 with "password" to start the VM, then once instructed press a key to boot from CD/DVD for the first install"
