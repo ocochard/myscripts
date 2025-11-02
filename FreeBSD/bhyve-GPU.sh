@@ -215,6 +215,9 @@ fi
 
 # If this running host doesn't have a TPM, we will need to provide a
 # softwate emulation
+if ! kldstat -qm tpm; then
+  ${SUDO} kldload tpm
+fi
 if ! [ -c /dev/tpm0 ]; then
   echo "No TPM device found, and emulation with sysutils/swtpm not supported by MS Windows"
   echo "So for your Windows installation, once in the first install menu (language):"
@@ -242,7 +245,7 @@ if kldstat -qm vmm; then
   fi
 fi
 
-# XXX Serial useless on Windows ?
+# Serial useless on Windows, but not for the UEFI shell
 if ! kldstat -qm nmdm; then
   ${SUDO} kldload nmdm
 fi
