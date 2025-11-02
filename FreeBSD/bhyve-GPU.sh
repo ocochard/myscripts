@@ -10,6 +10,11 @@
 #   https://github.com/stefanberger/swtpm/issues/1069
 #   same symptom: From the edk2 EFI setup, in Device Manager, there is no
 #   "TCG2 Configuration" menu
+# TO DO:
+# Need to check for any X running, or daemon like seatd, slim, etc.
+# nvme emulation error (while booting from USB disk):
+# nvme_opc_write_read command would exceed LBA range(slba=0x1 nblocks=0x21)
+# And windows installer display a 16K disk only
 set -eu
 SUDO=sudo
 vm_name=windows
@@ -109,6 +114,11 @@ if [ $# -lt 1 ]; then
 else
   win_iso=$1
 fi
+
+echo "************************************************"
+echo "* Stop all graphical utility (X11, seatd, etc.)"
+echo "* On your PC, switch to virtual console 2 (Alt+F2) to avoid any screen update"
+echo "*************"
 
 mkdir -p ${tmpdir}
 is_iso ${win_iso} || die "File ${win_iso} is not an ISO file"
