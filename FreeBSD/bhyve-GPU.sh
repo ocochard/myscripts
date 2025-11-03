@@ -167,7 +167,7 @@ if [ "${gpu_vendor}" == "AMD" ] && [ -z "${gpu_rom}" ]; then
   # specifying a full path here because of a name collision in $PATH
   # XXX What's this collision about???
   ${SUDO} /usr/local/bin/acpidump -b
-  if [ -r ${tmpdir}/vfct.dat ]; then
+  if ! [ -r ${tmpdir}/vfct.dat ]; then
      die "No vfct.dat file extracted with acpidump"
   fi
   fetch -o ${tmpdir}/vbios_vfct_file.c https://raw.githubusercontent.com/9vlc/ptnotes/refs/heads/main/progs/vbios_dump/vbios_vfct_file.c

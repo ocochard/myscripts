@@ -85,6 +85,10 @@ zpool export zroot
 
 And stays in the live mode for the next step.
 
+If you need to fix your installation, reboot from the USB media and mount the ZFS:
+```
+zpool import -R /mnt zroot
+```
 ## rEFInd Installation
 
 Here we will:
