@@ -4,7 +4,9 @@
 # Scripted version of this great guide:
 # http://www.paidbsd.org/blog/?1-bhyve_GPU_PT_setup.md
 # https://github.com/churchers/vm-bhyve/wiki/Running-Windows
-# Requiere a Windows 11 ISO as a first start
+# Windows 11 requieres a working TPM and using passthrough on it too.
+# Windows 10 doesn¿t have this requierement.
+# Requiere an ISO (MS Windows, Linux, etc.) as a first start
 # - Auto detect CPU (Intel/AMD)
 # - Auto detect and extract BIOS (for AMD GPU)
 # - Using a TPM emulator isn't enough to work with MS Windows
@@ -13,9 +15,14 @@
 #   "TCG2 Configuration" menu
 # TO DO:
 # Need to check for any X running, or daemon like seatd, slim, etc.
-# nvme emulation error (while booting from USB disk):
-# nvme_opc_write_read command would exceed LBA range(slba=0x1 nblocks=0x21)
-# And windows installer display a 16K disk only
+# - NAT (slirp useless by only allowing inside traffic)
+# - pf or ipfw with something like:
+#   route -n get default | grep interface
+#   nat on wlan0 inet from 10.1.1.0/24 to any -> (wlan0) round-robin
+#   pass in all
+#   pass out all
+#   gateway_enable
+#   ifconfig bridge0 inet 10.1.1.254/24 addm tap0
 set -eu
 SUDO=sudo
 vm_name=windows
@@ -45,8 +52,10 @@ die() {
 }
 
 usage() {
-  echo "$0 Windows.iso"
+  echo "$0 [Windows.iso]"
+  echo "The first run requiere an ISO file"
   echo "You can download MS Windows iso file here:"
+  echo "https://www.microsoft.com/en-us/software-download/windows10"
   echo "https://www.microsoft.com/en-us/software-download/windows11"
   exit 0
 }
@@ -73,23 +82,18 @@ bhyve_run() {
   pptdevs="${gpu_pci}"
   ${SUDO} pptdevs=$pptdevs sh "${tmpdir}/bind.sh" || true
 
-  # CPU binding
-  threads_per_core=$(sysctl -n kern.smp.threads_per_core)
-  cores=$(( threads / threads_per_core ))
-  if [ ${threads_per_core} -gt 1 ]; then
-    echo "HT on"
-  fi
-
   if [ -c /dev/tpm0 ]; then
     tpm="-l tpm,passthru,/dev/tpm0"
   else
     tpm=""
     #tpm="-l tpm,swtpm,/var/run/swtpm/tpm"
   fi
+  # Intel GPU are always connected to slot2, so some drivers are expecting
+  # an Intel in slot2
   if [ "${gpu_vendor}" == "AMD" ]; then
-    gpu="-s 1:0,passthru,${gpu_pci},rom=${gpu_rom}"
+    gpu="-s 2,passthru,${gpu_pci},rom=${gpu_rom}"
   else
-    gpu="-s 1:0,passthru,${gpu_pci}"
+    gpu="-s 2,passthru,${gpu_pci}"
   fi
   trap bhyve_destroy INT EXIT
   bhyve_destroy
@@ -101,12 +105,29 @@ bhyve_run() {
   # fbuf, vnc wait is important to catch the Windows CD message:
   # "Press any key to boot from CD or DVD..."
   # - virtio-net devices can be in any slot
+  # Using slirp net/libslirp for simple NAT is useless:
+  # only inbound trafic allowed
+  # -s 5,virtio-net,slirp,open \
+
+  # Intel non-uniform architecture joke, example of Intel Ultra 7 165U, we need
+  # to avoid at all cost the low power core and only use Pcore.
+  # sysctl kern.sched.topology_spec
+  # -c 4,sockets=1,cores=2,threads=2 \
+  # -p 0:0 -p 1:2 -p 2:1 -p 3:3 \
+  case $(sysctl -n hw.model) in
+    "Intel(R) Core(TM) Ultra 7 165U" ) cpus="-c 4,sockets=1,cores=2,threads=2"
+        binding="-p 0:0 -p 1:2 -p 2:1 -p 3:3"
+        ;;
+    *) cpus="-c 8"
+      binding=""
+  esac
+
   ${SUDO} bhyve -DSHw \
-    -c 8 -m 16g \
-    -l bootrom,/usr/local/share/edk2-bhyve/BHYVE_UEFI_CODE.fd,${tmpdir}/BHYVE_UEFI_VARS.fd \
+    -m 16g \
+    -l bootrom,/usr/local/share/edk2-bhyve/BHYVE_UEFI_CODE.fd,${tmpdir}/BHYVE_UEFI_VARS.fd,fwcfg=qemu \
     -s 0,hostbridge \
     ${gpu} \
-    -s 2,nvme,/dev/zvol/${vm_zvol_name},bootindex=1 \
+    -s 1,nvme,/dev/zvol/${vm_zvol_name},bootindex=1 \
     -s 3,ahci-cd,${win_iso} \
     -s 4,ahci-cd,${virtio_iso} \
     -s 5,virtio-net,tap0 \
@@ -114,11 +135,16 @@ bhyve_run() {
     -s 30,xhci,tablet \
     ${tpm} \
     -s 31,lpc -l com1,/dev/nmdm1A \
+    ${cpus} ${binding} \
     $vm_name
 }
 
 if [ $# -lt 1 ]; then
-  usage
+  # XXX BuG: Need to check existence first, need to move later code here
+  refer_size=$(zfs get -H -o value referenced ${vm_zvol_name})
+  if [ "${refer_size}" != "96K" ]; then
+    usage
+  fi
 else
   win_iso=$1
 fi
@@ -144,6 +170,7 @@ if [ -z "${gpu_pci}" ]; then
     "Advanced") gpu_vendor=AMD ;;
     *) gpu_vendor="" ;;
   esac
+  echo "gpu_vendor=${gpu_vendor}" >> ${data}
   gpu_pci=$(pciconf -l | awk '/vgapci/ {
     # Remove the prefix "vgapci0@pci0:"
     gsub(/^vgapci0@pci0:/, "", $1);
@@ -157,7 +184,7 @@ if [ -z "${gpu_pci}" ]; then
   if [ -z "${gpu_pci}" ]; then
     die "Did not find or fail to parse vga PCI id"
   fi
-  echo "gpu_pci=${gpu_pci}" > ${data}
+  echo "gpu_pci=${gpu_pci}" >> ${data}
 fi
 
 # BIOS extraction (only for AMD GPU)
@@ -218,7 +245,7 @@ fi
 #fi
 
 if ! zfs get -H -o value volsize ${vm_zvol_name}; then
-  ${SUDO} zfs create -V ${vm_zvol_size} ${vm_zvol_name}
+  ${SUDO} zfs create -o volmode=dev -V ${vm_zvol_size}G ${vm_zvol_name}
 fi
 
 if [ ${vm_cpus} -gt ${threads} ]; then

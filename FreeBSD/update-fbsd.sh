@@ -1,7 +1,7 @@
 #!/bin/sh
 # Update FreeBSD and ports, then install new environment using ZFS BE
 # To cleanup old BE:
-# bectl list | grep -v 'NR\|default\|BE' | cut -d ' ' -f 1 | xargs -L1 bectl destroy
+# bectl list | grep -v 'NR\|default\|BE' | cut -d ' ' -f 1 | xargs -L1 sudo bectl destroy
 
 set -eu
 

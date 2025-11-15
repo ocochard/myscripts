@@ -11,7 +11,7 @@
 
 set -eu
 ltp_version="20250930"
-workdir="/tmp/ltp"
+workdir="${HOME}/ltp"
 
 die() {
 	echo "FATAL: $1"

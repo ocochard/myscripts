@@ -120,11 +120,14 @@ So in this special case you will have to:
 1. During compilation AND run time force ROCm to use Navi21 binary (HSA_OVERRIDE_GFX_VERSION=10.3.0)
 
 But this isn’t the case here here with the gfx1151,
-So to compile llama.cpp with HIP support (here we enable DGGML_USE_CPU for bench comparison later using the CPU only):
+So to compile llama.cpp with:
+- HIP support (AMD ROCM)
+- CPU support (DGGML_USE_CPU for bench comparison later using the CPU only)
 
 ```
 sudo apt install -y libcurl4-gnutls-dev
 HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+    GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 \
     cmake -S . --fresh -B build -DGGML_HIP=ON -DGPU_TARGETS=gfx1151 \
     -DGGML_HIP_ROCWMMA_FATTN=ON -DGGML_USE_CPU=ON -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -- -j $(nproc)
@@ -265,6 +268,19 @@ To be compared with CPU only usage:
 | qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | CPU     |      22 | tg128 |  1.19 ± 0.00 |
 
 build: d5cb8684 (3891)
+```
+### Vulkan
+
+https://vulkan.lunarg.com/doc/sdk/1.4.328.1/linux/getting_started.html
+
+```
+sudo apt install xz-utils libxcb-xinput0 libxcb-xinerama0 libxcb-cursor-dev
+mkdir ~/vulkan
+cd ~/vulkan
+wget https://sdk.lunarg.com/sdk/download/1.4.328.1/linux/vulkansdk-linux-x86_64-1.4.328.1.tar.xz
+tar xf vulkansdk-linux-x86_64-1.*.tar.xz
+source ~/vulkan/1.x.yy.z/setup-env.sh
+
 ```
 
 ## Vision

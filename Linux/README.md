@@ -156,6 +156,18 @@ To re-enable it:
 sudo systemctl set-default graphical
 ```
 
+## Using snap
+
+```
+$ sudo snap find ollama
+$ sudo snap install ollama
+$ sudo snap install --beta open-webui
+$ sudo snap get open-webui
+$ sudo snap get -d open-webui | jq .
+$ sudo snap set open-webui host="0.0.0.0"
+$ sudo snap restart open-webui
+```
+
 ## Debian package creation
 
 Official docs:
