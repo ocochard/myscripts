@@ -15,7 +15,7 @@ sudo make buildworld-jobs buildkernel-jobs update-packages-jobs
 
 The generate the release media:
 ```
-sudo make -C release -DNOPORTS -DNODOC -DNOSRC -DNOPKGBASE memstick -j $(nproc)
+sudo make -C release -DNOPORTS -DNODOC -DNOSRC -DNOPKGBASE -DNOPKG memstick -j $(nproc)
 sudo dd if=/usr/obj/usr/src/amd64.amd64/release/memstick.img of=/dev/your-usb-stick bs=1M
 ```
 (the -DNOPKGBASE is for traditionnal, no package base, installation type)

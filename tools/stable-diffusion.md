@@ -57,11 +57,13 @@ Ubuntu running on AMD Strix Halo.
 sudo apt install python3-venv
 git clone https://github.com/comfyanonymous/ComfyUI.git
 cd ComfyUI
-python3 -m venv venv
+[ -d venv ] && python3 -m venv venv
 source venv/bin/activate
+# --upgrade
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
 pip install -r requirements.txt
 python main.py --listen 0.0.0.0 --front-end-version Comfy-Org/ComfyUI_frontend@latest
+# add --fp32-vae on AMD Strix Halo (to avoid bf16/fp16 known to trigger HIP kernel failures)
 => Prompt executed in 401.82 seconds
 
 ```

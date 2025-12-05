@@ -7,6 +7,10 @@
 
 Mainly for Ubuntu/Debian.
 
+```
+sudo systemctl poweroff
+```
+
 ## sudo
 
 Prevent password request without modifying default configuration file:
@@ -107,6 +111,8 @@ Able to move and resize the / partition.
 
 ## Network
 
+### Setup
+
 Warning: Ubuntu uses netplan and this mess uses:
 - NetworkManager on Ubuntu Desktop
 - (systemd) networkd on Ubuntu Server
@@ -120,6 +126,8 @@ And edit the renderer line to the installed API (switching back to networkd if
 you’ve upgraded a server to desktop without installing NetworkManager as example).
 
 A mess between the Network-manager (nmcli) and systemd-resolve.
+
+### Interfaces
 
 Interface status:
 ```
@@ -143,6 +151,13 @@ resolvectl status
 ```
 
 Static IP configuration in `/etc/netplan/02-netconfig.yaml`
+
+### ARP
+
+Display ARP entries:
+```
+ip neigh
+```
 
 ## Disabling or enabling GUI
 
@@ -323,6 +338,12 @@ If started remotly from SSH, cf chapter "Start local graphical from SSH"
 
 ## Intel GPU
 
+
+### Older
+
+sudo apt install intel-media-va-driver-non-free mesa-vulkan-drivers
+
+### ARC
 [Official Intel doc](https://dgpu-docs.intel.com/driver/client/overview.html)
 
 ```
@@ -363,7 +384,7 @@ sudo amdgpu-install --usecase=graphics --vulkan=pro --opencl=rocr
 Need to test Vulkan API with vkcube tool:
 ```
 sudo apt-get install vulkan-tools
-vulkaninfo
+vulkaninfo --summary
 vkcube
 ```
 
@@ -786,6 +807,12 @@ Dumping to -, until termination.
 ^C1683580765.868285: bus 74, gpu 0.00%, ee 0.00%, vgt 0.00%, ta 0.00%, sx 0.00%, sh 0.00%, spi 0.00%, sc 0.00%, pa 0.00%, db 0.00%, cb 0.00%, vram 2.97% 242.41mb, gtt 0.06% 17.50mb, mclk 42.44% 1.019ghz, sclk 18.18% 0.400ghz
 [ perf record: Woken up 36 times to write data ]
 [ perf record: Captured and wrote 9.256 MB perf.data (1136 samples) ]
+```
+
+## strace
+
+```
+strace -f -o strace.txt your_program
 ```
 
 ## Wayland
