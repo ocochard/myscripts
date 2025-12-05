@@ -26,12 +26,20 @@ cat <<'EOF' | sudo tee /usr/local/bin/monit_temp.sh
 temp=$(sysctl -n dev.amdtemp.0.core0.sensor0 | tr -dc '0-9.')
 threshold=70
 if [ $(echo "$temp > $threshold" | bc) -eq 1 ]; then
-    exit 1
+  exit 1
 else
-    exit 0
+  exit 0
 fi
 EOF
 chmod +x  /usr/local/bin/monit_temp.sh
+if ! grep -q '^set httpd port 2812' /etc/monit/monitrc; then
+  cat <<EOF | sudo tee -a /etc/monit/monitrc
+set httpd port 2812 and
+    use address localhost  # only accept connection from localhost (drop if you use M/Monit)
+    allow localhost        # allow localhost to connect to the server and
+    allow admin:monit      # require user 'admin' with password 'monit'
+EOF
+fi
 cat <<EOF | sudo tee /etc/monit/conf.d/p2p
 check program temperature with path /usr/local/bin/monit_temp.sh
     if status != 0 then alert

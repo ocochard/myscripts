@@ -11,6 +11,13 @@ Mainly for Ubuntu/Debian.
 sudo systemctl poweroff
 ```
 
+## Default text editor
+
+```
+sudo update-alternatives --install "$(which editor)" editor "$(which vim.gtk3)" 15
+sudo update-alternatives --config editor
+```
+
 ## sudo
 
 Prevent password request without modifying default configuration file:
@@ -601,6 +608,19 @@ sed -i '/swap.img/d' /etc/fstab
 ```
 
 ## Systemd
+
+### systemctl
+
+```
+export SYSTEMD_EDITOR=vim
+sudo -E systemctl edit UNIT.service
+```
+
+Or to avoid the -E to preserv your env:
+```
+sudo visudo
+Defaults  env_keep += "SYSTEMD_EDITOR"
+```
 
 ### journalctl
 ----------
