@@ -1,5 +1,6 @@
 #!/bin/sh
 # Measuring fast.com download speed with curl
+# Fixed version for accurate high-speed measurements
 
 # --- 1. TOKEN EXTRACTION AND VALIDATION ---
 
@@ -31,6 +32,8 @@ if [ -z "$token" ]; then
   exit 1
 fi
 
+echo "Starting speed test..." >&2
+
 # --- 2. THROUGHPUT MONITOR FUNCTION (Replaces 'pv') ---
 
 # Function to monitor the data transfer rate using the 'dd' utility.
@@ -47,39 +50,46 @@ monitor_dd() {
 
 # --- 3. CONCURRENT DOWNLOAD PIPELINE (The Generator) ---
 
+# First, get all URLs at once and store them
+urls=$(curl -s "https://api.fast.com/netflix/speedtest?https=true&token=$token" | grep -o 'https[^"]*')
+
+# Count the URLs for user feedback
+url_count=$(echo "$urls" | wc -l | tr -d ' ')
+echo "Found $url_count download servers, starting concurrent downloads..." >&2
+
 # The outer parenthesis '( ... )' puts all the enclosed commands into a single sub-shell,
 # and the pipe '|' connects its aggregated output to the next block (the monitor).
 (
-  # Get the list of actual download URLs from the API using the extracted token.
-  curl -s "https://api.fast.com/netflix/speedtest?https=true&token=$token" | \
-  # Extract the 'url' values from the API's JSON response (assuming simplified grep,
-  # but a full script might use 'jq -r .[].url' for robustness).
-  grep -o 'https[^"]*' | \
+  # Process all URLs and launch ALL background downloads BEFORE any blocking operations
+  echo "$urls" | while read url; do
+    if [ -n "$url" ]; then
+      # POSIX-compliant string substitution using 'sed' to change the URL endpoint.
+      # The first request is a small 2KB chunk (0-2048 bytes).
+      first=$(echo "$url" | sed 's/speedtest/speedtest\/range\/0-2048/')
+      # Increased to 100MB chunks (0-104857600 bytes) for high-speed connections (was 25MB).
+      # This reduces overhead and better saturates gigabit+ connections.
+      next=$(echo "$url" | sed 's/speedtest/speedtest\/range\/0-104857600/')
 
-  # Read each URL one by one from the pipeline.
-  while read url; do
-    # POSIX-compliant string substitution using 'sed' to change the URL endpoint.
-    # The first request is a small 2KB chunk (0-2048 bytes).
-    first=$(echo "$url" | sed 's/speedtest/speedtest\/range\/0-2048/')
-    # The subsequent requests are large 25MB chunks (0-26214400 bytes) to saturate the connection.
-    next=$(echo "$url" | sed 's/speedtest/speedtest\/range\/0-26214400/')
+      # Start a new background process '( ... ) &' for each URL to run ALL tests truly concurrently.
+      (
+        # Perform the initial, small request.
+        # '-H ...' sets necessary headers to mimic a browser and prevent rejection by the server.
+        # Note: The output of this curl command is NOT redirected, so it flows out to the main pipeline.
+        curl -s -H 'Referer: https://fast.com/' -H 'Origin: https://fast.com' "$first"
 
-    # Start a new background process '( ... ) &' for each URL to run the tests concurrently.
-    (
-      # Perform the initial, small request.
-      # '-H ...' sets necessary headers to mimic a browser and prevent rejection by the server.
-      # Note: The output of this curl command is NOT redirected, so it flows out to the main pipeline.
-      curl -s -H 'Referer: https://fast.com/' -H 'Origin: https://fast.com' "$first"
-
-      i=1
-      # Loop 10 times for the large download chunks to ensure a significant data transfer.
-      while [ "$i" -le 10 ]; do
-        # Perform the large download request. The output also flows to the main pipeline.
-        curl -s -H 'Referer: https://fast.com/' -H 'Origin: https://fast.com' "$next"
-        i=$((i + 1))
-      done
-    ) & # '&' runs this entire download sequence concurrently with others.
+        i=1
+        # Increased to 15 iterations for better sustained measurement (was 10).
+        while [ "$i" -le 15 ]; do
+          # Perform the large download request. The output also flows to the main pipeline.
+          curl -s -H 'Referer: https://fast.com/' -H 'Origin: https://fast.com' "$next"
+          i=$((i + 1))
+        done
+      ) & # '&' runs this entire download sequence concurrently with others.
+    fi
   done
+
+  # CRITICAL: Wait for ALL background downloads to complete before closing the pipe
+  wait
 ) | {
   # --- 4. THROUGHPUT MONITOR EXECUTION (The Receiver) ---
   # This block receives all the combined data from the concurrent background processes via the pipe.
@@ -98,27 +108,40 @@ monitor_dd() {
   # allowing us to pipe the status messages.
   dd of=/dev/null 2>&1 | awk '
     /bytes transferred/ {
-      # Extract bytes/sec from the parentheses, e.g., "(41814586 bytes/sec)"
-      # Field 7 is like "(41814586" and we need to remove the parenthesis
-      rate_bytes_str = $7
-      # Remove the opening parenthesis
-      gsub(/\(/, "", rate_bytes_str)
-      rate_bytes = rate_bytes_str + 0
-      # --- Calculation ---
-      # 1. Convert Bytes/sec to Bits/sec (Multiply by 8)
-      # 2. Convert Bits/sec to Megabits/sec (Divide by 1024 * 1024)
-      rate_mbit = rate_bytes * 8 / 1048576
-      # --- Formatting and Display ---
-      if (rate_mbit >= 1024) {
-        # If rate is 1024 Mbit/s or higher (1 Gbit/s), display in Gbit/s
-        rate_gbit = rate_mbit / 1024
-        printf "Download Rate: %.2f Gbit/s\n", rate_gbit
-      } else {
-        # Otherwise, display in Mbit/s
-        printf "Download Rate: %.2f Mbit/s\n", rate_mbit
+      # More robust parsing for FreeBSD dd output
+      # FreeBSD dd format: "X bytes transferred in Y secs (Z bytes/sec)"
+      # Scan through all fields to find bytes/sec value
+      rate_bytes = 0
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /bytes\/sec/ || $i ~ /bytes\/sec\)/) {
+          # Found the bytes/sec field, extract number from previous field
+          rate_field = $(i-1)
+          # Remove parentheses and any non-numeric characters
+          gsub(/[^0-9]/, "", rate_field)
+          if (length(rate_field) > 0) {
+            rate_bytes = rate_field + 0
+            break
+          }
+        }
+      }
+
+      if (rate_bytes > 0) {
+        # --- Calculation ---
+        # 1. Convert Bytes/sec to Bits/sec (Multiply by 8)
+        # 2. Convert Bits/sec to Megabits/sec (Divide by 1024 * 1024)
+        rate_mbit = rate_bytes * 8 / 1048576
+        # --- Formatting and Display ---
+        if (rate_mbit >= 1024) {
+          # If rate is 1024 Mbit/s or higher (1 Gbit/s), display in Gbit/s
+          rate_gbit = rate_mbit / 1024
+          printf "Download Rate: %.2f Gbit/s\n", rate_gbit
+        } else {
+          # Otherwise, display in Mbit/s
+          printf "Download Rate: %.2f Mbit/s\n", rate_mbit
+        }
       }
     }
-    # Print the original dd status lines (optional, but helpful)
+    # Print the original dd status lines for debugging
     { print }
   '
 
