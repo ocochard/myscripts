@@ -89,6 +89,14 @@ xzcat file.img.xz | sudo dd of=/dev/rdisk4 bs=1m
 sudo sync
 ```
 
+## Cleanup all partitions in USB disk
+
+```
+diskutil list
+sudo diskutil umountDisk disk4
+diskutil eraseDisk ExFAT DisqueUSB GPT disk
+```
+
 ## Create Install Media
 
 Insert a 32GB USB stick and format it (default: GUID, Apple_HFS) with label "MacOS_Tahoe" for this example.

@@ -3,12 +3,27 @@
 
 # --- 1. TOKEN EXTRACTION AND VALIDATION ---
 
+# First, dynamically discover the current JavaScript filename from fast.com's HTML.
+# Fast.com changes their JavaScript filename regularly (e.g., app-ed402d.js, app-0bffe1.js).
+# 1. 'curl -s https://fast.com': Downloads the HTML page.
+# 2. 'grep -o ...': Extracts the JavaScript filename (e.g., 'app-0bffe1.js').
+# 3. 'head -1': Takes only the first match.
+# 4. 'tr -d '\n\r'': Removes any newline or carriage return characters.
+js_file=$(curl -s https://fast.com | grep -o 'app-[^"]*\.js' | head -1 | tr -d '\n\r')
+
+# Check if the JavaScript filename was successfully retrieved.
+if [ -z "$js_file" ]; then
+  echo "Failed to retrieve JavaScript filename from fast.com"
+  exit 1
+fi
+
 # Extract the unique token required by the fast.com API from their main JavaScript file.
 # 1. 'curl -s ...': Downloads the JavaScript content silently.
 # 2. 'grep -o ...': Extracts the token string literal (e.g., 'token:"abcdef..."').
 # 3. 'cut -f2 -d'"': Extracts the token value itself by splitting at the quote.
-# 4. 'tr -d '\n\r'': Removes any newline or carriage return characters to ensure the token is a single line, preventing URL errors.
-token=$(curl -s https://fast.com/app-ed402d.js | grep -o 'token:"[^"]*' | cut -f2 -d'"' | tr -d '\n\r')
+# 4. 'head -1': Takes the first token found.
+# 5. 'tr -d '\n\r'': Removes any newline or carriage return characters to ensure the token is a single line, preventing URL errors.
+token=$(curl -s "https://fast.com/$js_file" | grep -o 'token:"[^"]*' | cut -f2 -d'"' | head -1 | tr -d '\n\r')
 
 # Check if the token was successfully retrieved.
 if [ -z "$token" ]; then
@@ -78,9 +93,36 @@ monitor_dd() {
   # The core speed measurement tool.
   # 'dd of=/dev/null' reads all the data piped from the left side and discards it.
   # While running, it is the foreground process that receives the INFO signals from monitor_dd.
-  dd of=/dev/null
+  # Run dd, but pipe its standard error (where the speed is printed) to awk.
+  # We use 'exec 2>&1' to temporarily redirect stderr to stdout for dd,
+  # allowing us to pipe the status messages.
+  dd of=/dev/null 2>&1 | awk '
+    /bytes transferred/ {
+      # Extract bytes/sec from the parentheses, e.g., "(41814586 bytes/sec)"
+      # Field 7 is like "(41814586" and we need to remove the parenthesis
+      rate_bytes_str = $7
+      # Remove the opening parenthesis
+      gsub(/\(/, "", rate_bytes_str)
+      rate_bytes = rate_bytes_str + 0
+      # --- Calculation ---
+      # 1. Convert Bytes/sec to Bits/sec (Multiply by 8)
+      # 2. Convert Bits/sec to Megabits/sec (Divide by 1024 * 1024)
+      rate_mbit = rate_bytes * 8 / 1048576
+      # --- Formatting and Display ---
+      if (rate_mbit >= 1024) {
+        # If rate is 1024 Mbit/s or higher (1 Gbit/s), display in Gbit/s
+        rate_gbit = rate_mbit / 1024
+        printf "Download Rate: %.2f Gbit/s\n", rate_gbit
+      } else {
+        # Otherwise, display in Mbit/s
+        printf "Download Rate: %.2f Mbit/s\n", rate_mbit
+      }
+    }
+    # Print the original dd status lines (optional, but helpful)
+    { print }
+  '
 
-   # Clean up: Kill the background monitoring function when the data transfer (dd) is complete.
+  # Clean up: Kill the background monitoring function when the data transfer (dd) is complete.
   kill "$MONITOR_PID" 2>/dev/null
 }
 # The final result (transfer rate) is displayed periodically on the terminal (stderr)

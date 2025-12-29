@@ -159,11 +159,34 @@ resolvectl status
 
 Static IP configuration in `/etc/netplan/02-netconfig.yaml`
 
+### Routes
+
+```
+ip route show
+```
+
 ### ARP
 
 Display ARP entries:
 ```
 ip neigh
+```
+
+
+### Sockets
+
+All:
+```
+ss -a
+```
+
+TCP:
+```
+ss -t -a
+```
+UDP:
+```
+ss -u -a
 ```
 
 ## Disabling or enabling GUI
