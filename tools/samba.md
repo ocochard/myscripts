@@ -47,3 +47,23 @@ Set-SmbClientConfiguration -EnableInsecureGuestLogons $true -Force
 Set-SmbClientConfiguration -RequireSecuritySignature $false -Force
 ```
 [Microsoft guide to allow guest access on Windows 10 and 11](https://docs.microsoft.com/en-us/troubleshoot/windows-server/networking/guest-access-in-smb2-is-disabled-by-default)
+
+## Filtering share by IPs
+
+Declaring all shares availables for a list of host or subnets:
+```
+% cat /usr/local/etc/smb4_allowed_friends.conf
+hosts allow = 127. ::1 10.10.10.0/25 172.16.10.0/24 192.168.10.0/24 192.168.1.0/24
+```
+Now in your smb.conf:
+```
+[sharename1]
+  # shared with friends
+  include = /usr/local/etc/smb4_allowed_friends.conf
+[sharename2]
+  # shared with friends
+  include = /usr/local/etc/smb4_allowed_friends.conf
+[sharename3]
+  # not shared
+  host allow = 127. ::1 192.168.1.0/24
+```
