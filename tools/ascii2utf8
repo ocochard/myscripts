@@ -1,0 +1,40 @@
+#!/usr/bin/env python
+
+import sys
+
+def transform_text(text, style_choice):
+    # Mapping styles to their Unicode starting point for lowercase 'a'
+    styles = {
+        "bold": 0x1D41A,
+        "italic": 0x1D44E,
+        "script": 0x1D4B6,
+        "double": 0x1D552,
+        "mono": 0x1D68A,
+        "gothic": 0x1D51E
+    }
+
+    start_point = styles.get(style_choice.lower())
+    if not start_point:
+        return f"Style '{style_choice}' not found. Try: bold, italic, script, double, mono, or gothic."
+
+    offset = start_point - ord('a')
+    result = ""
+
+    for char in text.lower():
+        if 'a' <= char <= 'z':
+            result += chr(ord(char) + offset)
+        else:
+            result += char
+
+    return result
+
+if __name__ == "__main__":
+    # Check if the user provided enough arguments
+    if len(sys.argv) < 3:
+        filename = sys.argv[0]
+        print(f"Usage: {filename} <word> <style>")
+        print("Styles: bold, italic, script, double, mono, gothic")
+    else:
+        word_input = sys.argv[1]
+        style_input = sys.argv[2]
+        print(transform_text(word_input, style_input))
