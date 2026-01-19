@@ -98,12 +98,12 @@ Here, the system reserved 32GB for GPU usage (default value allowed in the EFI s
 but it allows to use about 48GB of RAM for GPU usage in case of need by the system.
 
 To compile llama.cpp to support this feature, you need:
-- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) (version 7.0.2 used here);
+- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) (version 7.1.1 used here);
 - [Configure GPU access for your user](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/prerequisites.html#group-permissions)
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
 - Enable HIP UMA (LLAMA_HIP_UMA).
 
-Once rocm installed, check if your GPU correctly detected:
+Once rocm installed, check if correcly install by displaying your GPU detected:
 ```
 $ rocminfo | grep '^  Name:'
   Name:                    AMD RYZEN AI MAX+ PRO 395 w/ Radeon 8060S
@@ -122,10 +122,12 @@ So in this special case you will have to:
 But this isn’t the case here here with the gfx1151,
 So to compile llama.cpp with:
 - HIP support (AMD ROCM)
+- Enhance flash attention performance on RDNA3+ (Strix Halo)
+- Unified memory (Strix Halo)
 - CPU support (DGGML_USE_CPU for bench comparison later using the CPU only)
-
+- SSL support (mandatory to download model from hg as example)
 ```
-sudo apt install -y libcurl4-gnutls-dev
+sudo apt install -y libcurl4-gnutls-dev libssl-dev
 HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
     GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 \
     cmake -S . --fresh -B build -DGGML_HIP=ON -DGPU_TARGETS=gfx1151 \
