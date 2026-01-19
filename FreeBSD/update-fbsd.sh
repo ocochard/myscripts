@@ -101,7 +101,7 @@ else
 fi
 
 echo "Building world and kernel..."
-$SUDO make buildworld-jobs buildkernel-jobs
+$SUDO make clean-jobs buildworld-jobs buildkernel-jobs
 # make buildworld buildkernel update-packages to create pkg repo compliant
 # with upgrade mode
 if $SUDO poudriere ports -ln | grep -q 'default'; then
