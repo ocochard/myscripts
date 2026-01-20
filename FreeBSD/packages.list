@@ -70,7 +70,7 @@ net/py-wsdd
 net/read_bbrlog
 net/realtek-re-kmod
 net/rsync
-net/samba420
+net/samba423
 net/scapy
 net/sslh
 net/speedtest-go
@@ -131,6 +131,7 @@ www/nginx
 www/nginx-lite
 www/node
 www/npm
+www/p5-Net-Curl
 www/p5-WWW-Curl
 www/w3m-img
 x11-drivers/xf86-video-nv

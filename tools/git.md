@@ -172,6 +172,7 @@ git push -f
 ```
 
 ## Forking FreeBSD port
+
 From git webui: Fork freebsd/freebsd-ports
 
 ```
@@ -186,10 +187,11 @@ Therminology:
  - upstream = FreeBSD official
  - main = name of the main branch (was called 'master' previously)
 
-Keeping fork up-to-date with upstream:
+Keeping fork up-to-date with upstream (pull --rebase will do a "fetch upstream):
 ```
 git checkout main
-git pull --rebase upstream master
+git pull --rebase upstream main
+git push origin main
 ```
 
 # Creating a BSDRP branch
@@ -215,7 +217,8 @@ git push
 
 ```
 git checkout main
-git pull
+git pull --rebase upstream main
+git push origin main
 git checkout branch-name
 git rebase main
 git push -f
@@ -224,8 +227,8 @@ git push -f
 ```
 git checkout BSDRP
 #git rebase main
-git pull --rebase upstream/main ?, this one is equivalent to git fetch + git rebase origin/master
-git push
+git pull --rebase upstream main ?, this one is equivalent to git fetch + git rebase origin/master
+git push origin main ?
 ```
 
 Or sync WIP branch with the main:
