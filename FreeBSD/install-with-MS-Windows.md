@@ -40,6 +40,7 @@ gpart add -t freebsd-zfs -l zroot -s 120G nda0
 Now configuring a Boot Environment compliant ZFS layout, following the [installer script](usr.sbin/bsdinstall/scripts/zfsboot).
 zpool name: zroot:
 ```
+kldload zfs
 sysct vfs.zfs.vdev.min_auto_ashift=12
 zpool create -f -o altroot=/mnt -O compress=lz4 -O atime=off -O canmount=off -m none zroot gpt/zroot
 zfs create -o mountpoint=none zroot/ROOT
@@ -105,14 +106,14 @@ mount -t msdosfs /dev/gpt/EFI%20system%20partition /tmp/efiwin
 mount -t msdosfs /dev/da0s1 /tmp/efiusb
 mkdir /tmp/efiwin/EFI/FreeBSD
 cp /boot/loader.efi /tmp/efiwin/EFI/FreeBSD/
-unzip -d /tmp /tmp/efiusb/refind-bind-*.zip
-cp -r /tmp/refind-bind-*/refind /tmp/efiwin/EFI/
-rm -rf /tm/efiwin/EFI/refind/drivers_aa64
-rm -rf /tm/efiwin/EFI/refind/drivers_ia32
-rm -rf /tm/efiwin/EFI/refind/refind_ia32.efi
-rm -rf /tm/efiwin/EFI/refind/refind_aa64.efi
-rm -rf /tm/efiwin/EFI/refind/tools_ia32.efi
-rm -rf /tm/efiwin/EFI/refind/tools_aa64.efi
+unzip -d /tmp /tmp/efiusb/refind-bin-*.zip
+cp -r /tmp/refind-bin-*/refind /tmp/efiwin/EFI/
+rm -rf /tmp/efiwin/EFI/refind/drivers_aa64
+rm -rf /tmp/efiwin/EFI/refind/drivers_ia32
+rm -rf /tmp/efiwin/EFI/refind/refind_ia32.efi
+rm -rf /tmp/efiwin/EFI/refind/refind_aa64.efi
+rm -rf /tmp/efiwin/EFI/refind/tools_ia32.efi
+rm -rf /tmp/efiwin/EFI/refind/tools_aa64.efi
 cat <<EOF > /tmp/efiwin/EFI/refind/refind.conf
 timeout 10
 scanfor manual
