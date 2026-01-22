@@ -175,6 +175,19 @@ comconsole_port="0x2f8"
 
 ## NFS
 
+### NFS client
+
+Always mount NFS with:
+- soft:Operations fail after timeout instead of hanging forever (default is hard)
+- intr: Allow signals to interrupt hung operations
+- timeo=10: Wait only 1 second per retry (10 × 0.1s)
+- retrans=2: Only retry 2 times before failing
+- bg: Retry mount in background if server is down at boot
+
+Without the 2 first options, and with a GENERIC-DEBUG, it will trigger a panic
+in case of a mounted NFS directory that is no more reachable (the deadlock resolver
+can't distinguish NFS timeout from kernel deadlock).
+
 ### NFSv4
 
 Tuning NFSv4 server and client (here with a 100G link):
@@ -239,9 +252,9 @@ root@client:~ # iperf3 -c 1.1.1.30 --parallel 16
 ```
 
 Client setup with tunned NFS mount:
-- nconnect=16 : Use 16 TCP sessions, to load-share them with the NIC multi-queue and CPU
-- readahead=8 : determines how many blocks will be read ahead when a large file is being read sequentially
-- nocto: Disable a safety by avoid purging the data cache if they do not match attributes cached by the client
+- nconnect=16 : Use 16 TCP sessions, to load-share them with the NIC multi-queue and CPU
+- readahead=8 : determines how many blocks will be read ahead when a large file is being read sequentially
+- nocto: Disable a safety by avoid purging the data cache if they do not match attributes cached by the client
 - wcommitsize=67108864 (64MB): maximum amount of pending write data that the NFS client is willing to cache for each file
 ```
 # mkdir /tmp/nfs

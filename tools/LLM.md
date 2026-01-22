@@ -69,7 +69,7 @@ build/bin/llama-cli --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m mo
 
 ### Coding with vim, vs-code, etc.
 
-Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master) or a [vs-code[(https://marketplace.visualstudio.com/items?itemName=ggml-org.llama-vscode):
+Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master) or a [vs-code](https://marketplace.visualstudio.com/items?itemName=ggml-org.llama-vscode):
 First download the model and start the llama server
 ```
 llama-server \
@@ -79,6 +79,13 @@ llama-server \
 ```
 
 Then install the plugin and start coding :-)
+
+With claude code with a good model running on a [Strix Halo](https://www.amd.com/en/blogs/2025/how-to-vibe-coding-locally-with-amd-ryzen-ai-and-radeon.html):
+```
+llama-server -hf unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q4_K_M --ctx-size 0 -ngl 999
+-hf unsloth/GLM-4.5-Air-GGUF --hf-file GLM-4.5-Air-Q4_K_M.gguf --ctx-size 32768 --jinja
+ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_AUTH_TOKEN="dummy" claude
+```
 
 ## Unified Memory Architecture with AMD iGPU
 

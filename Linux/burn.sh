@@ -85,6 +85,7 @@ if [ ! -f ${HOME}/bin/telegram ]; then
 	echo "Monit will send messages to your telegram account, but you need to read instructions in ${HOME}/bin/telegram to configure it first"
 fi
 cpu_cmd="stress-ng --matrix 0 -t 10y"
+rm -rf ~/fio.bench
 disk_cmd="fio --filename=~/fio.bench --size=50GB --direct=1 --rw=randrw --bs=4k --ioengine=libaio --iodepth=256 --numjobs=4 --time_based -runtime=365d --group_reporting --name=iops-burn --eta-newline=1"
 # Estimate 90% of RAM (/proc/meminfo unit in KB)
 percent_ram=$(awk '/MemTotal/ {printf "%.0f\n", ($2 * 0.9)}' /proc/meminfo)
