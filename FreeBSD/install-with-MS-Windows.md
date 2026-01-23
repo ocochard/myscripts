@@ -134,8 +134,12 @@ Now we need to add this new rEFInd entry into your EFI, MS Windows should using 
 ```
 efibootmgr --create --activate --label "rEFInd" --loader 'gpt/EFI%20system%20partition:/EFI/refind/refind_x64.efi'
 reboot
-
 ```
+We can try to add a FreeBSD efibootmgr entry too:
+```
+sudo efibootmgr --create --activate --label "FreeBSD" --loader 'gpt/EFI%20system%20partition:/EFI/FreeBSD/loader.efi'
+```
+
 Then it will reboot in Windows (refind installed but not enabled)
 cmd in admin mode
 ```

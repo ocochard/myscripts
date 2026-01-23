@@ -104,6 +104,108 @@ With SSD disks or all trim compliant (off by default):
 zpool set autotrim=on $pool
 ```
 
+### Expanding raidz
+
+By replacing all existing disk, one by one by bigger disk, we can expand a raidz.
+
+On this example:
+- the zraid name is NAS
+- created using RAW disk ada0 to ada4.
+  Why RAW disk (no partition)?
+  Because this pool is not used to boot the machine, so no need for GPT/UEFI boot partition.
+  But if you need a partitionning scheme, you will have to create your partition before the replace
+  command and using the correct partition name in place of disk name.
+
+In all case, first enable auto expand feature on this zpool:
+```
+sudo zpool set autoexpand=on NAS
+```
+
+And check the current available space:
+```
+$ zfs list NAS
+NAME   USED  AVAIL  REFER  MOUNTPOINT
+NAS   25.7T  2.99T  25.7T  /NAS
+```
+
+Then we have multiple ways to replace the disk:
+
+#### Safest
+
+If you have a free disk slot and only one zpool (no danger of removing disk from another zpool),
+insert one new bigger disk in this free slot (it will be named ada5 on our example).
+
+Advantage: Your zpool will never be in degrated state during this operation.
+
+And replace the first old-smaller disk (ada0 on this example) with a `zpool replace NAS ada0 ada5`.
+Wait for the zpool to finish its resilvered, this task could takes hours/days depending the disk size.
+For information it is about 12hours for a SATA 8TB HDD disk).
+Once the zpool state back at "ONLINE" state, physically replace one old-small disk by a new-bigger one (power off before it no hot-swap support).
+If all the disks in our machine are dedicated to this zpool, you don’t have to identify
+the exact disk to remove (because all non-ada5 disks are to be replaced), so just physically replace another
+disk with a new one and check the status of zpool status to detect which one is now missing.
+As example, if you discover that it ada3 that is missing, a `zpool replace NAS ada3` will start
+to resilver the zpool re-using the new disk that was replaced.
+WAIT for the resilvering process, and repeat for all the other remaining disks using the same method.
+If you have multiple pools, then you can not remove then without identifying the disk to remove
+(using the blinking LED tips explained later).
+
+#### Controlled
+
+You don’t need a spare disk space here, but don’t made any mistake by replacing the wrong disk.
+
+Identify the disk by triggering activity on it and looking which LED is blinking:
+```
+sudo dd if=/dev/ada0 of=/dev/null bs=1m
+```
+
+Once identified switch this identified disk offline:
+```
+sudo zpool offline NAS ada0
+```
+
+Physically replace this ada0 by a bigger new one, then double-check you have
+unpluged the correct disk, here only ada0 should be in OFFLINE mode:
+```
+sudo zpool status NAS
+```
+To double check you are unpluging the good disk, you can try to trigger activity on
+ALL others disks to monitor their LED activity while you are replacing it.
+Once confirmed you've replaced the correct one, replace it (because the previous disk was ada0, you just need
+to use one disk name):
+```
+sudo zpool replace NAS ada0
+```
+
+Wait for the end of resilvering (about 12 hours with 8TB SATA disk):
+```
+sudo zpool status NAS
+$ sudo zpool status NAS
+  pool: NAS
+ state: DEGRADED
+status: One or more devices is currently being resilvered.  The pool will
+        continue to function, possibly in a degraded state.
+action: Wait for the resilver to complete.
+  scan: resilver in progress since Fri Jan 23 13:43:00 2026
+        2.43T / 32.2T scanned at 6.56G/s, 282G / 32.2T issued at 762M/s
+        56.4G resilvered, 0.86% done, 12:11:50 to go
+config:
+
+        NAME             STATE     READ WRITE CKSUM
+        NAS              DEGRADED     0     0     0
+          raidz1-0       DEGRADED     0     0     0
+            replacing-0  DEGRADED     0     0     0
+              ada0/old   OFFLINE      0     0     0
+              ada0       ONLINE       0     0     0  (resilvering)
+            ada2         ONLINE       0     0     0
+            ada1         ONLINE       0     0     0
+            ada3         ONLINE       0     0     0
+            ada4         ONLINE       0     0     0
+```
+Then do the same for all others disks (ada1 to ada4 on this example).
+Replacing five 8TB disk by five 14TB disks, will take here 12 hours x 5.
+
+You can check that the new disk size are correctly detected by ZFS with a `zpool list -v -p NAS`.
 ### Boot Environment (BE)
 
 Fixing mess with broken snapshot:
