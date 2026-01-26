@@ -13,12 +13,12 @@ sudo make buildworld-jobs buildkernel-jobs update-packages-jobs
 ```
 (add update-packages-jobs for pkgbase user)
 
-The generate the release media:
+Then generate the release media:
 ```
 sudo make -C release -DNOPORTS -DNODOC -DNOSRC -DNOPKGBASE -DNOPKG memstick -j $(nproc)
 sudo dd if=/usr/obj/usr/src/amd64.amd64/release/memstick.img of=/dev/your-usb-stick bs=1M
 ```
-(the -DNOPKGBASE is for traditionnal, no package base, installation type)
+(the -DNOPKGBASE is for traditional, no package base, installation type)
 
 Or VM image:
 ```
@@ -35,7 +35,7 @@ To avoid all "Read-only file system" message, don't forget to set MAKE_OBJDIR_CH
 
 But in case of libc upgrade, the clients can't upgrade.
 
-First: Do all your commmands from root (su) because using sudo, there is higher chance of it not working during the process.
+First: Run all your commands from root (su) because using sudo, there is a higher chance of it not working during the process.
 
 Example on old-way that doesn't support ZFS BE:
 ```
@@ -49,15 +49,15 @@ LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 make -j 4 installkern
 etcupdate -p
 ```
 
-And the `make buildworld` will start working too, but as soon as it will replace your /lib/libc.so.7,
+And the `make buildworld` will start working too, but as soon as it replaces your /lib/libc.so.7,
 there is a risk it will crash your system :-(
-So to prepare to ease the rescue by copy localy the new libc:
+So to prepare to ease the rescue by copying locally the new libc:
 ```
 cp /usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 /root
 LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 make -j 4 installworld
 ```
 
-In case of forcing some LD_PRELOAD, we can end-up in different state:
+In case of forcing some LD_PRELOAD, we can end up in different states:
 - No impact: Finish the upgrade with an `etcupdate -B`.
 - Bad state: All commands end with "Bad system call", you’re good to force power cycle, to continue.
 - Very bad state (libc upgrade): still problem after the reboot:
@@ -135,19 +135,19 @@ Then we have multiple ways to replace the disk:
 If you have a free disk slot and only one zpool (no danger of removing disk from another zpool),
 insert one new bigger disk in this free slot (it will be named ada5 on our example).
 
-Advantage: Your zpool will never be in degrated state during this operation.
+Advantage: Your zpool will never be in degraded state during this operation.
 
 And replace the first old-smaller disk (ada0 on this example) with a `zpool replace NAS ada0 ada5`.
-Wait for the zpool to finish its resilvered, this task could takes hours/days depending the disk size.
-For information it is about 12hours for a SATA 8TB HDD disk).
-Once the zpool state back at "ONLINE" state, physically replace one old-small disk by a new-bigger one (power off before it no hot-swap support).
+Wait for the zpool to finish its resilver, this task could take hours/days depending on the disk size.
+For information it takes about 12 hours for a SATA 8TB HDD disk).
+Once the zpool state is back to "ONLINE" state, physically replace one old-small disk with a new-bigger one (power off before if no hot-swap support).
 If all the disks in our machine are dedicated to this zpool, you don’t have to identify
 the exact disk to remove (because all non-ada5 disks are to be replaced), so just physically replace another
 disk with a new one and check the status of zpool status to detect which one is now missing.
 As example, if you discover that it ada3 that is missing, a `zpool replace NAS ada3` will start
 to resilver the zpool re-using the new disk that was replaced.
 WAIT for the resilvering process, and repeat for all the other remaining disks using the same method.
-If you have multiple pools, then you can not remove then without identifying the disk to remove
+If you have multiple pools, then you cannot remove them without identifying the disk to remove
 (using the blinking LED tips explained later).
 
 #### Controlled
@@ -164,14 +164,14 @@ Once identified switch this identified disk offline:
 sudo zpool offline NAS ada0
 ```
 
-Physically replace this ada0 by a bigger new one, then double-check you have
-unpluged the correct disk, here only ada0 should be in OFFLINE mode:
+Physically replace this ada0 with a bigger new one, then double-check you have
+unplugged the correct disk, here only ada0 should be in OFFLINE mode:
 ```
 sudo zpool status NAS
 ```
-To double check you are unpluging the good disk, you can try to trigger activity on
-ALL others disks to monitor their LED activity while you are replacing it.
-Once confirmed you've replaced the correct one, replace it (because the previous disk was ada0, you just need
+To double check you are unplugging the correct disk, you can try to trigger activity on
+ALL other disks to monitor their LED activity while you are replacing it.
+Once confirmed you've replaced the correct one, resilver it (because the previous disk was ada0, you just need
 to use one disk name):
 ```
 sudo zpool replace NAS ada0
@@ -222,7 +222,7 @@ NAS              39857296506880  35378596872192  4478699634688        -  2996169
 ```
 
 We notice all new disks are 14TB, and the EXPANDSZ column showing approx 27.2TB that will be added
-once the sileviring process will finish that will become at the end:
+once the resilvering process finishes and will become at the end:
 ```
 $ zfs list NAS
 NAME   USED  AVAIL  REFER  MOUNTPOINT
@@ -310,9 +310,9 @@ Always mount NFS with:
 - retrans=2: Only retry 2 times before failing
 - bg: Retry mount in background if server is down at boot
 
-Without the 2 first options, and with a GENERIC-DEBUG, it will trigger a panic
-in case of a mounted NFS directory that is no more reachable (the deadlock resolver
-can't distinguish NFS timeout from kernel deadlock).
+Without the first 2 options, and with a GENERIC-DEBUG, it will trigger a panic
+in case of a mounted NFS directory that is no longer reachable (the deadlock resolver
+cannot distinguish NFS timeout from kernel deadlock).
 
 ### NFSv4
 
@@ -370,18 +370,18 @@ root@server:~ # units -t '6176076082 bytes' gigabit
 49.408609
 ```
 
-The goal will be to reach about 49Gb/s (disk speed) on the NFS client.
+The goal is to reach about 49Gb/s (disk speed) on the NFS client.
 About the maximum TCP speed between client and server:
 ```
 root@client:~ # iperf3 -c 1.1.1.30 --parallel 16
 [SUM]   0.00-10.00  sec  99.1 GBytes  85.1 Gbits/sec  81693  sender
 ```
 
-Client setup with tunned NFS mount:
-- nconnect=16 : Use 16 TCP sessions, to load-share them with the NIC multi-queue and CPU
-- readahead=8 : determines how many blocks will be read ahead when a large file is being read sequentially
-- nocto: Disable a safety by avoid purging the data cache if they do not match attributes cached by the client
-- wcommitsize=67108864 (64MB): maximum amount of pending write data that the NFS client is willing to cache for each file
+Client setup with tuned NFS mount:
+- nconnect=16 : Use 16 TCP sessions to load-share them with the NIC multi-queue and CPU
+- readahead=8 : Determines how many blocks will be read ahead when a large file is being read sequentially
+- nocto: Disable a safety check by avoiding purging the data cache if they do not match attributes cached by the client
+- wcommitsize=67108864 (64MB): Maximum amount of pending write data that the NFS client is willing to cache for each file
 ```
 # mkdir /tmp/nfs
 # sysrc nfs_client_enable=YES
@@ -389,8 +389,7 @@ Client setup with tunned NFS mount:
 # mount -t nfs -o noatime,nfsv4,nconnect=16,wcommitsize=67108864,readahead=8,nocto 1.1.1.30:/nfs /tmp/nfs/
 ```
 
-Now check the negociated rsize/wsize (depend of vfs.maxbcachebuf), nconnect, readahead and wcommitsize values
-:
+Now check the negotiated rsize/wsize (depends on vfs.maxbcachebuf), nconnect, readahead and wcommitsize values:
 ```
 # nfsstat -m
 1.1.1.30:/nfs on /tmp/nfs
@@ -412,8 +411,8 @@ root@client:~ # dd of=/dev/zero if=/tmp/nfs/data bs=1M count=20480
 41.216757
 ```
 
-We reach 22Gb/s of writting speed and about 41Gb/s of reading speed.
-There are still room for improvement.
+We reach 22Gb/s of writing speed and about 41Gb/s of reading speed.
+There is still room for improvement.
 
 ## Ports
 
@@ -437,12 +436,12 @@ echo 'WITH_DEBUG_PORTS=devel/clinfo' >> /usr/local/etc/poudriere.d/builder-make.
 ```
 ### Pkg
 
-From which package this file came from ?
+From which package did this file come from?
 ```
 pkg which /usr/local/lib/libtinfo.so.6
 ```
 
-Which are the run dependencies of this package:
+What are the run dependencies of this package:
 ```
 pkg info -dF ../locust/py311-pyzmq-25.0.2_2.pkg
 ```
@@ -470,7 +469,7 @@ curl -v -d "nickname=$USER" -d "email=$USER@$(hostname)" -d "description=FreeBSD
 
 ### date
 
-Convert time zone, with 06:15 UTC, which hours in Los Angeles:
+Convert time zone, with 06:15 UTC to hours in Los Angeles:
 ```
 TZ=UTC date -z America/Los_Angeles -j 0615
 ```
@@ -484,9 +483,9 @@ fetch http://boot.netboot.xyz/ipxe/netboot.xyz.efi
 efibootmgr --create --loader /boot/efi/efi/xyz/netboot.xyz.efi --label "Netboot.xyz"
 ```
 And write down the boot entry number, but don’t use
-`--activate` because it could replace your FreeBSD entry).
+`--activate` because it could replace your FreeBSD entry.
 
-Test it as nexboot entry:
+Test it as nextboot entry:
 ```
 efibootmgr --bootnext --bootnum bootnum
 ```
