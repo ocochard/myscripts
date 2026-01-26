@@ -206,6 +206,30 @@ Then do the same for all others disks (ada1 to ada4 on this example).
 Replacing five 8TB disk by five 14TB disks, will take here 12 hours x 5.
 
 You can check that the new disk size are correctly detected by ZFS with a `zpool list -v -p NAS`.
+Here is an example output while resilvering the last disk in the zpool:
+```
+$ zpool list -v -p NAS
+NAME                       SIZE           ALLOC           FREE  CKPOINT        EXPANDSZ   FRAG    CAP  DEDUP    HEALTH  ALTROOT
+NAS              39857296506880  35378596872192  4478699634688        -  29961691856896      6     88   1.00  DEGRADED  -
+  raidz1-0       39857296506880  35378596872192  4478699634688        -  29961691856896      6     88      -  DEGRADED        -
+    ada3         14000519643136      -      -        -         -      -      -      -    ONLINE        -
+    ada2         14000519643136      -      -        -         -      -      -      -    ONLINE        -
+    ada1         14000519643136      -      -        -         -      -      -      -    ONLINE        -
+    ada0         14000519643136      -      -        -         -      -      -      -    ONLINE        -
+    replacing-4      -      -      -        -         -      -      -      -  DEGRADED        -
+      ada4/old   8001563131904      -      -        -         -      -      -      -   OFFLINE        -
+      ada4       14000519643136      -      -        -         -      -      -      -    ONLINE        -
+```
+
+We notice all new disks are 14TB, and the EXPANDSZ column showing approx 27.2TB that will be added
+once the sileviring process will finish that will become at the end:
+```
+$ zfs list NAS
+NAME   USED  AVAIL  REFER  MOUNTPOINT
+NAS   25.7T  24.8T  25.7T  /NAS
+```
+
+
 ### Boot Environment (BE)
 
 Fixing mess with broken snapshot:
