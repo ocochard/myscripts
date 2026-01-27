@@ -11,6 +11,7 @@ devel/ccache-static
 devel/R-cran-plyr
 devel/hs-ShellCheck
 devel/arcanist
+devel/ccache4
 devel/gdb
 devel/git
 devel/git@lite
@@ -63,7 +64,7 @@ net-mgmt/lldpd@tiny
 net/bwi-firmware-kmod
 net/bwn-firmware-kmod
 net/bird2@netlink
-net/frr9
+net/frr10
 net/mosh
 net/mrtparse
 net/py-wsdd
