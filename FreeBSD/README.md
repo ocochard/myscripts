@@ -304,8 +304,8 @@ comconsole_port="0x2f8"
 ### NFS client
 
 Always mount NFS with:
-- soft:Operations fail after timeout instead of hanging forever (default is hard)
-- intr: Allow signals to interrupt hung operations
+- (non-NFSv4) soft:Operations fail after timeout instead of hanging forever (default is hard)
+- (non-NFSv4) intr: Allow signals to interrupt hung operations
 - timeo=10: Wait only 1 second per retry (10 × 0.1s)
 - retrans=2: Only retry 2 times before failing
 - bg: Retry mount in background if server is down at boot
