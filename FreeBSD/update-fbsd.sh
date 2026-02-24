@@ -47,13 +47,6 @@ WITHOUT_PTHREADS_ASSERTIONS=yes
 #WITHOUT_TESTS=yes
 EOF
 
-if [ -f /etc/src-env.conf ]; then
-	if ! grep -q WITH_META_MODE /etc/src-env.conf; then
-		$SUDO mv  /etc/src-env.conf  /etc/src-env.conf.bak
-		echo "WITH_META_MODE=yes" | $SUDO tee /etc/src-env.conf >/dev/null
-	fi
-fi
-
 if [ -w /etc/make.conf ]; then
 	if ! grep -q GENERIC-NODEBUG /etc/make.conf; then
 		$SUDO mv /etc/make.conf /etc/make.conf.bak
@@ -63,12 +56,6 @@ KERNCONF="GENERIC-NODEBUG GENERIC"
 DEVELOPER=yes
 EOF
 	fi
-fi
-
-# Using META_MODE requiere filemon
-if ! $SUDO kldstat -qm filemon; then
-	$SUDO kldload filemon
-	$SUDO sysrc kld_list+=" filemon"
 fi
 
 # Enable ccache if installed
@@ -86,7 +73,21 @@ CCACHE_DIR=/var/cache/ccache/
 EOF
   fi
 else
-  echo "Do not enable ccache (not installed)"
+  # META mode
+  echo "ccache not installed: You should install ccache@static to improve build time"
+  echo "Enabling META mode because ccache not installed"
+    if [ -f /etc/src-env.conf ]; then
+	    if ! grep -q WITH_META_MODE /etc/src-env.conf; then
+		    $SUDO mv  /etc/src-env.conf  /etc/src-env.conf.bak
+		    echo "WITH_META_MODE=yes" | $SUDO tee /etc/src-env.conf >/dev/null
+	  fi
+  fi
+  # Using META_MODE requiere filemon
+  if ! $SUDO kldstat -qm filemon; then
+  	$SUDO kldload filemon
+  	$SUDO sysrc kld_list+=" filemon"
+  fi
+
 fi # no ccache
 
 if [ -e /usr/src/.git ]; then
@@ -101,7 +102,13 @@ else
 fi
 
 echo "Building world and kernel..."
-$SUDO make clean-jobs buildworld-jobs buildkernel-jobs
+
+if command -v ccache; then
+  # In case of ccache installed, we can run a clean first, ccache will help
+  # to rebuild everything quickly
+  $SUDO make clean-jobs cleankernel-jobs
+fi
+$SUDO make buildworld-jobs buildkernel-jobs
 # make buildworld buildkernel update-packages to create pkg repo compliant
 # with upgrade mode
 if $SUDO poudriere ports -ln | grep -q 'default'; then
@@ -135,6 +142,7 @@ if [ ! -f /usr/local/etc/poudriere.d/builder-make.conf ]; then
 	(
 	echo "DISABLE_LICENSES=yes"
   echo 'PORTS_MODULES=net/realtek-re-kmod graphics/drm-kmod graphics/drm-61-kmod graphics/gpu-firmware-kmod'
+  echo "devel_ccache4_SET+=STATIC"
 	) | $SUDO tee /usr/local/etc/poudriere.d/builder-make.conf >/dev/null
 fi
 

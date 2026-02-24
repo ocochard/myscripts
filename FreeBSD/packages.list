@@ -48,6 +48,7 @@ graphics/gimp
 graphics/mesa-demos
 graphics/mesa-devel
 graphics/nomacs
+graphics/viu
 lang/expect
 lang/go
 lang/python

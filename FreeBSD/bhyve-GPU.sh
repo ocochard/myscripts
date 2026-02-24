@@ -284,6 +284,8 @@ if ! [ -c /dev/tpm0 ]; then
   #fi
   #if ! service -q swtpm status; then
   #  echo "Enable and start swtpm service"
+  # XX need to add daemon flags: --flags not-need-init
+  # source: https://reviews.freebsd.org/D46373
   #  ${SUDO} service swtpm enable
   #  ${SUDO} service swtpm start
   #fi
