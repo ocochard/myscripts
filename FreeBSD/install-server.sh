@@ -1,5 +1,5 @@
 #!/bin/sh
-# FreeBSD desktop configuration script
+# FreeBSD server configuration script
 set -eu
 
 OLDIFS=$IFS
