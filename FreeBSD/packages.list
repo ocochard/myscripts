@@ -104,6 +104,7 @@ security/testssl.sh
 shells/ksh93
 sysutils/ansible
 sysutils/atop
+sysutils/btop
 sysutils/bhyve-firmware
 sysutils/cdrkit
 sysutils/cpu-microcode

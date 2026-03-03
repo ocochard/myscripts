@@ -1,76 +1,49 @@
-# Stable diffusion with A1111
+# ComfyUI
 
-First, must read the [beginer guide](https://stable-diffusion-art.com/beginners-guide/).
-[Official instruction to install automatic1111 on MacOS](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Installation-on-Apple-Silicon)
+## Apple
 
+[Need to install pytorch first](https://developer.apple.com/metal/pytorch/)
+
+Some external module like reactor need a not so recent python version:
 ```
-brew install cmake protobuf rust python@3.10 git wget
-git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui
-cd stable-diffusion-webui
-curl -LO stable-diffusion-webui/models/Stable-diffusion/Protogen_Infinity.ckpt "https://huggingface.co/darkstorm2150/Protogen_Infinity_Official_Release/resolve/main/model.ckpt?download=true"
-./webui.sh
+brew install python@3.12
+python3.12 -m venv venv
 ```
-
-## Models
-
-[Models guide for beginers](https://stable-diffusion-art.com/models/).
-Some [populars list](https://openaijourney.com/best-stable-diffusion-models/).
-
-## ControlNet extension
-
-Allows to :
-- Specify human poses;
-- Copy the composition from another image;
-- Generate a similar image.
-
-[Some tutorial about it](https://stable-diffusion-art.com/controlnet/#Installing_Stable_Diffusion_ControlNet).
-Need to install:
-1. [Controlnet](https://github.com/Mikubill/sd-webui-controlnet)
-2. [controlnet model](https://github.com/Mikubill/sd-webui-controlnet/wiki/Model-download), specialy the [Openpose model](https://huggingface.co/lllyasviel/ControlNet-v1-1/blob/main/control_v11p_sd15_openpose.pth), to be installed in  stable-diffusion-webui/models/ControlNet
-3. [Dynamic poses packages](https://civitai.com/models/87024/dynamic-poses-100), to be use as pose reference, this is not a model
-
-### IP Adapter
-
-Add-on for using images as prompts.
-
-To be downloaded in `stable-diffusion-webui/extensions/sd-webui-controlnet/models`, because with A1111 it is managed by ControlNet extension.
-The guides:
-- [How to use image prompt in Stable Diffusion](https://stable-diffusion-art.com/image-prompt/)
-
-## Ultimate SD upscale
-
-Extension -> Available -> Load From (to update the list) -> Go to Ultimate SD upscale and click install -> Installed -> Apply and reload
-
-## ComfyUI
-
-Extension -> Available -> ComfyUI
-
-ComfyUI -> install comfyui
-
-Extension -> Available -> Apply and reload
-
-# ComfyUI on Linux
+## Linux
 
 Ubuntu running on AMD Strix Halo.
 
 ```
 sudo apt install python3-venv
-git clone https://github.com/comfyanonymous/ComfyUI.git
+```
+
+## Generic instruction
+
+```
+git clone https://github.com/Comfy-Org/ComfyUI.git
 cd ComfyUI
 [ -d venv ] && python3 -m venv venv
 source venv/bin/activate
 # --upgrade
-pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
-pip install -r requirements.txt
+# For AMD ROCM:
+pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+# For Apple:
+pip3 install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cpu
+pip3 install -r requirements.txt
+pip3 install insightface
 # Testing pytorch install
 python -c "import torch" 2>nul && echo Success || echo Failure
-# testing if GPU available
+# testing if CUDA available (Linux/AMD/NVidia)
 python -c "import torch; print(torch.cuda.is_available())"
 python -c "import torch; print(f'device name [0]:', torch.cuda.get_device_name(0))"
+# testing if Metal (Apple) available:
+python -c "import torch; print(f'MPS available: {torch.backends.mps.is_available()}'); print(f'Built with MPS: {torch.backends.mps.is_built()}')"
+# Install ComfyUI Manager
+cd custom_nodes
+git clone https://github.com/ltdrdata/ComfyUI-Manager.git
+cd ..
 python main.py --listen 0.0.0.0 --front-end-version Comfy-Org/ComfyUI_frontend@latest
 # For ROCM version < 7.2, add --fp32-vae on AMD Strix Halo (to avoid bf16/fp16 known to trigger HIP kernel failures)
-=> Prompt executed in 401.82 seconds
-
 ```
 
 Open the URL into your browser and as example load the image_qwen_image workflow, then manually download requested files:
