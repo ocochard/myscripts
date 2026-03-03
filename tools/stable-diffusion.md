@@ -62,8 +62,13 @@ source venv/bin/activate
 # --upgrade
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
 pip install -r requirements.txt
+# Testing pytorch install
+python -c "import torch" 2>nul && echo Success || echo Failure
+# testing if GPU available
+python -c "import torch; print(torch.cuda.is_available())"
+python -c "import torch; print(f'device name [0]:', torch.cuda.get_device_name(0))"
 python main.py --listen 0.0.0.0 --front-end-version Comfy-Org/ComfyUI_frontend@latest
-# add --fp32-vae on AMD Strix Halo (to avoid bf16/fp16 known to trigger HIP kernel failures)
+# For ROCM version < 7.2, add --fp32-vae on AMD Strix Halo (to avoid bf16/fp16 known to trigger HIP kernel failures)
 => Prompt executed in 401.82 seconds
 
 ```

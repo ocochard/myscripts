@@ -105,7 +105,7 @@ Here, the system reserved 32GB for GPU usage (default value allowed in the EFI s
 but it allows to use about 48GB of RAM for GPU usage in case of need by the system.
 
 To compile llama.cpp to support this feature, you need:
-- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) (version 7.1.1 used here);
+- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) (version 7.2 used here that fix AMD Strix Halo stability);
 - [Configure GPU access for your user](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/prerequisites.html#group-permissions)
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
 - Enable HIP UMA (LLAMA_HIP_UMA).
@@ -133,6 +133,8 @@ So to compile llama.cpp with:
 - Unified memory (Strix Halo)
 - CPU support (DGGML_USE_CPU for bench comparison later using the CPU only)
 - SSL support (mandatory to download model from hg as example)
+
+If you’ve installed the Vulcan SDK, you can add "-DGGML_VULKAN=ON"
 ```
 sudo apt install -y libcurl4-gnutls-dev libssl-dev
 HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
@@ -147,10 +149,8 @@ And run a quick test using the gpt-oss-20b model:
 GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-cli -hf ggml-org/gpt-oss-20b-GGUF --flash-attn on --ctx-size 0 --jinja -ub 2048 -b 2048 -p "I believe the meaning of life is" -n 128 -no-cnv
 ```
 
-Log should have those data:
+Log should have this output:
 ```
-ggml_cuda_init: GGML_CUDA_FORCE_MMQ:    no
-ggml_cuda_init: GGML_CUDA_FORCE_CUBLAS: no
 ggml_cuda_init: found 1 ROCm devices:
   Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32
 (...)
@@ -280,16 +280,22 @@ build: d5cb8684 (3891)
 ```
 ### Vulkan
 
-https://vulkan.lunarg.com/doc/sdk/1.4.328.1/linux/getting_started.html
+[Getting started to Vulkan](https://vulkan.lunarg.com/doc/sdk/1.4.341.1/windows/getting_started.html)
 
 ```
 sudo apt install xz-utils libxcb-xinput0 libxcb-xinerama0 libxcb-cursor-dev
 mkdir ~/vulkan
 cd ~/vulkan
-wget https://sdk.lunarg.com/sdk/download/1.4.328.1/linux/vulkansdk-linux-x86_64-1.4.328.1.tar.xz
+wget https://sdk.lunarg.com/sdk/download/1.4.341.1/linux/vulkansdk-linux-x86_64-1.4.341.1.tar.xz
 tar xf vulkansdk-linux-x86_64-1.*.tar.xz
 source ~/vulkan/1.x.yy.z/setup-env.sh
+```
 
+llama.cpp starting with vulkan backend should display something like:
+```
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1151) (radv) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 64 | shared
+memory: 65536 | int dot: 1 | matrix cores: KHR_coopmat
 ```
 
 ## Vision
@@ -324,11 +330,8 @@ Here an exmple with:
 - SDL2 for real-time (stream mode)
 
 ```
-mkdir ~/vulkan
-cd ~/vulkan
-wget https://sdk.lunarg.com/sdk/download/1.4.321.1/linux/vulkansdk-linux-x86_64-1.4.321.1.tar.xz
-tar -xvf vulkansdk-linux-x86_64-1.4.321.1.tar.xz
-source ~/vulkan/1.4.321.1/setup-env.sh
+cd ~/vulkan (cf vulkan chapter)
+source ~/vulkan/1.4.21.1/setup-env.sh
 sudo apt install -y libsdl2-dev libavcodec-dev libavformat-dev libavutil-dev
 cmake --fresh -B build -DGGML_VULKAN=1 -DWHISPER_FFMPEG=yes
 cmake --build build --config Release -j $(nproc)
