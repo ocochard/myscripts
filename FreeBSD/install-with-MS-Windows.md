@@ -79,6 +79,11 @@ pkg --rootdir /mnt --repo-conf-dir /mnt/usr/local/etc/pkg/repos/ -o IGNORE_OSVER
 -o ABI="$(pkg config abi)"
 ```
 
+Now, instruct FreeBSD loader to load zfs module to be able to mount root filesystem:
+```
+echo 'zfs_load="YES"' > /mnt/boot/loader.conf
+```
+
 Export your ZFS:
 ```
 zpool export zroot

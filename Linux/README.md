@@ -136,6 +136,17 @@ A mess between the Network-manager (nmcli) and systemd-resolve.
 
 ### Interfaces
 
+Drivers used:
+```
+lspci -nnk | grep -A 3 Ethernet
+```
+
+Negociated speed:
+```
+ip link | grep 'enp.*UP'
+ethtool enp2s0
+```
+
 Interface status:
 ```
 nmcli device status

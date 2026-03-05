@@ -43,6 +43,7 @@ ftp/curl
 ftp/wget
 graphics/gpu-firmware-kmod
 graphics/drm-kmod
+graphics/drm-latest-kmod
 graphics/drm-66-kmod
 graphics/gimp
 graphics/mesa-demos
@@ -91,6 +92,7 @@ net/wifi-firmware-mt76-kmod
 net/wifi-firmware-mt7601u-kmod
 net-mgmt/nstat
 ports-mgmt/portlint
+ports-mgmt/poudriere
 ports-mgmt/poudriere-devel
 security/keepassxc
 security/nmap
