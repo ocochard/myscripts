@@ -70,20 +70,27 @@ build/bin/llama-cli --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m mo
 ### Coding with vim, vs-code, etc.
 
 Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master) or a [vs-code](https://marketplace.visualstudio.com/items?itemName=ggml-org.llama-vscode):
-First download the model and start the llama server
+First download the model and start the llama server using the [model’s instruction](https://unsloth.ai/docs/models/qwen3.5#qwen3.5-27b)
 ```
-llama-server \
-    --models/qwen2.5-coder-7b-q8_0.gguf \
-    --port 8012 -ngl 99 -fa -ub 1024 -b 1024 \
-    --ctx-size 0 --cache-reuse 256
+build/bin/llama-server \
+  -hf unsloth/Qwen3.5-27B-GGUF:UD-Q4_K_XL \
+  --alias qwen35-coder \
+  --device Vulkan0 \
+  --temp 0.6 \
+  --top-p 0.95 \
+  --top-k 20 \
+  --min-p 0.00 \
+  --flash-attn on \
+  --no-host \
+  --kv-unified \
+  --batch-size 4096 --ubatch-size 1024 \
+  --ctx-size 131072 \
+  --host 0.0.0.0
 ```
 
-Then install the plugin and start coding :-)
+Then run claude against it or [qwen-code](https://qwen.ai/qwencode):
 
-With claude code with a good model running on a [Strix Halo](https://www.amd.com/en/blogs/2025/how-to-vibe-coding-locally-with-amd-ryzen-ai-and-radeon.html):
 ```
-llama-server -hf unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q4_K_M --ctx-size 0 -ngl 999
--hf unsloth/GLM-4.5-Air-GGUF --hf-file GLM-4.5-Air-Q4_K_M.gguf --ctx-size 32768 --jinja
 ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_AUTH_TOKEN="dummy" claude
 ```
 
@@ -143,6 +150,20 @@ HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
     -DGGML_HIP_ROCWMMA_FATTN=ON -DGGML_USE_CPU=ON -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -- -j $(nproc)
 ```
+
+Once builded you can instruct it to display all detected devices (here with ROCM and Vulkan):
+```
+$ build/bin/llama-cli --list-devices
+ggml_cuda_init: found 1 ROCm devices:
+  Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1151) (radv) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 64 | shared memory: 65536 | int dot: 1 | matrix cores: KHR_coopmat
+Available devices:
+ggml_backend_cuda_get_available_uma_memory: final available_memory_kb: 61262128
+  ROCm0: AMD Radeon Graphics (65536 MiB, 59826 MiB free)
+  Vulkan0: AMD Radeon Graphics (RADV GFX1151) (97568 MiB, 97227 MiB free)
+```
+
 Then force usage of UMA with the env var `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1` when starting llama.
 And run a quick test using the gpt-oss-20b model:
 ```
@@ -168,39 +189,97 @@ system_info: n_threads = 16 (n_threads_batch = 16) / 32 | ROCm : NO_VMM = 1 | PE
 (...)
 ```
 
-Some benches (notice the llama-bench is using -ngl 99 by default) with 2 models:
+Some benches (notice the llama-bench is using -ngl 99 by default) with 2 models and with different backend (ROCM, Vulkan, CPU):
+  - enables Flash Attention, an optimized algorithm designed to speed up the "Attention" mechanism—the most computationally expensive part of a Transformer model.
+  - enables memory mapping, to tells the OS to map the model file directly into the process's virtual address space
+  - Use 16 threads (=number of physical cores)
+  - Display Token Generation (decoding) speeds (n-gen 128), line tg128 in the result
+  - enables Unified Memory Management (no-host), on APU the GPU can access the model data directly without needing a redundant copy in host-managed memory
+  - Enable performance mode with the Linux governor
 ```
-$ GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-bench -m ~/.cache/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf --threads 1 --flash-attn 1 --batch-size 2048 --ubatch-size 2048 --n-prompt 2048,8192,16384,32768
-(...)
+echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+build/bin/llama-bench \
+  -m ~/.cache/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf,\
+~/.cache/llama.cpp/unsloth_Qwen3.5-27B-GGUF_Qwen3.5-27B-UD-Q4_K_XL.gguf \
+  --device none,ROCm0,Vulkan0 \
+  --flash-attn 0,1 \
+  --batch-size 2048 \
+  --ubatch-size 512 \
+  --n-prompt 2048,8192,16384 \
+  --n-gen 128 \
+  --mmap 1 \
+  --threads 16 \
+  --no-host 1 \
+  --n-gen 128 \
+  --repetitions 5
+
 ggml_cuda_init: found 1 ROCm devices:
   Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32
-| model                 |      size |  params | back | ngl | thre | n_ubatch | fa |  test   |     t/s       |
-|                       |           |         | end  |     | ads  |          |    |         |               |
-| --------------------- | --------: | ------: | ---- | --: | ---: | -------: | -: | ------: | ------------: |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 | pp2048  | 514.35 ± 5.57 |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 | pp8192  | 455.70 ± 0.38 |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 | pp16384 | 388.89 ± 0.84 |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 | pp32768 | 297.21 ± 1.37 |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | ROCm |  99 |    1 |     2048 |  1 |   tg128 |  54.52 ± 0.32 |
-
-build: 8d8862829 (6842)
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1151) (radv) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 64 | shared memory: 65536 | int dot: 1 | matrix cores: KHR_coopmat | ngl: 99 | mmap: 1 | noh: 1
+| model                    |      size |  params | backend     | dev     | fa |    test |            t/s |
+| ------------------------ | --------: | ------: | ----------- | ------- | -: | ------: | -------------: |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |  pp2048 |  168.64 ± 3.37 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |  pp8192 |  146.99 ± 0.28 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 | pp16384 |  121.09 ± 0.24 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |   tg128 |   34.03 ± 0.06 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  507.51 ± 4.11 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  476.48 ± 1.95 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  430.54 ± 1.00 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   68.27 ± 0.25 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  470.19 ± 1.02 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  405.49 ± 0.90 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  339.08 ± 1.39 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   64.50 ± 1.48 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 | 1057.21 ± 3.79 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  958.72 ± 1.26 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  823.88 ± 0.89 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   74.15 ± 0.03 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  932.91 ± 4.12 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  779.61 ± 1.01 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  608.28 ± 0.55 |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   72.79 ± 0.02 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |  pp2048 |   24.88 ± 0.03 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |  pp8192 |   23.78 ± 0.02 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 | pp16384 |   22.30 ± 0.02 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |   tg128 |    4.94 ± 0.00 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  209.71 ± 0.07 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  160.12 ± 0.52 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  120.56 ± 0.82 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   10.56 ± 0.00 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  236.14 ± 1.41 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  220.67 ± 0.19 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  202.07 ± 0.51 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   10.51 ± 0.00 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 |  201.06 ± 0.06 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  193.04 ± 0.10 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  181.31 ± 1.34 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   10.48 ± 0.01 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  198.40 ± 0.10 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  192.44 ± 0.13 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  182.08 ± 1.50 |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   10.48 ± 0.00 |
+build: 451ef0843 (8243)
 ```
 
-Comparing to CPU backend:
+While running, system usage:
 ```
-$ build/bin/llama-bench -m ~/.cache/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf  --device none --threads $(nproc) --flash-attn 1 --batch-size 2048 --ubatch-size 2048 --n-prompt 2048,8192,16384,32768
-| model                 |      size |  params | back | thre | n_ubatch | fa |   test  |       t/s       |
-|                       |           |         | end  | ads  |          |    |         |                 |
-| --------------------- | --------: | ------: | ---- | ---: | -------: | -: | ------: | --------------: |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | CPU  |   32 |     2048 |  1 |  pp2048 |   112.79 ± 0.41 |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | CPU  |   32 |     2048 |  1 |  pp8192 |    86.62 ± 0.15 |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | CPU  |   32 |     2048 |  1 | pp16384 |    64.52 ± 0.57 |
-| gpt-oss 20B MXFP4 MoE | 11.27 GiB | 20.91 B | CPU  |   32 |     2048 |  1 |   tg128 |    30.45 ± 0.14 |
+$ rocm-smi
 
-build: 8d8862829 (6842)
+WARNING: AMD GPU device(s) is/are in a low-power state. Check power control/runtime_status
+
+======================================= ROCm System Management Interface =======================================
+================================================= Concise Info =================================================
+Device  Node  IDs              Temp    Power     Partitions          SCLK  MCLK     Fan  Perf  PwrCap  VRAM%  GPU%
+              (DID,     GUID)  (Edge)  (Socket)  (Mem, Compute, ID)
+================================================================================================================
+0       1     0x1586,   42721  68.0°C  59.098W   N/A, N/A, 0         N/A   1000Mhz  0%   auto  N/A     33%    100%
+================================================================================================================
+============================================= End of ROCm SMI Log ==============================================
 ```
 
-Conclusion: It is indeed able to load big model and using the iGPU
+Conclusion: It is indeed able to load big model and using the iGPU, but more important, Vulkan
+is twice faster than ROCm 7.2.
 
 ## Intel iGPU (Arc graphics)
 
@@ -288,7 +367,7 @@ mkdir ~/vulkan
 cd ~/vulkan
 wget https://sdk.lunarg.com/sdk/download/1.4.341.1/linux/vulkansdk-linux-x86_64-1.4.341.1.tar.xz
 tar xf vulkansdk-linux-x86_64-1.*.tar.xz
-source ~/vulkan/1.x.yy.z/setup-env.sh
+source ~/vulkan/1.*/setup-env.sh
 ```
 
 llama.cpp starting with vulkan backend should display something like:

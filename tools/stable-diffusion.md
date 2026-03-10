@@ -26,7 +26,7 @@ cd ComfyUI
 source venv/bin/activate
 # --upgrade
 # For AMD ROCM:
-pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.0
+pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.2
 # For Apple:
 pip3 install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 pip3 install -r requirements.txt
@@ -42,8 +42,12 @@ python -c "import torch; print(f'MPS available: {torch.backends.mps.is_available
 cd custom_nodes
 git clone https://github.com/ltdrdata/ComfyUI-Manager.git
 cd ..
-python main.py --listen 0.0.0.0 --front-end-version Comfy-Org/ComfyUI_frontend@latest
-# For ROCM version < 7.2, add --fp32-vae on AMD Strix Halo (to avoid bf16/fp16 known to trigger HIP kernel failures)
+# AMD Strix Halo tuning:
+# --disable-smart-memory: Don’t try to optimize between RAM and VRAM
+# --highvram: Kept everything in VRAM
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+python main.py --listen 0.0.0.0 --disable-smart-memory --highvram --front-end-version Comfy-Org/ComfyUI_frontend@latest
+
 ```
 
 Open the URL into your browser and as example load the image_qwen_image workflow, then manually download requested files:

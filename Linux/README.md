@@ -200,6 +200,11 @@ UDP:
 ss -u -a
 ```
 
+For listening (-l) TCP (-t) with process name (-p) without resolution (-n):
+```
+ss -tlnp
+```
+
 ## Disabling or enabling GUI
 
 To disable autostart of the GUI:
