@@ -73,7 +73,7 @@ Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master) o
 First download the model and start the llama server using the [model’s instruction](https://unsloth.ai/docs/models/qwen3.5#qwen3.5-27b)
 ```
 build/bin/llama-server \
-  -hf unsloth/Qwen3.5-27B-GGUF:UD-Q4_K_XL \
+  -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL \
   --alias qwen35-coder \
   --device Vulkan0 \
   --temp 0.6 \
@@ -200,7 +200,8 @@ Some benches (notice the llama-bench is using -ngl 99 by default) with 2 models 
 echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 build/bin/llama-bench \
   -m ~/.cache/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf,\
-~/.cache/llama.cpp/unsloth_Qwen3.5-27B-GGUF_Qwen3.5-27B-UD-Q4_K_XL.gguf \
+~/.cache/llama.cpp/unsloth_Qwen3.5-27B-GGUF_Qwen3.5-27B-UD-Q4_K_XL.gguf,\
+~/.cache/llama.cpp/unsloth_Qwen3-Next-80B-A3B-Instruct-GGUF_Qwen3-Next-80B-A3B-Instruct-Q4_K_M.gguf \
   --device none,ROCm0,Vulkan0 \
   --flash-attn 0,1 \
   --batch-size 2048 \
@@ -216,49 +217,72 @@ build/bin/llama-bench \
 ggml_cuda_init: found 1 ROCm devices:
   Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32
 ggml_vulkan: Found 1 Vulkan devices:
-ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1151) (radv) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 64 | shared memory: 65536 | int dot: 1 | matrix cores: KHR_coopmat | ngl: 99 | mmap: 1 | noh: 1
-| model                    |      size |  params | backend     | dev     | fa |    test |            t/s |
-| ------------------------ | --------: | ------: | ----------- | ------- | -: | ------: | -------------: |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |  pp2048 |  168.64 ± 3.37 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |  pp8192 |  146.99 ± 0.28 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 | pp16384 |  121.09 ± 0.24 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |   tg128 |   34.03 ± 0.06 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  507.51 ± 4.11 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  476.48 ± 1.95 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  430.54 ± 1.00 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   68.27 ± 0.25 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  470.19 ± 1.02 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  405.49 ± 0.90 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  339.08 ± 1.39 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   64.50 ± 1.48 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 | 1057.21 ± 3.79 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  958.72 ± 1.26 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  823.88 ± 0.89 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   74.15 ± 0.03 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  932.91 ± 4.12 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  779.61 ± 1.01 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  608.28 ± 0.55 |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   72.79 ± 0.02 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |  pp2048 |   24.88 ± 0.03 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |  pp8192 |   23.78 ± 0.02 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 | pp16384 |   22.30 ± 0.02 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |   tg128 |    4.94 ± 0.00 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  209.71 ± 0.07 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  160.12 ± 0.52 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  120.56 ± 0.82 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   10.56 ± 0.00 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  236.14 ± 1.41 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  220.67 ± 0.19 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  202.07 ± 0.51 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   10.51 ± 0.00 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 |  201.06 ± 0.06 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  193.04 ± 0.10 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  181.31 ± 1.34 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   10.48 ± 0.01 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  198.40 ± 0.10 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  192.44 ± 0.13 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  182.08 ± 1.50 |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   10.48 ± 0.00 |
+ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1151) (radv) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 64 |
+shared memory: 65536 | int dot: 1 | matrix cores: KHR_coopmat | ngl: 99 | mmap: 1 | noh: 1
+| model                    |      size |  params | backend     | dev     | fa |    test |             t/s |
+| ------------------------ | --------: | ------: | ----------- | ------- | -: | ------: | --------------: |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |  pp2048 |  168.64 ± 3.37  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |  pp8192 |  146.99 ± 0.28  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 | pp16384 |  121.09 ± 0.24  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |   tg128 |   34.03 ± 0.06  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  507.51 ± 4.11  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  476.48 ± 1.95  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  430.54 ± 1.00  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   68.27 ± 0.25  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  470.19 ± 1.02  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  405.49 ± 0.90  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  339.08 ± 1.39  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   64.50 ± 1.48  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 | 1057.21 ± 3.79  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  958.72 ± 1.26  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  823.88 ± 0.89  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   74.15 ± 0.03  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  932.91 ± 4.12  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  779.61 ± 1.01  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  608.28 ± 0.55  |
+| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   72.79 ± 0.02  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |  pp2048 |   24.88 ± 0.03  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |  pp8192 |   23.78 ± 0.02  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 | pp16384 |   22.30 ± 0.02  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |   tg128 |    4.94 ± 0.00  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  209.71 ± 0.07  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  160.12 ± 0.52  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  120.56 ± 0.82  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   10.56 ± 0.00  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  236.14 ± 1.41  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  220.67 ± 0.19  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  202.07 ± 0.51  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   10.51 ± 0.00  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 |  201.06 ± 0.06  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  193.04 ± 0.10  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  181.31 ± 1.34  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   10.48 ± 0.01  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  198.40 ± 0.10  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  192.44 ± 0.13  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  182.08 ± 1.50  |
+| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   10.48 ± 0.00  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | none    |  0 |  pp2048 |   96.59 ± 1.30  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | none    |  0 |  pp8192 |   94.81 ± 0.39  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | none    |  0 | pp16384 |   90.03 ± 0.19  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | none    |  0 |   tg128 |   23.48 ± 0.15  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  517.19 ± 3.27  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  481.88 ± 0.97  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  436.78 ± 6.83  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   38.66 ± 0.22  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  455.70 ± 2.26  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  341.23 ± 1.65  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  254.38 ± 1.02  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   38.58 ± 0.14  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  450.33 ± 8.52  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  430.85 ± 1.63  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  404.22 ± 5.23  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   38.77 ± 0.02  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 |  427.86 ± 33.08 |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  429.70 ± 20.43 |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  422.36 ± 7.85  |
+| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   38.92 ± 0.08  |
+
+
 build: 451ef0843 (8243)
 ```
 
