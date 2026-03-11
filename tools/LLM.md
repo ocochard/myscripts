@@ -84,14 +84,18 @@ build/bin/llama-server \
   --no-host \
   --kv-unified \
   --batch-size 4096 --ubatch-size 1024 \
-  --ctx-size 131072 \
-  --host 0.0.0.0
+  --ctx-size 131072
 ```
 
-Then run claude against it or [qwen-code](https://qwen.ai/qwencode):
+Then run a [qwen-code](https://qwen.ai/qwencode) as example:
 
 ```
-ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_AUTH_TOKEN="dummy" claude
+cat <<EOF > .env
+export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+export OPENAI_API_KEY=not-needed
+export OPENAI_MODEL=qwen35-coder
+EOF
+qwen
 ```
 
 ## Unified Memory Architecture with AMD iGPU
