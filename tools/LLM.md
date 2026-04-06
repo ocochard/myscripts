@@ -398,6 +398,13 @@ tar xf vulkansdk-linux-x86_64-1.*.tar.xz
 source ~/vulkan/1.*/setup-env.sh
 ```
 
+To install Vulkan headers and compilers on FreeBSD:
+```
+sudo pkg install -y vulkan-headers vulkan-loader glslang shaderc
+```
+
+Then compile llama.cpp with `-DGGML_VULKAN=ON`.
+
 llama.cpp starting with vulkan backend should display something like:
 ```
 ggml_vulkan: Found 1 Vulkan devices:
@@ -437,8 +444,7 @@ Here an exmple with:
 - SDL2 for real-time (stream mode)
 
 ```
-cd ~/vulkan (cf vulkan chapter)
-source ~/vulkan/1.4.21.1/setup-env.sh
+source ~/vulkan/*/setup-env.sh
 sudo apt install -y libsdl2-dev libavcodec-dev libavformat-dev libavutil-dev
 cmake --fresh -B build -DGGML_VULKAN=1 -DWHISPER_FFMPEG=yes
 cmake --build build --config Release -j $(nproc)
