@@ -7,7 +7,7 @@ Use case: Local LLM with Vulkan backend
 First, need a FreeBSD main at:
 `git: 36fe65cc7a31 - main - Bump __FreeBSD_version to 1600015 after linuxkpi changes for DRM 6.11`
 
-## Updated drm-kmod
+## Install latest drm-kmod from github
 
 Install latest drm-kmod:
 ```
@@ -18,10 +18,10 @@ $ sudo make install DEBUG_FLAGS=-g SYSDIR=/usr/src/sys KMODDIR=/boot/modules
 $ cd
 ```
 
-## Latest AMD firmwares
+## Install latest AMD firmwares
 
 ```
-$ git clone --single-branch --branch strix-halo https://github.com/ocochard/freebsd-ports.git
+$ git clone --single-branch --depth 1 --branch strix-halo https://github.com/ocochard/freebsd-ports.git
 $ cd freebsd-ports/graphics/gpu-firmware-amd-kmod
 $ for f in dcn_3_5_1 gc_11_5_1 psp_14_0_1 sdma_6_1_1
 vcn_4_0_6 vcn_4_0_6_1 vpe_6_1_1; do make FLAVOR=$f; done
