@@ -124,3 +124,31 @@ build/bin/llama-server \
   --batch-size 4096 --ubatch-size 1024 \
   --ctx-size 131072
 ```
+
+Or run a benchmark (once the model downloaded with previous example):
+```
+$ build/bin/llama-bench \
+  -m ~/.cache/huggingface/hub/models--unsloth--Qwen3.5-35B-A3B-GGUF/snapshots/bc014a17be43adabd7066b7a86075ff935c6a4e2/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf \
+  --device Vulkan0 \
+  --batch-size 2048 \
+  --ubatch-size 512 \
+  --n-prompt 2048,8192,16384 \
+  --n-gen 128 \
+  --mmap 1 \
+  --threads 16 \
+  --no-host 1 \
+  --n-gen 128 \
+  --repetitions
+
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = Radeon 8060S Graphics (RADV GFX1151) (radv) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 64 | shared memory: 65536 | int dot: 1 | matrix cores: KHR_coopmat
+| model                           |      size |  params | backend| ngl|    dev  |noh|    test |            t/s |
+| ------------------------------- | --------: | ------: | ------ | -: | ------- | -:| ------: | -------------: |
+| qwen35moe 35B.A3B Q4_K - Medium | 20.70 GiB | 34.66 B | Vulkan | 99 | Vulkan0 | 1 |  pp2048 | 865.89 ± 30.21 |
+| qwen35moe 35B.A3B Q4_K - Medium | 20.70 GiB | 34.66 B | Vulkan | 99 | Vulkan0 | 1 |  pp8192 | 869.87 ± 3.97  |
+| qwen35moe 35B.A3B Q4_K - Medium | 20.70 GiB | 34.66 B | Vulkan | 99 | Vulkan0 | 1 | pp16384 | 787.75 ± 3.65  |
+| qwen35moe 35B.A3B Q4_K - Medium | 20.70 GiB | 34.66 B | Vulkan | 99 | Vulkan0 | 1 |   tg128 |  50.38 ± 1.90  |
+| qwen35moe 35B.A3B Q4_K - Medium | 20.70 GiB | 34.66 B | Vulkan | 99 | Vulkan0 | 1 |   tg128 |  52.62 ± 0.75  |
+
+build: 94ca829b6 (8679)
+```
