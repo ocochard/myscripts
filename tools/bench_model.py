@@ -227,7 +227,7 @@ def benchmark_stream(base_url, prompt, max_tokens, num_runs=10, temperature=0.0,
 
 def main():
     parser = argparse.ArgumentParser(description="LLM Streaming Benchmark Tool")
-    parser.add_argument("-u", "--url", default="http://192.168.100.83:8080/v1/chat/completions")
+    parser.add_argument("-u", "--url", default="http://127.0.0.1:8080/v1/chat/completions")
     parser.add_argument(
         "-p", "--prompt",
         default="What is the difference between a mutex and a semaphore? Give a concise technical explanation with a short code example.",
