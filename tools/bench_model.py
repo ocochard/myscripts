@@ -21,10 +21,10 @@ import urllib.error
 import json
 
 
-def benchmark_stream(base_url, prompt, max_tokens, num_runs=10, temperature=0.0, show_output=False):
+def benchmark_stream(base_url, prompt, max_tokens, model="default", num_runs=10, temperature=0.0, show_output=False):
     headers = {"Content-Type": "application/json"}
     payload = {
-        "model": "default",
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
         "temperature": temperature,
@@ -33,6 +33,7 @@ def benchmark_stream(base_url, prompt, max_tokens, num_runs=10, temperature=0.0,
 
     print(f"LLM Streaming Benchmark")
     print(f"URL: {base_url}")
+    print(f"Model: {model}")
     print(f"Runs: {num_runs} (+1 warm-up) | max_tokens: {max_tokens} | temperature: {temperature}")
     print("-" * 75)
 
@@ -225,27 +226,80 @@ def benchmark_stream(base_url, prompt, max_tokens, num_runs=10, temperature=0.0,
     print("=" * 80)
 
 
-def probe_openai_compatible(base_url):
-    """Check /v1/models to confirm the server is OpenAI-compatible, return chat completions URL."""
-    models_url = base_url + "/v1/models"
+def _fetch_json(url, timeout=5):
+    """Fetch a URL and return parsed JSON, or None on failure."""
     try:
-        req = urllib.request.Request(models_url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        if "data" not in data and "object" not in data:
-            print(f"Error: {models_url} responded but does not look OpenAI-compatible.")
-            return None
-        model_ids = [m.get("id", "?") for m in data.get("data", [])]
-        print(f"OpenAI-compatible server detected at {base_url}")
-        if model_ids:
-            print(f"Available models: {', '.join(model_ids)}")
-    except urllib.error.HTTPError as e:
-        print(f"Error: {models_url} returned HTTP {e.code}. Is this an OpenAI-compatible server?")
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
         return None
-    except Exception as e:
-        print(f"Error: could not reach {models_url}: {e}")
-        return None
-    return base_url + "/v1/chat/completions"
+
+
+def _extract_context_length(model_entry):
+    """Try to extract context length from a /v1/models entry (varies by server)."""
+    # vLLM: top-level max_model_len
+    if "max_model_len" in model_entry:
+        return model_entry["max_model_len"]
+    # llama.cpp: meta.n_ctx_train
+    meta = model_entry.get("meta", {})
+    if "n_ctx_train" in meta:
+        return meta["n_ctx_train"]
+    return None
+
+
+def probe_openai_compatible(base_url):
+    """Check /v1/models to confirm the server is OpenAI-compatible.
+
+    Returns (chat_completions_url, discovered_context_length, model_ids).
+    discovered_context_length and model_ids are None/[] if not found.
+    """
+    models_url = base_url + "/v1/models"
+    data = _fetch_json(models_url)
+    if data is None:
+        print(f"Error: could not reach {models_url}")
+        return None, None, []
+    if "data" not in data and "object" not in data:
+        print(f"Error: {models_url} responded but does not look OpenAI-compatible.")
+        return None, None, []
+
+    print(f"OpenAI-compatible server detected at {base_url}")
+
+    discovered_ctx = None
+    model_ids = []
+    for model in data.get("data", []):
+        model_id = model.get("id", "?")
+        model_ids.append(model_id)
+        extras = []
+
+        ctx = _extract_context_length(model)
+        if ctx is not None:
+            discovered_ctx = ctx
+            extras.append(f"ctx={ctx}")
+
+        # llama.cpp: surface quantization / param count if present
+        meta = model.get("meta", {})
+        for key, label in [("n_params", "params"), ("quantization_type", "quant")]:
+            if key in meta:
+                extras.append(f"{label}={meta[key]}")
+
+        suffix = f"  ({', '.join(extras)})" if extras else ""
+        print(f"  Model: {model_id}{suffix}")
+
+    # llama.cpp /props: server-side defaults including active n_ctx
+    props = _fetch_json(base_url + "/props")
+    if props:
+        gen = props.get("default_generation_settings", {})
+        n_ctx = gen.get("n_ctx") or props.get("n_ctx")
+        if n_ctx:
+            print(f"  Server n_ctx (active): {n_ctx}")
+            # Prefer active context window over training-time value
+            discovered_ctx = n_ctx
+        slots = props.get("total_slots")
+        if slots is not None:
+            print(f"  Total slots: {slots}")
+
+    return base_url + "/v1/chat/completions", discovered_ctx, model_ids
 
 
 def main():
@@ -255,7 +309,10 @@ def main():
         "-p", "--prompt",
         default="What is the difference between a mutex and a semaphore? Give a concise technical explanation with a short code example.",
     )
-    parser.add_argument("-t", "--tokens", type=int, default=4096)
+    parser.add_argument("-m", "--model", default=None,
+                        help="Model ID to use (default: auto-detected if server has one model)")
+    parser.add_argument("-t", "--tokens", type=int, default=None,
+                        help="Max tokens to generate (default: auto from server, fallback 4096)")
     parser.add_argument("-r", "--runs", type=int, default=5)
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature (default 0.0 = greedy, best for reproducibility)")
@@ -264,15 +321,28 @@ def main():
     args = parser.parse_args()
 
     base_url = args.url.rstrip("/")
+    discovered_ctx = None
+    model_ids = []
     if base_url.endswith("/v1/chat/completions"):
         url = base_url
     else:
-        url = probe_openai_compatible(base_url)
+        url, discovered_ctx, model_ids = probe_openai_compatible(base_url)
         if url is None:
             return
 
-    benchmark_stream(url, args.prompt, args.tokens, num_runs=args.runs,
-                     temperature=args.temperature, show_output=args.output)
+    if args.model is None:
+        if len(model_ids) == 1:
+            args.model = model_ids[0]
+        else:
+            args.model = "default"
+
+    max_tokens = args.tokens or discovered_ctx or 4096
+    if args.tokens is None:
+        src = f"server-discovered ({discovered_ctx})" if discovered_ctx else "fallback"
+        print(f"  max_tokens: {max_tokens} ({src})")
+
+    benchmark_stream(url, args.prompt, max_tokens, model=args.model,
+                     num_runs=args.runs, temperature=args.temperature, show_output=args.output)
 
 
 if __name__ == "__main__":
