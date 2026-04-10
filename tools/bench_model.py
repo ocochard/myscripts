@@ -225,9 +225,32 @@ def benchmark_stream(base_url, prompt, max_tokens, num_runs=10, temperature=0.0,
     print("=" * 80)
 
 
+def probe_openai_compatible(base_url):
+    """Check /v1/models to confirm the server is OpenAI-compatible, return chat completions URL."""
+    models_url = base_url + "/v1/models"
+    try:
+        req = urllib.request.Request(models_url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if "data" not in data and "object" not in data:
+            print(f"Error: {models_url} responded but does not look OpenAI-compatible.")
+            return None
+        model_ids = [m.get("id", "?") for m in data.get("data", [])]
+        print(f"OpenAI-compatible server detected at {base_url}")
+        if model_ids:
+            print(f"Available models: {', '.join(model_ids)}")
+    except urllib.error.HTTPError as e:
+        print(f"Error: {models_url} returned HTTP {e.code}. Is this an OpenAI-compatible server?")
+        return None
+    except Exception as e:
+        print(f"Error: could not reach {models_url}: {e}")
+        return None
+    return base_url + "/v1/chat/completions"
+
+
 def main():
     parser = argparse.ArgumentParser(description="LLM Streaming Benchmark Tool")
-    parser.add_argument("-u", "--url", default="http://127.0.0.1:8080/v1/chat/completions")
+    parser.add_argument("-u", "--url", default="http://127.0.0.1:8080")
     parser.add_argument(
         "-p", "--prompt",
         default="What is the difference between a mutex and a semaphore? Give a concise technical explanation with a short code example.",
@@ -240,7 +263,15 @@ def main():
                         help="Print the LLM's answer text as it streams (content tokens only)")
     args = parser.parse_args()
 
-    benchmark_stream(args.url, args.prompt, args.tokens, num_runs=args.runs,
+    base_url = args.url.rstrip("/")
+    if base_url.endswith("/v1/chat/completions"):
+        url = base_url
+    else:
+        url = probe_openai_compatible(base_url)
+        if url is None:
+            return
+
+    benchmark_stream(url, args.prompt, args.tokens, num_runs=args.runs,
                      temperature=args.temperature, show_output=args.output)
 
 
