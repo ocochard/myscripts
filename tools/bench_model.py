@@ -333,6 +333,11 @@ def main():
     if args.model is None:
         if len(model_ids) == 1:
             args.model = model_ids[0]
+        elif len(model_ids) > 1:
+            print(f"Error: server exposes {len(model_ids)} models. Specify one with -m. Available:")
+            for mid in model_ids:
+                print(f"  {mid}")
+            return
         else:
             args.model = "default"
 
