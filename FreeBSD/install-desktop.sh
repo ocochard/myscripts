@@ -271,7 +271,7 @@ echo "pw group mod operator -m <username>"
 echo "pw group mod dialer -m <username>"
 echo 'echo export LANG="fr_FR.UTF-8" >> ~/.xinitrc'
 echo 'echo export MM_CHARSET="UTF-8" >> ~/.xinitrc'
-echo 'echo export GDM_LANG=fr_FR.UTF-8" >> ~/.xinitrc'
+echo 'echo export GDM_LANG="fr_FR.UTF-8" >> ~/.xinitrc'
 echo 'echo "exec ck-launch-session startxfce4" >> ~/.xinitrc'
 echo 'fetch http://gugus69.free.fr/freebsd/FreeBSD_paefchen_1920x1200.jpg'
 
