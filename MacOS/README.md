@@ -117,6 +117,13 @@ sudo /Applications/Install\ macOS\ Tahoe.app/Contents/Resources/createinstallmed
 
 # Bugs
 
+## USB audio input
+
+All USB microphone stop to be detected by the sound system (but still displayed as USB devices):
+```
+sudo killall coreaudiod
+```
+
 ## Floating App icons
 
 A years old bug, with a simple bad mouse movement in the Launchpad, the icon of the app will stay on the screen:

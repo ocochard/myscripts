@@ -50,6 +50,26 @@ Viewing log from unit 'ssh' matching "Accepted":
 sudo journalctl -u ssh --grep Accepted
 ```
 
+## Serial console
+
+Display the available tty:
+```
+sudo dmesg | grep ttyS
+```
+
+Example with ttyS4, enable getty first:
+```
+sudo systemctl start serial-getty@ttyS4.service
+sudo systemctl enable serial-getty@ttyS4.service
+```
+
+Grub:
+```
+GRUB_TERMINAL="serial console"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash console=tty0 console=ttyS4,115200"
+```
+
+
 ## LVM
 
 LVM concept in order:

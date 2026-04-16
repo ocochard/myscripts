@@ -83,7 +83,8 @@ build/bin/llama-server \
   --flash-attn on \
   --no-host \
   --kv-unified \
-  --batch-size 4096 --ubatch-size 1024 \
+  --batch-size 4096 \
+  --ubatch-size 1024 \
   --ctx-size 131072
 ```
 
@@ -155,7 +156,7 @@ HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
     && cmake --build build --config Release -- -j $(nproc)
 ```
 
-Once builded you can instruct it to display all detected devices (here with ROCM and Vulkan):
+Once builded you can instruct it to display all detected devices (here it correctly shows the ROCm and Vulkan):
 ```
 $ build/bin/llama-cli --list-devices
 ggml_cuda_init: found 1 ROCm devices:
@@ -395,6 +396,7 @@ mkdir ~/vulkan
 cd ~/vulkan
 wget https://sdk.lunarg.com/sdk/download/1.4.341.1/linux/vulkansdk-linux-x86_64-1.4.341.1.tar.xz
 tar xf vulkansdk-linux-x86_64-1.*.tar.xz
+rm vulkansdk-linux-x86_64-1.4.341.1.tar.xz
 source ~/vulkan/1.*/setup-env.sh
 ```
 

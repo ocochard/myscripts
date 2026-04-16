@@ -14,6 +14,11 @@
 #include <netdb.h> /* getaddrinfo */
 #include <errno.h> /* sendfile uses errno */
 
+#ifndef SF_SYNC
+/* SF_SYNC was removed from sys/socket.h in newer FreeBSD; value was 0x00000004 */
+#define SF_SYNC 0x00000004
+#endif
+
 static void usage(void){
 	fprintf(stderr,"Usage:\n");
 	fprintf(stderr," -f <string> : filename\n");

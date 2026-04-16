@@ -1,4 +1,5 @@
 archivers/7-zip
+archivers/innoextract
 benchmarks/flamegraph
 benchmarks/glmark2
 benchmarks/iperf3
@@ -33,6 +34,8 @@ emulators/fs-uae-launcher
 emulators/hatari
 emulators/qemu
 emulators/wine-devel
+emulators/wine-gecko
+emulators/wine-mono
 emulators/wine-proton
 emulators/winetricks
 emulators/xcpc
@@ -54,6 +57,7 @@ lang/expect
 lang/go
 lang/go126
 lang/python
+lang/rust
 math/gnuplot
 misc/claude-code
 multimedia/libva-utils
