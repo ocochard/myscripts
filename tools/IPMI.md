@@ -2,7 +2,9 @@
 
 ## Access
 
-If ipmi drivers loaded, just run ipmitool, so it will use the SMBus channel:
+If an ipmi driver is available and loaded, just run ipmitool to display which
+physical interface used to communicate to IPMI.
+Depending of hardware it could be a SMBus channel:
 ```
 # ipmitool channel info
 Channel 0x4 info:
@@ -12,6 +14,18 @@ Channel 0x4 info:
   Active Session Count  : 0
   Protocol Vendor ID    : 7154
 ```
+
+Or a KCS, or other:
+```
+# ipmitool channel info
+Channel 0xf info:
+  Channel Medium Type   : System Interface
+  Channel Protocol Type : KCS
+  Session Support       : session-less
+  Active Session Count  : 0
+  Protocol Vendor ID    : 7154
+```
+
 If not, need to known IP, login and password, so it will use the 802.3 LAN channel:
 ```
 $ ipmitool -H 172.16.16.16 -U admin -P admin -I lanplus channel info
