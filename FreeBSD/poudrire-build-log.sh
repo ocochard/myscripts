@@ -20,10 +20,11 @@ for pkgdir in "$LOGDIR"/*/; do
 	for verdir in "$pkgdir"*/; do
 		[ -d "$verdir" ] || continue
 		ver=$(basename "$verdir")
-		log="${verdir}builder-default.log"
-		[ -f "$log" ] || continue
-		btime=$(grep "^build time:" "$log" | tail -1 | awk '{print $3}')
-		[ -n "$btime" ] || continue
-		printf "%s\t%s-%s\n" "$btime" "$pkg" "$ver"
+		for log in "$verdir"*.log; do
+			[ -f "$log" ] || continue
+			btime=$(grep "^build time:" "$log" | tail -1 | awk '{print $3}')
+			[ -n "$btime" ] || continue
+			printf "%s\t%s-%s\n" "$btime" "$pkg" "$ver"
+		done
 	done
 done | sort -r
