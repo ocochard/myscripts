@@ -63,7 +63,10 @@ if command -v ccache; then
   echo "ccache installed, enabling it"
   $SUDO mkdir -p /var/cache/ccache
   if [ ! -f /var/cache/ccache/ccache.conf ]; then
-    echo 'max_size = 30.0Gi' | $SUDO tee /var/cache/ccache/ccache.conf
+    (
+    echo 'max_size = 30.0Gi'
+    echo 'compiler_check = %compiler% --version'
+    ) |   $SUDO tee /var/cache/ccache/ccache.conf
   fi
   if ! grep -q CCACHE /etc/make.conf; then
 $SUDO tee -a /etc/make.conf >/dev/null <<EOF
