@@ -70,11 +70,11 @@ build/bin/llama-cli --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m mo
 ### Coding with vim, vs-code, etc.
 
 Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master) or a [vs-code](https://marketplace.visualstudio.com/items?itemName=ggml-org.llama-vscode):
-First download the model and start the llama server using the [model’s instruction](https://unsloth.ai/docs/models/qwen3.5#qwen3.5-27b)
+First download the model and start the llama server using the [model’s instruction](https://unsloth.ai/docs/models/qwen3.6)
 ```
 build/bin/llama-server \
-  -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL \
-  --alias qwen35-coder \
+  -hf unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL
+  --alias qwen36-coder \
   --device Vulkan0 \
   --temp 0.6 \
   --top-p 0.95 \
@@ -94,7 +94,7 @@ Then run a [qwen-code](https://qwen.ai/qwencode) as example:
 cat <<EOF > .env
 export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
 export OPENAI_API_KEY=not-needed
-export OPENAI_MODEL=qwen35-coder
+export OPENAI_MODEL=qwen36-coder
 EOF
 qwen
 ```
@@ -170,9 +170,12 @@ ggml_backend_cuda_get_available_uma_memory: final available_memory_kb: 61262128
 ```
 
 Then force usage of UMA with the env var `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1` when starting llama.
-And run a quick test using the gpt-oss-20b model:
+And run a quick test using the big Qwen3.5-397B-A17B:UD-IQ2_XXS model:
+
+-hf unsloth/Qwen3.5-397B-A17B:UD-IQ2_XXS
+
 ```
-GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-cli -hf ggml-org/gpt-oss-20b-GGUF --flash-attn on --ctx-size 0 --jinja -ub 2048 -b 2048 -p "I believe the meaning of life is" -n 128 -no-cnv
+GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-cli -hf Qwen3.5-397B-A17B-GGUF:UD-IQ2_XXS --flash-attn on --ctx-size 0 --jinja -ub 2048 -b 2048 -p "I believe the meaning of life is" -n 128 -ngl 99 -no-cnv
 ```
 
 Log should have this output:

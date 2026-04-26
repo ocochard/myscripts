@@ -111,8 +111,8 @@ $ cmake --build build --config Release -- -j $(nproc)
 And run a big model (for coding):
 ```
 build/bin/llama-server \
-  -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL \
-  --alias qwen35-coder \
+  -hf unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL \
+  --alias qwen36-coder \
   --device Vulkan0 \
   --temp 0.6 \
   --top-p 0.95 \
