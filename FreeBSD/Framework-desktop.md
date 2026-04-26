@@ -11,7 +11,7 @@ First, need a FreeBSD main at:
 
 Install latest drm-kmod:
 ```
-$ git clone https://github.com/freebsd/drm-kmod/
+$ git clone --single-branch --branch strix https://github.com/ocochard/drm-kmod/
 $ cd drm-kmod
 $ make -j$(nproc) DEBUG_FLAGS=-g SYSDIR=/usr/src/sys
 $ sudo make install DEBUG_FLAGS=-g SYSDIR=/usr/src/sys KMODDIR=/boot/modules
