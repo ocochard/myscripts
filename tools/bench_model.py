@@ -69,7 +69,7 @@ def benchmark_stream(base_url, prompt, max_tokens, model="default", num_runs=10,
 
         try:
             req = urllib.request.Request(base_url, data=encoded, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=300) as response:
+            with urllib.request.urlopen(req, timeout=1800) as response:
                 for line in response:
                     line = line.decode("utf-8").strip()
                     if not line or not line.startswith("data: "):
