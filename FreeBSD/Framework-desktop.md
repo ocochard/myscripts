@@ -110,15 +110,8 @@ $ cmake --build build --config Release -- -j $(nproc)
 
 ### Recommended `llama-server` config for coding (build `9d34231bb` / 8929)
 
-Two modes, both wrapped by `~/llmsrv.sh` on the framework. Tuned via
-`llama-bench` and validated end-to-end with `tools/bench_model.py`. Full
-sweep, per-flag rationale, and crash signatures are in
+Full sweep, per-flag rationale, and crash signatures are in
 [llama-bench-framework-results.md](llama-bench-framework-results.md).
-
-```sh
-~/llmsrv.sh            # default: thinking-coder mode
-MODE=fast ~/llmsrv.sh  # non-thinking, ~8x faster on simple tasks
-```
 
 #### Mode `coder` (default) — full thinking, best quality
 
@@ -138,7 +131,7 @@ RADV_DEBUG=zerovram build/bin/llama-server \
 
 #### Mode `fast` — non-thinking, for routine edits / agent loops
 
-Same launcher with `MODE=fast`, which adds `--reasoning-budget 0` and
+Need to dds `--reasoning-budget 0` and
 swaps to the non-thinking sampler preset:
 
 ```sh
