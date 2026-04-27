@@ -347,3 +347,72 @@ that keeps interactive latency tolerable.
 timeout and the run shows `Error: timed out` even though the server
 is happily processing (PP ~93 t/s × 91 k tokens ≈ 16 min prefill).
 
+
+## Stage 6 — Qwen3.6-35B-A3B MoE (build 9d34231bb / 8929)
+
+The dense Qwen3.6-27B benched above is great quality but **slow on
+this hardware**: ~9-12 t/s tg, and ~127 t/s cold prefill at d≈65k means
+each fresh qwen-code session takes ~9 min just to ingest its repo
+context. Unsloth ships a sibling MoE variant —
+`unsloth/Qwen3.6-35B-A3B-GGUF` (35B total, 256 experts, 8 active per
+token, ~3B active params per forward pass) — that was a better fit.
+
+### Setup
+
+- File: `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` (22.4 GB)
+- Architecture: `qwen35moe`, n_expert = 256, n_expert_used = 8,
+  detected as `qwen35moe 35B.A3B` in the model loader
+- Same launch flags as 27B (RADV_DEBUG=zerovram, FA on, no-host,
+  b=2048/ub=512, ctx=65k, parallel=1) **plus `--no-warmup`**.
+
+### Quirk: warmup decode crashes the GPU
+
+llama-server's default warmup decode (`common_init_from_params`
+issues an empty-batch decode to prime caches) hits a
+`vk::DeviceLostError` in `ggml_vk_buffer_write_2d` for this MoE
+model. The same workload via `llama-bench` runs fine, so it's the
+empty-batch path that crashes, not the model itself. **Use
+`--no-warmup`** to skip it; first real request after startup serves
+as warmup.
+
+`llama-bench -d N>0` (depth seeding) hits the same crash — also
+empty-batch. Use real prompts via `bench_one.sh` to measure depth.
+
+### Results (real prompts via curl, cold prefill)
+
+| Depth (tokens) | Wall | PP TPS | TG TPS |
+| ------:        | ---: | -----: | -----: |
+|    4 004 |    6.2 s |   810 | 49.7 |
+|   15 909 |   20.4 s |   840 | 48.1 |
+|   30 475 |   41.7 s |   760 | 45.1 |
+|   49 353 |   75.1 s |   673 | 41.8 |
+
+`llama-bench` at d=0:
+
+| test | t/s |
+| ---- | --- |
+| pp4096 | 901.96 ± 32.75 |
+| tg128  |  52.41 ± 0.02  |
+
+### Comparison vs. Qwen3.6-27B dense at the same depths
+
+| Depth | 27B dense PP | MoE PP   | speedup | 27B dense TG | MoE TG | speedup |
+| ----: | -----------: | -------: | ------: | -----------: | -----: | ------: |
+| ~4k   | 285.6 t/s    | 810 t/s  | 2.8×    | 11.7 t/s     | 49.7   | 4.2×    |
+| ~12k  | 265.3 t/s    | ~840 t/s | 3.2×    | 11.4 t/s     | 48.1   | 4.2×    |
+| ~30k  | 190.5 t/s    | 760 t/s  | 4.0×    | 10.4 t/s     | 45.1   | 4.3×    |
+| ~50k  | ~150 t/s     | 673 t/s  | 4.5×    | ~10 t/s      | 41.8   | 4.2×    |
+
+For the qwen-code use case (50–60k of repo context per session), the
+MoE turns the 9-minute cold prefill into ~75 seconds, and per-turn
+generation from ~110 s of thinking to ~25 s.
+
+### Recommendation
+
+Switch the default `~/llmsrv.sh` model from
+`Qwen3.6-27B-GGUF:UD-Q4_K_XL` (16 GB, dense) to
+`Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL` (22 GB, MoE), and add
+`--no-warmup` to the launch line. ~4× faster on every metric, fits
+trivially in the 120 GB UMA budget. Quality difference per Unsloth
+is "slightly weaker" — acceptable trade for an interactive coding
+agent.

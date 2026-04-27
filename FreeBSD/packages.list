@@ -122,6 +122,7 @@ sysutils/htop
 sysutils/monit
 sysutils/mstflint
 sysutils/neofetch
+sysutils/nvtop
 sysutils/p5-BSD-Sysctl
 sysutils/p5-Filesys-ZFS
 sysutils/pfetch
