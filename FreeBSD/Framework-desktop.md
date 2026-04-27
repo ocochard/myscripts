@@ -221,12 +221,3 @@ Bump the default request timeout — cold prefill of large repo prompts
 - `maxRetries: 1` — don't pile up retries on a slow prefill.
 
 Restart qwen-code after editing (settings are read at startup).
-
-### Diagnosing "qwen-code feels stuck"
-
-Tail `/tmp/llmsrv.log` and look for two `new prompt` lines for the same
-`task.n_tokens` separated by a `cancel task` — that's the client timing
-out mid-prefill. Bump `timeout` further if it keeps happening.
-
-A normal slow prefill shows monotonic `progress = …` ticks ending in a
-`prompt eval time = …` summary, then generation; no `cancel task` line.
