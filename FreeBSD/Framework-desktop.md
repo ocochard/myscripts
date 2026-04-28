@@ -179,8 +179,9 @@ python3 tools/bench_model.py -u http://127.0.0.1:8080 \
   --prompt-file /tmp/coding_prompt.txt -t 256 -r 3
 ```
 
-Full sweep, per-flag rationale, and crash signatures are in
-[llama-bench-framework-results.md](llama-bench-framework-results.md).
+Full sweep, per-flag rationale, crash signatures, and FreeBSD-vs-Ubuntu
+cross-OS comparison are in
+[../tools/LLM.benches.FrameWork-Desktop.md](../tools/LLM.benches.FrameWork-Desktop.md).
 
 ## qwen-code (CLI agent)
 

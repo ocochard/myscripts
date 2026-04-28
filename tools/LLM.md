@@ -117,7 +117,7 @@ Here, the system reserved 32GB for GPU usage (default value allowed in the EFI s
 but it allows to use about 48GB of RAM for GPU usage in case of need by the system.
 
 To compile llama.cpp to support this feature, you need:
-- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) (version 7.2 used here that fix AMD Strix Halo stability);
+- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) (version 7.2.2 used here that fix AMD Strix Halo stability);
 - [Configure GPU access for your user](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/prerequisites.html#group-permissions)
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
 - Enable HIP UMA (LLAMA_HIP_UMA).

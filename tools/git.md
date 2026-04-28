@@ -14,7 +14,7 @@ Merge commit add useless commit, always avoid that to prefer rebase.
 
 ### rebase
 
-Here is a fork of this other repository that contains some changes.
+Here is a fork of this other repository that contains a branch with some changes.
 Now remove all my changes, fetch all changes from upstream, then re-apply my changes
 on top of this up-to-date fork.
 
@@ -23,12 +23,18 @@ In this order:
 2. Fetch all new data from this "upstream" repo
 3. Switch to your "main" branch
 4. Rebase your main branch with upstream
+5. Switch to your "working" branch
+6. Rebase your working branch with main
 
 ```
 git remote add upstream https://github.com/freebsd-net/tcp-testsuite.git
 git fetch upstream
 git switch main
 git rebase upstream/main
+git push
+git switch working
+git rebase main
+git push
 ```
 
 ## Diff

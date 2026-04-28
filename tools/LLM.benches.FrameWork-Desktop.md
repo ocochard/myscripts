@@ -1,8 +1,212 @@
-# llama-bench tuning on Framework Desktop (Strix Halo, Vulkan)
+# llama-bench tuning on Framework Desktop (Strix Halo)
 
-Model: `Qwen3.6-27B-UD-Q4_K_XL.gguf` (qwen35moe 35B.A3B Q4_K_M, 20.70 GiB)
-Backend: Vulkan0 — Radeon 8060S Graphics (RADV GFX1151)
+Hardware: AMD Ryzen AI MAX+ 395 (Strix Halo) + Radeon 8060S iGPU (gfx1151), 128 GB LPDDR5x UMA.
+Models: `Qwen3.6-27B-UD-Q4_K_XL.gguf` (dense, 16.39 GiB) and `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` (MoE, 20.81 GiB).
+Backends: Vulkan0 (RADV) on both OSes; ROCm0 only on Linux.
 Goal: best parameters for **code writing** workloads.
+
+This page compares two systems running the same hardware:
+
+- **`framework`** — FreeBSD 16.0-CURRENT, Vulkan via Mesa 24.1.7 / vulkan-loader 1.4.349, drm-kmod from
+  `ocochard/drm-kmod` branch `strix`, AMD firmwares from `ocochard/freebsd-ports` branch `strix-halo`.
+  No ROCm available.
+- **`framework2`** — Ubuntu 24.04.4 LTS, kernel 6.17.0-22-generic, Vulkan via Mesa (RADV) shipping
+  Vulkan 1.3.275, ROCm 7.2.2 (HIP runtime, hipBLAS/hipBLASLt installed).
+
+## TL;DR — Ubuntu vs FreeBSD on Strix Halo
+
+| Topic | FreeBSD | Ubuntu | Verdict |
+|-------|---------|--------|---------|
+| Vulkan dense pp4096 (Qwen3.6-27B, fa=1) | 290.08 t/s | 274.38 t/s | FreeBSD ~5% faster |
+| Vulkan dense tg128 | 11.99 t/s | 12.13 t/s | Tie (within noise) |
+| Vulkan MoE pp4096 (Qwen3.6-35B-A3B) | 901.96 t/s | 926.83 t/s | Tie |
+| Vulkan MoE tg128 | 52.41 t/s | 54.87 t/s | Tie (Ubuntu +5%) |
+| `RADV_DEBUG=zerovram` needed | **YES** (else `vk::DeviceLostError`) | **NO** | Ubuntu Mesa is healthier |
+| `-mmp 0` (no mmap) | **CRASHES** (wedges GPU, requires reboot) | **OK** (273.21 t/s) | Mesa 25.2.8 fix |
+| `-ctk q8_0 -ctv q8_0` (quantized KV) | **CRASHES** | **OK** (269.43 t/s) | Mesa 25.2.8 fix |
+| MoE depth d=8192 (empty-batch) | **CRASHES** (`llama-bench` only) | **OK** | Mesa 25.2.8 fix |
+| ROCm backend (HIP) | **N/A** (no ROCm port) | Available but **HANGS on MoE** at any depth | Skip ROCm for MoE on Strix Halo regardless of OS |
+| Vision encoder (mmproj) auto-load | OK (CPU/Vulkan path) | **HANGS** — `clip_ctx: CLIP using ROCm0` deadlocks; needs `--no-mmproj` | Ubuntu llama-server gotcha |
+
+**Bottom line**: FreeBSD wins ~5 % on raw Vulkan pp throughput; Ubuntu's newer Mesa is materially more
+stable (three crash classes that brick the FreeBSD GPU run cleanly on Ubuntu). For dense and MoE Vulkan
+workloads, perf is essentially OS-independent — the silicon is the wall, not the driver. ROCm is not
+worth the trouble on Strix Halo: dense models are ~2× slower than Vulkan ([tools/LLM.md](LLM.md)) and
+MoE simply hangs.
+
+## Software versions tested
+
+| Component       | FreeBSD `framework`                | Ubuntu `framework2`                       |
+|-----------------|------------------------------------|-------------------------------------------|
+| OS              | FreeBSD 16.0-CURRENT (n285413)     | Ubuntu 24.04.4 LTS (noble)                |
+| Kernel          | main-n285413-4602d45eb3b1 (custom) | Linux 6.17.0-22-generic                   |
+| GPU driver      | drm-kmod `ocochard/strix` branch   | amdgpu in-tree                            |
+| Firmware        | `freebsd-ports/strix-halo` branch  | linux-firmware (distro)                   |
+| Mesa            | 24.1.7                             | 25.2.8 (≈ Vulkan 1.3.275)                 |
+| vulkan-loader   | 1.4.349                            | (Mesa-bundled, instance v1.3.275)         |
+| ROCm / HIP      | — (not packaged for FreeBSD)       | ROCm 7.2.2, HIP runtime 7.2.53211, ROCk 6.16.13 |
+| llama.cpp build | `9d34231bb` (8929)                 | `f42e29fdf` (8961)                        |
+| Compiler        | Clang 19.1.7                       | gcc 13.3 (default Ubuntu noble)           |
+| CPU governor    | `powerd` adaptive                  | `performance` (set by bench harness)      |
+
+Note: the llama.cpp builds differ by ~32 commits but the relevant kernels (Vulkan dense / MoE
+`qwen35moe`) are unchanged between them; we verified by re-running Stage 0 on both.
+
+## Per-stage cross-OS comparison
+
+### Stage 0 — Sanity (Vulkan, fa=0, p=512, d=0)
+
+| OS      | pp512        | tg128        |
+|---------|--------------|--------------|
+| FreeBSD | 290.03 ± 4.09 | 12.01 ± 0.02 |
+| Ubuntu  | 286.02 ± 0.68 | 12.07 ± 0.00 |
+
+Within ±2 % — backends are interchangeable at the silicon level.
+
+### Stage 1 — Core knobs (Vulkan, pp4096+tg128, d=0, b=2048, ub=512, r=2)
+
+| Sub-stage | Config              | FreeBSD pp4096 | FreeBSD tg128 | Ubuntu pp4096 | Ubuntu tg128 |
+|-----------|---------------------|---------------:|--------------:|--------------:|-------------:|
+| 1.1       | fa=0 f16 KV         | 282.03         | 11.97         | 268.68        | 12.09        |
+| 1.2       | fa=1 f16 KV         | **290.08**     | 11.99         | **274.38**    | 12.13        |
+| 1.3       | fa=1 q8_0 KV        | **CRASH**      | —             | 269.43        | 12.07        |
+| 1b.1      | fa=1 +zerovram      | 285.64         | 11.87         | 273.77        | 12.12        |
+| 1b.2      | fa=1 +zerovram --no-host=1 | 287.98 | 11.91         | 273.76        | 12.12        |
+| 1b.3      | fa=1 -mmp 0         | **CRASH**      | —             | 273.21        | 12.11        |
+
+**Findings:**
+- `-fa 1` is the Stage 1 winner on both OSes (small +pp, no tg cost).
+- `RADV_DEBUG=zerovram` costs ~1.5 % pp on FreeBSD and is a hard requirement there. On Ubuntu it's
+  unnecessary — pp delta is within noise (273.77 vs 274.38).
+- `q8_0` KV cache and `-mmp 0` brick the FreeBSD GPU but run fine on Ubuntu.
+- `--no-host` is neutral on both (it documents the UMA topology to the runtime; perf flat).
+
+### Stage 2 — Batch / ubatch sweep (fa=1, d=0)
+
+| -b / -ub      | FreeBSD pp4096 | FreeBSD tg128 | Ubuntu pp4096 | Ubuntu tg128 |
+|---------------|---------------:|--------------:|--------------:|-------------:|
+| 1024 / 256    | (not tested)   | —             | **276.40**    | 12.13        |
+| **2048 / 512**| **287.98**     | 11.91         | 273.88        | 12.12        |
+| 4096 / 1024   | 278.36         | 11.98         | 257.21        | 12.12        |
+
+**Finding**: 2048/512 (the FreeBSD winner) is essentially tied with 1024/256 on Ubuntu. The 4096/1024
+config is ~5–10 % slower on both OSes. Recommend `--batch-size 2048 --ubatch-size 512` as the cross-OS
+default.
+
+### Stage 3 — Depth sweep (Qwen3.6-27B dense, fa=1, b=2048, ub=512)
+
+| Depth | FreeBSD pp4096 | FreeBSD tg128 | Ubuntu pp4096 | Ubuntu tg128 |
+|------:|---------------:|--------------:|--------------:|-------------:|
+|     0 | 287.98         | 11.91         | 273.88        | 12.12        |
+|  8192 | 246.60         | 11.42         | 238.57        | 11.71        |
+| 32768 | 131.33         | 10.64         | 124.15        | 10.72        |
+| 65536 |  65.57         |  9.59         |  66.34        |  9.70        |
+
+**Finding**: depth scaling is identical (within 3 %) on both OSes — pp drops from ~280 to ~65 t/s as
+depth grows from 0 → 64 k, tg degrades only ~20 %. FreeBSD's `pp4096 @ d8192` did **not** crash with
+`llama-bench` on dense (it crashes only on the MoE model); Ubuntu ran cleanly throughout.
+
+### Stage 4 — Prompt size sweep (fa=1, b=2048, ub=512)
+
+| Prompt × Depth | FreeBSD       | Ubuntu        |
+|----------------|--------------:|--------------:|
+| pp2048 @ d8192 | 250.34 / 11.56 | 239.73 / 11.70 |
+| pp16384 @ d=0  | 257.27 / 12.02 | 245.04 / 12.11 |
+
+Same shape. Larger prompts incur a small per-token-cost penalty on both OSes.
+
+### Stage 5 — `--ctx-size 131072` stability
+
+Both systems can reserve and serve a 131 072-token context on Vulkan. Memory split (Ubuntu, captured
+at server shutdown):
+
+```
+| memory breakdown [MiB]                      | total    free     self   model   context   compute    unaccounted |
+|   - Vulkan0 (8060S Graphics (RADV GFX1151)) | 63404 = 36131 + (25823 = 16104 +    8790 +     929) +        1449 |
+|   - Host                                    |                    958 =   682 +       0 +     276                |
+```
+
+Translation: model 16.1 GB + KV (f16, 4 slots × 131k) 8.8 GB + compute 0.9 GB ≈ 25.8 GB on Vulkan0 —
+fits easily into the 64 GB GTT/UMA budget on either OS. End-to-end inference at d≈4k context returned
+12.31 t/s tg on Ubuntu, matching FreeBSD's ~11.9 t/s.
+
+**Ubuntu-only gotcha**: `llama-server -hf unsloth/Qwen3.6-27B-GGUF` auto-downloads the **vision encoder
+(mmproj)** because this is the Qwen3.6-VL series. The CLIP encoder defaults to ROCm0, which hangs at
+load time on Strix Halo (same root cause as the MoE ROCm hang below). Workaround: pass `--no-mmproj` —
+or rely on Vulkan-only with `--mmproj-offload` overrides. On FreeBSD the same issue does not apply:
+there is no ROCm, so CLIP falls back to a working code path automatically.
+
+### Stage 6 — Qwen3.6-35B-A3B MoE on Vulkan
+
+| Depth |  FreeBSD pp4096 | FreeBSD tg128 | Ubuntu pp4096 | Ubuntu tg128 |
+|------:|----------------:|--------------:|--------------:|-------------:|
+|     0 |          901.96 |         52.41 |        926.83 |        54.87 |
+|  8192 | **CRASH** (empty-batch path in `llama-bench`; `llama-server` works with `--no-warmup`) | — | 818.30 | 51.40 |
+| 32768 |        (server-only on FreeBSD: 760 PP / 45.1 TG)  | — | 600.44 | 46.07 |
+| 65536 |        (n/a)    | —             |        431.69 |        40.52 |
+
+**Finding**: MoE Vulkan is fast and stable on Ubuntu at all depths — Ubuntu reproduces the FreeBSD
+`llama-server` results without the empty-batch crash workaround. The `-d N>0` `llama-bench` crash
+documented for FreeBSD is gone on Mesa 25.2.8.
+
+### Stage 6b — Qwen3.6-35B-A3B MoE on **ROCm**
+
+Tested only on Ubuntu (FreeBSD has no ROCm). Result: **HANGS**. Probe with reduced workload
+(`-p 1024 -n 64 -r 1 -d 0`) timed out at 5 min (CPU 100 %, GPU 0 % busy). Same hang at d=8192. ROCm
+HIP loads the model but never schedules MoE expert kernels successfully on gfx1151. Stick to Vulkan
+for MoE on Strix Halo regardless of OS.
+
+ROCm dense Qwen3.6-27B was **not benchmarked** on this run (the multi-backend matrix invocation hung
+similarly). Per `tools/LLM.md` benchmarks on smaller models, ROCm pp is comparable to Vulkan but tg is
+~½, so dense ROCm has no upside on this hardware either.
+
+## Recommended runtime config (cross-OS)
+
+The same flags work well on both OSes; the only OS-specific bit is `RADV_DEBUG`:
+
+```sh
+# FreeBSD: prefix with RADV_DEBUG=zerovram to avoid vk::DeviceLostError.
+# Ubuntu:  no RADV_DEBUG needed.
+
+build/bin/llama-server \
+  -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL \
+  --device Vulkan0 \
+  --flash-attn on \
+  --no-host \
+  --no-warmup \
+  --batch-size 2048 --ubatch-size 512 \
+  --ctx-size 65536 \
+  --jinja
+```
+
+On Ubuntu, also pass `--no-mmproj` if the model has a vision projector you don't need (Qwen3.6-VL
+does); otherwise `llama-server` will hang on CLIP load.
+
+## Memory bandwidth as the wall
+
+[A blog post benchmarking the Framework Laptop 13 with Ryzen AI 9 HX 370 + Radeon 890M](https://msf.github.io/blogpost/local-llm-performance-framework13.html)
+reports ~75 % memory-bandwidth utilization for Vulkan inference and identifies the 89.6 GB/s
+DDR5-5600 bus as "the hard wall." The Strix Halo Framework Desktop benched here has roughly **3×
+that bandwidth** (256-bit LPDDR5x ≈ 256 GB/s theoretical) and ~2.5× more CUs (40 vs 16). Translating
+our tg128 numbers (12 t/s on a 16.4 GB Q4 model) to bandwidth:
+
+```
+16.4 GB × 12 t/s = 197 GB/s ≈ 77 % of the 256 GB/s theoretical max
+```
+
+— almost exactly the same utilization ratio, on different silicon. This confirms tg is **memory-bound,
+not compute-bound or driver-bound** on this hardware. That's why FreeBSD and Ubuntu post identical tg
+numbers despite very different driver stacks: there's no software headroom to claim, only bandwidth.
+PP is more compute-shaped (matmul-heavy) and that's where the ~5 % FreeBSD/Ubuntu gap appears.
+
+---
+
+# FreeBSD-only deep-dive (the original tuning narrative)
+
+What follows is the FreeBSD-side multi-stage tuning that produced the recommendations above. Stages
+1-6 below were re-run on Ubuntu (results in the comparison tables above); the narrative — including
+crash signatures, workarounds, and the FreeBSD-specific drm-kmod context — is preserved verbatim
+because most of it is what one needs when reproducing this on another FreeBSD machine.
 
 ## Methodology
 
