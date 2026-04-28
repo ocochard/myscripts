@@ -2,6 +2,31 @@
 
 To do: Convert my [Desktop install webpage tips](https://olivier.cochard.me/bidouillage/installation-et-configuration-de-freebsd-comme-poste-de-travail) here
 
+## Index of notes and scripts in this directory
+
+Hardware / platform notes:
+- [Framework Desktop (Strix Halo) setup notes](Framework-desktop.md) — see also the cross-OS llama.cpp results in [../tools/LLM.benches.FrameWork-Desktop.md](../tools/LLM.benches.FrameWork-Desktop.md)
+- [Drivers notes](drivers.md)
+
+Utility scripts (loose, top-level):
+- [lab.sh](lab.sh) — lab/test orchestration
+- [loop_until_failure.sh](loop_until_failure.sh) — re-run a command until it fails
+- [loop-kyua-test.sh](loop-kyua-test.sh) — repeat a kyua test run
+- [zfs-test.sh](zfs-test.sh) — ZFS exercise/regression helper
+- [bhyve-GPU.sh](bhyve-GPU.sh) — bhyve GPU passthrough helper
+- [flamegraph.sh](flamegraph.sh) — generate flamegraphs from DTrace
+- [freebsd-memory.sh](freebsd-memory.sh) — memory introspection
+- [pf.conf](pf.conf), [pf-big-table.sh](pf-big-table.sh) — pf examples / large-table benchmark
+
+Subdirectories:
+- [jail/](jail/) — jail management scripts (bridge/nullfs/FRR examples, jail_lib, tests)
+- [benches/tcp/](benches/tcp/) — TCP stack and CCA benchmarks
+- [benches/nfs/](benches/nfs/) — NFS benchmarks
+- [benches/aio/](benches/aio/) — AIO benchmarks
+- [benches/udp/](benches/udp/) — UDP benchmarking C tools
+- [sendfile/](sendfile/), [tcp_dscp/](tcp_dscp/), [testrss/](testrss/) — small C test programs
+- [ports-tests/](ports-tests/) — port-related test scripts
+
 ## Building
 
 ### Custom install media
