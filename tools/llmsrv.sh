@@ -1,8 +1,9 @@
 #!/bin/sh
 # Launch llama-server tuned for Framework Desktop (Strix Halo + RADV).
-# Works on both hosts:
-#   - framework  (FreeBSD 16-CURRENT, Mesa 24.1.7)
-#   - framework2 (Ubuntu 24.04,      Mesa 25.2.8)
+# Works on all hosts:
+#   - framework  (FreeBSD 16-CURRENT, Mesa 24.1.7, Vulkan)
+#   - framework2 (Ubuntu 24.04,      Mesa 25.2.8, Vulkan)
+#   - mac        (macOS, Metal)
 #
 # Defaults to the Qwen3.6-35B-A3B MoE in coder (thinking) mode:
 # ~4x faster than the dense 27B on this hardware (TG ~50 vs ~12 t/s,
@@ -17,6 +18,25 @@
 #   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL (Ubuntu only)
 #   HOST=0.0.0.0 ./llmsrv.sh     # listen on all interfaces (default: 127.0.0.1)
 set -eu
+
+usage() {
+  cat <<EOF
+Usage: [ENV=val ...] $(basename "$0") [-h]
+
+Environment variables:
+  MODEL=moe    Qwen3.6-35B-A3B MoE (default)
+  MODEL=dense  Qwen3.6-27B dense
+  MODEL=med    Qwen3.5-122B-A10B MoE (Ubuntu only)
+  MODEL=big    Qwen3.5-397B-A17B MoE (Ubuntu only)
+  MODE=coder   Thinking mode, coding sampling (default)
+  MODE=fast    Non-thinking, faster on simple tasks
+  HOST=addr    Listen address (default: 127.0.0.1)
+  PORT=port    Listen port (default: 8080)
+EOF
+  exit 0
+}
+
+[ "${1:-}" = "-h" ] && usage
 
 MODE=${MODE:-coder}
 MODEL=${MODEL:-moe}
@@ -36,6 +56,7 @@ case "${OS}" in
     # FreeBSD/Mesa 24.1.7 cannot use --no-mmap / --direct-io / quantized KV
     # (they wedge the GPU and require reboot).
     extra_perf=""
+    device="Vulkan0"
     ;;
   Linux)
     # Ubuntu Mesa 25.2.8 is healthy: no zerovram workaround needed.
@@ -44,6 +65,13 @@ case "${OS}" in
     # they're within noise on Vulkan — keep the conservative defaults that
     # match FreeBSD so behavior is identical across hosts.
     extra_perf=""
+    device="Vulkan0"
+    ;;
+  Darwin)
+    # macOS: Metal backend, no Vulkan/RADV env needed.
+    radv_env=""
+    extra_perf=""
+    device="MTL0"
     ;;
   *)
     echo "unsupported OS='${OS}'" >&2; exit 1 ;;
@@ -71,12 +99,18 @@ case "${MODEL}" in
   moe)
     # Qwen3.6-35B-A3B: 35B total, 3B active per token. ~22 GB on disk.
     # Quality slightly below the dense 27B per Unsloth, but ~4x faster
-    # per-token on this hardware. Available on both hosts.
+    # per-token on this hardware. Available on all hosts.
+    # Prefer Q4_K_XL; fall back to Q4_K_M (only quant downloaded on macOS).
     model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf")
-    alias="Qwen3.6-35B-A3B-UD-Q4_K_XL"
+    if [ -n "${model}" ]; then
+      alias="Qwen3.6-35B-A3B-UD-Q4_K_XL"
+    else
+      model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf")
+      alias="Qwen3.6-35B-A3B-UD-Q4_K_M"
+    fi
     # --no-warmup: the default warmup decode (empty batch) hits
-    # vk::DeviceLostError in ggml_vk_buffer_write_2d on this MoE.
-    # Real prompts work fine; first real request serves as warmup.
+    # vk::DeviceLostError in ggml_vk_buffer_write_2d on this MoE (Vulkan).
+    # Harmless on Metal. Real prompts work fine either way.
     warmup_flag="--no-warmup"
     ;;
   dense)
@@ -147,7 +181,7 @@ exec env ${radv_env} build/bin/llama-server \
   --no-mmproj \
   ${warmup_flag} \
   --alias "${alias}" \
-  --device Vulkan0 \
+  --device "${device}" \
   --flash-attn on \
   --no-host \
   ${extra} \
