@@ -532,6 +532,19 @@ HTTP timeout bumped to 1800 s — at deep context, prefill alone is over
 > the `Prompt tokens:` line that `tools/bench_model.py` now prints
 > to record the actual value at the time of each run.
 
+> **Note (synthetic vs real code):** `tools/coding_prompt*.txt` are
+> synthetic (`fn_NNNN(x): return x + N` — trivially compressible by
+> the model's internal representations). On Strix Halo Vulkan, the
+> same depth measured with `tools/coding_prompt_real.txt` (real
+> FreeBSD sendfile(2) sources + a "find any bugs" question, ~4k tok)
+> yields **PP ~9 % slower** (909→828 t/s on FreeBSD, 932→841 t/s on
+> Ubuntu) and **TG within 1 %** (48.2→48.4, 51.2→52.1). Synthetic
+> prompts are best for cross-OS / cross-driver comparisons (tighter
+> variance, deterministic sizing); the real prompt is the more honest
+> "how an actual coding session feels" number. TG is bandwidth-bound
+> and content-insensitive on this hardware, which is why it doesn't
+> move.
+
 **No crash anywhere up to 114 k depth** (~87 % of the 131 072 ctx).
 At d≈114k, prefill alone takes **~26 minutes** for a single response,
 and tg drops to 8.5 t/s. Past ~90 k depth the system is technically
