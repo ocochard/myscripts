@@ -520,6 +520,18 @@ HTTP timeout bumped to 1800 s — at deep context, prefill alone is over
 | `coding_prompt_96k.txt`    |             ~91 382      |   980.9 s  |    93.1 |    9.1 |  112   |
 | `coding_prompt_120k.txt`   |            ~114 482      |  1552.5 s  |    73.7 |    8.5 |  120   |
 
+> **Note (build drift):** the token counts above were measured on the
+> llama.cpp builds in use at the time (`9d34231bb` on FreeBSD,
+> `f42e29fdf` on Ubuntu). Re-running the same byte-for-byte
+> `tools/coding_prompt.txt` on build `b8985-27aef3dd9` (both hosts,
+> 2026-04-30) reports `prompt_tokens = 4004` instead of ~4067 — the
+> Qwen3.6 chat template gained content (most visibly a trailing
+> `<think>` marker on the assistant turn) between those builds. The
+> raw text alone is 3994 tokens; the wrapper adds 10 today vs ~73
+> previously. Expect similar small drift on the larger files. Use
+> the `Prompt tokens:` line that `tools/bench_model.py` now prints
+> to record the actual value at the time of each run.
+
 **No crash anywhere up to 114 k depth** (~87 % of the 131 072 ctx).
 At d≈114k, prefill alone takes **~26 minutes** for a single response,
 and tg drops to 8.5 t/s. Past ~90 k depth the system is technically

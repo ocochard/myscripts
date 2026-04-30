@@ -46,6 +46,8 @@ def benchmark_stream(base_url, prompt, max_tokens, model="default", num_runs=10,
     print("-" * 75)
 
     all_results = []
+    announced_prompt_tokens = False  # one-shot info line after warmup
+    warned_small_prompt = False      # one-shot small-prompt warning
 
     # Run 0 is a warm-up to eliminate cold-start bias
     for run in range(0, num_runs + 1):
@@ -185,10 +187,25 @@ def benchmark_stream(base_url, prompt, max_tokens, model="default", num_runs=10,
                 pp_str = f", PP: {pp_tps:.1f} t/s" if pp_tps else ""
                 tps_str = f"Total TPS: {total_tps:.1f}" if total_tps else "no tokens"
                 trunc_flag = " [TRUNCATED - increase --tokens]" if truncated else ""
+                ptok_str = f", prompt: {prompt_tokens} tok" if prompt_tokens else ""
                 prefix = "\n" if show_output else " "
-                print(f"{prefix}Done. ({ttft_str}{pp_str}, {tps_str}, tokens: {total_tokens}{trunc_flag})")
+                print(f"{prefix}Done. ({ttft_str}{pp_str}, {tps_str}, tokens: {total_tokens}{ptok_str}{trunc_flag})")
+
+                # One-time small-prompt warning. PP TPS is computed from TTFT, which
+                # includes a fixed request-setup cost; for small prompts that overhead
+                # dominates and the reported PP TPS is meaningless.
+                if not warned_small_prompt and prompt_tokens and prompt_tokens < 512:
+                    print(
+                        f"\n  NOTE: prompt is short ({prompt_tokens} tok); PP TPS is dominated by request"
+                        f"\n  setup, not prompt processing. Use --prompt-file with a larger prompt"
+                        f"\n  (e.g. tools/coding_prompt.txt) for meaningful PP TPS measurements."
+                    )
+                    warned_small_prompt = True
             else:
                 print(" Done.")
+                if not announced_prompt_tokens and prompt_tokens:
+                    print(f"  Prompt tokens: {prompt_tokens}")
+                    announced_prompt_tokens = True
 
         except Exception as e:
             print(f" Error: {e}")
@@ -223,6 +240,17 @@ def benchmark_stream(base_url, prompt, max_tokens, model="default", num_runs=10,
     print("\n" + "=" * 80)
     print(f"{'FINAL BENCHMARK SUMMARY':^80}")
     print("=" * 80)
+
+    # Prompt tokens: same for every run (we re-send the same prompt). Show as a
+    # single value so the bench output self-identifies which depth row it is.
+    ptok_values = sorted({r["prompt_tokens"] for r in all_results if r["prompt_tokens"]})
+    if ptok_values:
+        if len(ptok_values) == 1:
+            print(f"{'Prompt tokens:':<25} {ptok_values[0]}")
+        else:
+            print(f"{'Prompt tokens:':<25} {ptok_values[0]}–{ptok_values[-1]} (varied)")
+        print("-" * 80)
+
     print(f"{'Metric':<25} {'Min':>12} {'Max':>12} {'Avg':>12} {'P95':>12}")
     print("-" * 80)
 
