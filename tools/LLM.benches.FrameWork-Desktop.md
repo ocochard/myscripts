@@ -164,24 +164,57 @@ config-switch ordering than the value of `-d`.
 | MoE Q4            | BSD +3 %                        | BSD ~5 % slower |
 | MoE Q8            | BSD +5 %                        | tie    |
 
-## Stage 4 — `bench_model.py` validation
+## Stage 4 — `bench_model.py` validation, all 4 (model, quant) pairs
 
 `llama-server` with the recommended runtime flags (see [Recommended runtime
-config](#recommended-runtime-config)), Qwen3.6-35B-A3B Q4 (the coding default), `--ctx-size 65536
---parallel 1`. Bench: `bench_model.py -t 256 -r 2` against `tools/coding_prompt.txt` (4 004 tok) and
-`tools/coding_prompt_32k.txt` (32 919 tok). The PP TPS is `prompt_tokens / TTFT` from the streaming
-response — i.e. **cold prefill** the first time the prompt is seen.
+config](#recommended-runtime-config)), `--ctx-size 65536 --parallel 1`. Bench:
+`bench_model.py -t 256 -r 2` against `tools/coding_prompt.txt` (4 004 tok) and
+`tools/coding_prompt_32k.txt` (32 919 tok). PP TPS is `prompt_tokens / TTFT` from the streaming
+response — i.e. **cold prefill** the first time the prompt is seen. Total TPS is the end-to-end rate
+including reasoning tokens (all runs hit the 256-token cap, so Total TPS underestimates pure decode).
 
-| Host       | Depth   | TTFT (ms) | PP t/s | Total TPS |
-|------------|---------|----------:|-------:|----------:|
-| frwk-bsd   |  ~4 k   |    4 443  | 901.3  |    48.9   |
-| frwk-linux |  ~4 k   |    4 413  | 907.4  |    51.5   |
-| frwk-bsd   | ~32 k   |   43 252  | 761.1  |    42.6   |
-| frwk-linux | ~32 k   |   44 043  | 747.4  |    44.7   |
+FreeBSD: rebooted between every (model, quant) combo to avoid Mesa 25 GPU-state contamination.
+Ubuntu: ran all four sequentially in one boot (no instability).
 
-These match Stage 3's `llama-bench` numbers within the expected gap (cold prefill at d≈4 k beats
-`llama-bench`'s warm-after-warmup numbers slightly). Ubuntu's small TG edge for MoE persists, FreeBSD
-matches/beats on PP.
+### Qwen3.6-35B-A3B MoE (Q4 → coding default; Q8 → doc default)
+
+| Host       | Quant | Depth   | TTFT (ms) | PP t/s | Total TPS |
+|------------|-------|---------|----------:|-------:|----------:|
+| frwk-bsd   | Q4    |  ~4 k   |    4 419  | 906.0  |    48.3   |
+| frwk-linux | Q4    |  ~4 k   |    4 256  | 940.9  |    51.6   |
+| frwk-bsd   | Q4    | ~32 k   |   42 290  | 778.4  |    40.6   |
+| frwk-linux | Q4    | ~32 k   |   44 027  | 747.7  |    44.6   |
+| frwk-bsd   | Q8    |  ~4 k   |    4 520  | 886.0  |    40.0   |
+| frwk-linux | Q8    |  ~4 k   |    4 622  | 866.3  |    39.9   |
+| frwk-bsd   | Q8    | ~32 k   |   43 451  | 757.6  |    35.8   |
+| frwk-linux | Q8    | ~32 k   |   46 661  | 706.0  |    35.9   |
+
+### Qwen3.6-27B dense
+
+| Host       | Quant | Depth   | TTFT (ms) | PP t/s | Total TPS |
+|------------|-------|---------|----------:|-------:|----------:|
+| frwk-bsd   | Q4    |  ~4 k   |   13 839  | 289.3  |    11.5   |
+| frwk-linux | Q4    |  ~4 k   |   14 713  | 272.1  |    11.5   |
+| frwk-bsd   | Q4    | ~32 k   |  156 597  | 210.2  |    10.4   |
+| frwk-linux | Q4    | ~32 k   |  167 265  | 196.8  |    10.4   |
+| frwk-bsd   | Q8    |  ~4 k   |   21 928  | 265.2  |     5.9   |
+| frwk-linux | Q8    |  ~4 k   |   18 655  | 214.6  |     5.9   |
+| frwk-bsd   | Q8    | ~32 k   |  170 511  | 193.1  |     5.6   |
+| frwk-linux | Q8    | ~32 k   |  199 935  | 164.7  |     5.6   |
+
+### Cross-host takeaway
+
+- **TG is OS-neutral**: every model/quant decodes within ~5 % across both OSes. The hardware sets the
+  ceiling.
+- **PP is OS-skewed in FreeBSD's favour on dense**: Q4 +6 % at d=0, +7 % at d=32k; Q8 +24 % at d=0,
+  +17 % at d=32k. Compiler/scheduler difference, not driver.
+- **PP is mixed on MoE**: Ubuntu wins MoE Q4 (+4 % at d=0) but FreeBSD wins MoE Q8 (+2 % at d=0,
+  +7 % at d=32k). Within-noise across reboots.
+- **Quant choice for daily use**: MoE Q4 for coding (54 t/s TG, 906 PP at d≈4 k), MoE Q8 for
+  documentation (~22 % slower TG but better prose quality — the small 3-B active path is more
+  sensitive to quant noise than a 30-B-active dense forward pass).
+- **Dense 27B is the slow path** on this hardware: Q4 decodes at ~12 t/s and Q8 at ~6 t/s; the 4×
+  TG advantage of MoE is real on every depth.
 
 ## Recommended runtime config
 
@@ -211,7 +244,8 @@ llama-server \
 `--ctx-size 65536` is the working ceiling — both stacks can reserve `--ctx-size 131072` but TTFT
 collapses past d ≈ 30 k on Strix Halo regardless of OS (memory bandwidth, not driver).
 
-The launcher `tools/llmsrv.sh` auto-detects OS and model and applies the right flags.
+The launcher `tools/llmsrv.sh` auto-detects OS and model and applies the right flags. Use
+`USAGE=coding` (default, MoE Q4) or `USAGE=doc` (MoE Q8) to pick the quant for the working profile.
 
 ## Memory bandwidth as the wall
 
@@ -258,8 +292,9 @@ follow-up bench can crash again. **Reboot is the only reliable recovery.** `kldu
   one of these). Pass `--no-mmproj` for text-only use to save VRAM and avoid the
   `cache_reuse is not supported by multimodal` log line.
 - **`--reasoning-budget 0`** disables `<think>...</think>` blocks for short, mechanical tasks.
-  Measured ~8.6× speedup on a "is_prime" task on Qwen3.6-27B with correct output. Use a separate
-  launch mode (`MODE=fast` in `llmsrv.sh`) rather than baking into the default.
+  Measured ~8.6× speedup on a "is_prime" task on Qwen3.6-27B with correct output. The launcher no
+  longer exposes a "fast" mode — on MoE the gen-time savings are small and quality drops; if you
+  really need it for an agent loop, pass the flag manually or inline `/no_think` in the prompt.
 - **`bench_model.py` warm-up populates the prompt cache** on `llama-server`, so the per-run TTFT it
   prints is for cached re-evaluation. To measure cold prefill, hit `/v1/chat/completions` with curl
   and read `timings.prompt_n` / `timings.prompt_per_second` directly — the
