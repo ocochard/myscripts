@@ -18,7 +18,7 @@ Backend: Vulkan (Mesa RADV) on both OSes — same upstream Mesa version.
 Both hosts run the **same upstream Mesa version (25.2.8)** and the **same llama.cpp build hash**.
 Differences below are due to OS / kernel / compiler, not Mesa.
 
-## TL;DR
+## Summary
 
 | Topic                                              | FreeBSD `frwk-bsd`              | Ubuntu `frwk-linux`             | Verdict                           |
 |----------------------------------------------------|---------------------------------|---------------------------------|-----------------------------------|
