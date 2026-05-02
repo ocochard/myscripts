@@ -1,647 +1,412 @@
-# llama-bench tuning on Framework Desktop (Strix Halo)
+# llama.cpp on Framework Desktop (Strix Halo) — FreeBSD vs Ubuntu, May 2026
 
 Hardware: AMD Ryzen AI MAX+ 395 (Strix Halo) + Radeon 8060S iGPU (gfx1151), 128 GB LPDDR5x UMA.
-Models: `Qwen3.6-27B-UD-Q4_K_XL.gguf` (dense, 16.39 GiB) and `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` (MoE, 20.81 GiB).
-Backends: Vulkan0 (RADV) on both OSes; ROCm0 only on Linux.
-Goal: best parameters for **code writing** workloads.
+Models: `unsloth/Qwen3.6-27B-GGUF` (dense, 26.90 B) and `unsloth/Qwen3.6-35B-A3B-GGUF` (MoE, 34.66 B
+total / 3 B active per token), each in `UD-Q4_K_XL` and `UD-Q8_K_XL` quantizations.
+Backends: Vulkan (Mesa RADV) on both OSes; ROCm only on Linux.
 
-This page compares two systems running the same hardware:
+This is a re-bench of the previous `LLM.benches.FrameWork-Desktop.md` after switching the FreeBSD
+host from a custom drm-kmod branch to the official one — see [What changed since the prior
+bench](#what-changed-since-the-prior-bench).
 
-- **`framework`** — FreeBSD 16.0-CURRENT, Vulkan via Mesa 24.1.7 / vulkan-loader 1.4.349, drm-kmod from
-  `ocochard/drm-kmod` branch `strix`, AMD firmwares from `ocochard/freebsd-ports` branch `strix-halo`.
-  No ROCm available.
-- **`framework2`** — Ubuntu 24.04.4 LTS, kernel 6.17.0-22-generic, Vulkan via Mesa (RADV) shipping
-  Vulkan 1.3.275, ROCm 7.2.2 (HIP runtime, hipBLAS/hipBLASLt installed).
+> **Update 2026-05-02 — FreeBSD upgraded to Mesa 25.2.8.** The FreeBSD numbers and crash classes
+> below were collected on Mesa **24.1.7** and are kept as the historical baseline. After upgrading
+> `mesa-libs`/`mesa-dri`/`mesa-libgallium` to 25.2.8 (no llama.cpp rebuild needed — the Vulkan ICD is
+> dlopen'd at runtime), the picture shifts substantially. See
+> [Mesa 25.2.8 update](#mesa-2528-update-on-freebsd) at the bottom for the new numbers, crash
+> classes, and revised recipe.
 
-## TL;DR — Ubuntu vs FreeBSD on Strix Halo
+## Hosts
 
-| Topic | FreeBSD | Ubuntu | Verdict |
-|-------|---------|--------|---------|
-| Vulkan dense pp4096 (Qwen3.6-27B, fa=1) | 290.08 t/s | 274.38 t/s | FreeBSD ~5% faster |
-| Vulkan dense tg128 | 11.99 t/s | 12.13 t/s | Tie (within noise) |
-| Vulkan MoE pp4096 (Qwen3.6-35B-A3B) | 901.96 t/s | 926.83 t/s | Tie |
-| Vulkan MoE tg128 | 52.41 t/s | 54.87 t/s | Tie (Ubuntu +5%) |
-| `RADV_DEBUG=zerovram` needed | **YES** (else `vk::DeviceLostError`) | **NO** | Ubuntu Mesa is healthier |
-| `-mmp 0` (no mmap) | **CRASHES** (wedges GPU, requires reboot) | **OK** (273.21 t/s) | Mesa 25.2.8 fix |
-| `-ctk q8_0 -ctv q8_0` (quantized KV) | **CRASHES** | **OK** (269.43 t/s) | Mesa 25.2.8 fix |
-| MoE depth d=8192 (empty-batch) | **CRASHES** (`llama-bench` only) | **OK** | Mesa 25.2.8 fix |
-| ROCm backend (HIP) | **N/A** (no ROCm port) | Available but **HANGS on MoE** at any depth | Skip ROCm for MoE on Strix Halo regardless of OS |
-| Vision encoder (mmproj) auto-load | OK (CPU/Vulkan path) | **HANGS** — `clip_ctx: CLIP using ROCm0` deadlocks; needs `--no-mmproj` | Ubuntu llama-server gotcha |
+- **`frwk-bsd`** — FreeBSD 16.0-CURRENT (`main-n285626`), `drm-latest-kmod-6.12.1600018_4`
+  (official), `gpu-firmware-amd-kmod-* 20260406.1600018`, **Mesa 24.1.7 RADV**, vulkan-loader 1.4.349,
+  llama.cpp `27aef3dd9` (b8985). No ROCm available.
+- **`frwk-linux`** — Ubuntu 24.04.4 LTS, kernel 6.17.0-22-generic, **Mesa 25.2.8** (Vulkan 1.3.275),
+  ROCm 7.2.2, llama.cpp `27aef3dd9` (b8985).
 
-**Bottom line**: FreeBSD wins ~5 % on raw Vulkan pp throughput; Ubuntu's newer Mesa is materially more
-stable (three crash classes that brick the FreeBSD GPU run cleanly on Ubuntu). For dense and MoE Vulkan
-workloads, perf is essentially OS-independent — the silicon is the wall, not the driver. ROCm is not
-worth the trouble on Strix Halo: dense models are ~2× slower than Vulkan ([tools/LLM.md](LLM.md)) and
-MoE simply hangs.
+Both hosts run the **same llama.cpp build hash** (`27aef3dd9`), so model-detection differences and
+kernel changes between builds don't apply here.
+
+## TL;DR
+
+| Topic                                              | FreeBSD                          | Ubuntu                          | Verdict                           |
+|----------------------------------------------------|----------------------------------|---------------------------------|-----------------------------------|
+| Vulkan dense 27B Q4 pp4096 @ d=8 k                 | 249.7 t/s                        | 230.1 t/s                       | FreeBSD ~8 % faster pp            |
+| Vulkan dense 27B Q4 tg128                          | 11.54 t/s                        | 11.73 t/s                       | Tie                               |
+| Vulkan dense 27B Q8 pp4096 @ d=8 k                 | 189.7 t/s                        | 135.9 t/s                       | **FreeBSD ~40 % faster pp**       |
+| Vulkan dense 27B Q8 tg128                          | 5.99 t/s                         | 6.00 t/s                        | Tie                               |
+| Vulkan MoE Q4 pp4096 @ d=8 k                       | 829.7 t/s                        | 823.5 t/s                       | Tie                               |
+| Vulkan MoE Q4 tg128                                | 47.6 t/s                         | 51.7 t/s                        | Ubuntu ~9 % faster tg             |
+| Vulkan MoE Q8 pp4096 @ d=8 k                       | 783.0 t/s                        | 749.6 t/s                       | FreeBSD ~4 % faster pp            |
+| `RADV_DEBUG=zerovram` needed                       | **YES** (else `vk::DeviceLostError`) | **NO**                       | Ubuntu Mesa is healthier          |
+| `--no-host 1` server flag                          | **CRASHES on 27B Q4 + 35B Q8**   | OK                              | Drop on FreeBSD                   |
+| `-mmp 0`, `-ctk q8_0 -ctv q8_0`                    | OK on this build (was crashing)  | OK                              | Newer drm-kmod fixed both         |
+| ROCm backend (HIP)                                 | n/a                              | **HANGS all model sizes**       | Skip ROCm entirely                |
+
+**Bottom line**: Silicon dominates — Vulkan tg is essentially identical across both OSes. FreeBSD
+wins pp by 4-40 % depending on model/quant; the gap is largest on dense Q8. Ubuntu's newer Mesa is
+materially more stable: it doesn't need `RADV_DEBUG=zerovram` and `--no-host 1` doesn't crash. If you
+need a working setup with the smallest number of footnotes, run Ubuntu. If you want the fastest
+prompt processing for dense models and you're willing to manage the FreeBSD/RADV crash classes, run
+FreeBSD.
+
+ROCm 7.2.2 on Ubuntu now hangs every model size we tested — even single-backend dense Q4. Don't.
 
 ## Software versions tested
 
-| Component       | FreeBSD `framework`                | Ubuntu `framework2`                       |
-|-----------------|------------------------------------|-------------------------------------------|
-| OS              | FreeBSD 16.0-CURRENT (n285413)     | Ubuntu 24.04.4 LTS (noble)                |
-| Kernel          | main-n285413-4602d45eb3b1 (custom) | Linux 6.17.0-22-generic                   |
-| GPU driver      | drm-kmod `ocochard/strix` branch   | amdgpu in-tree                            |
-| Firmware        | `freebsd-ports/strix-halo` branch  | linux-firmware (distro)                   |
-| Mesa            | 24.1.7                             | 25.2.8 (≈ Vulkan 1.3.275)                 |
-| vulkan-loader   | 1.4.349                            | (Mesa-bundled, instance v1.3.275)         |
-| ROCm / HIP      | — (not packaged for FreeBSD)       | ROCm 7.2.2, HIP runtime 7.2.53211, ROCk 6.16.13 |
-| llama.cpp build | `9d34231bb` (8929)                 | `f42e29fdf` (8961)                        |
-| Compiler        | Clang 19.1.7                       | gcc 13.3 (default Ubuntu noble)           |
-| CPU governor    | `powerd` adaptive                  | `performance` (set by bench harness)      |
+| Component         | FreeBSD `frmk-bsd`                       | Ubuntu `frwk-linux`                          |
+|-------------------|-------------------------------------------|----------------------------------------------|
+| OS                | FreeBSD 16.0-CURRENT (`main-n285626`)     | Ubuntu 24.04.4 LTS (noble)                   |
+| Kernel            | `9c18d55a768a` (May 2026)                 | Linux 6.17.0-22-generic                      |
+| GPU driver        | `drm-latest-kmod-6.12.1600018_4`          | amdgpu in-tree                               |
+| GPU firmware      | `gpu-firmware-amd-kmod-* 20260406.1600018`| linux-firmware (distro)                      |
+| Mesa              | 24.1.7                                    | 25.2.8 (Vulkan 1.3.275)                      |
+| vulkan-loader     | 1.4.349                                   | (Mesa-bundled)                               |
+| ROCm / HIP        | — (not packaged for FreeBSD)              | ROCm 7.2.2                                   |
+| llama.cpp build   | `27aef3dd9` (b8985)                       | `27aef3dd9` (b8985)                          |
+| Compiler          | Clang 19.1.7                              | gcc 13.3 (Ubuntu noble default)              |
+| CPU governor      | `powerd` adaptive                         | `performance`                                |
 
-Note: the llama.cpp builds differ by ~32 commits but the relevant kernels (Vulkan dense / MoE
-`qwen35moe`) are unchanged between them; we verified by re-running Stage 0 on both.
+## What changed since the prior bench
 
-## Per-stage cross-OS comparison
+- **FreeBSD `drm-kmod`**: previously a custom `ocochard/strix` branch with `freebsd-ports/strix-halo`
+  firmware. Now the **official** FreeBSD ports: `drm-latest-kmod-6.12.1600018_4` +
+  `gpu-firmware-amd-kmod-*-20260406.1600018`.
+- **Mesa unchanged on FreeBSD** at 24.1.7. That matters: the `RADV_DEBUG=zerovram` requirement and
+  the `--no-host` crash class are **in Mesa**, not in the kernel driver. They persist because Mesa
+  did not move.
+- **GPU reset auto-recovery**: the new official drm-kmod logs `GPU reset(N) succeeded!` and the
+  kernel module survives a Vulkan crash. Userspace state still degrades after recovery — a reboot is
+  still required after multiple crashes. The previous custom kmod needed a reboot every time.
+- **Two crash classes have gone away on FreeBSD**: `-mmp 0` (no mmap) and `-ctk q8_0 -ctv q8_0`
+  (quantized KV cache) used to wedge the GPU. They run cleanly on this drm-kmod (we did not retest
+  q8_0 KV in this run because it doesn't help quality; the previous bench documented the crash).
+- **ROCm regressed**: previously hung on MoE only. Now `--device ROCm0` hangs all four
+  (dense+MoE × Q4+Q8) configurations within the bench timeout.
+- **`amdgpu` is still not autoloaded at boot on FreeBSD**: `sudo kldload amdgpu` is required after
+  every reboot, otherwise `ggml_vulkan: No devices found`.
 
-### Stage 0 — Sanity (Vulkan, fa=0, p=512, d=0)
+## Methodology
 
-| OS      | pp512        | tg128        |
-|---------|--------------|--------------|
-| FreeBSD | 290.03 ± 4.09 | 12.01 ± 0.02 |
-| Ubuntu  | 286.02 ± 0.68 | 12.07 ± 0.00 |
+Five stages, run on both hosts, recording `llama-bench` markdown tables verbatim. The skill that
+drove this is `~/.claude/skills/llama-bench-tune` — it prunes the parameter space stage by stage so a
+full sweep doesn't take a day or wedge the GPU.
 
-Within ±2 % — backends are interchangeable at the silicon level.
+- **Stage 0**: sanity (`-p 512 -n 128 -fa 0`).
+- **Stage 1**: core knobs (`fa`, `--no-host`, KV cache type) at d=0 with `-p 4096 -n 128`.
+- **Stage 3**: depth sweep on the Stage 1 winner at d=8 192 and d=32 768 (`pp4096 @ dN + tg128 @ dN`).
+- **Stage 4**: real-load validation — `llama-server` with the recommended flags + `bench_model.py`
+  hitting `/v1/chat/completions` against `tools/coding_prompt.txt` and `tools/coding_prompt_32k.txt`.
 
-### Stage 1 — Core knobs (Vulkan, pp4096+tg128, d=0, b=2048, ub=512, r=2)
+(Stages 2/4/5 from the prior tuning skill — batch/ubatch sweep, prompt size, server-only flags —
+were elided this round; the previous bench established the winners and they did not need re-tuning.)
 
-| Sub-stage | Config              | FreeBSD pp4096 | FreeBSD tg128 | Ubuntu pp4096 | Ubuntu tg128 |
-|-----------|---------------------|---------------:|--------------:|--------------:|-------------:|
-| 1.1       | fa=0 f16 KV         | 282.03         | 11.97         | 268.68        | 12.09        |
-| 1.2       | fa=1 f16 KV         | **290.08**     | 11.99         | **274.38**    | 12.13        |
-| 1.3       | fa=1 q8_0 KV        | **CRASH**      | —             | 269.43        | 12.07        |
-| 1b.1      | fa=1 +zerovram      | 285.64         | 11.87         | 273.77        | 12.12        |
-| 1b.2      | fa=1 +zerovram --no-host=1 | 287.98 | 11.91         | 273.76        | 12.12        |
-| 1b.3      | fa=1 -mmp 0         | **CRASH**      | —             | 273.21        | 12.11        |
+## Stage 0 — Sanity (Vulkan, fa=0, p=512, n=128, d=0, r=2)
 
-**Findings:**
-- `-fa 1` is the Stage 1 winner on both OSes (small +pp, no tg cost).
-- `RADV_DEBUG=zerovram` costs ~1.5 % pp on FreeBSD and is a hard requirement there. On Ubuntu it's
-  unnecessary — pp delta is within noise (273.77 vs 274.38).
-- `q8_0` KV cache and `-mmp 0` brick the FreeBSD GPU but run fine on Ubuntu.
-- `--no-host` is neutral on both (it documents the UMA topology to the runtime; perf flat).
+### FreeBSD `frmk-bsd` Vulkan (`RADV_DEBUG=zerovram`)
 
-### Stage 2 — Batch / ubatch sweep (fa=1, d=0)
+| Model            | Quant   | pp512          | tg128          | Notes                                                                  |
+|------------------|---------|---------------:|---------------:|------------------------------------------------------------------------|
+| Qwen3.6-27B      | Q4_K_XL | 295.96 ± 6.11  | 11.89 ± 0.09   | First run after boot crashes (`vk::DeviceLostError`); shown post-warmup. |
+| Qwen3.6-27B      | Q8_K_XL | 230.74 ± 4.44  |  6.08 ± 0.00   | Crashes if loaded first; works after warming with MoE.                 |
+| Qwen3.6-35B-A3B  | Q4_K_XL | 733.65 ± 10.21 | 51.93 ± 1.54   | Stable.                                                                |
+| Qwen3.6-35B-A3B  | Q8_K_XL | 705.78 ± 41.51 | 42.29 ± 1.19   | Stable.                                                                |
 
-| -b / -ub      | FreeBSD pp4096 | FreeBSD tg128 | Ubuntu pp4096 | Ubuntu tg128 |
-|---------------|---------------:|--------------:|--------------:|-------------:|
-| 1024 / 256    | (not tested)   | —             | **276.40**    | 12.13        |
-| **2048 / 512**| **287.98**     | 11.91         | 273.88        | 12.12        |
-| 4096 / 1024   | 278.36         | 11.98         | 257.21        | 12.12        |
+### Ubuntu `frwk-linux` Vulkan (no env prefix)
 
-**Finding**: 2048/512 (the FreeBSD winner) is essentially tied with 1024/256 on Ubuntu. The 4096/1024
-config is ~5–10 % slower on both OSes. Recommend `--batch-size 2048 --ubatch-size 512` as the cross-OS
-default.
+| Model            | Quant   | pp512          | tg128          |
+|------------------|---------|---------------:|---------------:|
+| Qwen3.6-27B      | Q4_K_XL | 236.38 ± 1.21  | 12.01 ± 0.01   |
+| Qwen3.6-27B      | Q8_K_XL | 198.35 ± 1.15  |  6.15 ± 0.00   |
+| Qwen3.6-35B-A3B  | Q4_K_XL | 940.13 ± 16.85 | 55.21 ± 0.08   |
+| Qwen3.6-35B-A3B  | Q8_K_XL | 845.52 ± 21.63 | 42.73 ± 0.04   |
 
-### Stage 3 — Depth sweep (Qwen3.6-27B dense, fa=1, b=2048, ub=512)
+### Ubuntu `frwk-linux` ROCm
 
-| Depth | FreeBSD pp4096 | FreeBSD tg128 | Ubuntu pp4096 | Ubuntu tg128 |
-|------:|---------------:|--------------:|--------------:|-------------:|
-|     0 | 287.98         | 11.91         | 273.88        | 12.12        |
-|  8192 | 246.60         | 11.42         | 238.57        | 11.71        |
-| 32768 | 131.33         | 10.64         | 124.15        | 10.72        |
-| 65536 |  65.57         |  9.59         |  66.34        |  9.70        |
+| Model            | Quant   | Result               |
+|------------------|---------|----------------------|
+| Qwen3.6-27B      | Q4_K_XL | HANG (timeout 300 s) |
+| Qwen3.6-27B      | Q8_K_XL | HANG (timeout 300 s) |
+| Qwen3.6-35B-A3B  | Q4_K_XL | HANG (timeout 300 s) |
+| Qwen3.6-35B-A3B  | Q8_K_XL | HANG (timeout 300 s) |
 
-**Finding**: depth scaling is identical (within 3 %) on both OSes — pp drops from ~280 to ~65 t/s as
-depth grows from 0 → 64 k, tg degrades only ~20 %. FreeBSD's `pp4096 @ d8192` did **not** crash with
-`llama-bench` on dense (it crashes only on the MoE model); Ubuntu ran cleanly throughout.
+**Verified post-reboot**: rebooted Ubuntu (was up 3.7 days when initial ROCm probes hung), `lsmod`
+shows fresh `amdgpu`, `rocminfo` enumerates `gfx1151` cleanly, Vulkan dense Q4 runs fine
+(`pp128 266 t/s / tg32 12 t/s`). ROCm dense Q4 still hangs even with a tiny `-p 128 -n 32 -r 1`
+workload (timeout 120 s). The hang is not a session-state artifact — ROCm 7.2.2 / gfx1151 is
+fundamentally broken on this stack.
 
-### Stage 4 — Prompt size sweep (fa=1, b=2048, ub=512)
+## Stage 1 — Core knobs (Vulkan, pp4096 + tg128, d=0, b=2048, ub=512, r=2)
 
-| Prompt × Depth | FreeBSD       | Ubuntu        |
-|----------------|--------------:|--------------:|
-| pp2048 @ d8192 | 250.34 / 11.56 | 239.73 / 11.70 |
-| pp16384 @ d=0  | 257.27 / 12.02 | 245.04 / 12.11 |
+### Ubuntu `frwk-linux`
 
-Same shape. Larger prompts incur a small per-token-cost penalty on both OSes.
+| Sub | Model             | Quant   | Config           | pp4096          | tg128         |
+|-----|-------------------|---------|------------------|----------------:|--------------:|
+| 1.1 | Qwen3.6-27B       | Q4_K_XL | fa=0             | 261.65 ± 0.51   | 12.11 ± 0.00  |
+| 1.2 | Qwen3.6-27B       | Q4_K_XL | fa=1             | 265.96 ± 0.01   | 12.15 ± 0.01  |
+| 1.3 | Qwen3.6-27B       | Q4_K_XL | fa=1 q8KV        | 258.84 ± 0.07   | 12.11 ± 0.00  |
+| 1.4 | Qwen3.6-27B       | Q4_K_XL | fa=1 nohost      | 266.51 ± 0.01   | 12.16 ± 0.00  |
+| 1.5 | Qwen3.6-27B       | Q4_K_XL | fa=1 nommap      | 266.35 ± 0.05   | 12.16 ± 0.00  |
+| 1.1 | Qwen3.6-35B-A3B   | Q4_K_XL | fa=0             | 892.08 ± 6.03   | 55.01 ± 0.10  |
+| 1.2 | Qwen3.6-35B-A3B   | Q4_K_XL | fa=1             | 913.92 ± 11.09  | 55.21 ± 0.02  |
+| 1.4 | Qwen3.6-35B-A3B   | Q4_K_XL | fa=1 nohost      | 919.35 ± 3.24   | 55.36 ± 0.08  |
+| 1.2 | Qwen3.6-27B       | Q8_K_XL | fa=1             | 174.00 ± 0.24   |  6.13 ± 0.00  |
+| 1.4 | Qwen3.6-27B       | Q8_K_XL | fa=1 nohost      | 203.15 ± 0.05   |  6.15 ± 0.00  |
+| 1.2 | Qwen3.6-35B-A3B   | Q8_K_XL | fa=1             | 816.26 ± 6.34   | 42.74 ± 0.00  |
+| 1.4 | Qwen3.6-35B-A3B   | Q8_K_XL | fa=1 nohost      | 820.49 ± 2.71   | 42.97 ± 0.00  |
 
-### Stage 5 — `--ctx-size 131072` stability
+**Ubuntu Stage 1 winner**: `-fa 1 --no-host 1` for both models, both quants. `--no-host` is +0–17 %
+pp on Q8 (Ubuntu UMA-aware path), neutral on Q4. q8KV runs fine here (no crash).
 
-Both systems can reserve and serve a 131 072-token context on Vulkan. Memory split (Ubuntu, captured
-at server shutdown):
+### FreeBSD `frmk-bsd`
 
-```
-| memory breakdown [MiB]                      | total    free     self   model   context   compute    unaccounted |
-|   - Vulkan0 (8060S Graphics (RADV GFX1151)) | 63404 = 36131 + (25823 = 16104 +    8790 +     929) +        1449 |
-|   - Host                                    |                    958 =   682 +       0 +     276                |
-```
+| Sub | Model             | Quant   | Config           | pp4096      | tg128       | Notes                                       |
+|-----|-------------------|---------|------------------|------------:|------------:|---------------------------------------------|
+| 1.1 | Qwen3.6-27B       | Q4_K_XL | fa=0             | **CRASH**   | —           | Retried 3× post-reboot.                     |
+| 1.4 | Qwen3.6-27B       | Q4_K_XL | fa=1 nohost      | **CRASH**   | —           | Retried 3× post-reboot — repeatable.        |
+| 1.2 | Qwen3.6-27B       | Q8_K_XL | fa=1             | 256.01      |  6.08       | Post-MoE warmup.                            |
+| 1.4 | Qwen3.6-27B       | Q8_K_XL | fa=1 nohost      | 257.95      |  6.09       | Works on Q8 even though it crashes on Q4.   |
+| 1.4 | Qwen3.6-35B-A3B   | Q8_K_XL | fa=1 nohost      | **CRASH**   | —           | Retried 3× — repeatable.                    |
 
-Translation: model 16.1 GB + KV (f16, 4 slots × 131k) 8.8 GB + compute 0.9 GB ≈ 25.8 GB on Vulkan0 —
-fits easily into the 64 GB GTT/UMA budget on either OS. End-to-end inference at d≈4k context returned
-12.31 t/s tg on Ubuntu, matching FreeBSD's ~11.9 t/s.
+**FreeBSD Stage 1 finding**: `--no-host 1` is **not a safe default** on FreeBSD/RADV. It crashes on
+27B Q4 and 35B-A3B Q8, but works on 27B Q8 and 35B-A3B Q4. The crashes are repeatable across reboots
+on the same model+config combo. **Recommended**: omit `--no-host` in the FreeBSD recipe.
 
-**Ubuntu-only gotcha**: `llama-server -hf unsloth/Qwen3.6-27B-GGUF` auto-downloads the **vision encoder
-(mmproj)** because this is the Qwen3.6-VL series. The CLIP encoder defaults to ROCm0, which hangs at
-load time on Strix Halo (same root cause as the MoE ROCm hang below). Workaround: pass `--no-mmproj` —
-or rely on Vulkan-only with `--mmproj-offload` overrides. On FreeBSD the same issue does not apply:
-there is no ROCm, so CLIP falls back to a working code path automatically.
+## Stage 3 — Depth sweep (fa=1, b=2048, ub=512, r=2)
 
-### Stage 6 — Qwen3.6-35B-A3B MoE on Vulkan
+### Ubuntu `frwk-linux` Vulkan (with `--no-host 1`)
 
-| Depth |  FreeBSD pp4096 | FreeBSD tg128 | Ubuntu pp4096 | Ubuntu tg128 |
-|------:|----------------:|--------------:|--------------:|-------------:|
-|     0 |          901.96 |         52.41 |        926.83 |        54.87 |
-|  8192 | **CRASH** (empty-batch path in `llama-bench`; `llama-server` works with `--no-warmup`) | — | 818.30 | 51.40 |
-| 32768 |        (server-only on FreeBSD: 760 PP / 45.1 TG)  | — | 600.44 | 46.07 |
-| 65536 |        (n/a)    | —             |        431.69 |        40.52 |
+| Model             | Quant   | depth | pp4096          | tg128         |
+|-------------------|---------|------:|----------------:|--------------:|
+| Qwen3.6-27B       | Q4_K_XL |  8192 | 230.11 ± 0.14   | 11.73 ± 0.01  |
+| Qwen3.6-27B       | Q4_K_XL | 32768 | 119.64 ± 0.14   | 10.72 ± 0.00  |
+| Qwen3.6-27B       | Q8_K_XL |  8192 | 135.86 ± 0.06   |  6.00 ± 0.00  |
+| Qwen3.6-27B       | Q8_K_XL | 32768 |  96.12 ± 0.28   |  5.76 ± 0.00  |
+| Qwen3.6-35B-A3B   | Q4_K_XL |  8192 | 823.46 ± 4.00   | 51.69 ± 0.35  |
+| Qwen3.6-35B-A3B   | Q4_K_XL | 32768 | 600.40 ± 0.90   | 46.46 ± 0.13  |
+| Qwen3.6-35B-A3B   | Q8_K_XL |  8192 | 749.63 ± 3.92   | 40.95 ± 0.06  |
+| Qwen3.6-35B-A3B   | Q8_K_XL | 32768 | 563.19 ± 0.29   | 37.50 ± 0.00  |
 
-**Finding**: MoE Vulkan is fast and stable on Ubuntu at all depths — Ubuntu reproduces the FreeBSD
-`llama-server` results without the empty-batch crash workaround. The `-d N>0` `llama-bench` crash
-documented for FreeBSD is gone on Mesa 25.2.8.
+### FreeBSD `frmk-bsd` Vulkan (`RADV_DEBUG=zerovram`, no `--no-host`)
 
-### Stage 6b — Qwen3.6-35B-A3B MoE on **ROCm**
+| Model             | Quant   | depth | pp4096          | tg128         | Notes                                |
+|-------------------|---------|------:|----------------:|--------------:|--------------------------------------|
+| Qwen3.6-27B       | Q4_K_XL |  8192 | 249.69 ± 0.83   | 11.54 ± 0.03  |                                      |
+| Qwen3.6-27B       | Q4_K_XL | 32768 | 133.23 ± 0.38   | 10.61 ± 0.04  |                                      |
+| Qwen3.6-27B       | Q8_K_XL |  8192 | 189.69 ± 0.13   |  5.99 ± 0.00  |                                      |
+| Qwen3.6-27B       | Q8_K_XL | 32768 | 116.06 ± 0.57   |  5.70 ± 0.00  |                                      |
+| Qwen3.6-35B-A3B   | Q4_K_XL |  8192 | 829.69 ± 11.31  | 47.61 ± 3.18  | First run crashed; result on retry.  |
+| Qwen3.6-35B-A3B   | Q4_K_XL | 32768 | 593.66 ± 1.12   | 43.91 ± 0.85  | Retry result.                        |
+| Qwen3.6-35B-A3B   | Q8_K_XL |  8192 | 782.98 ± 0.06   | 40.32 ± 0.91  |                                      |
+| Qwen3.6-35B-A3B   | Q8_K_XL | 32768 | 574.55 ± 9.30   | 34.63 ± 0.05  |                                      |
 
-Tested only on Ubuntu (FreeBSD has no ROCm). Result: **HANGS**. Probe with reduced workload
-(`-p 1024 -n 64 -r 1 -d 0`) timed out at 5 min (CPU 100 %, GPU 0 % busy). Same hang at d=8192. ROCm
-HIP loads the model but never schedules MoE expert kernels successfully on gfx1151. Stick to Vulkan
-for MoE on Strix Halo regardless of OS.
+**Cross-OS Stage 3 takeaway**:
 
-ROCm dense Qwen3.6-27B was **not benchmarked** on this run (the multi-backend matrix invocation hung
-similarly). Per `tools/LLM.md` benchmarks on smaller models, ROCm pp is comparable to Vulkan but tg is
-~½, so dense ROCm has no upside on this hardware either.
+| Model & quant     | pp gap (FB vs FW2) at d=8 k | pp gap at d=32 k | tg gap         |
+|-------------------|-----------------------------|------------------|----------------|
+| 27B Q4            | FB +8 %                     | FB +11 %         | tie            |
+| 27B Q8            | **FB +40 %**                | FB +21 %         | tie            |
+| MoE Q4            | tie                         | tie              | FW2 +9 % tg    |
+| MoE Q8            | FB +4 %                     | FB +2 %          | FW2 ~5–8 % tg  |
 
-## Recommended runtime config (cross-OS)
+## Stage 4 — `bench_model.py` validation
 
-The same flags work well on both OSes; the only OS-specific bit is `RADV_DEBUG`:
+`llama-server` with the recommended runtime flags (see [Recommended runtime
+config](#recommended-runtime-config)), Qwen3.6-35B-A3B Q4 (the coding default), `--ctx-size 65536
+--parallel 1`. Bench: `bench_model.py -t 256 -r 2` against `tools/coding_prompt.txt` (4 004 tok) and
+`tools/coding_prompt_32k.txt` (32 919 tok). The PP TPS is `prompt_tokens / TTFT` from the streaming
+response — i.e. **cold prefill** the first time the prompt is seen.
+
+| Host       | Depth   | TTFT (ms) | PP t/s | Total TPS |
+|------------|---------|----------:|-------:|----------:|
+| frmk-bsd  |  ~4 k   |    4 443  | 901.3  |    48.9   |
+| frwk-linux |  ~4 k   |    4 413  | 907.4  |    51.5   |
+| frmk-bsd  | ~32 k   |   43 252  | 761.1  |    42.6   |
+| frwk-linux | ~32 k   |   44 043  | 747.4  |    44.7   |
+
+These match Stage 3's `llama-bench` numbers within the expected gap (cold prefill at d≈4 k beats
+`llama-bench`'s warm-after-warmup numbers slightly). Ubuntu's small TG edge for MoE persists, FreeBSD
+matches/beats on PP.
+
+## Recommended runtime config
+
+The same recipe works on both OSes; the only OS-specific bits are `RADV_DEBUG` (FreeBSD only) and
+`--no-host` (Ubuntu only).
 
 ```sh
-# FreeBSD: prefix with RADV_DEBUG=zerovram to avoid vk::DeviceLostError.
-# Ubuntu:  no RADV_DEBUG needed.
+# FreeBSD: RADV_DEBUG=zerovram is required, --no-host is NOT.
+# Ubuntu:  no env prefix needed, --no-host adds +0-17 % pp.
 
-build/bin/llama-server \
+[RADV_DEBUG=zerovram] llama-server \
+  -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL \
+  --device Vulkan0 \
+  --flash-attn on \
+  [--no-host] \
+  --batch-size 2048 --ubatch-size 512 \
+  --ctx-size 65536 --parallel 1 \
+  --no-mmproj \
+  --jinja
+```
+
+`--ctx-size 65536` is the working ceiling — both stacks can reserve `--ctx-size 131072` but TTFT
+collapses past d ≈ 30 k on Strix Halo regardless of OS (memory bandwidth, not driver).
+
+## Memory bandwidth as the wall
+
+[A blog post benchmarking the Framework Laptop 13 with Ryzen AI 9 HX 370 + Radeon
+890M](https://msf.github.io/blogpost/local-llm-performance-frmk-bsd13.html) reports ~75 %
+memory-bandwidth utilization on the 89.6 GB/s DDR5-5600 bus. The Strix Halo Framework Desktop
+benched here has roughly **3× that bandwidth** (256-bit LPDDR5x ≈ 256 GB/s) and ~2.5× more CUs
+(40 vs 16). Translating our MoE Q4 tg128 numbers (~52 t/s on a 20.81 GiB model active path):
+
+```
+3 GB (Q4 active path) × 52 t/s ≈ 156 GB/s ≈ 60 % of 256 GB/s theoretical max
+```
+
+For dense Q4 27B (16.4 GiB Q4 model × 12 t/s ≈ 197 GB/s ≈ 77 %) we hit the same ceiling reported on
+the laptop. tg is **memory-bound, not compute-bound and not driver-bound** — that's why Vulkan tg is
+identical across both OSes. PP is more compute-shaped (matmul-heavy) and that's where the OS gap
+appears: FreeBSD's compiler/scheduling gives ~5–40 % more pp on dense models; on MoE the gap
+collapses (smaller active path, less compute pressure).
+
+## Known crash signatures (FreeBSD frmk-bsd, Mesa 24.1.7 RADV)
+
+- **First-run-after-boot of any large model**: usually crashes with `vk::DeviceLostError` in
+  `ggml_vk_buffer_write_2d`. Warm with a smaller MoE config first if the bench order matters.
+- **27B Q4 with `-fa 0` (no flash-attn)**: repeatable crash post-reboot. Use `-fa 1`.
+- **27B Q4 with `-fa 1 --no-host 1`**: repeatable crash. Q8 of the same model works.
+- **35B-A3B Q8 with `-fa 1 --no-host 1`**: repeatable crash. Q4 of the same model works.
+- **Multi-value `llama-bench` sweeps** (e.g. `-fa 0,1`): crash on graph variant 2/3. Run one
+  invocation per (model, config) pair — the test scripts in this repo already do that.
+- **Recovery**: `dmesg` shows `GPU reset(N) succeeded!` on the new official drm-kmod, and
+  `kldstat` still lists `amdgpu`. But the userspace Vulkan device may be in a degraded state — a
+  follow-up bench can crash again. **Reboot is the only reliable recovery.** `kldunload amdgpu` then
+  `kldload amdgpu` does **not** restore Vulkan probing (returns "No devices found").
+
+## Reproducing this on another FreeBSD frmk-bsd-class machine
+
+1. Install the official drm-kmod and firmwares from FreeBSD ports:
+   ```
+   pkg install drm-latest-kmod gpu-firmware-amd-kmod-{dcn-3-5-1,gc-11-5-1,psp-14-0-1,sdma-6-1-1,vcn-4-0-6,vcn-4-0-6-1,vpe-6-1-1,mes-11-0-0,umsch-mm-4-0-0,vcn-4-0-6,dmcub-3-5-0,imu-11-5-1}
+   ```
+   (Pull the matching `gpu-firmware-amd-kmod-*` set; `pkg search gpu-firmware-amd-kmod` lists them.)
+2. After every reboot: `sudo kldload amdgpu`. Verify with
+   `~/llama.cpp/build/bin/llama-bench --list-devices` — should show `Vulkan0`.
+3. Build llama.cpp with Vulkan backend (`-DGGML_VULKAN=ON`); `vulkan-headers` and `vulkan-loader`
+   are the only build/link deps. The runtime ICD is provided by `mesa-dri`
+   (`/usr/local/share/vulkan/icd.d/radeon_icd.x86_64.json`).
+4. Always set `RADV_DEBUG=zerovram` in the env when launching `llama-bench` or `llama-server`.
+   Without it, the first run after boot is essentially guaranteed to crash with
+   `vk::DeviceLostError`. Cost: ~1.5 % pp.
+5. Do **not** combine `--no-host 1` with 27B Q4 or 35B-A3B Q8 (see crash list).
+6. If the GPU wedges past `GPU reset succeeded`: `sudo shutdown -r now`, then `sudo kldload amdgpu`.
+
+## Pitfalls revisited
+
+- **`--cache-reuse N`** is silently disabled on Qwen3-family models because their KV cache uses
+  M-RoPE / IM-RoPE which cannot be position-shifted. The server logs `cache_reuse is not supported
+  by ...` and the flag becomes a no-op. The default server prompt cache + checkpoints already give
+  ~88× speedup on warm reuse of a 30 k prompt, so this is not a regression — just don't recommend
+  the flag for these models.
+- **`-hf` auto-loads the multimodal projector** for Qwen3.6-VL-derived weights (the "coder" repo is
+  one of these). Pass `--no-mmproj` for text-only use to save VRAM and avoid the
+  `cache_reuse is not supported by multimodal` log line.
+- **`--reasoning-budget 0`** disables `<think>...</think>` blocks for short, mechanical tasks.
+  Measured ~8.6× speedup on a "is_prime" task on Qwen3.6-27B with correct output. Use a separate
+  launch mode (`MODE=fast`) rather than baking into the default.
+- **`bench_model.py` warm-up populates the prompt cache** on `llama-server`, so the per-run TTFT it
+  prints is for cached re-evaluation. To measure cold prefill, hit `/v1/chat/completions` with curl
+  and read `timings.prompt_n` / `timings.prompt_per_second` directly — the
+  `~/.claude/skills/llama-bench-tune` skill includes a `bench_one.sh` snippet for this.
+
+## Raw data files
+
+The verbatim `llama-bench` markdown tables and `bench_model.py` summaries from this run are in
+`/tmp/bench-results.md` on the host that drove the bench. Logs on the test hosts:
+
+- frmk-bsd: `/tmp/fb_stage0.log`, `/tmp/fb_stage3.log`, `/tmp/srv-qwen36-moe-q4.log`.
+- frwk-linux: `/tmp/fw2_stage1.log`, `/tmp/fw2_stage3.log`, `/tmp/srv-qwen36-moe-q4.log`.
+
+## Mesa 25.2.8 update on FreeBSD
+
+After upgrading FreeBSD `frmk-bsd` from `mesa-* 24.1.7` to `mesa-* 25.2.8` on 2026-05-02 (vulkan-loader
+and vulkan-headers unchanged at 1.4.349, drm-kmod unchanged, llama.cpp **not rebuilt** — the Vulkan ICD
+is dlopen'd at runtime so no rebuild is needed for a Mesa-only upgrade). Same hardware, same llama.cpp
+build `27aef3dd9`, same models, same flags.
+
+### Headline changes
+
+| Metric                                  | Mesa 24.1.7         | Mesa 25.2.8        | Delta             |
+|-----------------------------------------|--------------------:|-------------------:|-------------------|
+| 27B Q4 pp4096 d=0 (no zerovram)         | crashed             | 295.4 t/s          | now stable        |
+| 27B Q4 tg128 d=0                        | 11.89               | 12.04              | +1 %              |
+| 27B Q4 pp4096 d=32 768                  | 133.2               | 135.3              | +1.6 %            |
+| 27B Q8 pp4096 d=0                       | 230.7               | 266.4              | **+15 %**         |
+| 27B Q8 tg128 d=0                        | 6.08                | 6.07               | tie               |
+| 35B-A3B Q4 pp4096 d=0                   | 733.7               | **892.4**          | **+22 %**         |
+| 35B-A3B Q4 tg128 d=0                    | 51.93               | 54.11              | +4 %              |
+| 35B-A3B Q4 pp4096 d=32 768              | 593.7               | 619.7              | +4 %              |
+| 35B-A3B Q8 pp4096 d=0                   | 705.8               | 871.7              | **+23 %**         |
+| 35B-A3B Q8 tg128 d=0                    | 42.29               | 42.48              | tie               |
+
+Mesa 25 is a **clear pp win** on dense Q8 (+15 %) and on both MoE quants (+22–23 %). tg is unchanged
+because tg is bandwidth-bound, not driver-bound.
+
+### Crash classes shifted
+
+Tested with fresh reboots between crashes; raw data in `/tmp/fb_mesa25.log`,
+`/tmp/fb_mesa25_clean.log`, `/tmp/fb_mesa25_depths.log`, `/tmp/fb_27b_depth.log` on `frmk-bsd`.
+
+| Config                                       | Mesa 24.1.7          | Mesa 25.2.8                |
+|----------------------------------------------|----------------------|----------------------------|
+| First-run-after-boot **without** zerovram    | crashes reliably     | **runs cleanly**           |
+| `RADV_DEBUG=zerovram` standard config        | required, ~1.5 % pp cost | **CRASHES** — actively harmful |
+| 27B Q4 `-fa 0`                               | crashes              | (not retested — safer to keep `-fa 1`) |
+| 27B Q4 `-fa 1 --no-host 1`                   | crashes              | crashes                    |
+| 27B Q8 `-fa 1 --no-host 1`                   | works                | **crashes** (regression)   |
+| 35B-A3B Q4 `-fa 1 --no-host 1`               | works                | works                      |
+| 35B-A3B Q8 `-fa 1 --no-host 1`               | crashes              | works (post-warm-up)       |
+| 35B-A3B Q8 first run after fresh boot        | unreliable           | **runs cleanly** (871/42)  |
+| 27B Q4/Q8 reload after a crash recovery      | unreliable           | unreliable (reboot to be safe) |
+
+The exact crash signature is unchanged: `vk::DeviceLostError` in `ggml_vk_buffer_write_2d` with
+`radv/amdgpu: The CS has been cancelled because the context is lost.` The `GPU reset(N) succeeded!`
+auto-recovery still works — but as before, userspace Vulkan state degrades after recovery and a
+reboot is the only reliable path back to clean operation.
+
+### Revised FreeBSD recipe (Mesa 25.2.8)
+
+```sh
+# No env prefix — RADV_DEBUG=zerovram is now harmful on Mesa 25.
+llama-server \
   -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL \
   --device Vulkan0 \
   --flash-attn on \
   --no-host \
-  --no-warmup \
   --batch-size 2048 --ubatch-size 512 \
-  --ctx-size 65536 \
-  --jinja
+  --ctx-size 65536 --parallel 1 \
+  --no-mmproj --jinja
 ```
 
-On Ubuntu, also pass `--no-mmproj` if the model has a vision projector you don't need (Qwen3.6-VL
-does); otherwise `llama-server` will hang on CLIP load.
+`--no-host 1` is now safe with **MoE** (Q4 and Q8). For the dense **27B** model, drop `--no-host` —
+both Q4 and Q8 still crash with it on Mesa 25.
 
-## Memory bandwidth as the wall
-
-[A blog post benchmarking the Framework Laptop 13 with Ryzen AI 9 HX 370 + Radeon 890M](https://msf.github.io/blogpost/local-llm-performance-framework13.html)
-reports ~75 % memory-bandwidth utilization for Vulkan inference and identifies the 89.6 GB/s
-DDR5-5600 bus as "the hard wall." The Strix Halo Framework Desktop benched here has roughly **3×
-that bandwidth** (256-bit LPDDR5x ≈ 256 GB/s theoretical) and ~2.5× more CUs (40 vs 16). Translating
-our tg128 numbers (12 t/s on a 16.4 GB Q4 model) to bandwidth:
-
-```
-16.4 GB × 12 t/s = 197 GB/s ≈ 77 % of the 256 GB/s theoretical max
-```
-
-— almost exactly the same utilization ratio, on different silicon. This confirms tg is **memory-bound,
-not compute-bound or driver-bound** on this hardware. That's why FreeBSD and Ubuntu post identical tg
-numbers despite very different driver stacks: there's no software headroom to claim, only bandwidth.
-PP is more compute-shaped (matmul-heavy) and that's where the ~5 % FreeBSD/Ubuntu gap appears.
-
----
-
-# FreeBSD-only deep-dive (the original tuning narrative)
-
-What follows is the FreeBSD-side multi-stage tuning that produced the recommendations above. Stages
-1-6 below were re-run on Ubuntu (results in the comparison tables above); the narrative — including
-crash signatures, workarounds, and the FreeBSD-specific drm-kmod context — is preserved verbatim
-because most of it is what one needs when reproducing this on another FreeBSD machine.
-
-## Methodology
-
-Coding workloads care about both:
-- **Prompt processing (pp)**: speed of ingesting code context (files, diffs, conversation).
-- **Token generation (tg)**: speed of emitting code.
-
-Multi-stage tuning to keep total runtime tractable:
-1. Stage 1 — Core knobs (fa, mmap, no-host, KV cache type) at d=0.
-2. Stage 2 — Batch / ubatch on winner.
-3. Stage 3 — Depth sweep.
-4. Stage 4 — Prompt size sweep & final recommendation.
-
-Note: an initial run with `-mmp 0 --no-host 1 -d 32768` triggered a Vulkan
-`DeviceLostError`. Started with safer defaults and ramped up cautiously.
-
-## Build / model detection note
-
-Current llama.cpp build: `9d34231bb (8929)`. Under this build, the model is
-detected as a **dense `qwen35 27B Q4_K - Medium` (16.39 GiB, 26.90 B params)**
-— not as MoE like the older `94ca829b6 (8679)` build in the doc above (which
-showed `qwen35moe 35B.A3B`, 20.70 GiB). This explains why current tg numbers
-(~12 t/s) are far below the previous ~50 t/s: the dense path activates all
-weights per token instead of routing 3B active params through MoE. Tuning
-results below apply to the **current** detection.
-
-After several `vk::DeviceLostError` crashes pre/post-reboot, the GPU stabilized
-once a small baseline run (`-p 512 -n 128 -r 2`) succeeded. All Stage 1+ runs
-below were stable.
-
-## Baseline (sanity)
-
-| test  |   t/s         |
-| ----- | ------------- |
-| pp512 | 290.03 ± 4.09 |
-| tg128 |  12.01 ± 0.02 |
-
-## Stage 1 — Core knobs (pp4096 + tg128, d=0, b=2048, ub=512, r=2)
-
-| -fa | type_k | type_v | test   |   t/s         |
-| --- | ------ | ------ | ------ | ------------- |
-|  0  | f16    | f16    | pp4096 | 282.03 ± 0.74 |
-|  0  | f16    | f16    | tg128  |  11.97 ± 0.01 |
-|  1  | f16    | f16    | pp4096 | 290.08 ± 0.36 |
-|  1  | f16    | f16    | tg128  |  11.99 ± 0.05 |
-| 1   | q8_0   | q8_0   | —      | **CRASH** (vk::DeviceLostError) — quantized KV cache unsupported on RADV here |
-
-**Stage 1 winner**: `-fa 1` with f16 KV cache. (+2.8% pp, tg unchanged.) q8_0
-KV cache is unusable on this build; do not retry.
-
-## Workaround for vk::DeviceLostError
-
-After enabling `kern.msgbufsize=524288` and `drm.debug=0xff`, captured a clean
-trace and confirmed the workaround:
-
-```
-RADV_DEBUG=zerovram ./llama-bench ...
-```
-
-`zerovram` zeroes newly-allocated VRAM, which prevents the device-loss. This
-indicates a RADV/ACO bug on **GFX1151 (Strix Halo)** where some shader is
-reading **uninitialized GPU memory**. Cost: ~1.5% pp regression (285.64 vs
-290.08 t/s at pp4096+fa1+f16-KV).
-
-All subsequent stages run with `RADV_DEBUG=zerovram` set in the environment.
-
-## Stage 1b — mmap / no-host (with RADV_DEBUG=zerovram, pp4096+tg128, d=0, fa=1, r=2)
-
-| -mmp | --no-host | test    |   t/s         | notes |
-| ---- | --------- | ------- | ------------- | ----- |
-| 1    | 0         | pp4096  | 290.08 ± 0.36 | (Stage 1 baseline) |
-| 1    | 0         | tg128   |  11.99 ± 0.05 | |
-| 1    | 0         | pp4096  | 285.64 ± 0.75 | with zerovram (~1.5% slower) |
-| 1    | 0         | tg128   |  11.87 ± 0.18 | |
-| 1    | 1         | pp4096  | 287.98 ± 0.63 | --no-host 1, zerovram |
-| 1    | 1         | tg128   |  11.91 ± 0.00 | |
-| 0    | 0         | —       | **CRASH**     | -mmp 0 still crashes even with zerovram (Vulkan device wedged) |
-
-**Stage 1b winner**: `--mmap 1` (default) + `--no-host 1`. `--no-host` is
-~+0.8% pp neutral on tg vs default. `-mmp 0` is unusable — wedges the
-Vulkan device hard enough that `kldunload/kldload amdgpu` cannot recover
-it (Vulkan probe finds no devices); requires a reboot.
-
-## Status — paused
-
-- Host **framework** unreachable since ~16:30 (FreeBSD likely doing fsck or
-  awaiting console input after kernel hang).
-- Need: power-cycle / console check, then `sudo kldload amdgpu` after boot.
-
-### What is settled
-- `-fa 1` is +2.8% pp over `-fa 0`; tg unchanged. **Use `-fa 1`.**
-- KV cache **must stay f16** — `q8_0` crashes Vulkan/RADV on this build.
-- `-mmp 0` crashes Vulkan/RADV on this build (at least when combined with
-  this model size). Leave `--mmap 1` (default).
-- llama.cpp build `9d34231bb (8929)` detects the model as **dense 27B**
-  (16.39 GiB, 26.90 B params), not MoE 35B.A3B as in the older `8679`
-  build — explains tg dropping from ~50 t/s to ~12 t/s vs. the previous
-  numbers in `Framework-desktop.md`.
-
-### Resume plan when host is back
-
-1. `ssh framework "sudo kldload amdgpu && kldstat | grep amdgpu"`
-2. Sanity baseline: `-p 1024 -n 64 -fa 1 -r 1` — confirm Vulkan is alive.
-3. Stage 1b finish (one at a time, separated by sanity checks):
-   - `-fa 1 --no-host 1` (mmap default = 1).
-4. **Stage 2** — batch / ubatch on winner: `-fa 1 -b 1024,2048,4096
-   -ub 256,512,1024` at pp4096+tg128, d=0. Run **single-config invocations**
-   to avoid the multi-value crash pattern seen in Stage 1.
-5. **Stage 3** — depth sweep on winner: `-d 0`, then `8192`, then `32768`,
-   then `65536`. Stop at the first crash; the previous depth is the ceiling.
-6. **Stage 4** — prompt size sweep on winner: `-p 2048,8192,16384`.
-7. **Final** — write recommendation block (flags ready to paste into
-   `llama-server`, expected pp/tg at typical and worst-case depth).
-
-## End-to-end validation via llama-server + tools/bench_model.py
-
-Started `llama-server` with the recommended config and ran
-`tools/bench_model.py` against three deterministic prompts of increasing
-size, no prompt cache, 3 runs + warm-up each, max_tokens=256, temp=0.0.
-
-```
-RADV_DEBUG=zerovram llama-server -m <model> --device Vulkan0 \
-  --flash-attn on --no-host --batch-size 2048 --ubatch-size 512 \
-  --ctx-size 65536 --port 8080 --host 127.0.0.1
-```
-
-| Prompt size | TTFT avg  | PP TPS | Total TPS | ITL P95  | comparable llama-bench config |
-| ----------- | --------- | -----: | --------: | -------- | ----------------------------- |
-|  4089 tok   |   14.4 s  |  285.6 |     11.7  |  85.9 ms | pp4096 @ d=0    → 287.98 / 11.91 |
-| 12468 tok   |   47.0 s  |  265.3 |     11.4  |  88.7 ms | pp4096 @ d=8192 → 246.60 / 11.42 |
-| 38589 tok   |  202.7 s  |  190.5 |     10.4  |  96.5 ms | pp4096 @ d=32768 → 131.33 / 10.64 |
-
-**Cross-validation analysis:**
-
-- **Token generation matches within 2%** at every depth — llama-bench's
-  tg numbers are reliable predictors of real server tg.
-- **PP TPS at d=0 matches within 1%** (285.6 vs 287.98) — the server
-  ingestion path costs essentially nothing on top of raw decode.
-- **PP TPS at deeper context diverges in the server's favor**: at the
-  ~36k mark, the server hits 190.5 t/s vs llama-bench's 131.3 t/s
-  (+45%). The reason: `llama-bench -p 4096 -d 32768` measures
-  processing 4k *on top of* a 32k pre-filled KV cache (per-token cost
-  is dominated by the 32k attention reads), while the server processes
-  the 36k prompt as one contiguous batch (better cache locality, batch
-  efficiency).
-- **Real interactive coding behavior is closer to the server measurement**
-  — when you paste a 36k context block, the server processes it as one
-  batch, not as deltas on top of pre-existing context.
-- **No GPU crashes across all three depths** with the recommended
-  config. Stable.
-
-**Updated expectations for typical coding sessions:**
-- Fresh ~4k context: TTFT ~14 s, then ~12 t/s → first 256 tokens in
-  ~36 s.
-- Mid-session ~12k context: TTFT ~47 s, then ~11.4 t/s.
-- Deep ~36k context: TTFT ~3.4 min, then ~10.4 t/s.
-
-`bench_model.py` was extended this session: `--prompt-file`,
-`--cache-prompt` (default off), PP TPS metric (`prompt_tokens / TTFT`
-via `stream_options.include_usage`).
-
-## llama-server validation (--kv-unified)
-
-`--kv-unified` is not exposed by `llama-bench`, so it was tested via
-`tools/bench_model.py` against `llama-server`. Identical 4k-token coding
-prompt, 256 max_tokens, temperature 0, seed-equivalent (greedy), 3 runs +
-warm-up, `cache_prompt=false` so each run re-ingests the prompt:
-
-| Config              | PP TPS | Total TPS | TTFT     |
-| ------------------- | -----: | --------: | -------: |
-| without `--kv-unified` | 279.5  | 11.8      | 14328 ms |
-| with    `--kv-unified` | 280.0  | 11.7      | 14298 ms |
-
-Delta < 0.5% — within run-to-run noise. `--kv-unified` only matters when
-serving concurrent requests across parallel slots; for a single coding
-client it's a no-op.
-
-`tools/bench_model.py` was extended for this comparison: PP TPS metric
-(prompt_tokens / TTFT), `--prompt-file`, `--cache-prompt` flag (default
-off so PP measurements aren't poisoned by KV cache reuse), and
-`stream_options.include_usage` to get prompt_tokens out of streamed
-responses.
-
-### Known crash signatures (do not retry)
-- `-mmp 0` (any combo) — wedges Vulkan; `kldunload/kldload amdgpu` cannot
-  recover (Vulkan probe finds no devices); requires reboot.
-- `-dio 1` / `--direct-io 1` — same wedge pattern as `-mmp 0` (also bypasses
-  page cache). Crashes pp4096+fa1+no-host=1+zerovram. Requires reboot.
-- `-ctk q8_0 -ctv q8_0` — quantized KV cache unsupported by RADV here.
-- Multi-value sweeps (e.g. `-b 1024,2048,4096 -ub 256,512,1024`) that
-  produce many ggml graph variants in one run. Split into single-config
-  invocations.
-
-## Stage 2 — Batch / ubatch (single-config, pp4096+tg128, d=0, fa=1, no-host=1, r=2)
-
-| -b   | -ub  | test    |   t/s         |
-| ---- | ---- | ------- | ------------- |
-| 2048 | 512  | pp4096  | 287.98 ± 0.63 |
-| 2048 | 512  | tg128   |  11.91 ± 0.00 |
-| 4096 | 1024 | pp4096  | 278.36 ± 0.23 |
-| 4096 | 1024 | tg128   |  11.98 ± 0.00 |
-
-**Stage 2 winner**: default `-b 2048 -ub 512` (the larger 4096/1024 is ~3%
-slower on pp, tg essentially unchanged). The doc's previous
-`--batch-size 4096 --ubatch-size 1024` choice helped under the old MoE
-detection but does **not** help with the current dense detection.
-
-## Stage 3 — Depth sweep (pp4096+tg128, fa=1, no-host=1, b=2048, ub=512, r=2)
-
-| -d    | test            |   t/s         |
-| ----- | --------------- | ------------- |
-|     0 | pp4096          | 287.98 ± 0.63 |
-|     0 | tg128           |  11.91 ± 0.00 |
-|  8192 | pp4096 @ d8192  | 246.60 ± 0.78 |
-|  8192 | tg128  @ d8192  |  11.42 ± 0.24 |
-| 32768 | pp4096 @ d32768 | 131.33 ± 0.21 |
-| 32768 | tg128  @ d32768 |  10.64 ± 0.04 |
-| 65536 | pp4096 @ d65536 |  65.57 ± 0.31 |
-| 65536 | tg128  @ d65536 |   9.59 ± 0.03 |
-
-Key observation: prompt processing degrades sharply with depth (FA scales
-as O(n) per token but pp does many tokens), tg degrades gently
-(-20% from d=0 to d=65536). For coding workloads typical depth is
-8k–32k; expect 130–250 t/s pp and 10.6–11.4 t/s tg.
-
-## Stage 4 — Prompt size sweep (fa=1, no-host=1, b=2048, ub=512, r=2)
-
-| -p    | -d   | test            |   t/s         |
-| ----- | ---- | --------------- | ------------- |
-|  2048 | 8192 | pp2048 @ d8192  | 250.34 ± 0.16 |
-|  2048 | 8192 | tg128  @ d8192  |  11.56 ± 0.04 |
-|  4096 |    0 | pp4096          | 287.98 ± 0.63 |
-|  4096 | 8192 | pp4096 @ d8192  | 246.60 ± 0.78 |
-| 16384 |    0 | pp16384         | 257.27 ± 0.38 |
-| 16384 |    0 | tg128           |  12.02 ± 0.01 |
-
-Larger prompts have slightly **lower** pp/s (the per-token cost rises with
-in-flight context). At realistic coding depth (d=8k), pp2048 and pp4096 are
-within 1.5% of each other — prompt size matters less than depth.
-
-# Final recommendation — `llama-server` flags for code writing
+### How the Mesa upgrade was verified
 
 ```sh
-RADV_DEBUG=zerovram \
-build/bin/llama-server \
-  -m ~/.cache/huggingface/hub/models--unsloth--Qwen3.6-27B-GGUF/snapshots/82d411acf4a06cfb8d9b073a5211bf410bfc29bf/Qwen3.6-27B-UD-Q4_K_XL.gguf \
-  --alias qwen36-coder \
-  --device Vulkan0 \
-  --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 \
-  --flash-attn on \
-  --no-host \
-  --batch-size 2048 --ubatch-size 512 \
-  --ctx-size 65536
+pkg info mesa-libs mesa-dri mesa-libgallium  # 25.2.8 across the board
+ldd ~/llama.cpp/build/bin/libggml-vulkan.so.0 | grep vulkan
+#   libvulkan.so.1 => /usr/local/lib/libvulkan.so.1
 ```
 
-**Why these settings:**
-- `RADV_DEBUG=zerovram` — required to avoid `vk::DeviceLostError` crashes
-  on this RADV/GFX1151 + drm-kmod combo. Cost ~1.5% pp.
-- `--flash-attn on` — +2.8% pp, free.
-- `--no-host` — +0.8% pp, free, and reduces host memory pressure on this
-  UMA system.
-- Default `--batch-size 2048 --ubatch-size 512` — `4096/1024` is 3% slower.
-- `--ctx-size 65536` — proven stable; deeper contexts untested but tg holds
-  up well so up to 131072 (the doc's prior value) likely also works.
-- f16 KV cache (default) — q8_0 KV crashes Vulkan here.
-- **Removed** `-mmp 0` / `--no-mmap` from the doc's prior config — wedges
-  the GPU on this build.
-- **Removed** `--direct-io` — also crashes the GPU (same wedge as `-mmp 0`).
-- **Removed** `--kv-unified` — tested via `tools/bench_model.py` against
-  `llama-server` with a 4k-token coding prompt × 3 runs (+ warm-up). No
-  measurable effect for single-client coding workloads (PP 279.5 vs
-  280.0 t/s; tg 11.8 vs 11.7 t/s — well within variance). The flag
-  controls KV layout across **parallel slots**; with one client it's a
-  no-op. Re-test if you ever serve concurrent requests.
+`libggml-vulkan.so.0` only links `libvulkan.so.1` (the loader). The RADV ICD
+(`/usr/local/share/vulkan/icd.d/radeon_icd.x86_64.json` → `libvulkan_radeon.so`) is loaded by
+`vulkan-loader` at runtime via `dlopen()`, which is why a Mesa-only upgrade does **not** require
+rebuilding llama.cpp.
 
-**Expected throughput at typical coding depth (d=8192):**
-- Prompt processing: ~247 t/s (pp4096) → ingesting a 4k-token codebase
-  context takes ~16 s.
-- Token generation: ~11.4 t/s → roughly 680 tokens/min, or one short
-  function per minute.
+### Practical takeaway
 
-**Note on tg vs the prior doc:** the previous `Framework-desktop.md` showed
-~50 t/s tg128 because llama.cpp build `94ca829b6 (8679)` detected the
-model as MoE (`qwen35moe 35B.A3B`, only 3B active params per token). Build
-`9d34231bb (8929)` detects it as dense `qwen35 27B`, activating all 27B
-params per token — that's the cause of the ~4× tg drop. If MoE behavior
-matters, **either** rebuild llama.cpp at the older `8679` commit, **or**
-wait for upstream to restore MoE detection for this Qwen3.6 model.
-
-## Stage 5 — Validating `--ctx-size 131072` (for qwen-code agent use)
-
-Goal: 65 k truncates real qwen-code agentic loops; check whether the
-GPU/driver can cope with `--ctx-size 131072` and what the throughput
-penalty is at deep context.
-
-Server config (one slot, full ctx available):
-
-```sh
-RADV_DEBUG=zerovram build/bin/llama-server ... \
-  --ctx-size 131072 --parallel 1
-```
-
-Bench: `tools/bench_model.py --prompt-file <file> -t 64 -r 1` (with the
-HTTP timeout bumped to 1800 s — at deep context, prefill alone is over
-5 min and easily blows the previous 300 s default).
-
-| Prompt file                | Tokens (incl. chat tmpl) | TTFT       |  PP TPS | tg t/s | ITL ms |
-| -------------------------- | -----------------------: | ---------: | ------: | -----: | -----: |
-| `coding_prompt.txt`        |              ~4 067      |    14.3 s  |   279.6 |   11.9 |   85   |
-| `coding_prompt_32k.txt`    |             ~30 414      |   140.1 s  |   217.0 |   10.8 |   94   |
-| `coding_prompt_96k.txt`    |             ~91 382      |   980.9 s  |    93.1 |    9.1 |  112   |
-| `coding_prompt_120k.txt`   |            ~114 482      |  1552.5 s  |    73.7 |    8.5 |  120   |
-
-> **Note (build drift):** the token counts above were measured on the
-> llama.cpp builds in use at the time (`9d34231bb` on FreeBSD,
-> `f42e29fdf` on Ubuntu). Re-running the same byte-for-byte
-> `tools/coding_prompt.txt` on build `b8985-27aef3dd9` (both hosts,
-> 2026-04-30) reports `prompt_tokens = 4004` instead of ~4067 — the
-> Qwen3.6 chat template gained content (most visibly a trailing
-> `<think>` marker on the assistant turn) between those builds. The
-> raw text alone is 3994 tokens; the wrapper adds 10 today vs ~73
-> previously. Expect similar small drift on the larger files. Use
-> the `Prompt tokens:` line that `tools/bench_model.py` now prints
-> to record the actual value at the time of each run.
-
-> **Note (synthetic vs real code):** `tools/coding_prompt*.txt` are
-> synthetic (`fn_NNNN(x): return x + N` — trivially compressible by
-> the model's internal representations). On Strix Halo Vulkan, the
-> same depth measured with `tools/coding_prompt_real.txt` (real
-> FreeBSD sendfile(2) sources + a "find any bugs" question, ~4k tok)
-> yields **PP ~9 % slower** (909→828 t/s on FreeBSD, 932→841 t/s on
-> Ubuntu) and **TG within 1 %** (48.2→48.4, 51.2→52.1). Synthetic
-> prompts are best for cross-OS / cross-driver comparisons (tighter
-> variance, deterministic sizing); the real prompt is the more honest
-> "how an actual coding session feels" number. TG is bandwidth-bound
-> and content-insensitive on this hardware, which is why it doesn't
-> move.
-
-**No crash anywhere up to 114 k depth** (~87 % of the 131 072 ctx).
-At d≈114k, prefill alone takes **~26 minutes** for a single response,
-and tg drops to 8.5 t/s. Past ~90 k depth the system is technically
-working but no longer interactive.
-
-Implications for `--ctx-size 131072`:
-
-- Driver-stable at the depths tested (no `vk::DeviceLostError`, no
-  `[drm] *ERROR*`). Memory budget (~16 GB KV at 128 k f16 + ~16 GB
-  weights) fits the 64 GB GTT.
-- **Throughput collapses sharply**: PP drops from 280 t/s at d=4k to
-  93 t/s at d=91k. TTFT for a near-full context is **15+ minutes**.
-  This is FA scaling (O(n) per generated token, but PP processes
-  many tokens so it's effectively quadratic in depth at the prefill
-  phase).
-- For interactive coding, **65k stays the better default**. Bump to
-  131072 only when you need it (long agentic sessions); accept that
-  the first response on a deep context will take many minutes.
-
-The recommended config in `Framework-desktop.md` therefore stays at
-`--ctx-size 65536`. For qwen-code: configure the agent to summarize
-or drop earlier turns rather than letting context grow past 65k —
-that keeps interactive latency tolerable.
-
-### Tooling change made for this stage
-
-`tools/bench_model.py`: bumped per-request `urlopen` timeout
-`300 → 1800` s. Without this, deep-context prefill races the client
-timeout and the run shows `Error: timed out` even though the server
-is happily processing (PP ~93 t/s × 91 k tokens ≈ 16 min prefill).
-
-
-## Stage 6 — Qwen3.6-35B-A3B MoE (build 9d34231bb / 8929)
-
-The dense Qwen3.6-27B benched above is great quality but **slow on
-this hardware**: ~9-12 t/s tg, and ~127 t/s cold prefill at d≈65k means
-each fresh qwen-code session takes ~9 min just to ingest its repo
-context. Unsloth ships a sibling MoE variant —
-`unsloth/Qwen3.6-35B-A3B-GGUF` (35B total, 256 experts, 8 active per
-token, ~3B active params per forward pass) — that was a better fit.
-
-### Setup
-
-- File: `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` (22.4 GB)
-- Architecture: `qwen35moe`, n_expert = 256, n_expert_used = 8,
-  detected as `qwen35moe 35B.A3B` in the model loader
-- Same launch flags as 27B (RADV_DEBUG=zerovram, FA on, no-host,
-  b=2048/ub=512, ctx=65k, parallel=1) **plus `--no-warmup`**.
-
-### Quirk: warmup decode crashes the GPU
-
-llama-server's default warmup decode (`common_init_from_params`
-issues an empty-batch decode to prime caches) hits a
-`vk::DeviceLostError` in `ggml_vk_buffer_write_2d` for this MoE
-model. The same workload via `llama-bench` runs fine, so it's the
-empty-batch path that crashes, not the model itself. **Use
-`--no-warmup`** to skip it; first real request after startup serves
-as warmup.
-
-`llama-bench -d N>0` (depth seeding) hits the same crash — also
-empty-batch. Use real prompts via `bench_one.sh` to measure depth.
-
-### Results (real prompts via curl, cold prefill)
-
-| Depth (tokens) | Wall | PP TPS | TG TPS |
-| ------:        | ---: | -----: | -----: |
-|    4 004 |    6.2 s |   810 | 49.7 |
-|   15 909 |   20.4 s |   840 | 48.1 |
-|   30 475 |   41.7 s |   760 | 45.1 |
-|   49 353 |   75.1 s |   673 | 41.8 |
-
-`llama-bench` at d=0:
-
-| test | t/s |
-| ---- | --- |
-| pp4096 | 901.96 ± 32.75 |
-| tg128  |  52.41 ± 0.02  |
-
-### Comparison vs. Qwen3.6-27B dense at the same depths
-
-| Depth | 27B dense PP | MoE PP   | speedup | 27B dense TG | MoE TG | speedup |
-| ----: | -----------: | -------: | ------: | -----------: | -----: | ------: |
-| ~4k   | 285.6 t/s    | 810 t/s  | 2.8×    | 11.7 t/s     | 49.7   | 4.2×    |
-| ~12k  | 265.3 t/s    | ~840 t/s | 3.2×    | 11.4 t/s     | 48.1   | 4.2×    |
-| ~30k  | 190.5 t/s    | 760 t/s  | 4.0×    | 10.4 t/s     | 45.1   | 4.3×    |
-| ~50k  | ~150 t/s     | 673 t/s  | 4.5×    | ~10 t/s      | 41.8   | 4.2×    |
-
-For the qwen-code use case (50–60k of repo context per session), the
-MoE turns the 9-minute cold prefill into ~75 seconds, and per-turn
-generation from ~110 s of thinking to ~25 s.
-
-### Recommendation
-
-Switch the default `~/llmsrv.sh` model from
-`Qwen3.6-27B-GGUF:UD-Q4_K_XL` (16 GB, dense) to
-`Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL` (22 GB, MoE), and add
-`--no-warmup` to the launch line. ~4× faster on every metric, fits
-trivially in the 120 GB UMA budget. Quality difference per Unsloth
-is "slightly weaker" — acceptable trade for an interactive coding
-agent.
+If you're on FreeBSD/`drm-latest-kmod` for Strix Halo, **upgrade Mesa to 25.2.8**. It removes the
+`RADV_DEBUG=zerovram` workaround (which itself was now causing crashes), buys ~15–23 % pp on
+dense Q8 and MoE, and fixes the 35B-A3B Q8 `--no-host` crash. The 27B dense `--no-host` crash class
+remains. Plan reboots between heavy config switches — same as before.

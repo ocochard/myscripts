@@ -1,8 +1,8 @@
 #!/bin/sh
 # Launch llama-server tuned for Framework Desktop (Strix Halo + RADV).
 # Works on all hosts:
-#   - framework  (FreeBSD 16-CURRENT, Mesa 24.1.7, Vulkan)
-#   - framework2 (Ubuntu 24.04,      Mesa 25.2.8, Vulkan)
+#   - framework  (FreeBSD 16-CURRENT, Mesa 24.x or 25.x, Vulkan — auto-detected)
+#   - framework2 (Ubuntu 24.04,       Mesa 25.2.8, Vulkan)
 #   - mac        (macOS, Metal)
 #
 # Defaults to the Qwen3.6-35B-A3B MoE in coder (thinking) mode:
@@ -49,12 +49,21 @@ OS=$(uname -s)
 case "${OS}" in
   FreeBSD)
     kldstat -q -m amdgpu || sudo kldload amdgpu
-    # RADV_DEBUG=zerovram: workaround for RADV/GFX1151 uninitialized-VRAM bug
-    # in Mesa 24.1.7 that causes vk::DeviceLostError on first request.
-    # ~1.5% pp cost. Not needed on Ubuntu's Mesa 25.2.8.
-    radv_env="RADV_DEBUG=zerovram"
-    # FreeBSD/Mesa 24.1.7 cannot use --no-mmap / --direct-io / quantized KV
-    # (they wedge the GPU and require reboot).
+    # Mesa-version-dependent RADV behaviour on Strix Halo / gfx1151:
+    #   Mesa 24.x: RADV_DEBUG=zerovram is REQUIRED — without it the first
+    #              llama-server request crashes with vk::DeviceLostError
+    #              in ggml_vk_buffer_write_2d. ~1.5% pp cost.
+    #   Mesa 25.x: RADV_DEBUG=zerovram is HARMFUL — it crashes runs that
+    #              succeed without it. First-run-after-boot is reliable
+    #              with no env prefix.
+    # See tools/LLM.benches.FrameWork-Desktop.md for the bench data.
+    mesa_ver=$(pkg query %v mesa-libs 2>/dev/null | cut -d. -f1)
+    if [ "${mesa_ver}" = "24" ]; then
+      radv_env="RADV_DEBUG=zerovram"
+    else
+      # 25+ (current) or unknown — assume current behaviour, no env.
+      radv_env=""
+    fi
     extra_perf=""
     device="Vulkan0"
     ;;
@@ -95,6 +104,14 @@ hf_resolve() {
   [ -e "$1/blobs/$2" ] && echo "$1/blobs/$2"
 }
 
+# --no-host: enables UMA-aware host-pointer path on Vulkan. On Strix Halo:
+#   - MoE (35B-A3B Q4/Q8): safe and slightly faster on both OSes / Mesa versions.
+#   - Dense (27B Q4):       crashes on FreeBSD (Mesa 24 and 25); OK on Ubuntu.
+#   - Dense (27B Q8):       crashes on FreeBSD/Mesa 25 (regression vs Mesa 24);
+#                           OK on Ubuntu.
+# Default to no-host; cleared below for FreeBSD dense.
+nohost_flag="--no-host"
+
 case "${MODEL}" in
   moe)
     # Qwen3.6-35B-A3B: 35B total, 3B active per token. ~22 GB on disk.
@@ -119,6 +136,8 @@ case "${MODEL}" in
     model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-27B-GGUF" "Qwen3.6-27B-UD-Q4_K_XL.gguf")
     alias="Qwen3.6-27B-UD-Q4_K_XL"
     warmup_flag=""
+    # Drop --no-host on FreeBSD: crashes 27B dense (Q4 always, Q8 on Mesa 25).
+    [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     ;;
   med)
     # Qwen3.5-122B-A10B (MoE, 122B total / 10B active). Ubuntu only — not
@@ -183,7 +202,7 @@ exec env ${radv_env} build/bin/llama-server \
   --alias "${alias}" \
   --device "${device}" \
   --flash-attn on \
-  --no-host \
+  ${nohost_flag} \
   ${extra} \
   ${extra_perf} \
   --batch-size 2048 --ubatch-size 512 \

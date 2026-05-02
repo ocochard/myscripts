@@ -536,7 +536,24 @@ $ nvidia-smi
 
 # Base
 
-## initramfs
+
+## Kernel
+
+```
+cat /proc/cmdline
+sudo vim /etc/default/grub
+sudo update-grub
+sudo reboot
+cat /proc/cmdline
+```
+
+## drivers and initramfs
+
+And initramfs for early-loaded drivers
+```
+sudo vim /etc/modprobe.d/amdgpu.conf
+sudo update-initramfs -u
+```
 
 ### ALERT! UUID=1db6b810-d625-4e9a-aced-32b48f6a8d5b does not exist
 
