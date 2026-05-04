@@ -11,11 +11,11 @@
 # tools/LLM.benches.FrameWork-Desktop.md for the bench data.
 #
 # Usage:
-#   ./llmsrv.sh                  # default: MoE 35B-A3B Q4 (coding)
-#   USAGE=doc ./llmsrv.sh        # MoE 35B-A3B Q8 (better prose for docs)
+#   ./llmsrv.sh                  # default: MoE 35B-A3B Q4 (fast, fine for code)
+#   MODEL=moe-q8 ./llmsrv.sh     # MoE 35B-A3B Q8 (slower, better prose for docs)
 #   MODEL=dense ./llmsrv.sh      # fall back to dense 27B (older quality cap)
-#   MODEL=big ./llmsrv.sh        # Qwen3.5-397B-A17B IQ2_XXS (Ubuntu only)
-#   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL (Ubuntu only)
+#   MODEL=big ./llmsrv.sh        # Qwen3.5-397B-A17B IQ2_XXS
+#   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL
 #   HOST=0.0.0.0 ./llmsrv.sh     # listen on all interfaces (default: 127.0.0.1)
 set -eu
 
@@ -24,14 +24,13 @@ usage() {
 Usage: [ENV=val ...] $(basename "$0") [-h]
 
 Environment variables:
-  MODEL=moe    Qwen3.6-35B-A3B MoE (default)
-  MODEL=dense  Qwen3.6-27B dense
-  MODEL=med    Qwen3.5-122B-A10B MoE (Ubuntu only)
-  MODEL=big    Qwen3.5-397B-A17B MoE (Ubuntu only)
-  USAGE=coding MoE: Q4_K_XL (default — fast, fine for code)
-  USAGE=doc    MoE: Q8_K_XL (slower decode, better prose for documentation)
-  HOST=addr    Listen address (default: 127.0.0.1)
-  PORT=port    Listen port (default: 8080)
+  MODEL=moe     Qwen3.6-35B-A3B MoE Q4_K_XL (default — fast, fine for code)
+  MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (slower, better prose for docs)
+  MODEL=dense   Qwen3.6-27B dense
+  MODEL=med     Qwen3.5-122B-A10B MoE
+  MODEL=big     Qwen3.5-397B-A17B MoE
+  HOST=addr     Listen address (default: 127.0.0.1)
+  PORT=port     Listen port (default: 8080)
 EOF
   exit 0
 }
@@ -39,14 +38,8 @@ EOF
 [ "${1:-}" = "-h" ] && usage
 
 MODEL=${MODEL:-moe}
-USAGE=${USAGE:-coding}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8080}
-
-case "${USAGE}" in
-  coding|doc) ;;
-  *) echo "unknown USAGE='${USAGE}' (use coding|doc)" >&2; exit 1 ;;
-esac
 
 OS=$(uname -s)
 
@@ -119,33 +112,31 @@ nohost_flag="--no-host"
 
 case "${MODEL}" in
   moe)
-    # Qwen3.6-35B-A3B: 35B total, 3B active per token. Available on all hosts.
-    # Quant choice driven by USAGE:
-    #   coding (default): Q4_K_XL — fast (~54 t/s TG at 4k), fine for code.
-    #   doc:              Q8_K_XL — ~22% slower TG, better prose quality
-    #                     (small 3B active path is more sensitive to quant
-    #                     noise; doc work has no syntax-level error feedback).
-    if [ "${USAGE}" = "doc" ]; then
-      model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf")
-      alias="Qwen3.6-35B-A3B-UD-Q8_K_XL"
+    # Qwen3.6-35B-A3B Q4_K_XL: 35B total, 3B active per token. Available on
+    # all hosts. Fast (~54 t/s TG at 4k), fine for code.
+    # Prefer Q4_K_XL; fall back to Q4_K_M (only quant on macOS).
+    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf")
+    if [ -n "${model}" ]; then
+      alias="Qwen3.6-35B-A3B-UD-Q4_K_XL"
     else
-      # coding: prefer Q4_K_XL; fall back to Q4_K_M (only quant on macOS).
-      model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf")
-      if [ -n "${model}" ]; then
-        alias="Qwen3.6-35B-A3B-UD-Q4_K_XL"
-      else
-        model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf")
-        alias="Qwen3.6-35B-A3B-UD-Q4_K_M"
-      fi
+      model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf")
+      alias="Qwen3.6-35B-A3B-UD-Q4_K_M"
     fi
     # --no-warmup: the default warmup decode (empty batch) hits
     # vk::DeviceLostError in ggml_vk_buffer_write_2d on this MoE (Vulkan).
     # Harmless on Metal. Real prompts work fine either way.
     warmup_flag="--no-warmup"
     ;;
+  moe-q8)
+    # Qwen3.6-35B-A3B Q8_K_XL: ~22% slower TG than Q4, better prose quality
+    # (small 3B active path is more sensitive to quant noise; doc work has
+    # no syntax-level error feedback). Available on all hosts.
+    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf")
+    alias="Qwen3.6-35B-A3B-UD-Q8_K_XL"
+    warmup_flag="--no-warmup"
+    ;;
   dense)
     # Original 27B dense. Higher quality on hard reasoning, but ~4x slower.
-    # Available on both hosts.
     model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-27B-GGUF" "Qwen3.6-27B-UD-Q4_K_XL.gguf")
     alias="Qwen3.6-27B-UD-Q4_K_XL"
     warmup_flag=""
@@ -153,15 +144,14 @@ case "${MODEL}" in
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     ;;
   med)
-    # Qwen3.5-122B-A10B (MoE, 122B total / 10B active). Ubuntu only — not
-    # downloaded on FreeBSD host.
+    # Qwen3.5-122B-A10B (MoE, 122B total / 10B active).
     [ "${OS}" = "Linux" ] || { echo "MODEL=med only available on Ubuntu host" >&2; exit 1; }
     model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.5-122B-A10B-GGUF" "UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf")
     alias="Qwen3.5-122B-A10B-UD-Q4_K_XL"
     warmup_flag="--no-warmup"
     ;;
   big)
-    # Qwen3.5-397B-A17B IQ2_XXS (MoE, 397B total / 17B active). Ubuntu only.
+    # Qwen3.5-397B-A17B IQ2_XXS (MoE, 397B total / 17B active).
     # Needs unified memory to fit the 128 GB UMA pool.
     [ "${OS}" = "Linux" ] || { echo "MODEL=big only available on Ubuntu host" >&2; exit 1; }
     model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.5-397B-A17B-GGUF" "UD-IQ2_XXS/Qwen3.5-397B-A17B-UD-IQ2_XXS-00001-of-00004.gguf")
@@ -171,7 +161,7 @@ case "${MODEL}" in
     export GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
     ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use moe|dense|med|big)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|med|big)" >&2; exit 1 ;;
 esac
 
 [ -n "${model}" ] && [ -e "${model}" ] || {

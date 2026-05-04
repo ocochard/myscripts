@@ -300,10 +300,3 @@ follow-up bench can crash again. **Reboot is the only reliable recovery.** `kldu
   and read `timings.prompt_n` / `timings.prompt_per_second` directly — the
   `~/.claude/skills/llama-bench-tune` skill includes a `bench_one.sh` snippet for this.
 
-## Raw data files
-
-Logs on the test hosts:
-
-- frwk-bsd: `/tmp/fb_mesa25_clean.log`, `/tmp/fb_mesa25_depths.log`, `/tmp/fb_27b_depth.log`,
-  `/tmp/srv-qwen36-moe-q4.log`.
-- frwk-linux: `/tmp/fw2_stage1.log`, `/tmp/fw2_stage3.log`, `/tmp/srv-qwen36-moe-q4.log`.
