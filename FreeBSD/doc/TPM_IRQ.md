@@ -1,5 +1,7 @@
 # TPM TIS "Failed to switch to ready state" — Diagnostic & Background
 
+*Author: Claude (Anthropic Claude Opus 4)*
+
 ## Symptom
 
 ```
