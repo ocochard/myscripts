@@ -1,0 +1,660 @@
+diff --git a/sys/conf/files.arm64 b/sys/conf/files.arm64
+index 3b12999a6c87..2f654ec3e03e 100644
+--- a/sys/conf/files.arm64
++++ b/sys/conf/files.arm64
+@@ -407,6 +407,7 @@ dev/iicbus/controller/rockchip/rk_i2c.c		optional rk_i2c fdt
+ dev/ipmi/ipmi.c					optional ipmi
+ dev/ipmi/ipmi_acpi.c				optional ipmi acpi
+ dev/ipmi/ipmi_bt.c				optional ipmi
++dev/ipmi/ipmi_iic.c				optional ipmi iicbus acpi
+ dev/ipmi/ipmi_kcs.c				optional ipmi
+ dev/ipmi/ipmi_pci.c				optional ipmi pci
+ dev/ipmi/ipmi_smbios.c				optional ipmi
+diff --git a/sys/dev/ichiic/ig4_iic.c b/sys/dev/ichiic/ig4_iic.c
+index cd88b28a2d52..84fd2f9ce7de 100644
+--- a/sys/dev/ichiic/ig4_iic.c
++++ b/sys/dev/ichiic/ig4_iic.c
+@@ -846,7 +846,7 @@ ig4iic_get_config(ig4iic_softc_t *sc)
+ 	    reg_read(sc, IG4_REG_SDA_HOLD) & IG4_SDA_TX_HOLD_MASK;
+ 
+ 	if (sc->cfg.bus_speed != IG4_CTL_SPEED_STD)
+-		sc->cfg.bus_speed = IG4_CTL_SPEED_FAST;
++		sc->cfg.bus_speed = IG4_CTL_SPEED_STD;
+ 
+ 	/* REG_COMP_PARAM1 is not documented in latest Intel specs */
+ 	if (sc->version == IG4_HASWELL || sc->version == IG4_ATOM) {
+@@ -860,7 +860,7 @@ ig4iic_get_config(ig4iic_softc_t *sc)
+ 	/* Override hardware config with IC_clock-based counter values */
+ 	if (ig4_timings < 2 && sc->version < nitems(ig4iic_hw)) {
+ 		hw = &ig4iic_hw[sc->version];
+-		sc->cfg.bus_speed = IG4_CTL_SPEED_FAST;
++		sc->cfg.bus_speed = IG4_CTL_SPEED_STD;
+ 		ig4iic_clk_params(hw, IG4_CTL_SPEED_STD, &sc->cfg.ss_scl_hcnt,
+ 		    &sc->cfg.ss_scl_lcnt, &sc->cfg.ss_sda_hold);
+ 		ig4iic_clk_params(hw, IG4_CTL_SPEED_FAST, &sc->cfg.fs_scl_hcnt,
+diff --git a/sys/dev/iicbus/acpi_iicbus.c b/sys/dev/iicbus/acpi_iicbus.c
+index 873a96b04823..94bb1faf9d72 100644
+--- a/sys/dev/iicbus/acpi_iicbus.c
++++ b/sys/dev/iicbus/acpi_iicbus.c
+@@ -480,6 +480,10 @@ acpi_iicbus_enumerate_child(ACPI_HANDLE handle, UINT32 level,
+ 	if (!acpi_has_hid(handle))
+ 		return (AE_OK);
+ 
++	/* Skip AMPC0004 devices - they should attach via ipmi_iic driver on acpi bus */
++	if (acpi_MatchHid(handle, "AMPC0004"))
++		return (AE_OK);
++
+ 	/*
+ 	 * Read "I2C Serial Bus Connection Resource Descriptor"
+ 	 * described in p.19.6.57 of ACPI specification.
+diff --git a/sys/dev/ipmi/ipmi_acpi.c b/sys/dev/ipmi/ipmi_acpi.c
+index e51e6364e41e..8e8d0ae27e64 100644
+--- a/sys/dev/ipmi/ipmi_acpi.c
++++ b/sys/dev/ipmi/ipmi_acpi.c
+@@ -58,6 +58,7 @@ int
+ ipmi_acpi_probe(device_t dev)
+ {
+ 	static char *ipmi_ids[] = {"IPI0001", NULL};
++	ACPI_HANDLE handle;
+ 	int rv;
+ 
+ 	if (ipmi_attached)
+@@ -65,6 +66,12 @@ ipmi_acpi_probe(device_t dev)
+ 
+ 	if (acpi_disabled("ipmi"))
+ 		return (ENXIO);
++
++	/* Reject AMPC0004 devices - they use SSIF over I2C and should attach via ipmi_iic */
++	handle = acpi_get_handle(dev);
++	if (handle != NULL && acpi_MatchHid(handle, "AMPC0004"))
++		return (ENXIO);
++
+ 	rv = ACPI_ID_PROBE(device_get_parent(dev), dev, ipmi_ids, NULL);
+ 	if (rv <= 0)
+ 		device_set_desc(dev, "IPMI System Interface");
+diff --git a/sys/dev/ipmi/ipmi_iic.c b/sys/dev/ipmi/ipmi_iic.c
+new file mode 100644
+index 000000000000..0116ca42f2f5
+--- /dev/null
++++ b/sys/dev/ipmi/ipmi_iic.c
+@@ -0,0 +1,114 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2024 Olivier Cochard
++ *
++ * IPMI SSIF driver for ACPI-described I2C devices (Ampere Altra).
++ */
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/bus.h>
++#include <sys/condvar.h>
++#include <sys/kernel.h>
++#include <sys/module.h>
++#include <sys/rman.h>
++#include <sys/selinfo.h>
++
++#include <contrib/dev/acpica/include/acpi.h>
++#include <dev/acpica/acpivar.h>
++
++#include <dev/iicbus/iiconf.h>
++#include <dev/iicbus/iicbus.h>
++#include <dev/smbus/smbconf.h>
++
++#ifdef LOCAL_MODULE
++#include <ipmivars.h>
++#else
++#include <dev/ipmi/ipmivars.h>
++#endif
++
++static int ipmi_iic_probe(device_t dev);
++static int ipmi_iic_attach(device_t dev);
++
++static int
++ipmi_iic_probe(device_t dev)
++{
++	ACPI_HANDLE handle;
++
++	if (ipmi_attached)
++		return (ENXIO);
++
++	if (acpi_disabled("ipmi"))
++		return (ENXIO);
++
++	handle = acpi_get_handle(dev);
++	if (handle == NULL)
++		return (ENXIO);
++
++	if (acpi_MatchHid(handle, "AMPC0004")) {
++		device_set_desc(dev, "IPMI System Interface");
++		return (BUS_PROBE_DEFAULT);
++	}
++
++	return (ENXIO);
++}
++
++static int
++ipmi_iic_attach(device_t dev)
++{
++	struct ipmi_softc *sc;
++	ACPI_HANDLE handle;
++	device_t iicbus;
++	uint32_t addr;
++	int error, i;
++
++	sc = device_get_softc(dev);
++	sc->ipmi_dev = dev;
++
++	handle = acpi_get_handle(dev);
++	if (handle == NULL ||
++	    ACPI_FAILURE(acpi_GetInteger(handle, "_ADR", &addr)))
++		return (ENXIO);
++
++	/* Find the I2C bus */
++	iicbus = NULL;
++	for (i = 0; i < 4; i++) {
++		iicbus = devclass_get_device(devclass_find("iicbus"), i);
++		if (iicbus != NULL)
++			break;
++	}
++
++	if (iicbus == NULL)
++		return (ENXIO);
++
++	error = ipmi_ssif_iic_attach(sc, iicbus, addr);
++	if (error)
++		return (error);
++
++	error = ipmi_attach(dev);
++	if (error) {
++		ipmi_release_resources(dev);
++		return (error);
++	}
++
++	return (0);
++}
++
++static device_method_t ipmi_iic_methods[] = {
++	DEVMETHOD(device_probe,		ipmi_iic_probe),
++	DEVMETHOD(device_attach,	ipmi_iic_attach),
++	DEVMETHOD(device_detach,	ipmi_detach),
++	DEVMETHOD_END
++};
++
++static driver_t ipmi_iic_driver = {
++	"ipmi",
++	ipmi_iic_methods,
++	sizeof(struct ipmi_softc)
++};
++
++DRIVER_MODULE(ipmi_iic, acpi, ipmi_iic_driver, 0, 0);
++MODULE_DEPEND(ipmi_iic, iicbus, IICBUS_MINVER, IICBUS_PREFVER, IICBUS_MAXVER);
++MODULE_DEPEND(ipmi_iic, acpi, 1, 1, 1);
++MODULE_VERSION(ipmi_iic, 1);
+diff --git a/sys/dev/ipmi/ipmi_ssif_iic.c b/sys/dev/ipmi/ipmi_ssif_iic.c
+new file mode 100644
+index 000000000000..a87800f93fd5
+--- /dev/null
++++ b/sys/dev/ipmi/ipmi_ssif_iic.c
+@@ -0,0 +1,412 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2024 Olivier Cochard
++ *
++ * IPMI SSIF over IIC (I2C) - Direct I2C implementation.
++ * Bypasses the SMBus layer for proper SSIF protocol support.
++ */
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/bus.h>
++#include <sys/condvar.h>
++#include <sys/kernel.h>
++#include <sys/kthread.h>
++#include <sys/module.h>
++#include <sys/mutex.h>
++#include <sys/selinfo.h>
++
++#include <dev/iicbus/iiconf.h>
++#include <dev/iicbus/iicbus.h>
++
++#ifdef LOCAL_MODULE
++#include <ipmivars.h>
++#else
++#include <dev/ipmi/ipmivars.h>
++#endif
++
++/* SSIF command codes */
++#define	SSIF_WRITE_SINGLE	0x02
++#define	SSIF_WRITE_START	0x06
++#define	SSIF_WRITE_CONT		0x07
++#define	SSIF_READ_START		0x03
++#define	SSIF_READ_CONT		0x09
++#define	SSIF_DATA_SIZE		32
++#define	SSIF_MAX_MESSAGE_SIZE	256
++
++/*
++ * IPMI SSIF multi-part read protocol (IPMI v2.0 SSIF specification)
++ * Multi-part reads start with a 2-byte header: 0x00 0x01
++ * Continuation blocks contain: length, block_number (0-254), data
++ * Final block has block_number = 0xFF
++ */
++#define	SSIF_BLOCK_SIZE		32
++
++static int
++ssif_iic_write(device_t dev, device_t iicbus, uint8_t slave_addr,
++    uint8_t cmd, uint8_t *data, uint8_t len)
++{
++	uint8_t buffer[SSIF_BLOCK_SIZE + 2];
++	struct iic_msg msg;
++	uint8_t bytes_sent, current_cmd, chunk_size, block_len;
++	int error;
++
++	/* Handle single-part write (<=32 bytes) */
++	if (len <= SSIF_DATA_SIZE && cmd == SSIF_WRITE_SINGLE) {
++		buffer[0] = cmd;
++		buffer[1] = len;
++		if (len > 0)
++			bcopy(data, &buffer[2], len);
++
++		msg.slave = slave_addr;
++		msg.flags = IIC_M_WR;
++		msg.len = len + 2;
++		msg.buf = buffer;
++
++		error = iicbus_transfer(iicbus, &msg, 1);
++		if (error != 0)
++			return (EIO);
++		return (0);
++	}
++
++	/* Multi-part write for >32 bytes */
++	bytes_sent = 0;
++	current_cmd = cmd;
++	while (bytes_sent < len) {
++		chunk_size = min(len - bytes_sent, SSIF_BLOCK_SIZE);
++
++		/*
++		 * Last block: length is actual bytes remaining.
++		 * Not last block: use 0x20 (32 bytes).
++		 */
++		if (bytes_sent + chunk_size >= len)
++			block_len = chunk_size;
++		else
++			block_len = SSIF_BLOCK_SIZE;
++
++		buffer[0] = current_cmd;
++		buffer[1] = block_len;
++		bcopy(&data[bytes_sent], &buffer[2], chunk_size);
++
++		msg.slave = slave_addr;
++		msg.flags = IIC_M_WR;
++		msg.len = chunk_size + 2;
++		msg.buf = buffer;
++
++		error = iicbus_transfer(iicbus, &msg, 1);
++		if (error != 0)
++			return (EIO);
++
++		bytes_sent += chunk_size;
++
++		/* After first block, switch to WRITE_CONT command */
++		if (current_cmd == SSIF_WRITE_START)
++			current_cmd = SSIF_WRITE_CONT;
++
++		/* Small delay between multi-part writes */
++		if (bytes_sent < len)
++			pause("ssif", (10 * hz) / 1000);
++	}
++
++	return (0);
++}
++
++static int
++ssif_iic_read(device_t dev, device_t iicbus, uint8_t slave_addr,
++    uint8_t cmd, uint8_t *data, int *total_len)
++{
++	struct iic_msg msgs[2];
++	uint8_t buffer[SSIF_BLOCK_SIZE + 1];
++	uint8_t cmdbuf[1];
++	uint8_t count, current_cmd, expected_block, blocknum;
++	int bytes_received, max_len, data_len, error;
++
++	max_len = *total_len;
++	*total_len = 0;
++	current_cmd = cmd;
++
++	/* Read first block */
++	cmdbuf[0] = current_cmd;
++
++	msgs[0].slave = slave_addr;
++	msgs[0].flags = IIC_M_WR | IIC_M_NOSTOP;
++	msgs[0].len = 1;
++	msgs[0].buf = cmdbuf;
++
++	msgs[1].slave = slave_addr;
++	msgs[1].flags = IIC_M_RD;
++	msgs[1].len = SSIF_BLOCK_SIZE + 1;
++	msgs[1].buf = buffer;
++
++	error = iicbus_transfer(iicbus, msgs, 2);
++	if (error != 0)
++		return (EIO);
++
++	count = buffer[0];
++
++	/*
++	 * Check for multi-part read start: [0x00] [0x01]
++	 * Per IPMI v2.0 SSIF specification, multi-part reads begin with
++	 * a 2-byte header where byte[1]=0x00 and byte[2]=0x01.
++	 */
++	if (count >= 2 && buffer[1] == 0x00 && buffer[2] == 0x01) {
++		/* Multi-part response - skip 2-byte header */
++		count -= 2;
++		if (count > 0)
++			bcopy(&buffer[3], data, count);
++		bytes_received = count;
++		expected_block = 1;
++
++		/* Continue reading blocks */
++		while (bytes_received < max_len) {
++			pause("ssif", (10 * hz) / 1000);
++
++			cmdbuf[0] = SSIF_READ_CONT;
++			error = iicbus_transfer(iicbus, msgs, 2);
++			if (error != 0)
++				return (EIO);
++
++			count = buffer[0];
++
++			/*
++			 * Continuation block format:
++			 * - Length byte (count)
++			 * - Block number (0-254 for continuation, 0xFF for final)
++			 * - Data bytes (count-1 bytes)
++			 */
++			if (count < 2)
++				return (EIO);
++
++			blocknum = buffer[1];
++			data_len = count - 1;
++
++			/* Check for final block (0xFF) */
++			if (blocknum == 0xFF) {
++				if (data_len > 0 &&
++				    bytes_received + data_len <= max_len)
++					bcopy(&buffer[2], &data[bytes_received],
++					    data_len);
++				bytes_received += data_len;
++				break;
++			}
++
++			/* Regular continuation - validate sequence */
++			if (blocknum != expected_block)
++				return (EIO);
++
++			/* Copy data */
++			if (data_len > 0) {
++				if (bytes_received + data_len > max_len)
++					return (EIO);
++				bcopy(&buffer[2], &data[bytes_received],
++				    data_len);
++				bytes_received += data_len;
++			}
++
++			expected_block++;
++		}
++	} else {
++		/* Single-part response */
++		if (count > max_len)
++			return (EIO);
++		if (count > 0)
++			bcopy(&buffer[1], data, count);
++		bytes_received = count;
++	}
++
++	*total_len = bytes_received;
++	return (0);
++}
++
++static int
++ssif_iic_polled_request(struct ipmi_softc *sc, struct ipmi_request *req)
++{
++	device_t dev, iicbus;
++	uint8_t ssif_buf[SSIF_MAX_MESSAGE_SIZE];
++	uint8_t response[SSIF_MAX_MESSAGE_SIZE];
++	uint8_t slave_addr, write_cmd, request_len;
++	uint8_t addrs_to_try[3], try_addr;
++	int resp_len, error, retries, addr_idx, copy_len;
++
++	dev = sc->ipmi_dev;
++	iicbus = sc->ipmi_ssif_iicbus;
++	slave_addr = sc->ipmi_ssif_slave_addr;
++
++	/* Request I2C bus ownership */
++	error = iicbus_request_bus(iicbus, dev, IIC_WAIT);
++	if (error != 0)
++		return (0);
++
++	/* Build request: [NetFn/LUN] [Cmd] [Data...] */
++	ssif_buf[0] = req->ir_addr;
++	ssif_buf[1] = req->ir_command;
++	if (req->ir_requestlen > 0)
++		bcopy(req->ir_request, &ssif_buf[2], req->ir_requestlen);
++
++	request_len = req->ir_requestlen + 2;
++
++	/*
++	 * Currently only use single-part writes.
++	 * Multi-part writes require capability negotiation with BMC.
++	 */
++	write_cmd = SSIF_WRITE_SINGLE;
++	if (request_len > SSIF_DATA_SIZE) {
++		iicbus_release_bus(iicbus, dev);
++		return (0);
++	}
++
++	/* Try multiple address formats */
++	addrs_to_try[0] = slave_addr;
++	addrs_to_try[1] = slave_addr >> 1;
++	addrs_to_try[2] = slave_addr << 1;
++
++	error = ENXIO;
++	for (addr_idx = 0; addr_idx < 3; addr_idx++) {
++		try_addr = addrs_to_try[addr_idx];
++		if (try_addr == 0 || try_addr > 0x7F)
++			continue;
++
++		/* Write the request */
++		for (retries = 0; retries < 5; retries++) {
++			if (retries > 0)
++				pause("ssif", (60 * hz) / 1000);
++
++			error = ssif_iic_write(dev, iicbus, try_addr,
++			    write_cmd, ssif_buf, request_len);
++			if (error == 0)
++				break;
++		}
++
++		if (error == 0) {
++			/* Update slave_addr for future use */
++			if (try_addr != slave_addr) {
++				if (bootverbose)
++					device_printf(dev,
++					    "Using I2C address 0x%02x\n",
++					    try_addr);
++				sc->ipmi_ssif_slave_addr = try_addr;
++				slave_addr = try_addr;
++			}
++			break;
++		}
++	}
++
++	if (error != 0) {
++		iicbus_release_bus(iicbus, dev);
++		return (0);
++	}
++
++	/* Wait for BMC to process */
++	pause("ssif", (60 * hz) / 1000);
++
++	/* Read the response */
++	for (retries = 0; retries < 250; retries++) {
++		resp_len = sizeof(response);
++		error = ssif_iic_read(dev, iicbus, slave_addr,
++		    SSIF_READ_START, response, &resp_len);
++		if (error == 0)
++			break;
++
++		/* Small delay between read retries */
++		if (retries < 249)
++			pause("ssif", (10 * hz) / 1000);
++	}
++
++	/* Release I2C bus */
++	iicbus_release_bus(iicbus, dev);
++
++	if (error != 0)
++		return (0);
++
++	/* Copy response - SSIF format: [NetFn/LUN] [Cmd] [CompletionCode] [data...] */
++	if (resp_len >= 3) {
++		req->ir_compcode = response[2];
++		if (resp_len > 3 && req->ir_replybuflen > 0) {
++			copy_len = min(resp_len - 3, req->ir_replybuflen);
++			bcopy(&response[3], req->ir_reply, copy_len);
++			req->ir_replylen = copy_len;
++		} else {
++			req->ir_replylen = 0;
++		}
++	} else {
++		return (0);
++	}
++
++	return (1);
++}
++
++static void
++ssif_iic_loop(void *arg)
++{
++	struct ipmi_softc *sc = arg;
++	struct ipmi_request *req;
++
++	IPMI_LOCK(sc);
++	while ((req = ipmi_dequeue_request(sc)) != NULL) {
++		IPMI_UNLOCK(sc);
++		if (ssif_iic_polled_request(sc, req))
++			req->ir_error = 0;
++		else
++			req->ir_error = EIO;
++		IPMI_LOCK(sc);
++		ipmi_complete_request(sc, req);
++	}
++	IPMI_UNLOCK(sc);
++	kproc_exit(0);
++}
++
++static int
++ssif_iic_driver_request(struct ipmi_softc *sc, struct ipmi_request *req)
++{
++
++	if (ssif_iic_polled_request(sc, req)) {
++		req->ir_error = 0;
++		return (0);
++	} else {
++		req->ir_error = EIO;
++		return (EIO);
++	}
++}
++
++static void
++ssif_iic_startup_hook(void *arg)
++{
++	struct ipmi_softc *sc = arg;
++
++	/*
++	 * Create kernel thread for IPMI request processing.
++	 * Deferred via config_intrhook to ensure all drivers are initialized.
++	 */
++	kproc_create(ssif_iic_loop, sc, &sc->ipmi_kthread, 0, 0,
++	    "%s: ssif", device_get_nameunit(sc->ipmi_dev));
++}
++
++static int
++ssif_iic_startup(struct ipmi_softc *sc)
++{
++
++	/*
++	 * Defer thread creation until after device attachment completes
++	 * and all drivers are initialized. This prevents race conditions
++	 * with I2C bus driver initialization.
++	 */
++	config_intrhook_oneshot(ssif_iic_startup_hook, sc);
++	return (0);
++}
++
++int
++ipmi_ssif_iic_attach(struct ipmi_softc *sc, device_t iicbus, int slave_addr)
++{
++
++	sc->ipmi_ssif_iicbus = iicbus;
++	sc->ipmi_ssif_slave_addr = slave_addr;
++
++	/* Setup function pointers */
++	sc->ipmi_startup = ssif_iic_startup;
++	sc->ipmi_enqueue_request = ipmi_polled_enqueue_request;
++	sc->ipmi_driver_request = ssif_iic_driver_request;
++	sc->ipmi_driver_requests_polled = 1;
++
++	return (0);
++}
+diff --git a/sys/dev/ipmi/ipmivars.h b/sys/dev/ipmi/ipmivars.h
+index 6ab8b128b820..e444a084cc28 100644
+--- a/sys/dev/ipmi/ipmivars.h
++++ b/sys/dev/ipmi/ipmivars.h
+@@ -95,6 +95,8 @@ struct ipmi_smic {
+ struct ipmi_ssif {
+ 	device_t smbus;
+ 	int	smbus_address;
++	device_t iicbus;		/* For direct IIC mode */
++	int	slave_addr;		/* For direct IIC mode */
+ };
+ 
+ struct ipmi_softc {
+@@ -138,6 +140,8 @@ struct ipmi_softc {
+ 
+ #define	ipmi_ssif_smbus_address		_iface.ssif.smbus_address
+ #define	ipmi_ssif_smbus			_iface.ssif.smbus
++#define	ipmi_ssif_iicbus		_iface.ssif.iicbus
++#define	ipmi_ssif_slave_addr		_iface.ssif.slave_addr
+ #define	ipmi_bt_seq			_iface.bt.seq
+ 
+ #define	KCS_MODE			0x01
+@@ -261,6 +265,7 @@ int	ipmi_kcs_probe_align(struct ipmi_softc *);
+ int	ipmi_smic_attach(struct ipmi_softc *);
+ int	ipmi_bt_attach(struct ipmi_softc *);
+ int	ipmi_ssif_attach(struct ipmi_softc *, device_t, int);
++int	ipmi_ssif_iic_attach(struct ipmi_softc *, device_t, int);
+ 
+ extern int ipmi_attached;
+ 
+diff --git a/sys/modules/ipmi/Makefile b/sys/modules/ipmi/Makefile
+index e143b264d083..2b47790ee4d9 100644
+--- a/sys/modules/ipmi/Makefile
++++ b/sys/modules/ipmi/Makefile
+@@ -14,10 +14,13 @@ SRCS+=	opt_acpi.h
+ SRCS+=	acpi_if.h
+ SRCS+=	ipmi_smbios.c
+ SRCS+=	ipmi_ssif.c
++SRCS+=	ipmi_ssif_iic.c
+ SRCS+=	ipmi_pci.c
+ SRCS+=	ipmi_smbus.c
++SRCS+=	ipmi_iic.c
+ SRCS+=	pci_if.h
+ SRCS+=	smbus_if.h
++SRCS+=	iicbus_if.h
+ .endif
+ 
+ .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
