@@ -178,10 +178,14 @@ interrupts are silently disabled on those boxes.
 The error comes from `tpmtis_go_ready()` in
 `sys/dev/tpm/tpm_tis_core.c:371`. It writes `TPM_STS_CMD_RDY` to the
 `TPM_STS` register and waits up to `TPM_TIMEOUT_B` for the chip to
-acknowledge by setting the same bit back. If it never sets, the function
-returns false and you see the message.
+acknowledge by setting the same bit back. If the bit never sets, the
+function returns false and you see the message.
 
-### Where the call comes from at attach time
+### Two distinct callers — both can print this
+
+`tpmtis_go_ready` is reached from `tpmtis_transmit` (`tpm_tis_core.c:402`).
+There are two callers of `tpmtis_transmit` at runtime, and **both** can
+emit this error:
 
 ```mermaid
 flowchart TD
@@ -189,96 +193,137 @@ flowchart TD
     B --> C[bus_setup_intr → tpmtis_intr_handler]
     C --> D[tpmtis_setup_intr]
     D --> E{irq == 0 OR irq > 0xF?}
-    E -- "yes (e.g. GSI=28)" --> Z1[return early — no interrupts, polling only]
+    E -- "yes (e.g. GSI=28)<br/>or use_polling=1" --> Z1[skip IRQ test]
     E -- "no (irq in 1..15)" --> F[write TPM_INT_VECTOR<br/>enable interrupts]
     F --> G[tpmtis_test_intr → tpmtis_transmit GetRandom]
-    G --> H[tpmtis_request_locality]
-    H --> I[tpmtis_go_ready ← FAILS HERE]
-    I -- false --> X["printf 'Failed to switch to ready state'"]
-    Z1 --> Y[tpm20_init — should still succeed in polling mode]
+    Z1 --> H[tpm20_init]
+    G --> H
+    H --> I[register cdev /dev/tpm0]
+    H --> J[start harvest_task — every 10s]
+    J --> K[tpm20_harvest sends GetRandom<br/>via TPM_TRANSMIT every 10s]
+    K --> L[tpmtis_transmit → tpmtis_go_ready]
+    L -- false --> X["printf 'Failed to switch to ready state'"]
+    G --> L
 ```
 
-In your dmesg, `irq 28` is the GSI assigned to the TPM. Since 28 > 0xF,
-`tpmtis_setup_intr` should hit the early return and `tpmtis_test_intr`
-should *never* run — meaning `go_ready` should not fail at attach.
+The harvest task is registered unconditionally in `tpm20_init`
+(`tpm20.c:202-204`) when the kernel is built with `TPM_HARVEST` or
+`RANDOM_ENABLE_TPM`. It fires every 10 seconds (`TPM_HARVEST_INTERVAL`)
+and sends `TPM_CC_GetRandom` through the same `tpmtis_transmit` →
+`tpmtis_go_ready` path. Polling does **not** disable it — `use_polling`
+only short-circuits the `tpmtis_test_intr` call at attach.
 
-The fact that you see the error suggests one of two things is happening on
-the affected box.
+So if `hw.tpm.0.use_polling=1` doesn't make the message go away, the
+problem is **not** the IRQ test path. It is the TPM itself failing to
+acknowledge `CMD_RDY`.
 
-### Hypothesis 1 — firmware reports an SIRQ-shaped value that doesn't fire
+### What polling did, and didn't, prove
 
-Some firmwares place a value in 1..15 in the ACPI `_CRS` (matching the
-real SIRQ slot) instead of the GSI. The driver then takes the early-exit
-branch *false* and enables interrupts using that value as the SIRQ. If the
-chipset isn't actually listening on that SIRQ slot — or if the IO-APIC GSI
-never fires — `tpmtis_test_intr` sends GetRandom, the TPM goes busy, and
-`tpm_wait_for_u32` sleeps the full `TPM_TIMEOUT_B`. The next call to
-`go_ready` (still inside `transmit`) returns false → "Failed to switch to
-ready state."
+Setting `hw.tpm.0.use_polling=1` was confirmed on the affected machine to
+have **no effect** on the error. This rules out the IRQ-test hypothesis
+that was originally hypothesis 1. The chip is genuinely not responding to
+`TPM_STS_CMD_RDY` writes — locality is the prime suspect.
 
-**Test:** force polling.
+### Hypothesis 1 (most likely) — locality 0 not actually granted
 
-```
-# In /boot/loader.conf or via device.hints
-hw.tpm.0.use_polling=1
-```
+`tpmtis_request_locality()` polls for `TPM_ACCESS_ACTIVE_LOCALITY`. On
+some firmwares this bit is reported as set (because firmware took
+locality earlier and didn't release it cleanly, or because Intel TXT /
+Boot Guard / DRTM holds locality > 0 and locality 0 ends up gated), but
+subsequent register writes are still ignored by the TPM. Then
+`tpmtis_go_ready` writes `CMD_RDY` into the void and times out.
 
-This is read at line 108 of `tpm_tis_core.c`:
+A related variant: the TPM needs `TPM2_Startup(CLEAR|STATE)` after every
+power-on. The FreeBSD driver does **not** issue Startup itself — it
+relies on firmware. If the previous OS executed `TPM2_Shutdown(STATE)`
+and your firmware didn't re-issue `Startup` on the next boot, the chip
+sits in a half-initialized state where `TPM_STS` writes are no-ops.
+
+**Tests:**
+
+1. Full **AC power cycle** (drain standby power on desktops, AC-cycle on
+   servers) to force firmware to re-run Startup.
+2. In BIOS, look for and try toggling:
+   - "Security Device Support" / "TPM Device" — must be **Enabled** (not
+     just "Available")
+   - "TPM State" — **Enabled**
+   - "Pending TPM operation" — set to **None**
+   - "Clear TPM" — try once (the OS isn't using it yet, nothing to lose)
+   - "Intel PTT" vs discrete TPM — make sure only one is active
+   - "TXT", "Boot Guard", "DRTM", "Trusted Execution" — **disable**
+3. Make sure no other measured-boot shim (tboot, vendor pre-OS agent) is
+   loaded ahead of the FreeBSD loader.
+
+### Hypothesis 2 (rule out cheaply) — MMIO not actually responding
+
+`fed40000-fed44fff` is the standard TPM TIS window, so this is unlikely,
+but if reads return `0xFFFFFFFF` then writes are no-ops by definition.
+
+**Test:** instrument `tpmtis_go_ready` to print the `TPM_STS` register
+value before and after the write:
 
 ```c
-resource_int_value("tpm", device_get_unit(dev), "use_polling", &poll);
-if (poll != 0) {
-    device_printf(dev, "Using poll method to get TPM operation status\n");
-    goto skip_irq;
+static bool
+tpmtis_go_ready(struct tpm_sc *sc)
+{
+	uint32_t mask, sts_before, sts_after;
+
+	mask = TPM_STS_CMD_RDY;
+	sc->intr_type = TPM_INT_STS_CMD_RDY;
+
+	sts_before = TPM_READ_4(sc->dev, TPM_STS);
+	TPM_WRITE_4(sc->dev, TPM_STS, TPM_STS_CMD_RDY);
+	TPM_WRITE_BARRIER(sc->dev, TPM_STS, 4);
+	sts_after = TPM_READ_4(sc->dev, TPM_STS);
+	device_printf(sc->dev, "go_ready: sts before=%#x after=%#x\n",
+	    sts_before, sts_after);
+	if (!tpm_wait_for_u32(sc, TPM_STS, mask, mask, TPM_TIMEOUT_B))
+		return (false);
+
+	return (true);
 }
 ```
 
-If the TPM attaches cleanly with polling, the IRQ-test path is the culprit
-and the firmware's IRQ resource is wrong.
+Interpretation of the printed values:
 
-### Hypothesis 2 — locality 0 is held by another agent
+| `sts_before`               | `sts_after`                    | Meaning                                                                   |
+|----------------------------|--------------------------------|---------------------------------------------------------------------------|
+| `0xffffffff`               | `0xffffffff`                   | MMIO not responding — chip dark, SMM/firmware blocking the window.        |
+| `0x00000000`               | `0x00000000`                   | Locality 0 not actually granted; firmware/locality issue (Hypothesis 1).  |
+| Plausible bits set         | `CMD_RDY` not set              | Chip alive but rejecting commands — almost always missing `TPM2_Startup`. |
+| Plausible bits set         | `CMD_RDY` set                  | Race / interrupt-path issue, not a chip-state issue.                      |
 
-If BIOS, Secure Launch / TXT, or a measured-boot component still owns
-locality 0, `tpmtis_request_locality` may appear to succeed but the TPM
-won't honor `CMD_RDY` writes from the OS. `go_ready` then times out.
+### Hypothesis 3 — stuck locality from previous boot
 
-**Test:** check BIOS for "TPM Active/Available", "Intel TXT", "Trusted
-Execution", "Secure Launch", or "TPM device" options. Try toggling them.
-Also confirm no other OS component (e.g. tboot, vendor measured-boot
-shim) is loaded ahead of the kernel.
+A previous OS may have left locality state half-claimed. Cheap to rule
+out: full **AC-cycle** (warm reboot is not enough — the TPM keeps state
+across a warm reset).
 
-### Hypothesis 3 — the TPM itself is in a stuck state
+### Recommended diagnostic order (revised)
 
-Less likely but cheap to rule out: a previous boot left the TPM in a state
-where locality 0 is half-claimed.
-
-**Test:** full power cycle (not just reboot — drain standby power on
-desktops by unplugging for ~30s; on servers, AC-cycle). Then boot.
-
-### Recommended diagnostic order
-
-1. **Boot verbose** (`boot -v`) and capture full TPM-related messages.
-   You want to know whether `tpmtis_setup_intr` returned early or
-   proceeded to `test_intr`.
-2. **Inspect the IRQ resource the bus assigned:**
+1. **AC-cycle the box.** Cheapest and rules out the most common cause.
+2. **Check BIOS** for TPM and TXT/Boot-Guard/DRTM options as listed in
+   Hypothesis 1.
+3. **Try Clear TPM in BIOS** (safe — the OS isn't using it yet).
+4. **Boot verbose** (`boot -v`) and capture all TPM-related messages.
+5. **Inspect the IRQ resource the bus assigned** (still useful context):
    ```sh
    devinfo -rv | grep -A2 -i tpm
    sysctl hw.tpm
    ```
-   This tells you the actual number FreeBSD picked up from `_CRS`.
-3. **Force polling** with `hw.tpm.0.use_polling=1` in
-   `/boot/loader.conf`. If the TPM attaches and `tpm20_init` succeeds,
-   you have your answer (and a working workaround).
-4. **AC-cycle the box** to rule out stuck-locality state.
-5. **Check BIOS** for TXT / measured-boot options that might be holding
-   locality 0.
+6. **Instrument `tpmtis_go_ready`** as shown above to read `TPM_STS`
+   before/after — the table tells you which hypothesis is real.
 
-### Permanent workaround
+### What `use_polling` does and does not do
 
-If polling works, leaving `hw.tpm.0.use_polling=1` set is fine — TPM
-operations are infrequent and slow enough that polling has no practical
-performance cost over interrupts. The driver explicitly supports this
-mode.
+`hw.tpm.0.use_polling=1` only affects the **attach-time IRQ test**
+(`tpmtis_test_intr`). The harvest task and any user-space access through
+`/dev/tpm0` go through the same `tpmtis_transmit` path regardless. If
+`go_ready` fails for chip-state reasons, polling cannot help.
+
+If you do *not* want repeated harvest-task errors filling dmesg while you
+debug, build a kernel without `TPM_HARVEST` / `RANDOM_ENABLE_TPM`, or
+detach `tpmtis0` after attach.
 
 ### Source references
 
@@ -287,3 +332,6 @@ mode.
 - `sys/dev/tpm/tpm_tis_core.c:371-384` — `tpmtis_go_ready`
 - `sys/dev/tpm/tpm_tis_core.c:386-406` — `tpmtis_transmit`, where the
   error message is printed
+- `sys/dev/tpm/tpm20.c:182-209` — `tpm20_init`, registers harvest_task
+- `sys/dev/tpm/tpm20.c:267-310` — `tpm20_harvest`, runs every 10s and
+  goes through the same transmit/go_ready path
