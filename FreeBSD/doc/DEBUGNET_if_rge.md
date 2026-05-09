@@ -4,6 +4,15 @@
 
 *Author: Claude (Anthropic Claude Opus 4)*
 
+> **Status: DRAFT — NOT PEER-REVIEWED.** This document was written by
+> the agent as a side product of the rge(4) debugnet work and reviewed
+> only by Olivier Cochard (whose C/kernel experience is limited). It
+> is *plausible* but not *validated by FreeBSD kernel maintainers*. At
+> least one factual error has already been found in companion material
+> from the same session; analogous errors almost certainly remain
+> here. Treat it as a starting point for your own reading, not a
+> finished tutorial.
+
 ---
 
 ## What this document is for

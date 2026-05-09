@@ -1,5 +1,13 @@
 # Writing a FreeBSD IPMI SSIF Driver: An Educational Walkthrough
 
+> **Status: DRAFT — NOT PEER-REVIEWED.** This document was written by
+> Claude (Anthropic) as a side product of agent-assisted work and
+> reviewed only by Olivier Cochard (whose C/kernel experience is
+> limited). It is *plausible* but not *validated by FreeBSD kernel
+> maintainers*. Factual errors found in companion material from the
+> same workflow suggest analogous errors may remain here. Treat it as
+> a starting point for your own reading, not a finished tutorial.
+
 This document explains, from first principles, how the FreeBSD IPMI-over-I2C
 (SSIF) driver for the Ampere Altra ARM64 platform was built. It is written so
 that a developer who has never touched IPMI, the FreeBSD `iicbus` layer, or
