@@ -14,9 +14,12 @@
 #   ./llmsrv.sh                  # default: MoE 35B-A3B Q4 (fast, fine for code)
 #   MODEL=moe-q8 ./llmsrv.sh     # MoE 35B-A3B Q8 (slower, better prose for docs)
 #   MODEL=dense ./llmsrv.sh      # fall back to dense 27B (older quality cap)
+#   MODEL=mtp ./llmsrv.sh        # Qwen3.6-27B-MTP Q8 (havenoammo, thinking)
 #   MODEL=big ./llmsrv.sh        # Qwen3.5-397B-A17B IQ2_XXS
 #   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL
 #   HOST=0.0.0.0 ./llmsrv.sh     # listen on all interfaces (default: 127.0.0.1)
+#   LLAMA_DIR=~/llama-am17an ./llmsrv.sh   # override llama.cpp build dir
+#                                          # (MTP needs ~/llama.cpp with PR #22673)
 set -eu
 
 usage() {
@@ -27,10 +30,13 @@ Environment variables:
   MODEL=moe     Qwen3.6-35B-A3B MoE Q4_K_XL (default — fast, fine for code)
   MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (slower, better prose for docs)
   MODEL=dense   Qwen3.6-27B dense
+  MODEL=mtp     Qwen3.6-27B-MTP Q8_K_XL (havenoammo, multi-token-pred + thinking)
   MODEL=med     Qwen3.5-122B-A10B MoE
   MODEL=big     Qwen3.5-397B-A17B MoE
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
+  LLAMA_DIR=dir llama.cpp build dir (default: ~/llama.cpp for all models;
+                MTP requires the PR #22673 merge in ~/llama.cpp)
 EOF
   exit 0
 }
@@ -84,7 +90,7 @@ case "${OS}" in
     echo "unsupported OS='${OS}'" >&2; exit 1 ;;
 esac
 
-cd ~/llama.cpp
+LLAMA_DIR=${LLAMA_DIR:-${HOME}/llama.cpp}
 
 HF_HUB="${HOME}/.cache/huggingface/hub"
 
@@ -109,6 +115,9 @@ hf_resolve() {
 #                           OK on Ubuntu.
 # Default to no-host; cleared below for FreeBSD dense.
 nohost_flag="--no-host"
+
+# Per-model extras (chat-template flags etc.). Set inside cases as needed.
+model_extra=""
 
 case "${MODEL}" in
   moe)
@@ -143,6 +152,34 @@ case "${MODEL}" in
     # Drop --no-host on FreeBSD: crashes 27B dense (Q4 always, Q8 on Mesa 25).
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     ;;
+  mtp)
+    # Qwen3.6-27B-MTP (havenoammo): dense 27B fine-tuned with Multi-Token
+    # Prediction heads + thinking traces. Requires an llama.cpp build with
+    # upstream PR #22673 ("llama + spec: MTP Support") merged in — ~/llama.cpp
+    # has this merged at commit c0b933255 (master). The am17an fork's own
+    # MTP implementation has an incompatible tensor layout and fails to load
+    # this GGUF with "missing tensor 'blk.64.ssm_conv1d.weight'".
+    LLAMA_DIR=${LLAMA_DIR:-${HOME}/llama.cpp}
+    model=$(hf_resolve "${HF_HUB}/models--havenoammo--Qwen3.6-27B-MTP-UD-GGUF" "Qwen3.6-27B-MTP-UD-Q8_K_XL.gguf")
+    alias="Qwen3.6-27B-MTP-UD-Q8_K_XL"
+    warmup_flag=""
+    # Same constraint as plain dense 27B on FreeBSD: --no-host crashes.
+    [ "${OS}" = "FreeBSD" ] && nohost_flag=""
+    # --jinja + preserve_thinking: keep the model's <think> traces in the
+    # OpenAI-compatible chat completions (per the model card / friend's
+    # working config). The embedded chat_template is used; no template
+    # file needed.
+    # --spec-type mtp: enable MTP-based speculative decoding using the
+    #   draft head embedded in the GGUF (no separate draft model needed).
+    #   Added by PR #22673 ("spec: support MTP"). Whole point of this model.
+    # NOT carrying over from friend's config on this hardware:
+    #   -ctk q4_0 -ctv q4_0  : quantized KV crashes Vulkan on FreeBSD,
+    #                          ~no benefit on Ubuntu (see Framework-desktop.md)
+    #   --no-mmap            : wedges the FreeBSD GPU
+    #   -t 6                 : threads irrelevant when fully GPU-offloaded
+    #   --chat-template-file : friend's local file; this GGUF has it embedded
+    model_extra='--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type mtp'
+    ;;
   med)
     # Qwen3.5-122B-A10B (MoE, 122B total / 10B active).
     [ "${OS}" = "Linux" ] || { echo "MODEL=med only available on Ubuntu host" >&2; exit 1; }
@@ -161,7 +198,7 @@ case "${MODEL}" in
     export GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
     ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|med|big)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|mtp|med|big)" >&2; exit 1 ;;
 esac
 
 [ -n "${model}" ] && [ -e "${model}" ] || {
@@ -185,6 +222,8 @@ extra='--temperature 0.6 --top-p 0.95 --top-k 20 --min-p 0.0'
 # --ctx-size > 131072            : 131072 is the model native max RoPE length
 # --parallel > 1                 : slots divide ctx; single-client gets full ctx with -p 1
 
+cd "${LLAMA_DIR}"
+
 exec env ${radv_env} build/bin/llama-server \
   --model "${model}" \
   --no-mmproj \
@@ -195,6 +234,7 @@ exec env ${radv_env} build/bin/llama-server \
   ${nohost_flag} \
   ${extra} \
   ${extra_perf} \
+  ${model_extra} \
   --batch-size 2048 --ubatch-size 512 \
   --ctx-size 131072 --parallel 1 \
   --log-file /tmp/llama-server.log \

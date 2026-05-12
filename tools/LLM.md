@@ -17,6 +17,11 @@ cmake --fresh -B build
 cmake --build build --config Release -- -j $(nproc)
 ```
 
+Some llama fork need to add this to be compiled on FreeBSD:
+```
+-DCMAKE_MAKE_PROGRAM=/usr/local/bin/gmake
+```
+
 ## Usage
 
 ### Start Web UI with specific model

@@ -32,6 +32,8 @@ Differences below are due to OS / kernel / compiler, not Mesa.
 | Vulkan MoE Q8 tg128                                | 42.5 t/s                        | 43.0 t/s                        | Tie                               |
 | `--no-host 1` server flag                          | OK on MoE; **crashes 27B dense** | OK on every config             | Drop on FreeBSD dense only        |
 | `RADV_DEBUG=zerovram`                              | **harmful** (don't set)         | not needed                      | No env prefix on either OS        |
+| Qwen3.6-27B-MTP Q8 + `--spec-type mtp` (~4 k)      | 14.2 t/s (vs 6.0 off)           | not measured                    | **2.37× decode** (see Stage 5)    |
+| Qwen3.6-27B-MTP Q8 + `--spec-type mtp` (~32 k)     | 12.9 t/s (vs 5.7 off)           | not measured                    | **2.26× decode** (see Stage 5)    |
 
 **Bottom line**: silicon dominates — Vulkan tg is essentially identical across both OSes (within 2 %
 on every model/quant). FreeBSD wins pp by ~6–31 % depending on model/quant; the gap is largest on
@@ -52,7 +54,7 @@ prompt processing for dense models, run FreeBSD with `--no-host` dropped from th
 | Mesa              | **25.2.8** ([FreeBSD bug 294948](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=294948)) | **25.2.8-0ubuntu0.24.04.1** |
 | Vulkan API        | 1.4.318 (RADV)                                       | 1.4.318 (RADV)                               |
 | vulkan-loader     | 1.4.349                                              | 1.3.275 (libvulkan1)                         |
-| llama.cpp build   | `27aef3dd9` (b8985)                                  | `27aef3dd9` (b8985)                          |
+| llama.cpp build   | `27aef3dd9` (b8985); Stage 5 only: `c0b933255` (b9124, master + PR #22673) | `27aef3dd9` (b8985)              |
 | Compiler          | Clang 19.1.7                                         | gcc 13.3 (Ubuntu noble default)              |
 | CPU governor      | `powerd` adaptive                                    | `performance`                                |
 
@@ -215,6 +217,60 @@ Ubuntu: ran all four sequentially in one boot (no instability).
   sensitive to quant noise than a 30-B-active dense forward pass).
 - **Dense 27B is the slow path** on this hardware: Q4 decodes at ~12 t/s and Q8 at ~6 t/s; the 4×
   TG advantage of MoE is real on every depth.
+
+## Stage 5 — MTP speculative decoding (Qwen3.6-27B-MTP, Q8, FreeBSD only)
+
+`havenoammo/Qwen3.6-27B-MTP-UD-GGUF:UD-Q8_K_XL` is the dense Qwen3.6-27B fine-tuned with Multi-Token
+Prediction (NextN) heads. Loaded into `llama-server` with `--spec-type mtp`, the draft path proposes
+N tokens per step and the main model verifies them in a single batched forward pass; accepted
+tokens are kept. Observed acceptance rate on coding prompts: ~80–86 % (e.g. `draft_n_accepted:
+30/35` on smoke test).
+
+**Build divergence — important.** These rows were measured on `~/llama.cpp` at commit
+`c0b933255` (b9124 = master + [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673)
+"llama + spec: MTP Support" merged via `git merge --no-ff pr-22673`). All Stage 0/1/3/4 rows
+above were on `27aef3dd9` (b8985). Existing rows were **not** re-measured — only the new MTP rows
+use b9124. Treat the MTP-off ~4 k / ~32 k rows in the table below as the like-for-like baseline
+for the MTP rows; the Stage 4 Q8 dense rows are the same hardware/model but a different upstream
+snapshot and serve as a cross-check (Total TPS within 2 %).
+
+Server flags (Strix Halo, FreeBSD, Vulkan, gfx1151): same as Stage 4 dense Q8 recipe plus
+`--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type mtp`. Bench harness
+identical to Stage 4: `bench_model.py -t 256 -r 2` against `coding_prompt.txt` and
+`coding_prompt_32k.txt`.
+
+| Host     | MTP | Depth | TTFT (ms) | PP t/s | Total TPS | vs MTP-off |
+|----------|-----|-------|----------:|-------:|----------:|-----------:|
+| frwk-bsd | off |  ~4 k |   15 320  | 261.4  |     6.0   |    —       |
+| frwk-bsd | on  |  ~4 k |   17 182  | 233.0  |    14.2   | **2.37×**  |
+| frwk-bsd | off | ~32 k |  178 987  | 183.9  |     5.7   |    —       |
+| frwk-bsd | on  | ~32 k |  196 612  | 167.4  |    12.9   | **2.26×**  |
+
+### Takeaways
+
+- **Decode throughput ~2.3× across depths.** MTP turns the dense-Q8 slow-path (5.7–6.0 t/s) into a
+  12.9–14.2 t/s range — close to the dense **Q4** speed without Q4. The 2.26× at 32k vs 2.37× at 4k
+  shows acceptance holds up well under long context on this model.
+- **TTFT and PP TPS get worse, not better.** PP drops ~11 % (261 → 233 at 4k) and TTFT rises ~12 %
+  because the draft heads run during prefill too. MTP is a decode-side win; on prefill-dominated
+  workloads (single large doc, no generation) it's a small net loss.
+- **Memory-bandwidth ceiling is partially defeated.** Stage 4 framed dense Q8 as bandwidth-bound at
+  ~6 t/s ≈ 26 GiB × 6 / 256 GB/s ≈ 61 % of peak. With MTP at 14 t/s we'd be at ~140 % of that
+  budget on a naive single-token model — confirming MTP gets multiple useful tokens per memory pass
+  (each verified token costs <1 full read of weights).
+- **Reasoning content preserved.** `--chat-template-kwargs {"preserve_thinking":true}` plus
+  `--jinja` keeps `<think>…</think>` blocks emitted into `reasoning_content` (verified in smoke
+  test); accepted-draft tokens stream the same way as non-MTP output.
+
+### Caveats
+
+- Different upstream snapshot than the rest of this doc — re-bench the Stage 4 Q8 dense row on
+  b9124 if you want apples-to-apples (skipped here because the MTP-off rows in this section already
+  provide the controlled comparison).
+- `--spec-type mtp` requires PR #22673 merged; the `am17an/mtp-clean` fork uses a different tensor
+  layout and fails to load the havenoammo GGUF with `missing tensor 'blk.64.ssm_conv1d.weight'`.
+- All Total TPS rows hit the 256-token cap so the figures are mild underestimates; the MTP/no-MTP
+  ratio is unaffected (both are capped identically).
 
 ## Recommended runtime config
 
