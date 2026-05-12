@@ -262,6 +262,35 @@ identical to Stage 4: `bench_model.py -t 256 -r 2` against `coding_prompt.txt` a
   `--jinja` keeps `<think>…</think>` blocks emitted into `reasoning_content` (verified in smoke
   test); accepted-draft tokens stream the same way as non-MTP output.
 
+### `--spec-draft-n-max` sweep (~4 k prompt)
+
+`--spec-draft-n-max N` caps how many tokens MTP proposes per verification step (`b9124` default
+is 16). Each verify is one batched forward pass regardless of N, so larger N trades acceptance
+rate per chain-position for fewer verification rounds. Sweep at ~4 k prompt, single pass r=2,
+same flags as the table above:
+
+| n_max | TTFT (ms) | PP t/s | Total TPS | vs default |
+|------:|----------:|-------:|----------:|-----------:|
+|     2 |   17 231  | 232.4  |   11.2    |   -21 %    |
+|     3 |   17 138  | 233.6  |   11.9    |   -16 %    |
+|     4 |   17 199  | 232.8  |   13.4    |    -6 %    |
+|     5 |   17 126  | 233.8  |   13.9    |    -2 %    |
+|     8 |   17 195  | 232.9  |   12.7    |   -11 %    |
+| **16 (default)** | **17 182** | **233.0** | **14.2** | **best** |
+
+- **Default `n_max=16` is the peak** on this hardware. Curve is monotonic 2 → 5 then dips at 8 and
+  recovers at 16. The N=8 dip is probably real (it's wider than typical run-to-run noise here ~0.3
+  t/s) but a re-bench with more repetitions would confirm.
+- **N=5 is within 2 % of the default** — a reasonable cap if you want to bound worst-case verify
+  batch width (e.g. if you suspect memory pressure or want predictable per-step latency).
+- **TTFT and PP are flat** across N — prefill cost doesn't depend on draft chain length, only
+  decode does. Matches theory: the draft heads are tiny relative to the main forward pass.
+- **Caveat on third-party guidance**: a benchmark gist
+  ([am17an/228edfb84ed082aa88e3865d6fa27090](https://gist.github.com/am17an/228edfb84ed082aa88e3865d6fa27090))
+  claims N=3 is optimal at 21.6 t/s. That's likely a different model arch or a separate draft
+  model (where small N is conventional); on havenoammo Qwen3.6-27B-MTP + Strix Halo + Vulkan,
+  bigger is better up to the default cap.
+
 ### Caveats
 
 - Different upstream snapshot than the rest of this doc — re-bench the Stage 4 Q8 dense row on
