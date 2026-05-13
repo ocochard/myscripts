@@ -1,5 +1,8 @@
 # How to debug a port build crash: a worked example
 
+*Author: Claude (Anthropic), Opus 4 — written while working through
+the `math/openblas` 0.3.33 SIGBUS regression.*
+
 This document walks through the *process* of diagnosing a real-world
 crash — `math/openblas` 0.3.33 failing the `sblat3` test suite with a
 SIGBUS — using only standard Unix tooling (`lldb`, `objdump`, `nm`,
@@ -92,7 +95,7 @@ session it's much cleaner to use a command file than to type at the
 ```sh
 $ cat > lldb-cmds <<'EOF'
 target create "./sblat3"
-process launch -i ./sblat3.dat -- 
+process launch -i ./sblat3.dat --
 EOF
 
 $ lldb -s lldb-cmds
@@ -382,9 +385,9 @@ The diff shows every field-offset load (`movl 0x18(%r9),%ecx`,
 matches the size of the three added struct fields and confirms the
 library-level change.
 
-## 8. Step C — caller bug or kernel-internal bug? (lldb breakpoints)
+## 8. Caller bug or kernel-internal bug? (lldb breakpoints)
 
-Sections 1-8 located **where** the crash happens
+Sections 1-7 located **where** the crash happens
 (`movaps (%r8),%xmm3` at `+6096` inside `strsm_kernel_RT_BARCELONA`)
 and **why** (`%r8` is not 16-byte aligned). They did not answer the
 load-bearing question:
@@ -596,7 +599,7 @@ SIGBUS.
 6. On FreeBSD: **lldb only speaks lua**, not Python. Use command
    lists, not script callbacks.
 
-## 9. Step D — automated source bisection with `git bisect run`
+## 9. Automated source bisection with `git bisect run`
 
 Section 7 used `git log` to *read* commit messages and form a
 hypothesis. That works when there are a few dozen relevant commits
@@ -759,9 +762,9 @@ Date: …
 That commit is the regression. From here:
 
 1. `git show <sha>` to see the diff.
-2. Map the diff back to the symptoms found in Step C (kernel walks
+2. Map the diff back to the symptoms found in section 8 (kernel walks
    `%r8` off alignment for odd `bn*bk`). The bisect identifies the
-   commit; Step C explains *why* that commit broke STRSM
+   commit; section 8 explains *why* that commit broke STRSM
    specifically — that pairing is what makes the fix tractable.
 3. `git bisect reset` to return to `develop`.
 
@@ -844,7 +847,7 @@ one is **not** sufficient on x86_64 DYNAMIC_ARCH — likely because
 the SMP thread-fanout path between the two returns can produce
 per-block `bm` values that are 0 even when the original `args.m`
 isn't, and only the late return guarded the kernel against that.
-(Step C showed `bm=0, bn=7, bk=7` at the crashing entry.)
+(Section 8 showed `bm=0, bn=7, bk=7` at the crashing entry.)
 
 ### 9.8 Verifying the fix
 
@@ -869,7 +872,7 @@ $ grep "STRSM\|END OF TESTS" SBLAT3.SUMM
 patch for the port — much smaller than carrying a behavioral patch
 to the `.S` kernel or to `level3_thread.c`.
 
-## 10. Step E — package the fix as a port patch and verify in poudriere
+## 10. Package the fix as a port patch and verify in poudriere
 
 Once the upstream revert is identified and verified in a worktree,
 the FreeBSD-port side of the work is mechanical: turn the two-line

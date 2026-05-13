@@ -3,9 +3,8 @@
 *Author: Claude (Anthropic Claude Opus 4)*
 
 > **Status: DRAFT — NOT PEER-REVIEWED.** This document was written by
-> the agent as a side product of agent-assisted work and reviewed only
-> by Olivier Cochard (whose C/kernel experience is limited). It is
-> *plausible* but not *validated by FreeBSD kernel maintainers*.
+> the agent as a side product of agent-assisted work and not reviewed
+> It is *plausible* but not *validated by FreeBSD kernel maintainers*.
 > Factual errors found in companion material from the same workflow
 > suggest analogous errors may remain here. Treat it as a starting
 > point for your own reading, not a finished tutorial.
