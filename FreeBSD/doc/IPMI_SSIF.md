@@ -14,7 +14,7 @@ that a developer who has never touched IPMI, the FreeBSD `iicbus` layer, or
 ACPI device enumeration can use it as a roadmap to write an equivalent driver
 for a similar bus-bridged peripheral.
 
-The final, working patch lives at `ipmi.ssif.patch'`.
+The final, working patch lives at [ipmi.ssif.patch](ipmi.ssif.patch).
 This document is the conceptual explanation behind that patch.
 
 ---
