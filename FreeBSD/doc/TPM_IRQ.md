@@ -2,12 +2,20 @@
 
 *Author: Claude (Anthropic Claude Opus 4)*
 
-> **Status: DRAFT — NOT PEER-REVIEWED.** This document was written by
-> the agent as a side product of agent-assisted work and not reviewed
-> It is *plausible* but not *validated by FreeBSD kernel maintainers*.
-> Factual errors found in companion material from the same workflow
-> suggest analogous errors may remain here. Treat it as a starting
-> point for your own reading, not a finished tutorial.
+> **Status: PARTIALLY CONFIRMED.** Hypothesis 4 (missing trailing
+> `CMD_RDY` write on STMicro ST33-series parts) has been independently
+> confirmed on hardware: a reporter testing
+> **ST33KTPM2X32CKE3** on FreeBSD 14.2 (and current main) arrived at
+> the same fix described in that section — writing
+> `TPM_STS_CMD_RDY` near the end of `tpmtis_transmit`, before
+> `tpmtis_relinquish_locality()` — and confirms that with it
+> `go_ready` returns good status regularly and `tpm2_*` userspace
+> commands work. Hypotheses 1–3 remain unverified for this incident
+> and are retained as a differential diagnosis for other chips and
+> firmwares producing the same symptom. The educational background
+> chapter has not been independently reviewed by FreeBSD kernel
+> maintainers — treat it as a starting point, not a finished
+> tutorial.
 
 ## Symptom
 
@@ -183,7 +191,7 @@ interrupts are silently disabled on those boxes.
 ### What the message means
 
 The error comes from `tpmtis_go_ready()` in
-`sys/dev/tpm/tpm_tis_core.c:371`. It writes `TPM_STS_CMD_RDY` to the
+`sys/dev/tpm/tpm_tis_core.c:370`. It writes `TPM_STS_CMD_RDY` to the
 `TPM_STS` register and waits up to `TPM_TIMEOUT_B` for the chip to
 acknowledge by setting the same bit back. If the bit never sets, the
 function returns false and you see the message.
@@ -196,14 +204,17 @@ emit this error:
 
 ```mermaid
 flowchart TD
-    A[tpmtis_attach] --> B[bus_alloc_resource_any IRQ]
+    A[tpmtis_attach] --> P{use_polling tunable set?}
+    P -- "yes" --> Z0[skip IRQ alloc, setup, and test<br/>goto skip_irq]
+    P -- "no" --> B[bus_alloc_resource_any IRQ]
     B --> C[bus_setup_intr → tpmtis_intr_handler]
     C --> D[tpmtis_setup_intr]
     D --> E{irq == 0 OR irq > 0xF?}
-    E -- "yes (e.g. GSI=28)<br/>or use_polling=1" --> Z1[skip IRQ test]
+    E -- "yes (e.g. GSI=28)" --> Z1[skip IRQ test]
     E -- "no (irq in 1..15)" --> F[write TPM_INT_VECTOR<br/>enable interrupts]
     F --> G[tpmtis_test_intr → tpmtis_transmit GetRandom]
-    Z1 --> H[tpm20_init]
+    Z0 --> H[tpm20_init]
+    Z1 --> H
     G --> H
     H --> I[register cdev /dev/tpm0]
     H --> J[start harvest_task — every 10s]
@@ -214,37 +225,51 @@ flowchart TD
 ```
 
 The harvest task is registered unconditionally in `tpm20_init`
-(`tpm20.c:202-204`) when the kernel is built with `TPM_HARVEST` or
+(`tpm20.c:200-205`) when the kernel is built with `TPM_HARVEST` or
 `RANDOM_ENABLE_TPM`. It fires every 10 seconds (`TPM_HARVEST_INTERVAL`)
 and sends `TPM_CC_GetRandom` through the same `tpmtis_transmit` →
-`tpmtis_go_ready` path. Polling does **not** disable it — `use_polling`
-only short-circuits the `tpmtis_test_intr` call at attach.
+`tpmtis_go_ready` path. Polling does **not** disable the harvest —
+`use_polling` only changes attach-time IRQ setup (it short-circuits IRQ
+resource allocation and the attach-time `tpmtis_test_intr` call), but
+every subsequent transmit still goes through `tpmtis_go_ready` regardless.
 
-So if `hw.tpm.0.use_polling=1` doesn't make the message go away, the
-problem is **not** the IRQ test path. It is the TPM itself failing to
-acknowledge `CMD_RDY`.
+So if `hint.tpm.0.use_polling="1"` doesn't make the message go away,
+the problem is **not** the IRQ test path. It is the TPM itself failing
+to acknowledge `CMD_RDY`.
 
 ### What polling did, and didn't, prove
 
-Setting `hw.tpm.0.use_polling=1` was confirmed on the affected machine to
-have **no effect** on the error. This rules out the IRQ-test hypothesis
-that was originally hypothesis 1. The chip is genuinely not responding to
-`TPM_STS_CMD_RDY` writes — locality is the prime suspect.
+Setting `hint.tpm.0.use_polling="1"` in `/boot/device.hints` (or via
+`kenv hint.tpm.0.use_polling=1` before the driver attaches) was
+reported to have **no effect** on the error. Because `use_polling`
+only bypasses attach-time IRQ setup (see *What `use_polling` does and
+does not do* below) and the harvest path still calls
+`tpmtis_go_ready` on every tick, this rules out the IRQ-test
+hypothesis but does not distinguish between Hypotheses 1, 3, and 4 —
+all of which produce a chip-not-acknowledging-`CMD_RDY` failure
+inside `tpmtis_go_ready` itself.
 
 ### Hypothesis 1 (most likely) — locality 0 not actually granted
 
-`tpmtis_request_locality()` polls for `TPM_ACCESS_ACTIVE_LOCALITY`. On
-some firmwares this bit is reported as set (because firmware took
-locality earlier and didn't release it cleanly, or because Intel TXT /
-Boot Guard / DRTM holds locality > 0 and locality 0 ends up gated), but
+`tpmtis_request_locality()` polls for `TPM_ACCESS_LOC_ACTIVE |
+TPM_ACCESS_VALID` (`tpm_tis_core.c:334`). On some firmwares the
+`LOC_ACTIVE` bit is reported as set (because firmware took locality
+earlier and didn't release it cleanly, or because Intel TXT / Boot
+Guard / DRTM holds locality > 0 and locality 0 ends up gated), but
 subsequent register writes are still ignored by the TPM. Then
 `tpmtis_go_ready` writes `CMD_RDY` into the void and times out.
 
 A related variant: the TPM needs `TPM2_Startup(CLEAR|STATE)` after every
-power-on. The FreeBSD driver does **not** issue Startup itself — it
-relies on firmware. If the previous OS executed `TPM2_Shutdown(STATE)`
-and your firmware didn't re-issue `Startup` on the next boot, the chip
-sits in a half-initialized state where `TPM_STS` writes are no-ops.
+power-on. At initial attach the FreeBSD driver does **not** issue
+Startup — `tpm20_init` (`tpm20.c:183-209`) sets up the cdev and
+harvest task but does not transmit `TPM_CC_Startup`, so it relies on
+firmware having issued Startup before handing control to the OS.
+(The driver does issue Startup on resume — `tpm20_restart` at
+`tpm20.c:311-345` sends `TPM_CC_Startup` (0x144), called from
+`tpm20_resume` — but not on cold boot.) If the previous OS executed
+`TPM2_Shutdown(STATE)` and your firmware didn't re-issue Startup on
+the next boot, the chip sits in a half-initialized state where
+`TPM_STS` writes are no-ops.
 
 **Tests:**
 
@@ -306,27 +331,185 @@ A previous OS may have left locality state half-claimed. Cheap to rule
 out: full **AC-cycle** (warm reboot is not enough — the TPM keeps state
 across a warm reset).
 
+### Hypothesis 4 (CONFIRMED for ST33KTPM2X32CKE3) — chip state not cleared between commands (à la Linux `tpm_tis_ready`)
+
+> **Independently confirmed on hardware.** A reporter testing
+> ST33KTPM2X32CKE3 on FreeBSD 14.2 (and current main) confirms the
+> diagnosis below: adding a `TPM_STS_CMD_RDY` write near the end of
+> `tpmtis_transmit`, before `tpmtis_relinquish_locality()`, makes
+> `go_ready` return good status regularly, and `tpm2_*` userspace
+> commands work normally. See *Confirmed fix* at the end of this
+> section for the exact diff.
+
+Some TPMs — notably STMicro parts like the **ST33KTPM2X32CKE3** — require
+the host to explicitly put the chip back into `CMD_RDY` after consuming a
+response, not just relinquish locality. The TIS state machine on these
+chips does **not** transition cleanly out of "response available" on its
+own: it sits with `STS.dataAvail` asserted (or in an intermediate state)
+until the host writes `TPM_STS_CMD_RDY` again, which both cancels any
+leftover state and parks the chip ready for the next command.
+
+Linux's `drivers/char/tpm/tpm_tis_core.c` handles this by calling
+`tpm_tis_ready(chip)` — a write of `TPM_STS_COMMAND_READY` to `TPM_STS`
+— on the way *out* of every transmit, after the response has been read.
+FreeBSD's `tpmtis_transmit` does **not** do this. It calls
+`tpmtis_go_ready()` only at the *start* of a transmit (to prepare the
+chip for a new command) and in the timeout cancel path; the successful
+path falls through to `tpmtis_relinquish_locality()` and returns,
+leaving the chip in its post-response state.
+
+The consequence: the **first** transmit (the `tpmtis_test_intr`
+`GetRandom` at attach time) succeeds, because the chip is in a clean
+post-boot state. The **next** transmit — typically the first
+`tpm20_harvest` call ~10 seconds later — finds the chip still holding
+the previous response's state, the leading `tpmtis_go_ready()` write of
+`CMD_RDY` is ignored, the bit never echoes back, and `tpm_wait_for_u32`
+times out with `Failed to switch to ready state`. From then on every
+harvest tick repeats the same failure.
+
+This matches the symptom pattern observed on ST33KTPM2X32CKE3: clean
+attach, then failures starting roughly one harvest interval later.
+
+**Fix (mirror Linux's `tpm_tis_ready`):** call `tpmtis_go_ready()` near
+the end of `tpmtis_transmit`, **before** `tpmtis_relinquish_locality()`
+— the `CMD_RDY` write must happen while the driver still owns
+locality 0, otherwise the TPM ignores it. Treat its return value as
+advisory (log, don't fail the transmit) — at that point a valid
+response is already in `priv->buf` and the caller is entitled to it.
+Linux's `tpm_tis_ready()` is `void` for exactly this reason.
+
+Sketch:
+
+```c
+    /* ... after reading the response into priv->buf ... */
+
+    /*
+     * Park the chip in CMD_RDY before relinquishing locality. Some TPMs
+     * (e.g. STMicro ST33KTPM2X32CKE3) won't accept the next command's
+     * CMD_RDY write otherwise. Mirrors Linux's tpm_tis_ready(). Failure
+     * here is non-fatal: we already have the response.
+     */
+    if (!tpmtis_go_ready(sc))
+        device_printf(dev, "post-transmit go_ready failed (non-fatal)\n");
+
+    tpmtis_relinquish_locality(sc);
+    priv->offset = 0;
+    priv->len = bytes_available;
+
+    return (0);
+```
+
+**How to confirm this is your bug before patching:**
+
+1. Boot verbose and watch the timing: does the first failure land
+   ~10 s after attach (one `TPM_HARVEST_INTERVAL`)?
+2. Add the `sts_before`/`sts_after` instrumentation from Hypothesis 2.
+   On the *second* transmit, you should see `sts_before` with bits like
+   `STS_VALID | STS_DATA_AVAIL` still asserted from the previous
+   response — that's the smoking gun for this hypothesis (and rules out
+   Hypothesis 1, where `sts_before` would be `0x00000000`).
+
+**Confirmed fix (reported against FreeBSD 14.2, applies to current main):**
+
+The minimal patch verified on ST33KTPM2X32CKE3 hardware. Inserted at
+the end of `tpmtis_transmit` in `sys/dev/tpm/tpm_tis_core.c`, just
+before the existing `tpmtis_relinquish_locality(sc)` call (around
+line 477 in current main):
+
+```diff
+        if (!tpmtis_read_bytes(sc, bytes_available - TPM_HEADER_SIZE,
+            &priv->buf[TPM_HEADER_SIZE])) {
+                device_printf(dev,
+                    "Failed to read response\n");
+                return (EIO);
+        }
++
++       /* Park the chip in CMD_RDY before relinquishing locality.
++        * Required for STMicro ST33KTPM2X32CKE3 and similar parts that
++        * do not transition cleanly out of "response available" on
++        * their own. Mirrors Linux's tpm_tis_ready(). */
++       TPM_WRITE_4(sc->dev, TPM_STS, TPM_STS_CMD_RDY);
++       TPM_WRITE_BARRIER(sc->dev, TPM_STS, 4);
+        tpmtis_relinquish_locality(sc);
+        priv->offset = 0;
+        priv->len = bytes_available;
+```
+
+Notes on the confirmed patch versus the sketch above:
+
+- The reporter writes `TPM_STS_CMD_RDY` directly via `TPM_WRITE_4`
+  rather than calling `tpmtis_go_ready(sc)`. The two are equivalent
+  for the happy path, but the direct write skips the
+  `tpm_wait_for_u32` echo check. This matches Linux's `void
+  tpm_tis_ready()` literally (which also does not check the bit
+  echoes back). It also means there is no diagnostic log on the rare
+  case where the chip ignores this final write.
+- The reporter's original diff was against an older tree using the
+  macros `WR4` / `bus_barrier` and the file name `tpm_tis.c`. The
+  diff above is the same change translated to the current
+  `tpm_tis_core.c` macros (`TPM_WRITE_4` / `TPM_WRITE_BARRIER`).
+- The patch is purely additive — it does not change any existing
+  control flow. The TIS state machine treats writing `CMD_RDY` to a
+  chip already in ready state as a no-op (this is what Linux relies
+  on by calling `tpm_tis_ready()` unconditionally at the end of every
+  transmit), so the patch should be safe on TPMs that don't need it,
+  but this has not been independently retested on non-STMicro parts
+  as part of this report.
+
 ### Recommended diagnostic order (revised)
 
-1. **AC-cycle the box.** Cheapest and rules out the most common cause.
-2. **Check BIOS** for TPM and TXT/Boot-Guard/DRTM options as listed in
+1. **Identify the TPM vendor/part.** If the chip is an STMicro
+   ST33-series part (e.g. ST33KTPM2X32CKE3), skip straight to
+   Hypothesis 4 — its fix is confirmed on that family and the patch is
+   purely additive. The DID/VID can be read from `TPM_DID_VID`
+   (offset `0xF00`) via the driver, or inferred from board
+   documentation.
+2. **Boot verbose** (`boot -v`) and capture all TPM-related messages.
+   Note the *timing* of the first `Failed to switch to ready state`: if
+   it lands ~10 s after a clean attach (one `TPM_HARVEST_INTERVAL`),
+   that is the timing signature of Hypothesis 4 regardless of vendor.
+3. **AC-cycle the box.** Cheapest way to rule out Hypotheses 1 and 3
+   (stuck locality, missing post-power-on Startup) before patching.
+4. **Check BIOS** for TPM and TXT/Boot-Guard/DRTM options as listed in
    Hypothesis 1.
-3. **Try Clear TPM in BIOS** (safe — the OS isn't using it yet).
-4. **Boot verbose** (`boot -v`) and capture all TPM-related messages.
-5. **Inspect the IRQ resource the bus assigned** (still useful context):
+5. **Try Clear TPM in BIOS** (safe — the OS isn't using it yet).
+6. **Inspect the IRQ resource the bus assigned** (still useful context):
    ```sh
    devinfo -rv | grep -A2 -i tpm
-   sysctl hw.tpm
+   kenv | grep -i tpm   # the driver registers no hw.tpm sysctls
    ```
-6. **Instrument `tpmtis_go_ready`** as shown above to read `TPM_STS`
-   before/after — the table tells you which hypothesis is real.
+7. **Instrument `tpmtis_go_ready`** as shown above to read `TPM_STS`
+   before/after — the table tells you which hypothesis is real. Compare
+   `sts_before` on the *first* vs *second* transmit: leftover
+   `STS_VALID | STS_DATA_AVAIL` on the second points squarely at
+   Hypothesis 4.
+8. **If Hypothesis 4 is confirmed**, apply the trailing `CMD_RDY` write
+   from the *Confirmed fix* sub-section and retest. This matches what
+   the Linux TIS driver does for the same family of chips (STMicro
+   ST33-series).
 
 ### What `use_polling` does and does not do
 
-`hw.tpm.0.use_polling=1` only affects the **attach-time IRQ test**
-(`tpmtis_test_intr`). The harvest task and any user-space access through
-`/dev/tpm0` go through the same `tpmtis_transmit` path regardless. If
-`go_ready` fails for chip-state reasons, polling cannot help.
+`use_polling` is a **device hint**, not a sysctl. It is read once at
+attach by `tpmtis_attach` at `tpm_tis_core.c:108` via
+`resource_int_value("tpm", unit, "use_polling", &poll)`. The driver
+registers no `hw.tpm.*` sysctls, so it cannot be toggled at runtime.
+Set it before boot, e.g.:
+
+```
+# /boot/device.hints
+hint.tpm.0.use_polling="1"
+```
+
+or via `kenv hint.tpm.0.use_polling=1` before the module loads.
+
+When set non-zero, `tpmtis_attach` jumps directly to `skip_irq:` and
+bypasses `bus_alloc_resource_any` for the IRQ, `bus_setup_intr`, and
+the entire `tpmtis_setup_intr` → `tpmtis_test_intr` sequence. The
+harvest task and any user-space access through `/dev/tpm0` still go
+through the same `tpmtis_transmit` path, which still calls
+`tpmtis_go_ready` at its head. If `go_ready` fails for chip-state
+reasons (Hypotheses 1, 3, or 4), the hint cannot help.
 
 If you do *not* want repeated harvest-task errors filling dmesg while you
 debug, build a kernel without `TPM_HARVEST` / `RANDOM_ENABLE_TPM`, or
@@ -334,11 +517,24 @@ detach `tpmtis0` after attach.
 
 ### Source references
 
-- `sys/dev/tpm/tpm_tis_core.c:108` — `use_polling` tunable
-- `sys/dev/tpm/tpm_tis_core.c:181-216` — `tpmtis_setup_intr`, the SIRQ check
-- `sys/dev/tpm/tpm_tis_core.c:371-384` — `tpmtis_go_ready`
-- `sys/dev/tpm/tpm_tis_core.c:386-406` — `tpmtis_transmit`, where the
-  error message is printed
-- `sys/dev/tpm/tpm20.c:182-209` — `tpm20_init`, registers harvest_task
-- `sys/dev/tpm/tpm20.c:267-310` — `tpm20_harvest`, runs every 10s and
-  goes through the same transmit/go_ready path
+Line numbers verified against FreeBSD main as of 2026-05-21.
+
+- `sys/dev/tpm/tpm_tis_core.c:108-112` — `use_polling` tunable read in
+  `tpmtis_attach`; on non-zero value, jumps to `skip_irq:` and bypasses
+  IRQ resource allocation, `bus_setup_intr`, and `tpmtis_setup_intr`
+- `sys/dev/tpm/tpm_tis_core.c:181-216` — `tpmtis_setup_intr`, the SIRQ
+  4-bit range check (`if (irq == 0 || irq > 0xF) return;` at line 194)
+- `sys/dev/tpm/tpm_tis_core.c:370-384` — `tpmtis_go_ready`
+- `sys/dev/tpm/tpm_tis_core.c:386-482` — `tpmtis_transmit`; the
+  "Failed to switch to ready state" message is printed at line 404
+  (head of transmit) and the timeout-cancel `go_ready` is at line 446
+- `sys/dev/tpm/tpm20.c:183-209` — `tpm20_init`, registers
+  `harvest_task` at lines 200-205. Does **not** issue
+  `TPM_CC_Startup` at attach — relies on firmware.
+- `sys/dev/tpm/tpm20.c:266-308` — `tpm20_harvest`, runs every
+  `TPM_HARVEST_INTERVAL` (10 s, defined at `tpm20.c:40`) and goes
+  through the same `TPM_TRANSMIT` → `tpmtis_transmit` →
+  `tpmtis_go_ready` path
+- `sys/dev/tpm/tpm20.c:311-345` — `tpm20_restart`, the only place the
+  driver issues `TPM_CC_Startup` (0x144); called from
+  `tpm20_resume` (`tpm20.c:227-241`), not at initial attach
