@@ -4,7 +4,9 @@
 
 > **Status: PARTIALLY CONFIRMED.** Hypothesis 4 (missing trailing
 > `CMD_RDY` write on STMicro ST33-series parts) has been independently
-> confirmed on hardware: a reporter testing
+> confirmed on hardware and reported upstream as
+> [FreeBSD bug 295103](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=295103),
+> which includes the patch: a reporter testing
 > **ST33KTPM2X32CKE3** on FreeBSD 14.2 (and current main) arrived at
 > the same fix described in that section — writing
 > `TPM_STS_CMD_RDY` near the end of `tpmtis_transmit`, before
@@ -46,10 +48,13 @@ function:
 ```
 
 This fix was independently verified on hardware against FreeBSD 14.2
-and applies cleanly to current main. The patch is purely additive —
-it adds two lines and does not touch any existing control flow.
-After applying, `go_ready` returns success regularly and `tpm2_*`
-userspace commands work normally.
+and applies cleanly to current main. It was reported upstream as
+[FreeBSD bug 295103](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=295103)
+— *"tpm_tis driver reports 'Failed to switch to ready state'"* —
+which includes the original patch and the reporter's description.
+The patch is purely additive — it adds two lines and does not touch
+any existing control flow. After applying, `go_ready` returns success
+regularly and `tpm2_*` userspace commands work normally.
 
 The rest of this document explains *why* this works (Hypothesis 4),
 covers three other hypotheses that produce the same symptom on
@@ -451,10 +456,15 @@ Sketch:
 
 **Confirmed fix (reported against FreeBSD 14.2, applies to current main):**
 
-The minimal patch verified on ST33KTPM2X32CKE3 hardware. Inserted at
-the end of `tpmtis_transmit` in `sys/dev/tpm/tpm_tis_core.c`, just
-before the existing `tpmtis_relinquish_locality(sc)` call (around
-line 477 in current main):
+The minimal patch verified on ST33KTPM2X32CKE3 hardware. Reported
+upstream as
+[FreeBSD bug 295103](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=295103)
+— *"tpm_tis driver reports 'Failed to switch to ready state'"* —
+which is the canonical source for the patch and the reporter's
+write-up. Inserted at the end of `tpmtis_transmit` in
+`sys/dev/tpm/tpm_tis_core.c`, just before the existing
+`tpmtis_relinquish_locality(sc)` call (around line 477 in current
+main):
 
 ```diff
         if (!tpmtis_read_bytes(sc, bytes_available - TPM_HEADER_SIZE,
