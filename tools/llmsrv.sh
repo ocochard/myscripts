@@ -102,10 +102,11 @@ HF_HUB="${HOME}/.cache/huggingface/hub"
 # Echos resolved path or empty.
 hf_resolve() {
   for f in "$1"/snapshots/*/$2; do
-    [ -e "$f" ] && { echo "$f"; return; }
+    [ -e "$f" ] && { echo "$f"; return 0; }
   done
   # Fallback: framework was hand-populated with named files under blobs/.
   [ -e "$1/blobs/$2" ] && echo "$1/blobs/$2"
+  return 0
 }
 
 # --no-host: enables UMA-aware host-pointer path on Vulkan. On Strix Halo:
@@ -124,11 +125,15 @@ case "${MODEL}" in
     # Qwen3.6-35B-A3B Q4_K_XL: 35B total, 3B active per token. Available on
     # all hosts. Fast (~54 t/s TG at 4k), fine for code.
     # Prefer Q4_K_XL; fall back to Q4_K_M (only quant on macOS).
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf")
+    hf_repo="unsloth/Qwen3.6-35B-A3B-GGUF"
+    hf_dir="${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF"
+    model=$(hf_resolve "${hf_dir}" "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf")
     if [ -n "${model}" ]; then
+      hf_file="Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
       alias="Qwen3.6-35B-A3B-UD-Q4_K_XL"
     else
-      model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf")
+      model=$(hf_resolve "${hf_dir}" "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf")
+      hf_file="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
       alias="Qwen3.6-35B-A3B-UD-Q4_K_M"
     fi
     # --no-warmup: the default warmup decode (empty batch) hits
@@ -140,13 +145,17 @@ case "${MODEL}" in
     # Qwen3.6-35B-A3B Q8_K_XL: ~22% slower TG than Q4, better prose quality
     # (small 3B active path is more sensitive to quant noise; doc work has
     # no syntax-level error feedback). Available on all hosts.
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf")
+    hf_repo="unsloth/Qwen3.6-35B-A3B-GGUF"
+    hf_file="Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf"
+    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "${hf_file}")
     alias="Qwen3.6-35B-A3B-UD-Q8_K_XL"
     warmup_flag="--no-warmup"
     ;;
   dense)
     # Original 27B dense. Higher quality on hard reasoning, but ~4x slower.
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-27B-GGUF" "Qwen3.6-27B-UD-Q4_K_XL.gguf")
+    hf_repo="unsloth/Qwen3.6-27B-GGUF"
+    hf_file="Qwen3.6-27B-UD-Q4_K_XL.gguf"
+    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-27B-GGUF" "${hf_file}")
     alias="Qwen3.6-27B-UD-Q4_K_XL"
     warmup_flag=""
     # Drop --no-host on FreeBSD: crashes 27B dense (Q4 always, Q8 on Mesa 25).
@@ -160,7 +169,9 @@ case "${MODEL}" in
     # MTP implementation has an incompatible tensor layout and fails to load
     # this GGUF with "missing tensor 'blk.64.ssm_conv1d.weight'".
     LLAMA_DIR=${LLAMA_DIR:-${HOME}/llama.cpp}
-    model=$(hf_resolve "${HF_HUB}/models--havenoammo--Qwen3.6-27B-MTP-UD-GGUF" "Qwen3.6-27B-MTP-UD-Q8_K_XL.gguf")
+    hf_repo="havenoammo/Qwen3.6-27B-MTP-UD-GGUF"
+    hf_file="Qwen3.6-27B-MTP-UD-Q8_K_XL.gguf"
+    model=$(hf_resolve "${HF_HUB}/models--havenoammo--Qwen3.6-27B-MTP-UD-GGUF" "${hf_file}")
     alias="Qwen3.6-27B-MTP-UD-Q8_K_XL"
     warmup_flag=""
     # Same constraint as plain dense 27B on FreeBSD: --no-host crashes.
@@ -183,7 +194,9 @@ case "${MODEL}" in
   med)
     # Qwen3.5-122B-A10B (MoE, 122B total / 10B active).
     [ "${OS}" = "Linux" ] || { echo "MODEL=med only available on Ubuntu host" >&2; exit 1; }
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.5-122B-A10B-GGUF" "UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf")
+    hf_repo="unsloth/Qwen3.5-122B-A10B-GGUF"
+    hf_file="UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf"
+    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.5-122B-A10B-GGUF" "${hf_file}")
     alias="Qwen3.5-122B-A10B-UD-Q4_K_XL"
     warmup_flag="--no-warmup"
     ;;
@@ -191,7 +204,9 @@ case "${MODEL}" in
     # Qwen3.5-397B-A17B IQ2_XXS (MoE, 397B total / 17B active).
     # Needs unified memory to fit the 128 GB UMA pool.
     [ "${OS}" = "Linux" ] || { echo "MODEL=big only available on Ubuntu host" >&2; exit 1; }
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.5-397B-A17B-GGUF" "UD-IQ2_XXS/Qwen3.5-397B-A17B-UD-IQ2_XXS-00001-of-00004.gguf")
+    hf_repo="unsloth/Qwen3.5-397B-A17B-GGUF"
+    hf_file="UD-IQ2_XXS/Qwen3.5-397B-A17B-UD-IQ2_XXS-00001-of-00004.gguf"
+    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.5-397B-A17B-GGUF" "${hf_file}")
     alias="Qwen3.5-397B-A17B-UD-IQ2_XXS"
     warmup_flag="--no-warmup"
     # Required to spill across the unified memory pool on Ubuntu.
@@ -201,11 +216,14 @@ case "${MODEL}" in
     echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|mtp|med|big)" >&2; exit 1 ;;
 esac
 
-[ -n "${model}" ] && [ -e "${model}" ] || {
-  echo "model file for MODEL=${MODEL} not found under ${HF_HUB}" >&2
-  echo "(checked snapshots/*/ and blobs/)" >&2
-  exit 1
-}
+# If the file isn't in the HF cache, hand off to llama-server's -hf/-hff so it
+# downloads on first run. Skip --model in that case (-hf is mutually exclusive).
+if [ -n "${model}" ] && [ -e "${model}" ]; then
+  model_src="--model ${model}"
+else
+  echo "model file not cached under ${HF_HUB}; downloading via -hf ${hf_repo} -hff ${hf_file}" >&2
+  model_src="-hf ${hf_repo} -hff ${hf_file}"
+fi
 
 # Sampling preset: Qwen3 thinking-coder (per Qwen3 docs).
 # Non-thinking mode was removed — on MoE the gen-time savings are small
@@ -225,7 +243,7 @@ extra='--temperature 0.6 --top-p 0.95 --top-k 20 --min-p 0.0'
 cd "${LLAMA_DIR}"
 
 exec env ${radv_env} build/bin/llama-server \
-  --model "${model}" \
+  ${model_src} \
   --no-mmproj \
   ${warmup_flag} \
   --alias "${alias}" \
