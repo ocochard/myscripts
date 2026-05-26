@@ -1,5 +1,19 @@
 # Case study: `tun_destroy()` parks a global sx-lock on FreeBSD 16-CURRENT
 
+*Author: Claude (Anthropic Claude Opus 4)*
+
+> **Status: DRAFT — NOT PEER-REVIEWED.** This document was written by
+> the agent as a side product of debugging the `tun_destroy` deadlock,
+> and reviewed only by Olivier Cochard (whose C/kernel experience is
+> limited). The reproducer, the kgdb evidence, the patch, and the
+> validation runs are all real and machine-verifiable. The
+> *explanatory* prose — the background sections, the framing as a
+> teaching case study, and the exercise prompts — is *plausible* but
+> not *validated by FreeBSD kernel maintainers*. Factual errors found
+> in companion material from the same workflow suggest analogous
+> errors may remain here. Treat it as a starting point for your own
+> reading, not a finished tutorial.
+
 A real-world kernel-locking bug, walked through from "I can reproduce
 this in three lines of shell" to "here is the upstream patch and why
 that exact shape is correct."
@@ -28,10 +42,11 @@ before. Concepts are introduced as they appear.
 2. [Background: what is `tun(4)` and what is `if_clone`?](#2-background-what-is-tun4-and-what-is-if_clone)
 3. [What deadlocks, and what does "deadlock" even mean here?](#3-what-deadlocks-and-what-does-deadlock-even-mean-here)
 4. [The lock chain in the kernel](#4-the-lock-chain-in-the-kernel)
-5. [The culprit code](#5-the-culprit-code)
-6. [The patch and why this shape is correct](#6-the-patch-and-why-this-shape-is-correct)
-7. [Validating the fix](#7-validating-the-fix)
-8. [Exercises](#8-exercises)
+5. [Reading the dump in kgdb](#5-reading-the-dump-in-kgdb)
+6. [The culprit code](#6-the-culprit-code)
+7. [The patch and why this shape is correct](#7-the-patch-and-why-this-shape-is-correct)
+8. [Validating the fix](#8-validating-the-fix)
+9. [Exercises](#9-exercises)
 
 ---
 
@@ -161,14 +176,14 @@ The thread chain:
 
 ```mermaid
 flowchart TD
-    A["Holder process<br/>open('/dev/tun1') → tun_busy = 1<br/>then parks in select()"]
-    B["ifconfig tun1 destroy<br/>holds ifnet_detach_sxlock (X)<br/>parks in cv_wait_sig on tun_cv<br/>waiting for tun_busy → 0"]
-    C["ifconfig tun2 destroy<br/>(or jail -R, or any cloner op)<br/>blocked in sx_xlock_hard<br/>waiting for ifnet_detach_sxlock"]
-    D["jls<br/>blocked in sx_slock_hard<br/>waiting for allprison<br/>(held by the wedged jail -R)"]
+    A["Holder process<br/>open /dev/tun1, tun_busy = 1<br/>then parks in select()"]
+    B["ifconfig tun1 destroy<br/>holds ifnet_detach_sxlock X<br/>parks in cv_wait_sig on tun_cv<br/>waiting for tun_busy = 0"]
+    C["ifconfig tun2 destroy<br/>or jail -R, or any cloner op<br/>blocked in sx_xlock_hard<br/>waiting for ifnet_detach_sxlock"]
+    D["jls<br/>blocked in sx_slock_hard<br/>waiting for allprison<br/>held by the wedged jail -R"]
 
-    A -. "never closes fd" .-> B
-    B -- "holds the sx lock" --> C
-    C -- "if it was jail -R, it also held allprison" --> D
+    A -.->|never closes fd| B
+    B -->|holds the sx lock| C
+    C -->|if it was jail -R, also held allprison| D
 
     classDef wedged fill:#f99,stroke:#900
     class B,C,D wedged
@@ -246,7 +261,277 @@ also queues up — visible as a separate pile of threads blocked on
 
 ---
 
-## 5. The culprit code
+## 5. Reading the dump in kgdb
+
+The previous section walked through the lock chain as if we already
+knew what was happening. We didn't — we **confirmed** it by loading
+the kernel dump in `kgdb` and following pointers. This section shows
+the exact commands, in the order I ran them, so you can do the same
+on a panic dump of your own.
+
+### Preliminaries: getting a usable dump
+
+A `GENERIC-NODEBUG` kernel won't help you here — the lock-debug
+machinery and `DEADLKRES` watchdog you need are compiled out. Boot
+the matching `GENERIC` kernel (it's installed alongside
+`GENERIC-NODEBUG` at `/boot/kernel/kernel` vs `/boot/kernel.GENERIC/`)
+or rebuild with these enabled in your config:
+
+    options WITNESS
+    options INVARIANTS
+    options DEADLKRES
+    options DDB
+
+Then lower the deadlock-watchdog thresholds so it fires in seconds
+instead of minutes:
+
+    sudo sysctl debug.deadlkres.slptime_threshold=120
+    sudo sysctl debug.deadlkres.blktime_threshold=60
+
+Reproduce the wedge (the three-line recipe from §1), wait ~2 minutes,
+and the kernel will panic itself with a message like:
+
+    panic: deadlres_td_sleep_q: possible deadlock detected for
+           0xfffff8011f4ea000 (ifconfig), blocked for 120339 ticks
+
+That hex pointer is the wedged thread's `struct thread *` — write it
+down, you'll need it. The dump gets written to `/var/crash/` as
+`vmcore.0` (or `.zst`-compressed if `dumpon -z` is in effect).
+
+### Loading the dump
+
+After the host reboots, decompress if needed and open with `kgdb`:
+
+    cd /var/crash
+    sudo zstd -d vmcore.0.zst                    # if compressed
+    sudo kgdb /boot/kernel/kernel ./vmcore.0
+
+`kgdb` will print the panic string, the dumping CPU's stack, and
+drop you at the `(kgdb)` prompt. From this point everything is just
+reading memory and following pointers.
+
+### Step 1 — confirm the panic message and identify the victim
+
+    (kgdb) p (char *) panicstr
+    $1 = 0xffffffff81de3b10 <vpanic[buf]>
+         "deadlres_td_sleep_q: possible deadlock detected for
+          0xfffff8011f4ea000 (ifconfig), blocked for 120339 ticks"
+
+So `DEADLKRES` named one specific thread (`0xfffff8011f4ea000`) as
+*its* victim. That's a **waiter**, not necessarily the holder — the
+watchdog notices a thread that has been asleep too long, not a thread
+that's holding a lock.
+
+### Step 2 — list every thread, find ifconfig processes
+
+    (kgdb) info threads
+
+This produces hundreds of lines. The useful filter:
+
+    (kgdb) info threads
+    ... (long output) ...
+
+In a stuck system you usually know what command got wedged
+(`ifconfig tun1 destroy` here). The process names are in the
+`info threads` output; pick the one matching your reproducer.
+Alternatively, before the panic you can capture `procstat -kk` of
+the wedged ifconfig and write down its `TID` — that's the most
+reliable way to land on the right thread in the dump.
+
+In this case there were two `ifconfig` threads:
+
+| Description | TID | `struct thread *` |
+| --- | --- | --- |
+| `ifconfig tun1 destroy` (holder candidate) | 105425 | `0xfffff8011f502000` |
+| `ifconfig tun2 destroy` (DEADLKRES victim) | 105919 | `0xfffff8011f4ea000` |
+
+### Step 3 — switch to a thread and print its backtrace
+
+The crucial gotcha: in `kgdb`, `bt <address>` does **not** switch
+thread context — it just backtraces from a frame pointer, which is
+not what you want. To inspect another thread's stack you have to
+switch to it first:
+
+    (kgdb) tid 105425             # switch context to the holder
+    (kgdb) bt                     # now bt walks THAT thread's stack
+
+Output (trimmed to the interesting frames):
+
+    #5 _cv_wait_sig (cvp=0xfffff830608b86b8, lock=0xfffff830608b8698)
+                    at kern_condvar.c:275
+    #6 tun_destroy  (tp=0xfffff830608b8600, may_intr=true)
+                    at sys/net/if_tuntap.c:662
+    #7 if_clone_destroyif_flags (ifc=..., ifp=..., flags=0)
+                    at sys/net/if_clone.c:465
+    #8 if_clone_destroyif (...)
+                    at sys/net/if_clone.c:481
+    #9 if_clone_destroy (name="tun1")
+                    at sys/net/if_clone.c:431
+
+Frame #6 hands you two gifts: the `tuntap_softc *` for the wedged
+tun (`tp=0xfffff830608b8600`), and the call site line number
+(`if_tuntap.c:662`). Frames #7–#8 confirm the caller had taken
+`ifnet_detach_sxlock` (at `if_clone.c:480`, one line up from #8's
+`:481`).
+
+### Step 4 — inspect the softc to read the bug's preconditions
+
+The `tuntap_softc` is the per-device kernel struct. Print it:
+
+    (kgdb) p *(struct tuntap_softc *) 0xfffff830608b8600
+
+Long output; the fields that matter:
+
+    tun_pid           = 15757    /* the holder process: our `sleep` */
+    tun_busy          = 1        /* exactly one open fd */
+    tun_flags         = 0x203    /* TUN_OPEN | TUN_INITED | TUN_DYING */
+    tun_cv.cv_waiters = 1        /* exactly our ifconfig is waiting */
+    tun_mtx.mtx_lock  = 0        /* released by cv_wait, as expected */
+
+This proves four things at once:
+
+- The tun **is** in use (`tun_busy == 1`).
+- `tun_destroy` already entered the wait path (`TUN_DYING` set).
+- The CV has exactly one waiter, matching our wedged ifconfig.
+- The `tun_mtx` was correctly released by `cv_wait` (otherwise we'd
+  have a much worse problem).
+
+So the kernel state is internally consistent — this isn't a
+corrupted-softc bug, it's a logic bug in *who waits for whom*.
+
+### Step 5 — backtrace the waiter, identify the contested lock
+
+    (kgdb) tid 105919             # the DEADLKRES victim
+    (kgdb) bt
+
+    #2 sleepq_switch  (wchan=0xffffffff822e6ea8 <ifnet_detach_sxlock>)
+    #4 _sx_xlock_hard (sx=0xffffffff822e6ea8 <ifnet_detach_sxlock>,
+                       file="sys/net/if_clone.c", line=480)
+    #6 if_clone_destroyif (...)         at sys/net/if_clone.c:480
+    #7 if_clone_destroy (name="tun2")   at sys/net/if_clone.c:431
+
+The `wchan` and `sx=` are the **lock identity**: a global symbol
+named `ifnet_detach_sxlock` at address `0xffffffff822e6ea8`. The
+`file=/line=` are the call site that's blocked, i.e. **this thread
+is queued on a lock that some other thread holds**.
+
+### Step 6 — decode the lock's owner field
+
+The whole point of this exercise is to prove that the holder thread
+(step 3) is the one parking this lock. Print the lock:
+
+    (kgdb) p ifnet_detach_sxlock
+    $3 = {
+      lock_object = { lo_name = "ifnet_detach_sx", ... },
+      sx_lock = 18446735282436841476
+    }
+
+`sx_lock` is an integer that encodes both the holder thread pointer
+and a few flag bits in its lowest 3 bits. Convert it to hex:
+
+    (kgdb) p /x ifnet_detach_sxlock.sx_lock
+    $4 = 0xfffff8011f502004
+
+Mask the bottom 3 bits to get the holder `struct thread *`:
+
+    (kgdb) p /x ifnet_detach_sxlock.sx_lock & ~7
+    $5 = 0xfffff8011f502000
+
+And the flag bits:
+
+    (kgdb) p /x ifnet_detach_sxlock.sx_lock & 7
+    $6 = 0x4
+
+Two pieces of information drop out:
+
+- **Holder td = `0xfffff8011f502000`**, which is *exactly* tid
+  105425 — the `ifconfig tun1 destroy` thread we backtraced in
+  step 3. The thread that is asleep in `cv_wait_sig` is the same
+  thread that holds `ifnet_detach_sxlock` exclusively. QED.
+- **Flag `0x4` is `SX_LOCK_EXCLUSIVE_WAITERS`**, defined in
+  `sys/sys/sx.h`. It means at least one other thread is queued
+  waiting for the xlock — which matches tid 105919 in step 5.
+
+> **Where do the sx_lock bit definitions live?** `sys/sys/sx.h`,
+> around `SX_LOCK_SHARED`, `SX_LOCK_SHARED_WAITERS`,
+> `SX_LOCK_EXCLUSIVE_WAITERS`, `SX_LOCK_RECURSED`. Worth reading
+> once; the encoding shows up in any kgdb session on a sleeping
+> lock. The `mtx(9)` and `rwlock(9)` encodings are similar.
+
+### Step 7 — make the picture explicit
+
+After steps 1–6 you have:
+
+```
+        sx_lock      = 0xfffff8011f502004
+                       └──────────────┴─── flags  = 0x4 (SX_LOCK_EXCLUSIVE_WAITERS)
+                       └──────────┬────── holder td = 0xfffff8011f502000
+                                  │
+                                  ▼
+                        tid 105425 "ifconfig tun1 destroy"
+                        sleeping in cv_wait_sig (frame #5)
+                        called from tun_destroy (frame #6, line 662)
+                        called from if_clone_destroyif_flags
+                        called from if_clone_destroyif (frame #8, line 481)
+                        ^^^^^^^^^^^ which took the xlock at line 480 ^^^^^^^^^^^
+
+        tid 105919 "ifconfig tun2 destroy"
+        queued on _sx_xlock_hard for the same lock
+        (this is the thread DEADLKRES named)
+```
+
+No ambiguity left: the bug is "`tun_destroy` parks on a CV while
+holding `ifnet_detach_sxlock`."
+
+### A minimal kgdb cheat-sheet for this kind of bug
+
+| Goal | Command |
+| --- | --- |
+| Open the dump | `sudo kgdb /boot/kernel/kernel /var/crash/vmcore.0` |
+| Print the panic message | `p (char *) panicstr` |
+| List all threads | `info threads` |
+| Switch to a specific thread by tid | `tid <tid>` |
+| Backtrace the current thread | `bt` |
+| Backtrace every thread (long!) | `thread apply all bt` |
+| Print a struct at an address | `p *(struct foo *) 0xADDR` |
+| Print a global by name | `p <symbol>` |
+| Print a value in hex | `p /x <expr>` |
+| Decode an sx-lock holder | `p /x lockvar.sx_lock & ~7` |
+| Find a source line | `list sys/net/if_tuntap.c:662` |
+
+What `kgdb` is *not* good at: it cannot resume the kernel or execute
+anything — you are reading a frozen snapshot of memory. Everything is
+"follow this pointer, print that struct." Treat it as a debugger over
+a corpse, not a running program.
+
+### What if it weren't a dump but a live wedged system?
+
+If you don't have DEADLKRES enabled but the system is still wedged,
+you can still get useful information without panicking the host:
+
+    sudo procstat -kk <pid>          # kernel stack of one process
+    sudo procstat -akk               # every thread on the system
+    sudo lockstat -P                 # if LOCK_PROFILING compiled in
+
+The `procstat -akk` output is essentially what kgdb shows in
+`thread apply all bt`, but without the ability to dereference
+structs. It's enough to identify the *shape* of a wedge (which lock,
+which call sites) but not to confirm the *holder* — for that you
+need the dump.
+
+A trick that works well in the lab: from a parallel ssh session,
+trigger a controlled panic to get the dump *while* the wedge is
+active:
+
+    sudo sysctl debug.kdb.panic=1
+
+This is destructive (the host reboots), but on a debug kernel it
+gives you the same `vmcore` that DEADLKRES would have, without
+waiting for the watchdog.
+
+---
+
+## 6. The culprit code
 
 The kernel side, in `sys/net/if_tuntap.c`, looked like this (line
 numbers from the pre-patch tree at `n286096-490c53e9353f`):
@@ -310,27 +595,18 @@ the loop exits, which will not happen until userspace closes the fd.
 
 ### Confirming this from a real kernel dump
 
-To make sure we weren't reading the source wrong, we used FreeBSD's
-`DEADLKRES` watchdog: enable it, reproduce the wedge, wait for the
-panic, then load the dump in `kgdb` and follow pointers.
-
-The dump confirmed end-to-end that the very thread sleeping in
-`tun_destroy → cv_wait_sig` is the one holding `ifnet_detach_sxlock`
-exclusively, and that every other waiter is queued for that same
-lock. Full kgdb transcript: [`vnet_jail_deadlock_kgdb_session.txt`](vnet_jail_deadlock_kgdb_session.txt).
-
-The trick to read it: an sx lock's `sx_lock` field encodes
-`<holder thread pointer> | <flag bits in the low 3 bits>`. We saw
-
-    ifnet_detach_sxlock.sx_lock = 0xfffff8011f502004
-
-so the holder td was `0xfffff8011f502000` (mask off the bottom 3
-bits) — which is tid 105425, the ifconfig parked in `cv_wait_sig`.
-QED.
+Reading the source is one thing; confirming the kernel actually
+behaves that way at runtime is another. The full kgdb walkthrough is
+in §5 above — `DEADLKRES` panics the host, we load the resulting
+`vmcore` in `kgdb`, switch into the holder thread, print its softc,
+and decode the sx-lock owner field. The output matches the source
+exactly: holder td `0xfffff8011f502000` is the thread parked in
+`cv_wait_sig`, and the sx-lock's `EXCLUSIVE_WAITERS` flag confirms
+others are queued behind it.
 
 ---
 
-## 6. The patch and why this shape is correct
+## 7. The patch and why this shape is correct
 
 There are two callers of `tun_destroy`:
 
@@ -411,7 +687,7 @@ flowchart TD
         B1[if_clone_destroy] --> B2[sx_xlock]
         B2 --> B3[tun_destroy]
         B3 --> B4["while tun_busy != 0:<br/>cv_wait_sig (FOREVER)"]
-        B4 -. "userspace never closes" .-> B4
+        B4 -.->|userspace never closes| B4
         B2 -.->|lock held the entire time| BL[Global lock<br/>held forever]
     end
 
@@ -431,10 +707,10 @@ flowchart TD
 
 ---
 
-## 7. Validating the fix
+## 8. Validating the fix
 
 We rebuilt the kernel with the patch and ran three tests on a
-non-production host (`framework`).
+non-production host.
 
 ### Test 1 — does the EBUSY path actually fire?
 
@@ -496,7 +772,7 @@ a confused softc state. They didn't.
 
 ---
 
-## 8. Exercises
+## 9. Exercises
 
 For the student. None of these require modifying the kernel further;
 they are all readable from the existing sources.
@@ -529,6 +805,5 @@ they are all readable from the existing sources.
 - [`tun_destroy_ebusy.patch`](tun_destroy_ebusy.patch) — the patch.
 - [`FreeBSD/repro_tun_destroy_deadlock.sh`](../repro_tun_destroy_deadlock.sh) — three-line wedge, scripted.
 - [`FreeBSD/test_tun_destroy_patch.sh`](../test_tun_destroy_patch.sh) — automated PASS/FAIL validator.
-- [`vnet_jail_deadlock_kgdb_session.txt`](vnet_jail_deadlock_kgdb_session.txt) — full kgdb transcript showing the lock chain.
-- Source: `sys/net/if_tuntap.c`, `sys/net/if_clone.c`.
-- FreeBSD manpages: `tun(4)`, `if_clone(9)`, `sx(9)`, `condvar(9)`.
+- Source: `sys/net/if_tuntap.c`, `sys/net/if_clone.c`, `sys/sys/sx.h`.
+- FreeBSD manpages: `tun(4)`, `if_clone(9)`, `sx(9)`, `condvar(9)`, `kgdb(1)`, `procstat(1)`, `dumpon(8)`.
