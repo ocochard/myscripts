@@ -1,19 +1,36 @@
 # llama.cpp
 
-## Generic build instructions (CPU only: no backend)
+## Generic build instructions with a Vulkan backend
 
 [Official doc is very good for that](https://github.com/ggerganov/llama.cpp/blob/master/docs/build.md).
 ```
 git clone https://github.com/ggerganov/llama.cpp.git
-cd llama.cpp
+```
+
+Install Vulkan headers on FreeBSD
+```
+sudo pkg install -y vulkan-headers vulkan-loader glslang shaderc
+```
+
+Or on Ubuntu:
+```
+sudo apt install xz-utils libxcb-xinput0 libxcb-xinerama0 libxcb-cursor-dev
+mkdir ~/vulkan
+cd ~/vulkan
+wget https://sdk.lunarg.com/sdk/download/1.4.350.1/linux/vulkansdk-linux-x86_64-1.4.350.1.tar.xz
+tar xf vulkansdk-linux-x86_64-1.*.tar.xz
+rm vulkansdk-linux-x86_64-1.*.tar.xz
+cd
+source ~/vulkan/1.*/setup-env.sh
 ```
 
 Then build it using cmake:
 ```
+cd llama.cpp
 which -s apt && sudo apt install -y build-essential cmake libcurl4-openssl-dev
 test $(uname)=FreeBSD && sudo pkg install -y cmake
 test $(uname)=Darwin && alias nproc="sysctl -n hw.physicalcpu"
-cmake --fresh -B build
+cmake --fresh -B build -DGGML_VULKAN=ON
 cmake --build build --config Release -- -j $(nproc)
 ```
 
@@ -393,33 +410,6 @@ To be compared with CPU only usage:
 | qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | CPU     |      22 | tg128 |  1.19 ± 0.00 |
 
 build: d5cb8684 (3891)
-```
-### Vulkan
-
-[Getting started to Vulkan](https://vulkan.lunarg.com/doc/sdk/1.4.341.1/windows/getting_started.html)
-
-```
-sudo apt install xz-utils libxcb-xinput0 libxcb-xinerama0 libxcb-cursor-dev
-mkdir ~/vulkan
-cd ~/vulkan
-wget https://sdk.lunarg.com/sdk/download/1.4.341.1/linux/vulkansdk-linux-x86_64-1.4.341.1.tar.xz
-tar xf vulkansdk-linux-x86_64-1.*.tar.xz
-rm vulkansdk-linux-x86_64-1.4.341.1.tar.xz
-source ~/vulkan/1.*/setup-env.sh
-```
-
-To install Vulkan headers and compilers on FreeBSD:
-```
-sudo pkg install -y vulkan-headers vulkan-loader glslang shaderc
-```
-
-Then compile llama.cpp with `-DGGML_VULKAN=ON`.
-
-llama.cpp starting with vulkan backend should display something like:
-```
-ggml_vulkan: Found 1 Vulkan devices:
-ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1151) (radv) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 64 | shared
-memory: 65536 | int dot: 1 | matrix cores: KHR_coopmat
 ```
 
 ## Vision

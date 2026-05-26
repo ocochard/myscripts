@@ -1,0 +1,97 @@
+From: Olivier Cochard-Labbe <olivier@FreeBSD.org>
+Subject: [PATCH] tun(4): refuse if_clone destroy of an in-use device with EBUSY
+
+tun_destroy() is reached two ways:
+
+ 1. via tun_clone_destroy() (may_intr=true), which is called from
+    if_clone_destroyif() with ifnet_detach_sxlock held exclusively
+    (sys/net/if_clone.c:480). This is the `ifconfig tunN destroy` path.
+
+ 2. via tun_uninit() (may_intr=false) at module unload time. This path
+    does not hold ifnet_detach_sxlock.
+
+In path 1, if the tun device currently has an open consumer (tun_busy
+!= 0), the existing code sets TUN_DYING and parks in cv_wait_sig() on
+tun_cv waiting for the consumer's close(2). With the global
+ifnet_detach_sxlock held exclusively, every other ifnet-clone destroy
+on the host (including the chain reaction into tuntap_prison_remove ->
+if_clone_detach from `jail -R`) immediately blocks in _sx_xlock_hard.
+
+Reproducer (kernel wedges, only a reboot recovers):
+
+    ifconfig tun create                  # -> tun1
+    sleep 9999 < /dev/tun1 &
+    ifconfig tun1 destroy                # never returns
+    ifconfig <anything-else> destroy     # blocks in _sx_xlock_hard
+
+cv_wait_sig() is nominally interruptible, but SIGKILL to the ifconfig
+caller does not break the wait in practice, presumably because the
+process is parked in a syscall holding kernel resources.
+
+Refuse the destroy in path 1 with EBUSY instead of waiting. This
+matches the spirit of other "destroy a parent of an in-use child"
+checks. Module unload (path 2) keeps the existing wait-for-close
+semantics because the unload cannot proceed past in-use devices and
+is not holding any global sx lock.
+
+Confirmed in a vmcore from a 16.0-CURRENT GENERIC (debug) kernel:
+DEADLKRES panics naming the waiter ifconfig thread, and
+ifnet_detach_sxlock.sx_lock decodes to the holder td which is the
+ifconfig parked in tun_destroy -> cv_wait_sig.
+
+PR:		<to be filed>
+Reported by:	wedge on bigone 2026-05-26, dump under /var/crash
+---
+diff --git sys/net/if_tuntap.c sys/net/if_tuntap.c
+index a1ef2541ffba..1a7a35779fa6 100644
+--- sys/net/if_tuntap.c
++++ sys/net/if_tuntap.c
+@@ -646,7 +646,6 @@ tunfree(struct epoch_context *ctx)
+ static int
+ tun_destroy(struct tuntap_softc *tp, bool may_intr)
+ {
+-	int error;
+
+ 	TUN_LOCK(tp);
+
+@@ -655,18 +654,31 @@ tun_destroy(struct tuntap_softc *tp, bool may_intr)
+ 	 * a result of the last close, which we'll allow.
+ 	 */
+ 	MPASS((tp->tun_flags & (TUN_DYING | TUN_TRANSIENT)) != TUN_DYING);
++
++	/*
++	 * If our caller is willing to be interrupted (i.e. we are reached from
++	 * if_clone_destroy(), holding ifnet_detach_sxlock exclusively) and
++	 * the device currently has an open consumer, refuse the destroy with
++	 * EBUSY rather than parking on tun_cv with the global sx lock held.
++	 * Waiting here is unbounded: tun_busy only drops to 0 when the
++	 * consumer close(2)s the device, and a process holding the fd open
++	 * in select(2) (e.g. openvpn) will not do so on demand. The result
++	 * is that every subsequent ifnet-clone destroy on the host wedges in
++	 * _sx_xlock_hard, with only a reboot to recover.
++	 *
++	 * Module unload (may_intr == false, from tun_uninit() outside the
++	 * ifnet-clone path) still waits, because the unload itself cannot
++	 * proceed past in-use devices and is not holding any global sx lock.
++	 */
++	if (may_intr && tp->tun_busy != 0) {
++		TUN_UNLOCK(tp);
++		return (EBUSY);
++	}
++
+ 	tp->tun_flags |= TUN_DYING;
+-	error = 0;
+ 	while (tp->tun_busy != 0) {
+-		if (may_intr)
+-			error = cv_wait_sig(&tp->tun_cv, &tp->tun_mtx);
+-		else
+-			cv_wait(&tp->tun_cv, &tp->tun_mtx);
+-		if (error != 0 && tp->tun_busy != 0) {
+-			tp->tun_flags &= ~TUN_DYING;
+-			TUN_UNLOCK(tp);
+-			return (error);
+-		}
++		MPASS(!may_intr);
++		cv_wait(&tp->tun_cv, &tp->tun_mtx);
+ 	}
+ 	TUN_UNLOCK(tp);

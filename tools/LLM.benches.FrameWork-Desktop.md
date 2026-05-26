@@ -385,3 +385,80 @@ follow-up bench can crash again. **Reboot is the only reliable recovery.** `kldu
   and read `timings.prompt_n` / `timings.prompt_per_second` directly — the
   `~/.claude/skills/llama-bench-tune` skill includes a `bench_one.sh` snippet for this.
 
+## BIOS UMA frame-buffer carve-out (critical)
+
+Strix Halo's iGPU shares system RAM as UMA. The BIOS exposes a **UMA Frame Buffer Size** setting
+that pre-allocates a region as "dedicated VRAM" (reported by amdgpu as
+`/sys/class/drm/card*/device/mem_info_vram_total`). The remainder is exposed as **GTT** (Graphics
+Translation Table — regular system RAM the GPU accesses via paging,
+`mem_info_gtt_total`).
+
+llama.cpp's Vulkan backend with `--no-host` is designed for the UMA-aware GTT path — it accesses
+host-pointer buffers directly. **Configuring a large dedicated VRAM region forces an extra staging
+copy through the carved-out region and tanks prompt processing.**
+
+| BIOS UMA setting | `mem_info_vram_total` | `mem_info_gtt_total` | MoE Q4 PP at d≈4 k | TG  |
+|------------------|----------------------:|---------------------:|-------------------:|----:|
+| Large (64 GiB carve-out) | 64 GiB | 93.7 GiB | **543 t/s** | 49.5 t/s |
+| Small / Auto (512 MiB)   | 512 MiB | 93.7 GiB | **712 t/s** (+31 %) | 50.0 t/s |
+| Reference (`frwk-linux`) | 512 MiB | 61.4 GiB | 918 t/s | 55.3 t/s |
+
+Measured on a second Strix Halo host (HP ZBook, AMD RYZEN AI MAX+ PRO 395) running the **identical**
+software stack as `frwk-linux` (same kernel 6.17.0-29, Mesa 25.2.8, Vulkan 1.3.275, llama.cpp
+b0df4c0cf, same `llmsrv.sh` cmdline, 8× LPDDR5-8000 in 8 channels = 256 GB/s). The BIOS UMA setting
+alone explains a ~31 % PP swing; TG is unaffected (memory-bandwidth-bound, doesn't care about the
+VRAM/GTT split).
+
+**Recommendation**: set UMA Frame Buffer to the **smallest** value the BIOS allows (typically 512 MiB
+or "Auto"). The amdgpu driver will allocate from GTT on demand, which is the fast UMA path. A large
+dedicated carve-out is only useful for legacy code that hardcodes VRAM allocations — not llama.cpp.
+
+## Firmware power cap (`platform_profile` on laptops)
+
+After fixing the UMA carve-out, a residual gap remained on the laptop. Sampling
+`/sys/class/hwmon/hwmon*/power1_average` (amdgpu PPT label) at 2 Hz during the bench identified the
+cause: HP firmware caps GPU PPT depending on the ACPI `platform_profile` setting, while Framework
+Desktop firmware does not. Both hosts were on `platform_profile=balanced` initially.
+
+| Host / profile        | GPU PPT active avg | GPU PPT p95 | GPU PPT max | GPU max freq | MoE Q4 PP at d≈4 k |
+|-----------------------|-------------------:|------------:|------------:|-------------:|-------------------:|
+| zbook `balanced`      |  40 W              |  40 W       |  59 W       | 2070 MHz     |  519 t/s           |
+| zbook `performance`   |  69 W              |  70 W       |  70 W       | 2898 MHz     |  741 t/s (+43 %)   |
+| framework2 `balanced` |  83 W              | 110 W       | 113 W       | 2900 MHz     |  918 t/s           |
+
+On zbook the p95 and max being identical at 40 W (balanced) or 70 W (performance) is the textbook
+signature of a firmware-imposed hard cap, not thermal throttling — GPU temperature peaked at 83 °C
+under the 70 W cap, well below the ~95 °C silicon throttle ceiling. Framework Desktop on the same
+`balanced` profile lets PPT spike to 113 W and sustains ~83 W — so HP's "balanced" is a real cap
+where Framework's is a hint.
+
+**Recommendation for laptops**: switch to `performance` profile when running llama.cpp prompt
+processing workloads:
+
+```sh
+echo performance | sudo tee /sys/firmware/acpi/platform_profile
+for c in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+  echo performance | sudo tee "$c" > /dev/null
+done
+```
+
+Revert with `balanced` / `balance_performance` when done — sustained 70 W on a laptop will spin the
+fans up and reduce battery life. TG is barely affected by the profile change (memory-bound), so for
+pure decoding workloads `balanced` is fine.
+
+The HP BIOS may expose a higher cTDP override (look under Advanced → Power Management, or HP-specific
+menus like "AI Engine Power" / "Workstation Performance"). If not, `ryzenadj --stapm-limit=...` can
+raise SMU power limits at runtime on Ryzen Mobile — assuming HP firmware doesn't lock SMU writes.
+
+### Summary of the laptop vs desktop PP gap
+
+| Cause                                       | PP impact on zbook                |
+|---------------------------------------------|-----------------------------------|
+| BIOS UMA carve-out (64 GiB → 512 MiB VRAM)  | 544 → 712 t/s (+31 %)             |
+| `platform_profile` (balanced → performance) | 519 → 741 t/s (+43 %)             |
+| Residual vs framework2 (`performance` zbook vs `balanced` framework2) | ~20 % (~70 W cap vs 113 W headroom) |
+
+The residual gap correlates almost 1:1 with the remaining PPT headroom (70 W cap vs 110+ W observed
+on framework2). To close it would require unlocking sustained TDP above 70 W on the laptop — chassis
+thermal design likely limits how far this can practically go.
+
