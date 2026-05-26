@@ -1,0 +1,140 @@
+interrupt                          total       rate
+irq4: uart0                            4          0
+cpu0:timer                      47140397         67
+cpu1:timer                      15837976         23
+cpu2:timer                      16760903         24
+cpu3:timer                      17052203         24
+cpu4:timer                      17535041         25
+cpu5:timer                      16948013         24
+cpu6:timer                      18156608         26
+cpu7:timer                      17974498         26
+cpu8:timer                      15962291         23
+cpu9:timer                      15518482         22
+cpu10:timer                     16620967         24
+cpu11:timer                     16317380         23
+cpu12:timer                     17180245         25
+cpu13:timer                     16519889         24
+cpu14:timer                     16116843         23
+cpu15:timer                     16333927         23
+cpu16:timer                     31891823         46
+cpu17:timer                     31351019         45
+cpu18:timer                     33545932         48
+cpu19:timer                     33881179         48
+cpu20:timer                     35169993         50
+cpu21:timer                     32955249         47
+cpu22:timer                     31171815         45
+cpu23:timer                     32123357         46
+cpu24:timer                     30856183         44
+cpu25:timer                     29754634         43
+cpu26:timer                     30501630         44
+cpu27:timer                     29830026         43
+cpu28:timer                     29773911         43
+cpu29:timer                     29367224         42
+cpu30:timer                     30272256         43
+cpu31:timer                     29946300         43
+cpu32:timer                     51042692         73
+cpu33:timer                     30179752         43
+cpu34:timer                     52868045         76
+cpu35:timer                     54252561         78
+cpu36:timer                     49409120         71
+cpu37:timer                     55982127         80
+cpu38:timer                     23473735         34
+cpu39:timer                     23242644         33
+cpu40:timer                     33187081         47
+cpu41:timer                     31493426         45
+cpu42:timer                     27797569         40
+cpu43:timer                     22914532         33
+cpu44:timer                     30468535         44
+cpu45:timer                     35822169         51
+cpu46:timer                     30721595         44
+cpu47:timer                     29835350         43
+cpu48:timer                     24716072         35
+cpu49:timer                     30743302         44
+cpu50:timer                     27174015         39
+cpu51:timer                     30126796         43
+cpu52:timer                     24406075         35
+cpu53:timer                     29357921         42
+cpu54:timer                     24461557         35
+cpu55:timer                     29336999         42
+cpu56:timer                     43538168         62
+cpu57:timer                     39431279         56
+cpu58:timer                     47004430         67
+cpu59:timer                     39366155         56
+cpu60:timer                     37353216         53
+cpu61:timer                     34680757         50
+cpu62:timer                     43093844         62
+cpu63:timer                     36880167         53
+irq205: xhci0                        583          0
+irq207: nvme0:admin                  146          0
+irq208: nvme0:io0                1393550          2
+irq209: nvme0:io1                1393056          2
+irq210: nvme0:io2                1419377          2
+irq211: nvme0:io3                1362547          2
+irq212: nvme0:io4                1426662          2
+irq213: nvme0:io5                1384791          2
+irq214: nvme0:io6                1425082          2
+irq215: nvme0:io7                1378117          2
+irq216: nvme0:io8                1337731          2
+irq217: nvme0:io9                1323339          2
+irq218: nvme0:io10               1300647          2
+irq219: nvme0:io11               1338574          2
+irq220: nvme0:io12               1361528          2
+irq221: nvme0:io13               1291906          2
+irq222: nvme0:io14               1293524          2
+irq223: nvme0:io15               1368108          2
+irq224: nvme0:io16               1257917          2
+irq225: nvme0:io17               1229819          2
+irq226: nvme0:io18               1250024          2
+irq227: nvme0:io19               1268193          2
+irq228: nvme0:io20               1304433          2
+irq229: nvme0:io21               1279685          2
+irq230: nvme0:io22               1298209          2
+irq231: nvme0:io23               1290522          2
+irq232: nvme0:io24               1317675          2
+irq233: nvme0:io25               1284828          2
+irq234: nvme0:io26               1278681          2
+irq235: nvme0:io27               1319535          2
+irq236: nvme0:io28               1263425          2
+irq237: nvme0:io29               1258658          2
+irq238: nvme0:io30               1300635          2
+irq239: nvme0:io31               1291243          2
+irq240: nvme1:admin                  158          0
+irq241: nvme1:io0                1371495          2
+irq242: nvme1:io1                1363583          2
+irq243: nvme1:io2                1359233          2
+irq244: nvme1:io3                1399775          2
+irq245: nvme1:io4                1389067          2
+irq246: nvme1:io5                1377474          2
+irq247: nvme1:io6                1360003          2
+irq248: nvme1:io7                1357110          2
+irq249: nvme1:io8                1294020          2
+irq250: nvme1:io9                1344046          2
+irq251: nvme1:io10               1352853          2
+irq252: nvme1:io11               1333672          2
+irq253: nvme1:io12               1318661          2
+irq254: nvme1:io13               1310562          2
+irq255: nvme1:io14               1316396          2
+irq256: nvme1:io15               1340402          2
+irq257: nvme1:io16               1280899          2
+irq258: nvme1:io17               1270626          2
+irq259: nvme1:io18               1260023          2
+irq260: nvme1:io19               1227202          2
+irq261: nvme1:io20               1300055          2
+irq262: nvme1:io21               1318277          2
+irq263: nvme1:io22               1305636          2
+irq264: nvme1:io23               1310460          2
+irq265: nvme1:io24               1306949          2
+irq266: nvme1:io25               1334829          2
+irq267: nvme1:io26               1299621          2
+irq268: nvme1:io27               1295117          2
+irq269: nvme1:io28               1274189          2
+irq270: nvme1:io29               1249480          2
+irq271: nvme1:io30               1259968          2
+irq272: nvme1:io31               1272248          2
+irq273: igb0:rxq0                8981148         13
+irq274: igb0:rxq1                2330775          3
+irq275: igb0:rxq2                5936007          8
+irq276: igb0:rxq3                4836605          7
+irq277: igb0:aq                        4          0
+irq283: xhci1                    4260264          6
+Total                         2035521526       2910

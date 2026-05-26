@@ -1,0 +1,22 @@
+14428/62749/77177 mbufs in use (current/cache/total)
+10240/58982/69222/16401627 mbuf clusters in use (current/cache/total/max)
+2/15492 mbuf+clusters out of packet secondary zone in use (current/cache)
+0/25136/25136/8200813 4k (page size) jumbo clusters in use (current/cache/total/max)
+0/0/0/2429870 9k jumbo clusters in use (current/cache/total/max)
+0/0/0/1366802 16k jumbo clusters in use (current/cache/total/max)
+24087K/234195K/258282K bytes allocated to network (current/cache/total)
+0/0/0 requests for mbufs denied (mbufs/clusters/mbuf+clusters)
+0/0/0 requests for mbufs delayed (mbufs/clusters/mbuf+clusters)
+0/0/0 requests for jumbo clusters delayed (4k/9k/16k)
+0/0/0 requests for jumbo clusters denied (4k/9k/16k)
+469 sendfile syscalls
+125 sendfile syscalls completed without I/O request
+514 requests for I/O initiated by sendfile
+10684 pages read by sendfile as part of a request
+5335 pages were valid at time of a sendfile request
+0 pages were valid and substituted to bogus page
+0 pages were requested for read ahead by applications
+4846 pages were read ahead by sendfile
+0 times sendfile encountered an already busy page
+0 requests for sfbufs denied
+0 requests for sfbufs delayed

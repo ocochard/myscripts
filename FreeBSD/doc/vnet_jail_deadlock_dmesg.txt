@@ -1,0 +1,1509 @@
+uhid0: <Yubico YubiKey OTP+FIDO+CCID, class 0/0, rev 2.00/5.27, addr 1> on usbus0
+cdce0 numa-domain 3 on uhub2
+cdce0: <OpenBMC OpenBMC USB Net Device, class 2/13, rev 2.00/6.06, addr 2> on usbus1
+ue0: <USB Ethernet> on cdce0
+ue0: Ethernet address: 02:42:3f:48:a9:3a
+igb0: link state changed to UP
+ue0: link state changed to UP
+amdviiommu0 at device 0.2 numa-domain 0 on pci0
+amdviiommu1 at device 0.2 numa-domain 1 on pci4
+amdviiommu2 at device 0.2 numa-domain 2 on pci9
+amdviiommu3 at device 0.2 numa-domain 3 on pci13
+AMD-Vi: IVRS Info VAsize = 64 PAsize = 48 GVAsize = 2 flags:0
+ivhd0: <AMD-Vi/IOMMU ivhd with EFR> on acpi0
+ivhd0: Flag:b0<IotlbSup,Coherent>
+ivhd0: Features(type:0x11) MsiNumPPR = 0 PNBanks= 2 PNCounters= 0
+ivhd0: Extended features[31:0]:22294ade<PPRSup,<b2>,NXSup,GTSup,IASup,GASup,PCSup> HATS = 0x2 GATS = 0x0 GLXSup = 0x1 SmiFSup = 0x1 SmiFRC = 0x2 GAMSup = 0x1 DualPortLogSup = 0x2 DualEventLogSup = 0x2
+ivhd0: Extended features[62:32]:58f77ef<USSup,PprOvrflwEarlySup,PPRAutoRspSup,BlKStopMrkSup,PerfOptSup,MsiCapMmioSup,GIOSup,HASup,EPHSup,AttrFWSup> Max PASID: 0x2f DevTblSegSup = 0x3 MarcSup = 0x1
+ivhd0: supported paging level:7, will use only: 4
+ivhd0: device [0xc008 - 0xfffe] config:0
+ivhd0: PCI cap 0x190b640f@0x40 feature:19<IOTLB,EFR,CapExt>
+ivhd1: <AMD-Vi/IOMMU ivhd with EFR> on acpi0
+ivhd1: Flag:b0<IotlbSup,Coherent>
+ivhd1: Features(type:0x11) MsiNumPPR = 0 PNBanks= 2 PNCounters= 0
+ivhd1: Extended features[31:0]:22294ade<PPRSup,<b2>,NXSup,GTSup,IASup,GASup,PCSup> HATS = 0x2 GATS = 0x0 GLXSup = 0x1 SmiFSup = 0x1 SmiFRC = 0x2 GAMSup = 0x1 DualPortLogSup = 0x2 DualEventLogSup = 0x2
+ivhd1: Extended features[62:32]:58f77ef<USSup,PprOvrflwEarlySup,PPRAutoRspSup,BlKStopMrkSup,PerfOptSup,MsiCapMmioSup,GIOSup,HASup,EPHSup,AttrFWSup> Max PASID: 0x2f DevTblSegSup = 0x3 MarcSup = 0x1
+ivhd1: supported paging level:7, will use only: 4
+ivhd1: device [0x8008 - 0xbffe] config:0
+ivhd1: PCI cap 0x190b640f@0x40 feature:19<IOTLB,EFR,CapExt>
+ivhd2: <AMD-Vi/IOMMU ivhd with EFR> on acpi0
+ivhd2: Flag:b0<IotlbSup,Coherent>
+ivhd2: Features(type:0x11) MsiNumPPR = 0 PNBanks= 2 PNCounters= 0
+ivhd2: Extended features[31:0]:22294ade<PPRSup,<b2>,NXSup,GTSup,IASup,GASup,PCSup> HATS = 0x2 GATS = 0x0 GLXSup = 0x1 SmiFSup = 0x1 SmiFRC = 0x2 GAMSup = 0x1 DualPortLogSup = 0x2 DualEventLogSup = 0x2
+ivhd2: Extended features[62:32]:58f77ef<USSup,PprOvrflwEarlySup,PPRAutoRspSup,BlKStopMrkSup,PerfOptSup,MsiCapMmioSup,GIOSup,HASup,EPHSup,AttrFWSup> Max PASID: 0x2f DevTblSegSup = 0x3 MarcSup = 0x1
+ivhd2: supported paging level:7, will use only: 4
+ivhd2: device [0x4008 - 0x7ffe] config:0
+ivhd2: PCI cap 0x190b640f@0x40 feature:19<IOTLB,EFR,CapExt>
+ivhd3: <AMD-Vi/IOMMU ivhd with EFR> on acpi0
+ivhd3: Flag:b0<IotlbSup,Coherent>
+ivhd3: Features(type:0x11) MsiNumPPR = 0 PNBanks= 2 PNCounters= 0
+ivhd3: Extended features[31:0]:22294ade<PPRSup,<b2>,NXSup,GTSup,IASup,GASup,PCSup> HATS = 0x2 GATS = 0x0 GLXSup = 0x1 SmiFSup = 0x1 SmiFRC = 0x2 GAMSup = 0x1 DualPortLogSup = 0x2 DualEventLogSup = 0x2
+ivhd3: Extended features[62:32]:58f77ef<USSup,PprOvrflwEarlySup,PPRAutoRspSup,BlKStopMrkSup,PerfOptSup,MsiCapMmioSup,GIOSup,HASup,EPHSup,AttrFWSup> Max PASID: 0x2f DevTblSegSup = 0x3 MarcSup = 0x1
+ivhd3: supported paging level:7, will use only: 4
+ivhd3: device [0x8 - 0x3ffe] config:0
+ivhd3: device [0xff00 - 0xffff] config:0
+ivhd3: PCI cap 0x190b640f@0x40 feature:19<IOTLB,EFR,CapExt>
+bridge0: Ethernet address: 58:9c:fc:10:0b:8e
+bridge0: changing name to 'vm-public'
+vm-public: WARNING: Adding member interface igb0 which has an IP address assigned is deprecated and will be unsupported in a future release.
+igb0: promiscuous mode enabled
+bridge1: Ethernet address: 58:9c:fc:10:a8:23
+bridge1: changing name to 'vm-thrash-1'
+igb0: link state changed to DOWN
+vm-public: link state changed to UP
+igb0: link state changed to UP
+tun0: link state changed to UP
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+bridge4: link state changed to DOWN
+tap2: promiscuous mode enabled
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+bridge5: link state changed to DOWN
+tap3: promiscuous mode enabled
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap0: link state changed to UP
+bridge2: link state changed to UP
+tap1: link state changed to UP
+bridge3: link state changed to UP
+tap2: link state changed to UP
+bridge4: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap8: link state changed to UP
+tap9: link state changed to UP
+bridge6: link state changed to UP
+tap10: link state changed to UP
+bridge9: link state changed to UP
+tap11: link state changed to UP
+bridge10: link state changed to UP
+tap12: link state changed to UP
+tap13: link state changed to UP
+bridge7: link state changed to UP
+tap14: link state changed to UP
+tap15: link state changed to UP
+bridge11: link state changed to UP
+tap4: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+tap7: link state changed to UP
+bridge8: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+tap18: link state changed to UP
+tap19: link state changed to UP
+pid 23781 (conftest), jid 192, uid 0: exited on signal 11 (core dumped)
+pid 43194 (conftest), jid 153, uid 0: exited on signal 11 (core dumped)
+pid 86566 (conftest), jid 161, uid 0: exited on signal 11 (core dumped)
+pid 95496 (conftest), jid 151, uid 0: exited on signal 11 (core dumped)
+pid 8350 (conftest), jid 162, uid 0: exited on signal 11 (core dumped)
+pid 96392 (expect), jid 0, uid 0: exited on signal 11 (no core dump - coredumpsize limit is 0)
+pid 96390 (sudo), jid 0, uid 0: exited on signal 11 (no core dump - sugid process denied by kern.sugid_coredump)
+pid 97038 (expect), jid 0, uid 0: exited on signal 11 (no core dump - coredumpsize limit is 0)
+pid 97036 (sudo), jid 0, uid 0: exited on signal 11 (no core dump - sugid process denied by kern.sugid_coredump)
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+tap2: link state changed to DOWN
+tap3: link state changed to DOWN
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+bridge2: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap18: link state changed to DOWN
+tap19: link state changed to DOWN
+bridge8: link state changed to DOWN
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+tap14: link state changed to DOWN
+bridge4: link state changed to DOWN
+tap15: link state changed to DOWN
+bridge7: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+bridge3: link state changed to DOWN
+tap10: link state changed to DOWN
+tap11: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge9: link state changed to DOWN
+bridge10: link state changed to DOWN
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+bridge8: link state changed to DOWN
+tap7: promiscuous mode enabled
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap4: link state changed to UP
+bridge2: link state changed to UP
+tap5: link state changed to UP
+bridge6: link state changed to UP
+tap6: link state changed to UP
+bridge7: link state changed to UP
+tap7: link state changed to UP
+bridge8: link state changed to UP
+tap12: link state changed to UP
+bridge4: link state changed to UP
+tap13: link state changed to UP
+tap14: link state changed to UP
+bridge9: link state changed to UP
+tap15: link state changed to UP
+bridge11: link state changed to UP
+tap8: link state changed to UP
+bridge3: link state changed to UP
+tap9: link state changed to UP
+tap10: link state changed to UP
+tap11: link state changed to UP
+bridge10: link state changed to UP
+tap0: link state changed to UP
+tap1: link state changed to UP
+tap2: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+tap18: link state changed to UP
+tap19: link state changed to UP
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+tap18: link state changed to DOWN
+tap19: link state changed to DOWN
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+bridge8: link state changed to DOWN
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+tap2: link state changed to DOWN
+bridge2: link state changed to DOWN
+tap3: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+tap10: link state changed to DOWN
+tap11: link state changed to DOWN
+bridge3: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge10: link state changed to DOWN
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+tap14: link state changed to DOWN
+bridge4: link state changed to DOWN
+tap15: link state changed to DOWN
+bridge7: link state changed to DOWN
+bridge9: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap0: link state changed to UP
+bridge2: link state changed to UP
+tap1: link state changed to UP
+bridge3: link state changed to UP
+tap2: link state changed to UP
+bridge4: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap4: link state changed to UP
+tap5: link state changed to UP
+bridge6: link state changed to UP
+tap6: link state changed to UP
+bridge7: link state changed to UP
+tap7: link state changed to UP
+bridge8: link state changed to UP
+tap8: link state changed to UP
+tap9: link state changed to UP
+tap10: link state changed to UP
+bridge9: link state changed to UP
+tap11: link state changed to UP
+bridge10: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+tap18: link state changed to UP
+tap19: link state changed to UP
+bridge11: link state changed to UP
+tap12: link state changed to UP
+tap13: link state changed to UP
+tap14: link state changed to UP
+tap15: link state changed to UP
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+tap18: link state changed to DOWN
+tap19: link state changed to DOWN
+bridge8: link state changed to DOWN
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+tap2: link state changed to DOWN
+bridge2: link state changed to DOWN
+tap3: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+tap14: link state changed to DOWN
+bridge4: link state changed to DOWN
+tap15: link state changed to DOWN
+bridge7: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+tap10: link state changed to DOWN
+bridge3: link state changed to DOWN
+tap11: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge9: link state changed to DOWN
+bridge10: link state changed to DOWN
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+bridge3: link state changed to DOWN
+tap1: promiscuous mode enabled
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap8: link state changed to UP
+bridge3: link state changed to UP
+tap9: link state changed to UP
+bridge6: link state changed to UP
+tap10: link state changed to UP
+bridge9: link state changed to UP
+tap11: link state changed to UP
+bridge10: link state changed to UP
+tap12: link state changed to UP
+bridge4: link state changed to UP
+tap13: link state changed to UP
+bridge7: link state changed to UP
+tap14: link state changed to UP
+tap15: link state changed to UP
+bridge11: link state changed to UP
+tap0: link state changed to UP
+bridge2: link state changed to UP
+tap1: link state changed to UP
+tap2: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap4: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+tap7: link state changed to UP
+bridge8: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+tap18: link state changed to UP
+tap19: link state changed to UP
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+tap4: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+tap7: link state changed to UP
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+tap14: link state changed to DOWN
+tap15: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+tap10: link state changed to DOWN
+tap11: link state changed to DOWN
+bridge9: link state changed to DOWN
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge7: link state changed to DOWN
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+tap18: link state changed to DOWN
+tap19: link state changed to DOWN
+bridge8: link state changed to DOWN
+bridge10: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+bridge2: link state changed to DOWN
+tap2: link state changed to DOWN
+tap3: link state changed to DOWN
+bridge3: link state changed to DOWN
+bridge4: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap0: link state changed to UP
+bridge2: link state changed to UP
+tap1: link state changed to UP
+bridge3: link state changed to UP
+tap2: link state changed to UP
+bridge4: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap8: link state changed to UP
+tap9: link state changed to UP
+bridge6: link state changed to UP
+tap10: link state changed to UP
+bridge9: link state changed to UP
+tap11: link state changed to UP
+bridge10: link state changed to UP
+tap4: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+bridge7: link state changed to UP
+tap7: link state changed to UP
+bridge8: link state changed to UP
+tap12: link state changed to UP
+tap13: link state changed to UP
+tap14: link state changed to UP
+tap15: link state changed to UP
+bridge11: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+tap18: link state changed to UP
+tap19: link state changed to UP
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+tap2: link state changed to DOWN
+tap3: link state changed to DOWN
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+bridge2: link state changed to DOWN
+tap7: link state changed to DOWN
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+tap18: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap19: link state changed to DOWN
+bridge8: link state changed to DOWN
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+bridge4: link state changed to DOWN
+bridge7: link state changed to DOWN
+tap14: link state changed to DOWN
+tap15: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+bridge3: link state changed to DOWN
+tap10: link state changed to DOWN
+tap11: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge9: link state changed to DOWN
+bridge10: link state changed to DOWN
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap8: link state changed to UP
+bridge3: link state changed to UP
+tap9: link state changed to UP
+bridge6: link state changed to UP
+tap10: link state changed to UP
+bridge9: link state changed to UP
+tap11: link state changed to UP
+bridge10: link state changed to UP
+tap4: link state changed to UP
+bridge2: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+bridge7: link state changed to UP
+tap7: link state changed to UP
+bridge8: link state changed to UP
+tap0: link state changed to UP
+tap1: link state changed to UP
+tap2: link state changed to UP
+bridge4: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap12: link state changed to UP
+tap13: link state changed to UP
+tap14: link state changed to UP
+tap15: link state changed to UP
+bridge11: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+tap18: link state changed to UP
+tap19: link state changed to UP
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+tap18: link state changed to DOWN
+bridge8: link state changed to DOWN
+tap19: link state changed to DOWN
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+bridge2: link state changed to DOWN
+tap2: link state changed to DOWN
+tap3: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+bridge4: link state changed to DOWN
+tap14: link state changed to DOWN
+bridge7: link state changed to DOWN
+tap15: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+bridge3: link state changed to DOWN
+tap10: link state changed to DOWN
+tap11: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge9: link state changed to DOWN
+bridge10: link state changed to DOWN
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+bridge6: link state changed to DOWN
+tap5: promiscuous mode enabled
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap0: link state changed to UP
+bridge2: link state changed to UP
+tap1: link state changed to UP
+bridge3: link state changed to UP
+tap2: link state changed to UP
+bridge4: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+bridge8: link state changed to UP
+tap18: link state changed to UP
+bridge10: link state changed to UP
+tap19: link state changed to UP
+bridge11: link state changed to UP
+tap12: link state changed to UP
+tap13: link state changed to UP
+bridge7: link state changed to UP
+tap14: link state changed to UP
+bridge9: link state changed to UP
+tap15: link state changed to UP
+tap8: link state changed to UP
+tap9: link state changed to UP
+bridge6: link state changed to UP
+tap10: link state changed to UP
+tap11: link state changed to UP
+tap4: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+tap7: link state changed to UP
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+tap2: link state changed to DOWN
+tap3: link state changed to DOWN
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+tap18: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap19: link state changed to DOWN
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+bridge2: link state changed to DOWN
+bridge8: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+bridge3: link state changed to DOWN
+tap10: link state changed to DOWN
+tap11: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge10: link state changed to DOWN
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+bridge4: link state changed to DOWN
+tap14: link state changed to DOWN
+tap15: link state changed to DOWN
+bridge7: link state changed to DOWN
+bridge9: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+bridge7: link state changed to DOWN
+tap6: promiscuous mode enabled
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap0: link state changed to UP
+bridge2: link state changed to UP
+tap1: link state changed to UP
+bridge3: link state changed to UP
+tap2: link state changed to UP
+bridge4: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap12: link state changed to UP
+tap13: link state changed to UP
+bridge7: link state changed to UP
+tap14: link state changed to UP
+bridge9: link state changed to UP
+tap15: link state changed to UP
+bridge11: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+bridge8: link state changed to UP
+tap18: link state changed to UP
+bridge10: link state changed to UP
+tap19: link state changed to UP
+tap8: link state changed to UP
+tap9: link state changed to UP
+bridge6: link state changed to UP
+tap10: link state changed to UP
+tap11: link state changed to UP
+tap4: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+tap7: link state changed to UP
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+tap18: link state changed to DOWN
+tap19: link state changed to DOWN
+bridge8: link state changed to DOWN
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+bridge2: link state changed to DOWN
+tap2: link state changed to DOWN
+tap3: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+bridge4: link state changed to DOWN
+tap14: link state changed to DOWN
+tap15: link state changed to DOWN
+bridge7: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+bridge3: link state changed to DOWN
+tap10: link state changed to DOWN
+tap11: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge9: link state changed to DOWN
+bridge10: link state changed to DOWN
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap0: link state changed to UP
+bridge2: link state changed to UP
+tap1: link state changed to UP
+bridge3: link state changed to UP
+tap2: link state changed to UP
+bridge4: link state changed to UP
+tap3: link state changed to UP
+bridge5: link state changed to UP
+tap12: link state changed to UP
+tap13: link state changed to UP
+bridge7: link state changed to UP
+tap14: link state changed to UP
+bridge9: link state changed to UP
+tap15: link state changed to UP
+bridge11: link state changed to UP
+tap8: link state changed to UP
+tap9: link state changed to UP
+bridge6: link state changed to UP
+tap10: link state changed to UP
+tap11: link state changed to UP
+bridge10: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+bridge8: link state changed to UP
+tap18: link state changed to UP
+tap19: link state changed to UP
+tap4: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+tap7: link state changed to UP
+tap4: promiscuous mode disabled
+tap0: promiscuous mode disabled
+bridge2: link state changed to DOWN
+tap8: link state changed to DOWN
+tap9: link state changed to DOWN
+tap10: link state changed to DOWN
+tap11: link state changed to DOWN
+tap12: link state changed to DOWN
+tap13: link state changed to DOWN
+tap14: link state changed to DOWN
+tap15: link state changed to DOWN
+bridge9: link state changed to DOWN
+tap0: link state changed to DOWN
+tap1: link state changed to DOWN
+tap2: link state changed to DOWN
+tap3: link state changed to DOWN
+bridge3: link state changed to DOWN
+bridge4: link state changed to DOWN
+tap16: link state changed to DOWN
+tap17: link state changed to DOWN
+bridge5: link state changed to DOWN
+tap18: link state changed to DOWN
+tap19: link state changed to DOWN
+bridge10: link state changed to DOWN
+bridge11: link state changed to DOWN
+tap4: link state changed to DOWN
+tap5: link state changed to DOWN
+tap6: link state changed to DOWN
+tap7: link state changed to DOWN
+bridge6: link state changed to DOWN
+bridge7: link state changed to DOWN
+bridge8: link state changed to DOWN
+tap8: promiscuous mode disabled
+tap1: promiscuous mode disabled
+tap12: promiscuous mode disabled
+tap2: promiscuous mode disabled
+tap16: promiscuous mode disabled
+tap3: promiscuous mode disabled
+tap9: promiscuous mode disabled
+tap5: promiscuous mode disabled
+tap13: promiscuous mode disabled
+tap6: promiscuous mode disabled
+tap17: promiscuous mode disabled
+tap7: promiscuous mode disabled
+tap14: promiscuous mode disabled
+tap10: promiscuous mode disabled
+tap18: promiscuous mode disabled
+tap11: promiscuous mode disabled
+tap19: promiscuous mode disabled
+tap15: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+tap0: link state changed to UP
+bridge2: link state changed to UP
+tap0: link state changed to DOWN
+bridge2: link state changed to DOWN
+tap0: promiscuous mode disabled
+bridge2: Ethernet address: 58:9c:fc:10:5c:28
+tap0: Ethernet address: 58:9c:fc:10:bd:3f
+tap0: promiscuous mode enabled
+bridge2: link state changed to DOWN
+bridge3: Ethernet address: 58:9c:fc:10:81:89
+tap1: Ethernet address: 58:9c:fc:10:d4:94
+tap1: promiscuous mode enabled
+bridge3: link state changed to DOWN
+bridge4: Ethernet address: 58:9c:fc:10:30:95
+tap2: Ethernet address: 58:9c:fc:10:19:ac
+tap2: promiscuous mode enabled
+bridge4: link state changed to DOWN
+bridge5: Ethernet address: 58:9c:fc:10:0e:b8
+tap3: Ethernet address: 58:9c:fc:10:bf:ec
+tap3: promiscuous mode enabled
+bridge5: link state changed to DOWN
+tap4: Ethernet address: 58:9c:fc:10:95:1b
+tap4: promiscuous mode enabled
+bridge6: Ethernet address: 58:9c:fc:10:29:aa
+tap5: Ethernet address: 58:9c:fc:10:76:a3
+tap5: promiscuous mode enabled
+bridge6: link state changed to DOWN
+bridge7: Ethernet address: 58:9c:fc:10:b4:7a
+tap6: Ethernet address: 58:9c:fc:10:9e:46
+tap6: promiscuous mode enabled
+bridge7: link state changed to DOWN
+bridge8: Ethernet address: 58:9c:fc:10:29:83
+tap7: Ethernet address: 58:9c:fc:10:07:19
+tap7: promiscuous mode enabled
+bridge8: link state changed to DOWN
+tap8: Ethernet address: 58:9c:fc:10:2e:c6
+tap8: promiscuous mode enabled
+tap9: Ethernet address: 58:9c:fc:10:ea:46
+tap9: promiscuous mode enabled
+bridge9: Ethernet address: 58:9c:fc:10:10:cf
+tap10: Ethernet address: 58:9c:fc:10:03:b0
+tap10: promiscuous mode enabled
+bridge9: link state changed to DOWN
+bridge10: Ethernet address: 58:9c:fc:10:46:fb
+tap11: Ethernet address: 58:9c:fc:10:69:ea
+tap11: promiscuous mode enabled
+bridge10: link state changed to DOWN
+tap12: Ethernet address: 58:9c:fc:10:69:25
+tap12: promiscuous mode enabled
+tap13: Ethernet address: 58:9c:fc:10:c0:57
+tap13: promiscuous mode enabled
+tap14: Ethernet address: 58:9c:fc:10:9a:49
+tap14: promiscuous mode enabled
+bridge11: Ethernet address: 58:9c:fc:10:64:42
+tap15: Ethernet address: 58:9c:fc:10:bf:a4
+tap15: promiscuous mode enabled
+bridge11: link state changed to DOWN
+tap16: Ethernet address: 58:9c:fc:10:3e:c9
+tap16: promiscuous mode enabled
+tap17: Ethernet address: 58:9c:fc:10:55:96
+tap17: promiscuous mode enabled
+tap18: Ethernet address: 58:9c:fc:10:e4:4a
+tap18: promiscuous mode enabled
+tap19: Ethernet address: 58:9c:fc:10:bb:90
+tap19: promiscuous mode enabled
+tap0: link state changed to UP
+tap1: link state changed to UP
+tap2: link state changed to UP
+tap3: link state changed to UP
+bridge2: link state changed to UP
+bridge3: link state changed to UP
+bridge4: link state changed to UP
+bridge5: link state changed to UP
+tap8: link state changed to UP
+tap9: link state changed to UP
+bridge6: link state changed to UP
+tap10: link state changed to UP
+bridge9: link state changed to UP
+tap11: link state changed to UP
+bridge10: link state changed to UP
+tap4: link state changed to UP
+tap5: link state changed to UP
+tap6: link state changed to UP
+bridge7: link state changed to UP
+tap7: link state changed to UP
+bridge8: link state changed to UP
+tap12: link state changed to UP
+tap13: link state changed to UP
+tap14: link state changed to UP
+tap15: link state changed to UP
+bridge11: link state changed to UP
+tap16: link state changed to UP
+tap17: link state changed to UP
+tap18: link state changed to UP
+tap19: link state changed to UP
+epair12a: Ethernet address: 58:9c:fc:10:e5:1f
+epair12b: Ethernet address: 58:9c:fc:10:2d:22
+epair12a: link state changed to UP
+epair12b: link state changed to UP
+epair12a: link state changed to DOWN
+epair12b: link state changed to DOWN
+epair12a: Ethernet address: 58:9c:fc:10:e5:1f
+epair12b: Ethernet address: 58:9c:fc:10:2d:22
+epair12a: link state changed to UP
+epair12b: link state changed to UP
+epair12a: link state changed to DOWN
+epair12b: link state changed to DOWN
+epair12a: Ethernet address: 58:9c:fc:10:e5:1f
+epair12b: Ethernet address: 58:9c:fc:10:2d:22
+epair12a: link state changed to UP
+epair12b: link state changed to UP
+epair12a: link state changed to DOWN
+epair12b: link state changed to DOWN
+epair12a: Ethernet address: 58:9c:fc:10:e5:1f
+epair12b: Ethernet address: 58:9c:fc:10:2d:22
+epair12a: link state changed to UP
+epair12b: link state changed to UP
+epair12a: link state changed to DOWN
+epair12b: link state changed to DOWN
+epair12a: Ethernet address: 58:9c:fc:10:e5:1f
+epair12b: Ethernet address: 58:9c:fc:10:2d:22
+epair12a: link state changed to UP
+epair12b: link state changed to UP
+epair12a: link state changed to DOWN
+epair12b: link state changed to DOWN
+epair12a: Ethernet address: 58:9c:fc:10:e5:1f
+epair12b: Ethernet address: 58:9c:fc:10:2d:22
+epair12a: link state changed to UP
+epair12b: link state changed to UP
+epair12a: link state changed to DOWN
+epair12b: link state changed to DOWN
+epair12a: Ethernet address: 58:9c:fc:10:e5:1f
+epair12b: Ethernet address: 58:9c:fc:10:2d:22
+epair12a: link state changed to UP
+epair12b: link state changed to UP
+tun1: link state changed to UP
+tun2: link state changed to UP
+pid 27316 (mlvpn), tun1: tun/tap protocol violation, non-controlling process closed last.
+tun1: link state changed to DOWN
+pid 27330 (mlvpn), tun2: tun/tap protocol violation, non-controlling process closed last.
+tun2: link state changed to DOWN
+epair12a: link state changed to DOWN
+epair12b: link state changed to DOWN
+tun1: link state changed to UP
+tun2: link state changed to UP
+pid 27799 (mlvpn), tun1: tun/tap protocol violation, non-controlling process closed last.
+tun1: link state changed to DOWN
+pid 27985 (mlvpn), tun2: tun/tap protocol violation, non-controlling process closed last.
+tun2: link state changed to DOWN
+tun1: link state changed to UP
+pid 28723 (mlvpn), tun1: tun/tap protocol violation, non-controlling process closed last.
+tun1: link state changed to DOWN
+tun1: link state changed to UP
+tun2: link state changed to UP
+pid 40869 (mlvpn), tun1: tun/tap protocol violation, non-controlling process closed last.
+tun1: link state changed to DOWN
+pid 40886 (mlvpn), tun2: tun/tap protocol violation, non-controlling process closed last.
+tun2: link state changed to DOWN
+tun1: link state changed to UP
+pid 41387 (mlvpn), tun1: tun/tap protocol violation, non-controlling process closed last.
+tun1: link state changed to DOWN
+tun1: link state changed to UP
+tun2: link state changed to UP
+pid 54581 (mlvpn), tun1: tun/tap protocol violation, non-controlling process closed last.
+pid 54640 (mlvpn), tun2: tun/tap protocol violation, non-controlling process closed last.
+tun1: link state changed to DOWN
+tun2: link state changed to DOWN
+arp: 192.168.100.190 moved from 1e:7c:7f:af:30:dc to 4e:c6:4c:00:ea:34 on igb0
+arp: 192.168.100.190 moved from 4e:c6:4c:00:ea:34 to 1e:7c:7f:af:30:dc on igb0
+epair112a: Ethernet address: 58:9c:fc:10:43:bd
+epair112b: Ethernet address: 58:9c:fc:10:6b:79
+epair112a: link state changed to UP
+epair112b: link state changed to UP
