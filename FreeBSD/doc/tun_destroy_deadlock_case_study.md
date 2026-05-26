@@ -79,23 +79,23 @@ sequenceDiagram
     autonumber
     participant U as User shell
     participant K as Kernel (tun + if_clone)
-    participant H as Holder process<br/>(`sleep 99999 < /dev/tun1`)
+    participant H as Holder process (sleep)
 
     U->>K: ifconfig tun create
-    K-->>U: tun1 created (tun_busy = 0)
+    K-->>U: tun1 created, tun_busy = 0
 
-    U->>H: spawn `sleep 99999 < /dev/tun1`
-    H->>K: open("/dev/tun1", O_RDWR)
-    K-->>H: fd 0 (tun_busy = 1)
+    U->>H: spawn sleep 99999 < /dev/tun1
+    H->>K: open(/dev/tun1, O_RDWR)
+    K-->>H: fd 0, tun_busy = 1
 
-    Note over H: parks in select/read forever<br/>fd stays open
+    Note over H: parks in select/read forever, fd stays open
 
     U->>K: ifconfig tun1 destroy
-    Note over K: takes ifnet_detach_sxlock<br/>(exclusive)
-    Note over K: enters tun_destroy()<br/>sees tun_busy != 0
-    Note over K: cv_wait_sig() on tun_cv<br/>WAITING FOR holder.close()
+    Note over K: takes ifnet_detach_sxlock exclusive
+    Note over K: enters tun_destroy, sees tun_busy != 0
+    Note over K: cv_wait_sig on tun_cv, waiting for holder close
 
-    Note over K,H: Holder will never close.<br/>The lock is held forever.
+    Note over K,H: Holder will never close. The lock is held forever.
 ```
 
 The arrangement is mundane: one process opens the tun device and
@@ -176,7 +176,7 @@ The thread chain:
 
 ```mermaid
 flowchart TD
-    A["Holder process<br/>open /dev/tun1, tun_busy = 1<br/>then parks in select()"]
+    A["Holder process<br/>open /dev/tun1, tun_busy = 1<br/>then parks in select"]
     B["ifconfig tun1 destroy<br/>holds ifnet_detach_sxlock X<br/>parks in cv_wait_sig on tun_cv<br/>waiting for tun_busy = 0"]
     C["ifconfig tun2 destroy<br/>or jail -R, or any cloner op<br/>blocked in sx_xlock_hard<br/>waiting for ifnet_detach_sxlock"]
     D["jls<br/>blocked in sx_slock_hard<br/>waiting for allprison<br/>held by the wedged jail -R"]
@@ -211,22 +211,22 @@ Let's look at the kernel side step by step.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as Userland: ifconfig tun1 destroy
-    participant CL as if_clone_destroy<br/>(sys/net/if_clone.c)
-    participant TD as tun_destroy<br/>(sys/net/if_tuntap.c)
-    participant CV as tun_cv<br/>(condition variable)
-    participant SX as ifnet_detach_sxlock<br/>(global sx lock)
+    participant U as Userland ifconfig tun1 destroy
+    participant CL as if_clone_destroy in if_clone.c
+    participant TD as tun_destroy in if_tuntap.c
+    participant CV as tun_cv condition variable
+    participant SX as ifnet_detach_sxlock global sx lock
 
     U->>CL: ioctl SIOCIFDESTROY
-    CL->>SX: sx_xlock(&ifnet_detach_sxlock)<br/>(line 480)
+    CL->>SX: sx_xlock at line 480
     Note over SX: held EXCLUSIVE by this thread
-    CL->>TD: tun_clone_destroy → tun_destroy(may_intr=true)
-    TD->>TD: TUN_LOCK(tp)<br/>tp->tun_flags |= TUN_DYING
-    loop while tp->tun_busy != 0
-        TD->>CV: cv_wait_sig(&tun_cv, &tun_mtx)
-        Note over CV,TD: tun_mtx released atomically;<br/>thread sleeps
+    CL->>TD: tun_clone_destroy then tun_destroy may_intr=true
+    TD->>TD: TUN_LOCK then set TUN_DYING
+    loop while tp.tun_busy != 0
+        TD->>CV: cv_wait_sig on tun_cv and tun_mtx
+        Note over CV,TD: tun_mtx released atomically, thread sleeps
     end
-    Note over SX: lock is STILL HELD — we are sleeping with it
+    Note over SX: lock is STILL HELD while we sleep
 ```
 
 Until step 8 the thread is on the CPU and the sx lock can be
@@ -612,8 +612,8 @@ There are two callers of `tun_destroy`:
 
 ```mermaid
 flowchart LR
-    A[tun_clone_destroy<br/>at if_tuntap.c:729<br/>called from if_clone_destroyif] -->|may_intr = true| TD[tun_destroy]
-    B[tun_uninit<br/>at if_tuntap.c:773<br/>called from MOD_UNLOAD] -->|may_intr = false| TD
+    A["tun_clone_destroy<br/>at if_tuntap.c line 729<br/>called from if_clone_destroyif"] -->|may_intr = true| TD[tun_destroy]
+    B["tun_uninit<br/>at if_tuntap.c line 773<br/>called from MOD_UNLOAD"] -->|may_intr = false| TD
 
     style A fill:#fdd,stroke:#900
     style B fill:#dfd,stroke:#090
@@ -686,9 +686,9 @@ flowchart TD
     subgraph before [Before patch]
         B1[if_clone_destroy] --> B2[sx_xlock]
         B2 --> B3[tun_destroy]
-        B3 --> B4["while tun_busy != 0:<br/>cv_wait_sig (FOREVER)"]
+        B3 --> B4["while tun_busy != 0<br/>cv_wait_sig FOREVER"]
         B4 -.->|userspace never closes| B4
-        B2 -.->|lock held the entire time| BL[Global lock<br/>held forever]
+        B2 -.->|lock held the entire time| BL["Global lock<br/>held forever"]
     end
 
     subgraph after [After patch]
@@ -696,7 +696,7 @@ flowchart TD
         A2 --> A3[tun_destroy]
         A3 -->|tun_busy != 0| A4[return EBUSY]
         A4 --> A5[sx_xunlock]
-        A5 --> A6[ifconfig prints<br/>'SIOCIFDESTROY: Device busy']
+        A5 --> A6["ifconfig prints<br/>SIOCIFDESTROY Device busy"]
     end
 
     classDef bad fill:#fdd,stroke:#900
@@ -757,13 +757,13 @@ final cleanup after killing the holder succeeded normally.
 
 ```mermaid
 flowchart LR
-    H[1 holder<br/>fd open]
-    P1[destroy #1] -->|EBUSY| R[Refused]
-    P2[destroy #2] -->|EBUSY| R
-    P3[destroy ...] -->|EBUSY| R
-    P10[destroy #10] -->|EBUSY| R
+    H["1 holder<br/>fd open"]
+    P1["destroy 1"] -->|EBUSY| R[Refused]
+    P2["destroy 2"] -->|EBUSY| R
+    P3["destroy ..."] -->|EBUSY| R
+    P10["destroy 10"] -->|EBUSY| R
     R --> K[holder killed]
-    K --> D[destroy #11] -->|rc=0| OK[tun gone]
+    K --> D["destroy 11"] -->|rc=0| OK[tun gone]
 ```
 
 If the fix had been subtly wrong (for example, if the EBUSY path had
