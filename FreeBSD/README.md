@@ -8,22 +8,48 @@ Hardware / platform notes:
 - [Framework Desktop (Strix Halo) setup notes](Framework-desktop.md) — see also the cross-OS llama.cpp results in [../tools/LLM.benches.FrameWork-Desktop.md](../tools/LLM.benches.FrameWork-Desktop.md)
 - [Drivers notes](drivers.md)
 
-Utility scripts (loose, top-level):
-- [lab.sh](lab.sh) — lab/test orchestration
-- [loop_until_failure.sh](loop_until_failure.sh) — re-run a command until it fails
+Install / system setup:
+- [install-server.sh](install-server.sh) — post-install setup for a FreeBSD server
+- [install-desktop.sh](install-desktop.sh) — post-install setup for a FreeBSD desktop
+- [update-fbsd.sh](update-fbsd.sh) — FreeBSD update helper
+- [knobs.sh](knobs.sh) — apply tuning knobs / sysctls
+
+Test & benchmark orchestration:
 - [loop-kyua-test.sh](loop-kyua-test.sh) — repeat a kyua test run
-- [zfs-test.sh](zfs-test.sh) — ZFS exercise/regression helper
-- [bhyve-GPU.sh](bhyve-GPU.sh) — bhyve GPU passthrough helper
+- [testPR.sh](testPR.sh) — apply and test a FreeBSD pull request
+- [tmux-bench.sh](tmux-bench.sh) — tmux-based benchmark harness
+- [tmux-workstation.sh](tmux-workstation.sh) — tmux workstation layout
 - [flamegraph.sh](flamegraph.sh) — generate flamegraphs from DTrace
 - [freebsd-memory.sh](freebsd-memory.sh) — memory introspection
-- [pf.conf](pf.conf), [pf-big-table.sh](pf-big-table.sh) — pf examples / large-table benchmark
+- [bhyve-GPU.sh](bhyve-GPU.sh) — bhyve GPU passthrough helper
+- [qemu-uefi-ipxe.sh](qemu-uefi-ipxe.sh) — QEMU UEFI / iPXE boot helper
+- [pf-big-table.sh](pf-big-table.sh) — pf large-table benchmark
+
+Ports / packaging helpers:
+- [generate_GH_TUPLES.sh](generate_GH_TUPLES.sh) — generate `GH_TUPLE` lines for a port
+- [poudrire-build-log.sh](poudrire-build-log.sh) — extract / summarize poudriere build logs
+- [pkg-real-size.sh](pkg-real-size.sh) — report actual installed size of pkgs
+- [check_missing_lib.sh](check_missing_lib.sh) — find binaries linked to missing libs
+
+Misc utilities:
+- [dmesg-nycbug.sh](dmesg-nycbug.sh) — submit dmesg to dmesgd.nycbug.org
+- [passphrase-generator.sh](passphrase-generator.sh) — passphrase generator
+- [ssh-dns-fingerprint.sh](ssh-dns-fingerprint.sh) — generate SSHFP DNS records
+- [rotate.pl](rotate.pl) — log rotation helper
+- [rename.sh](rename.sh) — batch rename helper
+- [scpget.sh](scpget.sh) — scp-based fetch helper
+- [rspro.sh](rspro.sh) — rspro helper
+- [discovering-getsockname.c](discovering-getsockname.c) — small C demo
 
 Subdirectories:
+- [TP/](TP/) — practical-work prep scripts (preparation-master/server, tunnels)
 - [jail/](jail/) — jail management scripts (bridge/nullfs/FRR examples, jail_lib, tests)
 - [benches/tcp/](benches/tcp/) — TCP stack and CCA benchmarks
 - [benches/nfs/](benches/nfs/) — NFS benchmarks
 - [benches/aio/](benches/aio/) — AIO benchmarks
 - [benches/udp/](benches/udp/) — UDP benchmarking C tools
+- [benches/buildworld.sh](benches/buildworld.sh) — buildworld benchmark
+- [benches/http_bench.sh](benches/http_bench.sh) — HTTP benchmark
 - [sendfile/](sendfile/), [tcp_dscp/](tcp_dscp/), [testrss/](testrss/) — small C test programs
 - [ports-tests/](ports-tests/) — port-related test scripts
 

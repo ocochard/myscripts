@@ -478,9 +478,12 @@ create_jail () {
 		exit 1
 	fi
 	if [ -f /var/run/bird/bird${id}.ipsec ]; then
-		# Should be autoloaded by bird, but not sure under a jail
-		kldstat -qm ipsec || ${SUDO} kldload ipsec
-		kldstat -qm tcpmd5 || ${SUDO} kldload tcpmd5
+		# Should be autoloaded by bird, but not sure under a jail.
+		# kldload exits 1 with "already loaded or in kernel" when
+		# IPSEC_SUPPORT is built-in but the .ko is not yet loaded -
+		# tolerate that so set -e does not abort here.
+		${SUDO} kldload ipsec 2>/dev/null || true
+		${SUDO} kldload tcpmd5 2>/dev/null || true
 	fi
 	eval "
 		if [ -z "\$bird${id}_ifa_p" ] || [ "\$bird${id}_ifa_p" != b ]; then

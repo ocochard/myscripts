@@ -16,7 +16,7 @@ host where the rebuilt package is installed (`pkg install ...` or
 | `sslh.sh`           | `net/sslh`                      | Self-contained: `pkg add`s the freshly-built `sslh` from the poudriere builder, starts `sslh-ev` listening on 127.0.0.1:8022, forwards to local sshd on :22, runs an `ssh -p 8022` probe, checks the log for the connection, then stops the daemon and `pkg delete`s the package. | Local sshd, sudo, `sslh-*.pkg` in poudriere |
 | `bird_test.sh`      | `net/bird2`, `net/bird3`        | Builds a 6-jail vnet lab exercising BGP / RIP / OSPF / BABEL / static between `bird1..bird6`. `start` brings the lab up, `stop` tears it down. Used to validate `bird` after a bump on multi-protocol configs.              | `sudo`, vnet jails, root       |
 | `frr_test.sh`       | `net/frr8/9/10`                 | Same idea as `bird_test.sh` but for FRR: 7-jail topology covering BGP / RIP / OSPF / ISIS / BABEL / static. Used to catch routing-protocol regressions across FRR major bumps.                                               | `sudo`, vnet jails, root       |
-| `suricata_test.sh`  | `security/suricata` (legacy)    | Currently a near-copy of `bird_test.sh` (the file header is stale). Kept for historical reference; not actively maintained.                                                                                                  | -                              |
+| `mlvpn_test.sh`     | `net/mlvpn`                     | Host-only smoke test: runs two `mlvpn` instances (server + client) bound to different loopback ports, opens two `tun` devices (10.0.16.1/2), verifies the tunnel comes up and forwards ICMP between the endpoints.            | `sudo`, root, `mlvpn` installed |
 | `osquery_test.sh`   | `sysutils/osquery`              | Cross-platform (FreeBSD + Linux). Audits `ldd` for the port's `Find<lib>.cmake` hijacks, runs ~30 `osqueryi` SQL queries against core / posix / process / network / filesystem / pci / usb / yara / augeas tables, starts `osqueryd` with a 30 s schedule + event backends (devd/inotify/openbsm), then cross-checks counts against native tools (`arp`, `mount`, `pciconf`, `usbconfig`, `sockstat`, etc.). | `sudo`, `jq`                   |
 | `geoip-test.py`     | `net/py-GeoIP2`                 | One-liner: opens a MaxMind DB and looks up a country for a given IP via `geoip2.database.Reader`. Verifies the Python binding loads and a basic query returns the expected country.                                          | `db.data` (see below), Python  |
 | `maxminddb-test.py` | `net/py-maxminddb`              | Same shape as `geoip-test.py` but goes through the lower-level `maxminddb` reader and pretty-prints the full record. Verifies the raw binding (no GeoIP2 wrapper).                                                            | `db.data` (see below), Python  |
@@ -70,7 +70,7 @@ not exercising every code path.
 
 Currently missing tests for:
 
-- `net/mlvpn`, `net/mrtparse`, `net/sslh` (only smoke), `net/libyang*`,
+- `net/sslh` (only smoke), `net/libyang*`,
   `net/freevrrpd`, `net/pimd`, `net/pkt-gen`, `net/packetdrill`,
   `net/tcptestsuite`, `net/tcplog_dumper`, `net/graphpath`,
   `net/read_bbrlog`
