@@ -61,9 +61,19 @@ packets can land on any CPU and chase the PCB across cores.
   `271-275` have `XXXRW: not yet` TODO comments. Every host uses the
   same Microsoft default key (which is also Chelsio T5's firmware
   default).
-- **UDP 4-tuple is off by default** — `sys/net/rss_config.c:153`,
-  gated by tunable `net.inet.rss.udp_4tuple`. Default is 2-tuple,
-  which collapses many short-lived UDP flows onto one CPU.
+- **UDP 4-tuple is off by default, and is new** — `sys/net/rss_config.c:153`,
+  gated by tunable `net.inet.rss.udp_4tuple`. The tunable itself was
+  added in FreeBSD 16-CURRENT (commit 283ef95d167, 2026-03-01,
+  PR #2057) and is not present in 15.x or earlier.
+  With the default (`udp_4tuple=0`), UDP falls back to the 2-tuple
+  hash on (src IP, dst IP) — see `sys/netinet/in_rss.c:128-139`. That
+  still distributes UDP across queues as long as your traffic spans
+  many src/dst IP pairs (a DNS resolver talking to many external
+  servers, a router forwarding for many subscribers, etc.). It only
+  collapses to a single CPU for flows between a single IP pair —
+  e.g. all UDP inside one IPsec/WireGuard/GRE/VXLAN tunnel, or one
+  GTP-U PDP session. Enable `udp_4tuple=1` when those tunneled
+  workloads dominate; otherwise the default is usually fine.
 - **Assumes contiguous CPU ids** — `sys/net/rss_config.c:213-215`
   walks `0..mp_maxid` and has an `XXXRW` warning about "incorrect
   assumptions regarding contiguity of this set elsewhere".
@@ -244,8 +254,13 @@ parts of the network stack.
 - `sys/net/if_ethersubr.c:76,698` — ether netisr uses
   `NETISR_POLICY_CPU` and `rss_m2cpuid()` to dispatch each frame to
   the bucket-owning CPU before L3 processing.
-- `sys/net/if_epair.c:74-77,206,936` — `epair_select_queue()` picks
-  TX queue via `rss_hash2bucket()`; per-CPU task allocation.
+- `sys/net/if_epair.c:74-77,206-234,936-970` — without RSS, epair
+  allocates a single taskqueue and `epair_select_queue()` always
+  returns bucket 0 (serialised on one CPU). With RSS, one taskqueue
+  is created per CPU and pinned, and `epair_select_queue()` selects
+  the bucket via `rss_m2bucket()` / `rss_soft_m2cpuid_v4()` so
+  forwarding scales across cores — a meaningful throughput win for
+  VNET jails on SMP boxes.
 - `sys/net/if_gre.c:74-75,83-84,883,894` — GRE flowid computed via
   `rss_hash_ip4_2tuple()` / `rss_hash_ip6_2tuple()` so encapsulated
   flows hash consistently.
@@ -314,17 +329,33 @@ get re-dispatched.
 - Hardware and software hashes agree (matters for any path that
   re-hashes: IPsec, fragments, lagg, netmap, GRE).
 - Deterministic queue placement — easier to reason about CPU load
-  with `top -SHP`.
+  with `top -SHP`. Packets within the same stream always hit the
+  same queue, so per-flow latency stays stable.
+- **epair(4) becomes per-CPU.** Without RSS, `if_epair.c:936-970`
+  creates a single taskqueue and `epair_select_queue()` returns
+  bucket 0 for every packet — all forwarding through an epair pair
+  is serialised on one CPU. With RSS, one taskqueue is created and
+  pinned per CPU, and `epair_select_queue()` hashes via
+  `rss_m2bucket()` / `rss_soft_m2cpuid_v4()` to spread traffic
+  across them (`if_epair.c:206-234`). This is the
+  big win for VNET jails wired with epair on SMP boxes.
 
 **Costs / sharp edges**
 - `nrxq` / `ntxq` defaults change to `rss_getnumbuckets()`. Anything
   that hard-codes these (tunables, tuning docs, test scripts) needs
   re-checking, or you'll trip the "nrxq != kernel RSS buckets"
-  warning.
+  warning. For best results tune so RX/TX queue counts match the CPU
+  count (which is what `rss_getnumbuckets()` will give you anyway,
+  capped at 128).
 - Hard-coded Toeplitz key — fine in practice but worth noting.
-- UDP 4-tuple needs `net.inet.rss.udp_4tuple=1` to be useful for a
-  router carrying lots of UDP (DNS resolvers, GTP, VXLAN underlay,
-  CARP, etc.). Default 2-tuple collapses UDP flows onto one CPU.
+- UDP defaults to 2-tuple (src IP, dst IP) hashing. That distributes
+  across CPUs when traffic involves many IP pairs (DNS resolver
+  fan-out, a router serving many subscribers), but pins all UDP
+  inside a single tunnel (IPsec, WireGuard, GRE, VXLAN underlay, a
+  GTP-U PDP session) onto one CPU. On 16-CURRENT you can flip
+  `net.inet.rss.udp_4tuple=1` (loader tunable, `CTLFLAG_RDTUN`) to
+  hash UDP on the full 4-tuple instead — useful when tunnelled
+  workloads dominate. Not available on 15.x or earlier.
 - The implementation still has `XXXRW` TODOs from the original
   Juniper-funded work and assumes contiguous CPU ids — fine on a
   normal router box, watch out on weird NUMA / hotplug topologies.
