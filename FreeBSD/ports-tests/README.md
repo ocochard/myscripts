@@ -15,6 +15,7 @@ host where the rebuilt package is installed (`pkg install ...` or
 | ------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
 | `sslh.sh`           | `net/sslh`                      | Self-contained: `pkg add`s the freshly-built `sslh` from the poudriere builder, starts `sslh-ev` listening on 127.0.0.1:8022, forwards to local sshd on :22, runs an `ssh -p 8022` probe, checks the log for the connection, then stops the daemon and `pkg delete`s the package. | Local sshd, sudo, `sslh-*.pkg` in poudriere |
 | `bird_test.sh`      | `net/bird2`, `net/bird3`        | Builds a 6-jail vnet lab exercising BGP / RIP / OSPF / BABEL / static between `bird1..bird6`. `start` brings the lab up, `stop` tears it down. Used to validate `bird` after a bump on multi-protocol configs.              | `sudo`, vnet jails, root       |
+| `bird_fib_test.sh`  | `net/bird2` (netlink vs `@rtsock`) | Host-only (no jails / no vnet) `start`/`check`/`stop` regression for [PR 279662](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=279662). Creates `lo901` bound to FIB 1, manually installs `10.55.0.0/24` in FIB 1, then runs `bird` with one `kernel` protocol (`kernel table 1`, `learn`) plus a static `10.123.0.0/24`. Asserts **both directions**: (a) bird learned the FIB-1 kernel route (inbound `learn`) and (b) the bird static landed in kernel FIB 1 (outbound `export`). On `15.0-RELEASE-p9` + netlink the export path passes (kernel fix `f34aca55adef` is MFC'd) but the learn path fails (kernel fix `33acf0f26b49` is main-only at this writing). `@rtsock` passes both directions. | `sudo`, `net.fibs>=2`, root    |
 | `frr_test.sh`       | `net/frr8/9/10`                 | Same idea as `bird_test.sh` but for FRR: 7-jail topology covering BGP / RIP / OSPF / ISIS / BABEL / static. Used to catch routing-protocol regressions across FRR major bumps.                                               | `sudo`, vnet jails, root       |
 | `mlvpn_test.sh`     | `net/mlvpn`                     | Host-only smoke test: runs two `mlvpn` instances (server + client) bound to different loopback ports, opens two `tun` devices (10.0.16.1/2), verifies the tunnel comes up and forwards ICMP between the endpoints.            | `sudo`, root, `mlvpn` installed |
 | `osquery_test.sh`   | `sysutils/osquery`              | Cross-platform (FreeBSD + Linux). Audits `ldd` for the port's `Find<lib>.cmake` hijacks, runs ~30 `osqueryi` SQL queries against core / posix / process / network / filesystem / pci / usb / yara / augeas tables, starts `osqueryd` with a 30 s schedule + event backends (devd/inotify/openbsm), then cross-checks counts against native tools (`arp`, `mount`, `pciconf`, `usbconfig`, `sockstat`, etc.). | `sudo`, `jq`                   |
@@ -44,6 +45,11 @@ sh bird_test.sh start
 sudo jexec bird3 birdc -s /var/run/bird/bird3.ctl
 # ...inspect routes / protocols...
 sh bird_test.sh stop
+
+# net/bird2 — multi-FIB host-only regression (no jails), both directions
+sh bird_fib_test.sh start
+sh bird_fib_test.sh check     # exits non-zero if either direction fails
+sh bird_fib_test.sh stop
 
 # net/frr{8,9,10} — same idea
 sh frr_test.sh start
