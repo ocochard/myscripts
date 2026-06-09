@@ -1,0 +1,1 @@
+ktls_sendfile_server.full: /usr/lib/libc.a
