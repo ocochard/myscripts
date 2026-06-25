@@ -103,3 +103,131 @@ openssl s_client -connect jelly.home.com:8920
 ```
 
 > **Status:** Verified! Handshake completes cleanly, showing the Let's Encrypt issuer and your exact `jelly.home.com` domain.
+
+---
+
+# Hardware Transcoding (VA-API on FreeBSD with AMD GPU)
+
+## Log locations
+
+| Path | Contents |
+|------|----------|
+| `/var/db/jellyfin/log/log_YYYYMMDD.log` | Main application log |
+| `/var/db/jellyfin/log/FFmpeg.Transcode-*.log` | FFmpeg transcoding jobs |
+| `/var/db/jellyfin/log/FFmpeg.Remux-*.log` | FFmpeg remux jobs |
+| `/var/db/jellyfin/log/FFmpeg.DirectStream-*.log` | FFmpeg direct stream jobs |
+
+Jellyfin process (not in a jail):
+```
+/usr/local/jellyfin/jellyfin --datadir /var/db/jellyfin --cachedir /var/cache/jellyfin
+```
+
+## Diagnosing playback failures
+
+Check today's log for errors, optionally filtering by username:
+```bash
+grep -E '\[(ERR|WRN)\]' /var/db/jellyfin/log/log_$(date +%Y%m%d).log | tail -50
+grep -i 'lulu' /var/db/jellyfin/log/log_$(date +%Y%m%d).log | tail -50
+```
+
+Check the most recent FFmpeg transcode logs:
+```bash
+ls -t /var/db/jellyfin/log/FFmpeg.Transcode-*.log | head -5 | xargs tail -30
+```
+
+## Symptom: FFmpeg exits with code 234 — hardware upload failure
+
+In the Jellyfin main log (`log_YYYYMMDD.log`):
+```
+MediaBrowser.Common.FfmpegException: FFmpeg exited with code 234
+```
+
+In the FFmpeg transcode log (`FFmpeg.Transcode-*.log`):
+```
+[hwupload @ 0x...] A hardware device reference is required to upload frames to.
+[AVFilterGraph @ 0x...] Error initializing filters
+Error opening output files: Invalid argument
+```
+
+When testing the FFmpeg command manually with `-vaapi_device`:
+```
+[VAAPI @ 0x...] No VA display found for device /dev/dri/renderD128.
+Device creation failed: -22.
+Failed to set value '/dev/dri/renderD128' for option 'vaapi_device': Invalid argument
+```
+
+**Cause:** VA-API hardware acceleration is enabled in Jellyfin but the userspace Mesa driver is missing or misconfigured. Jellyfin silently fails to validate the device at startup and omits `-vaapi_device` from all FFmpeg commands.
+
+**Working FFmpeg command (after fix):**
+```
+"ffmpeg" "-analyzeduration 200M ... -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va -hwaccel vaapi ... -codec:v:0 h264_vaapi ..."
+```
+```
+FFmpeg exited with code 0
+```
+
+The key difference is `-init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va` appearing in the command — Jellyfin only injects this when it successfully validated the device at startup.
+
+## Required packages (FreeBSD)
+
+```bash
+pkg install mesa-dri libva libva-utils
+```
+
+- `mesa-dri`: provides `radeonsi_drv_video.so` — the actual VA-API driver for AMD GPUs
+- `libva`: VA-API wrapper
+- `libva-utils`: provides `vainfo` to verify GPU codec support
+
+## Verify VA-API works
+
+```bash
+sudo env LIBVA_DRIVERS_PATH=/usr/local/lib/dri LIBVA_DRIVER_NAME=radeonsi \
+    vainfo --display drm --device /dev/drm/128
+```
+
+Expected output for AMD Radeon 780M (Phoenix/Hawk Point):
+```
+VAProfileH264ConstrainedBaseline:  VAEntrypointVLD + VAEntrypointEncSlice
+VAProfileH264Main:                 VAEntrypointVLD + VAEntrypointEncSlice
+VAProfileH264High:                 VAEntrypointVLD + VAEntrypointEncSlice
+VAProfileHEVCMain:                 VAEntrypointVLD + VAEntrypointEncSlice
+VAProfileHEVCMain10:               VAEntrypointVLD + VAEntrypointEncSlice  (10-bit HDR)
+VAProfileAV1Profile0:              VAEntrypointVLD + VAEntrypointEncSlice
+VAProfileVP9Profile0/2:            VAEntrypointVLD (decode only)
+VAProfileJPEGBaseline:             VAEntrypointVLD (decode only)
+```
+
+## Permissions
+
+- `/dev/drm/128` (symlinked as `/dev/dri/renderD128`) must be owned `root:video`, mode `crw-rw----`
+- The `jellyfin` user must be in the `video` group:
+  ```bash
+  pw groupshow video        # verify
+  pw groupmod video -m jellyfin  # add if missing
+  ```
+
+## Configure Jellyfin
+
+In **Admin → Dashboard → Playback → Transcoding**:
+- Hardware acceleration: **VA-API**
+- VA-API device: `/dev/dri/renderD128`
+- Enable H264, HEVC, AV1 hardware decode/encode checkboxes
+
+## Required environment variables for Jellyfin service
+
+Without `LIBVA_DRIVER_NAME=radeonsi`, libva cannot auto-detect the driver. Jellyfin will silently fail to open the VA-API device at startup and will omit `-vaapi_device` from all FFmpeg commands, causing the same `hwupload` error even after `mesa-dri` is installed.
+
+Add to `/etc/rc.conf`:
+```
+jellyfin_env="LIBVA_DRIVERS_PATH=/usr/local/lib/dri LIBVA_DRIVER_NAME=radeonsi"
+```
+
+Then restart:
+```bash
+service jellyfin restart
+```
+
+Confirm it worked — the log should show on startup:
+```
+VAAPI device "/dev/dri/renderD128" is AMD GPU
+```
