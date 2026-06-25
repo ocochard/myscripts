@@ -280,7 +280,7 @@ def load_db_meta(db_path: str, item_id: str) -> Meta:
     content_type = "Episode" if TYPE_EPISODE in (itype or "") else "Movie"
 
     return Meta(
-        title          = name or "",
+        title          = _clean_sort_title(name) or orig or name or "",
         original_title = orig or "",
         sort_title     = _clean_sort_title(sort),
         year           = year_str,
@@ -428,7 +428,7 @@ def _fmt(v) -> str:
     return v if v else "(none)"
 
 
-def _trunc(s: str, n: int = 60) -> str:
+def _trunc(s: str, n: int = 35) -> str:
     return s[:n - 1] + "…" if len(s) > n else s
 
 
@@ -438,21 +438,31 @@ def _osc8(url: str, text: str) -> str:
 
 
 def print_diff(path: str, diffs: dict, db_meta: Meta | None = None) -> None:
-    print(f"\n  {path}")
+    print(f"\n  {Path(path).name}")
+    links = []
     if db_meta and db_meta.imdb:
         url = f"https://www.imdb.com/title/{db_meta.imdb}/"
-        print(f"    IMDB  {_osc8(url, url)}")
+        links.append(_osc8(url, f"IMDB:{db_meta.imdb}"))
     if db_meta and db_meta.tmdb:
         url = f"https://www.themoviedb.org/movie/{db_meta.tmdb}"
-        print(f"    TMDB  {_osc8(url, url)}")
+        links.append(_osc8(url, f"TMDB:{db_meta.tmdb}"))
+    if links:
+        print(f"  {'  '.join(links)}")
     if not diffs:
-        print("    ✓ all tags match")
+        print("  ✓ all tags match")
         return
-    w = max(len(FIELD_LABELS.get(k, k)) for k in diffs) + 1
+    # Table: Field | DB value | MKV value
+    COL_F = max(len(FIELD_LABELS.get(k, k)) for k in diffs)
+    COL_D = 35
+    COL_M = 35
+    sep = f"  {'─' * COL_F}  {'─' * COL_D}  {'─' * COL_M}"
+    print(f"  {'Field':<{COL_F}}  {'DB':<{COL_D}}  {'MKV':<{COL_M}}")
+    print(sep)
     for fname, (db_val, mkv_val) in diffs.items():
-        label = FIELD_LABELS.get(fname, fname)
-        print(f"    {label:<{w}}  DB : {_trunc(_fmt(db_val))}")
-        print(f"    {'':<{w}}  MKV: {_trunc(_fmt(mkv_val))}")
+        label  = FIELD_LABELS.get(fname, fname)
+        db_s   = _trunc(_fmt(db_val))
+        mkv_s  = _trunc(_fmt(mkv_val))
+        print(f"  {label:<{COL_F}}  {db_s:<{COL_D}}  {mkv_s:<{COL_M}}")
 
 
 def print_summary(report: list) -> None:
@@ -535,15 +545,15 @@ def main() -> None:
         print("  Everything is in sync — nothing to do.")
         return
 
+    if args.interactive:
+        _interactive_update(report)
+        return
+
     for path, diffs, db_meta in report:
         print_diff(path, diffs, db_meta)
 
     if args.summary:
         print_summary(report)
-
-    if args.interactive:
-        _interactive_update(report)
-        return
 
     if not args.update:
         print(f"\n  Run with --update to write, or --interactive to review each file.")
