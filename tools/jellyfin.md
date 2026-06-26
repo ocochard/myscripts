@@ -81,6 +81,36 @@ echo "0 0 * * * root  certbot renew --quiet --no-self-upgrade --deploy-hook /usr
 
 ---
 
+## Warning: TV devices may reject the newer Let's Encrypt chain
+
+Since late 2024, Let's Encrypt issues certificates using the `YE2` / `ISRG Root X2` intermediate chain by default. This chain is **not in the trust store of most TV firmware** (LG, Samsung, Android TV older builds), causing the Jellyfin app on those devices to fail connecting with an SSL error — even though the certificate is perfectly valid on browsers and phones.
+
+**Symptom:** The Jellyfin TV app says it cannot find or connect to the server when the address is entered manually, while the same address works fine in a browser or on a phone.
+
+**Verify which chain is in use:**
+
+```bash
+echo | openssl s_client -connect nas.cochard.me:8920 2>&1 | grep -E 'depth|issuer'
+```
+
+If you see `CN=YE2` or `CN=ISRG Root X2`, you are on the newer chain.
+
+**Fix:** force certbot to use the older `R3` / `ISRG Root X1` chain, which TVs have trusted since 2021:
+
+```bash
+sudo certbot renew --force-renewal --preferred-chain "ISRG Root X1" -d nas.cochard.me
+sudo /usr/local/bin/jellyfin-cert-renew.sh
+sudo service jellyfin restart
+```
+
+Also add `--preferred-chain "ISRG Root X1"` to the cron line so it survives future renewals:
+
+```
+0 0 * * * root  certbot renew --quiet --no-self-upgrade --preferred-chain "ISRG Root X1" --deploy-hook /usr/local/bin/jellyfin-cert-renew.sh
+```
+
+---
+
 ## Step 4: Configure the Jellyfin Web UI
 
 With the `.pfx` file successfully created at `/var/lib/jellyfin/jellyfin.pfx`, you input these settings into your Jellyfin Dashboard:
@@ -134,6 +164,33 @@ Check the most recent FFmpeg transcode logs:
 ```bash
 ls -t /var/db/jellyfin/log/FFmpeg.Transcode-*.log | head -5 | xargs tail -30
 ```
+
+## Symptom: Dynamic Image Provider error — missing fonts
+
+In the Jellyfin main log (`log_YYYYMMDD.log`):
+```
+[ERR] MediaBrowser.Providers.Folders.UserViewMetadataService: Error in "Dynamic Image Provider"
+System.ArgumentNullException: Value cannot be null. (Parameter 'typeface')
+   at SkiaSharp.HarfBuzz.SKShaper..ctor(SKTypeface typeface)
+   at Jellyfin.Drawing.Skia.StripCollageBuilder.MeasureAndDrawText(...)
+```
+
+**Cause:** Jellyfin's image generator (used to draw library tile thumbnails) calls `SKTypeface.FromFamilyName("sans-serif")` via SkiaSharp. If no fonts are registered with fontconfig on the system, both the primary lookup and the fallback return `null`, causing this crash. The library browser still works but auto-generated collection thumbnails fail silently.
+
+**Verify:** confirm fontconfig has no fonts:
+```bash
+fc-list
+```
+Empty output confirms the problem.
+
+**Fix:** install the DejaVu font package, which provides the `sans-serif` generic family:
+```bash
+pkg install dejavu
+```
+
+No Jellyfin restart needed — the next library scan or thumbnail refresh will succeed automatically.
+
+---
 
 ## Symptom: FFmpeg exits with code 234 — hardware upload failure
 
