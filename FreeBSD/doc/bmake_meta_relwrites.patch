@@ -1,0 +1,87 @@
+diff --git a/contrib/bmake/meta.c b/contrib/bmake/meta.c
+index 9f9f4fe04663..5f385ba4c621 100644
+--- a/contrib/bmake/meta.c
++++ b/contrib/bmake/meta.c
+@@ -1283,12 +1283,29 @@ meta_oodate(GNode *gn, bool oodate)
+ 		    DEQUOTE(move_target);
+ 		    /* FALLTHROUGH */
+ 		case 'D':		/* unlink */
+-		    if (*p == '/') {
+-			/* remove any missingFiles entries that match p */
+-			StringListNode *ln = missingFiles.first;
++		    {
++			const char *match_p = p;
++			char match_buf[MAXPATHLEN];
++			StringListNode *ln;
++
++			if (*p != '/') {
++			    /*
++			     * Resolve a relative unlink/rename source so
++			     * the matching missingFiles entry (added by
++			     * the prior 'W' for this path) is cleared.
++			     */
++			    if (snprintf(match_buf, sizeof match_buf,
++				    "%s/%s", latestdir, p) <
++				(int)sizeof match_buf)
++				match_p = match_buf;
++			    else
++				break;
++			}
++			/* remove any missingFiles entries that match */
++			ln = missingFiles.first;
+ 			while (ln != NULL) {
+ 			    StringListNode *next = ln->next;
+-			    if (path_starts_with(ln->datum, p)) {
++			    if (path_starts_with(ln->datum, match_p)) {
+ 				free(ln->datum);
+ 				Lst_Remove(&missingFiles, ln);
+ 			    }
+@@ -1330,9 +1347,46 @@ meta_oodate(GNode *gn, bool oodate)
+ 		     * but outside of .OBJDIR is missing,
+ 		     * we need to do it again.
+ 		     */
+-		    /* ignore non-absolute paths */
+-		    if (*p != '/')
++		    if (*p != '/') {
++			/*
++			 * Relative paths are resolved against the most
++			 * recent chdir context: latestdir, then lcwd, then
++			 * cwd (the last covers a freshly-exec'd process
++			 * with no recorded fork that inherits make's cwd).
++			 * Without this, writes performed by sub-processes
++			 * that chdir into a build subdirectory (e.g. zic
++			 * into share/zoneinfo/builddir/) are dropped, and
++			 * the recipe is wrongly considered up-to-date if
++			 * the subdirectory is later removed out-of-band.
++			 *
++			 * fname1 holds the canonical (latestdir-based)
++			 * form, which is also what D/M cleanup uses, so
++			 * any missingFiles entry stays matchable when the
++			 * later rename/unlink record for the same path
++			 * arrives.  fname2 is a scratch for lcwd/cwd
++			 * fallback stats; we only need to know whether
++			 * the file exists, not where.
++			 */
++			if (snprintf(fname1, sizeof fname1, "%s/%s",
++				latestdir, p) >= (int)sizeof fname1)
++			    break;
++			if (cached_stat(fname1, &cst) == 0)
++			    break;	/* found via latestdir */
++			if (strcmp(latestdir, lcwd) != 0 &&
++			    snprintf(fname2, sizeof fname2, "%s/%s",
++				lcwd, p) < (int)sizeof fname2 &&
++			    cached_stat(fname2, &cst) == 0)
++			    break;	/* found via lcwd */
++			if (strcmp(latestdir, cwd) != 0 &&
++			    strcmp(lcwd, cwd) != 0 &&
++			    snprintf(fname2, sizeof fname2, "%s/%s",
++				cwd, p) < (int)sizeof fname2 &&
++			    cached_stat(fname2, &cst) == 0)
++			    break;	/* found via cwd */
++			if (errno == ENOENT && !meta_ignore(gn, fname1))
++			    append_if_new(&missingFiles, fname1);
+ 			break;
++		    }
+ 
+ 		    if (Lst_IsEmpty(&metaBailiwick))
+ 			break;

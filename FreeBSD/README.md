@@ -506,6 +506,30 @@ cd /tmp/libcbor
 tar -x /tmp/pkg/usr/local/lib/libcbor.a
 ```
 
+#### `pkg set -n` fails with `UNIQUE constraint failed: packages.name`
+
+Renaming a package prefix in bulk (e.g. the python default-version bump
+`sudo pkg set -p -n py311-:py312-` from UPDATING) is implemented as a single
+SQLite `UPDATE` on `pkg`'s database. If both `py311-FOO` and `py312-FOO` are
+already installed, the UPDATE tries to create a duplicate `packages.name` row
+and SQLite aborts the whole transaction — no rename succeeds.
+
+Find the colliding packages:
+```
+pkg query '%n' | grep -E '^py(311|312)-' | sed -E 's/^py(311|312)-//' | sort | uniq -d
+```
+
+For each duplicate, check which side has reverse dependencies (the one to keep)
+— format below is `automatic reverse-deps forward-deps`:
+```
+pkg query '%a %#r %#d' py311-FOO
+pkg query '%a %#r %#d' py312-FOO
+```
+
+Delete the orphan side (typically the `py312-` one if it has 0 rdeps), then
+re-run the `pkg set` command. The same pattern applies to any future
+`pkg set -n OLD:NEW` migration.
+
 ### Jails
 
 [cf dedicated doc](jail/README.md)

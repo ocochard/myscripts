@@ -24,7 +24,11 @@ host where the rebuilt package is installed (`pkg install ...` or
 | `maxminddb-test.py` | `net/py-maxminddb`              | Same shape as `geoip-test.py` but goes through the lower-level `maxminddb` reader and pretty-prints the full record. Verifies the raw binding (no GeoIP2 wrapper).                                                            | `db.data` (see below), Python  |
 | `mrtparse_test.sh`  | `net/mrtparse`                  | Self-contained: `pkg add`s the freshly-built `py311-mrtparse`, imports the library, parses a sample MRT RIB dump (`mrtparse-sample.mrt`, shipped here), checks record count + version, exercises the `mrt2json.py` CLI, then `pkg delete`s. | sudo, `py311-mrtparse-*.pkg` in poudriere |
 | `py-anthropic_test.sh` | `misc/py-anthropic`         | Self-contained: `pkg add`s the freshly-built `py311-anthropic`, imports the SDK, checks version, constructs an `Anthropic` client (no network call), verifies main types are importable. Skips uninstall if reverse deps (e.g. `hermes-agent`) are installed. | sudo, `py311-anthropic-*.pkg` in poudriere |
+| `py-deepdiff_test.sh` | `devel/py-deepdiff`         | Self-contained: `pkg add`s the freshly-built `py311-deepdiff`, imports the library, exercises the cachebox-backed `DistanceCache` (`deepdiff/lfucache.py`) directly and via `DeepDiff(get_deep_distance=True, cache_size=N)` on both a small nested-dict diff and a 50-item `ignore_order=True` list diff. Catches cachebox API breakage across major bumps — the regression the previous `cachebox>=5.2,<6` upper bound was hiding. | sudo, `py311-deepdiff-*.pkg` in poudriere |
 | `py-exa-py_test.sh` | `www/py-exa-py`             | Self-contained: `pkg add`s the freshly-built `py311-exa-py`, imports the SDK, checks version via `importlib.metadata` (no `__version__` exposed), constructs an `Exa` client (no network call), verifies `AsyncExa` subclasses `Exa` and key submodules import. Skips uninstall if reverse deps (e.g. `hermes-agent`) are installed. | sudo, `py311-exa-py-*.pkg` in poudriere |
+| `py-PyHive_test.sh` | `databases/py-PyHive` (+ `devel/py-pure-sasl`, `devel/py-thrift_sasl` pulled in transitively via the HIVE option) | Self-contained: `pkg add`s the freshly-built `py312-PyHive`, imports `pyhive` + every DB-API submodule (`hive`/`presto`/`trino`, touching thrift/requests deps), constructs a `puresasl.client.SASLClient` and imports `thrift_sasl` (proves the HIVE-option SASL stack is wired), constructs all five SQLAlchemy dialect classes (`HiveDialect`, `HiveHTTP{,S}Dialect`, `PrestoDialect`, `TrinoDialect`), verifies the `sqlalchemy.dialects` registry entry points resolve back to PyHive's classes (i.e. `create_engine("hive://...")` would work), checks the PEP 249 module attributes, then `pkg delete`s. | sudo, `py312-PyHive-*.pkg` in poudriere |
+| `gpac_test.sh`      | `multimedia/gpac`           | Self-contained: `pkg add`s the freshly-built `gpac`, runs `gpac -i <sample>.mp4 inspect` and `MP4Box -info` against the bundled `share/gpac/res/gpac.mp4` sample, asserts the expected PID / codec / Movie Info markers, then `pkg delete`s the package. | sudo, `gpac-*.pkg` in poudriere |
+| `cbmc_test.sh`      | `devel/cbmc`                | Self-contained: `pkg add`s the freshly-built `cbmc`, checks `--version`, runs cbmc on a buggy C program (asserts `VERIFICATION FAILED` + non-zero exit) and on a clean program (asserts `VERIFICATION SUCCESSFUL`), then `pkg delete`s the package. | sudo, `cbmc-*.pkg` in poudriere |
 
 ## Data files
 
@@ -89,7 +93,10 @@ Currently missing tests for:
 - All `graphics/vulkan-*`, `graphics/crucible`, `graphics/vkrunner`,
   `graphics/openfx-*`, `graphics/ttygif`
 - All `www/py-*`, `misc/py-*`, `devel/py-*`, `audio/py-edge-tts`
+  (covered so far: `misc/py-anthropic`, `www/py-exa-py`,
+  `devel/py-deepdiff`, `databases/py-PyHive` +
+  transitive `devel/py-pure-sasl`, `devel/py-thrift_sasl`)
 - `misc/picoclaw`, `misc/qwen-code`, `misc/hermes-agent`
 - `sysutils/mstflint`, `multimedia/gpac`, `benchmarks/ipc-bench`,
-  `devel/cbmc`, `devel/bbparse`, `security/rcracki_mt`,
+  `devel/bbparse`, `security/rcracki_mt`,
   `filesystems/amazon-efs-utils`

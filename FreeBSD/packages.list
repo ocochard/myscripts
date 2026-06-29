@@ -16,6 +16,7 @@ devel/ccache4
 devel/gdb
 devel/git
 devel/git@lite
+devel/git-filter-repo
 devel/git-lfs
 devel/p5-Cache-LRU
 devel/p5-POSIX-strptime
@@ -59,6 +60,7 @@ lang/python
 lang/rust
 math/gnuplot
 misc/claude-code
+multimedia/jellyfin
 multimedia/libva-utils
 multimedia/mpv
 multimedia/mplayer
@@ -134,6 +136,9 @@ sysutils/edk2@bhyve
 sysutils/vm-bhyve
 textproc/bat
 textproc/jq
+textproc/py-mkdocs
+textproc/py-mkdocs-material
+textproc/py-pymdown-extensions
 www/chromium
 www/firefox
 www/mohawk
