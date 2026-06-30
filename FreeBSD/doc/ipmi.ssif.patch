@@ -191,6 +191,9 @@ index 000000000000..0116ca42f2f5
 +DRIVER_MODULE(ipmi_iic, acpi, ipmi_iic_driver, 0, 0);
 +MODULE_DEPEND(ipmi_iic, iicbus, IICBUS_MINVER, IICBUS_PREFVER, IICBUS_MAXVER);
 +MODULE_DEPEND(ipmi_iic, acpi, 1, 1, 1);
++#ifdef __aarch64__
++MODULE_DEPEND(ipmi_iic, ig4iic, 1, 1, 1);
++#endif
 +MODULE_VERSION(ipmi_iic, 1);
 diff --git a/sys/dev/ipmi/ipmi_ssif_iic.c b/sys/dev/ipmi/ipmi_ssif_iic.c
 new file mode 100644

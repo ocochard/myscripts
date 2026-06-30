@@ -420,6 +420,71 @@ state — both the input parameters *and* the output buffer if it's shared.
 
 ---
 
+## 7b. Lesson #5.5: Sub-bus drivers must declare their controller module
+
+When `ipmi.ko` was first installed via `installkernel` and `ipmi_load="YES"`
+was set in `/boot/loader.conf`, attach still failed:
+
+```
+ipmi0: <IPMI System Interface> on acpi0
+device_attach: ipmi0 attach returned 6
+```
+
+Error 6 is `ENXIO`. The path that returns it in `ipmi_iic_attach()` is the
+iicbus lookup:
+
+```c
+for (i = 0; i < 4; i++) {
+    iicbus = devclass_get_device(devclass_find("iicbus"), i);
+    if (iicbus != NULL) break;
+}
+if (iicbus == NULL) return (ENXIO);
+```
+
+No `iicbus` existed because `ig4.ko` (the Designware I2C controller driver,
+module name `ig4iic`) was not loaded. The Ampere I2C controller node
+`APMC0D0F` had no driver attached → no `iicbus` instance → ipmi_iic had
+nothing to bind to.
+
+Diagnosis sequence (reproducible recipe):
+
+1. `sysctl dev.iicbus` → "unknown oid" confirms no iicbus instances exist.
+2. `kldstat | grep -E 'iic|ig4'` → no controller driver loaded.
+3. `kldload ig4` → controller attaches, iicbus appears, the kernel
+   automatically re-probes unattached children, and `ipmi0` attaches
+   cleanly.
+
+### Fix: pull in the controller via MODULE_DEPEND
+
+The kernel module loader can do this for us. Add to `ipmi_iic.c`:
+
+```c
+#ifdef __aarch64__
+MODULE_DEPEND(ipmi_iic, ig4iic, 1, 1, 1);
+#endif
+```
+
+The `#ifdef __aarch64__` guard avoids pulling `ig4` into x86 builds where
+ipmi uses KCS/SMIC/BT and has no I2C dependency.
+
+After this change, `kldload ipmi` (or `ipmi_load="YES"` in loader.conf)
+transitively loads `ig4`, the controller attaches first, and ipmi_iic finds
+its iicbus on the first attempt.
+
+**Generalization:** whenever your driver looks up another driver's device
+at attach time (here, an iicbus instance), declare a `MODULE_DEPEND` on
+the *module that provides that device class*, not just on the framework
+(`iicbus` itself). `MODULE_DEPEND(..., iicbus, ...)` only pulls in the
+iicbus *framework* — it does not pull in any controller driver. The chain
+that actually creates an iicbus instance is: controller driver attaches to
+its hardware node → calls `device_add_child(..., "iicbus", ...)`. Without
+the controller driver loaded, no `iicbus` ever exists.
+
+The hint that this was missing: `MODULE_DEPEND` says "I need this code
+loaded", not "I need this device present". Two different guarantees.
+
+---
+
 ## 8. Lesson #6: ACPI address conventions are a mess
 
 ACPI's `_ADR` for an I2C-connected device returns the **7-bit** I2C slave
