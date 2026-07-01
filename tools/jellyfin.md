@@ -165,30 +165,64 @@ Check the most recent FFmpeg transcode logs:
 ls -t /var/db/jellyfin/log/FFmpeg.Transcode-*.log | head -5 | xargs tail -30
 ```
 
-## Symptom: Dynamic Image Provider error — missing fonts
+## Symptom: Dynamic Image Provider error
 
 In the Jellyfin main log (`log_YYYYMMDD.log`):
 ```
-[ERR] MediaBrowser.Providers.Folders.UserViewMetadataService: Error in "Dynamic Image Provider"
+[ERR] MediaBrowser.Providers.Folders.CollectionFolderMetadataService: Error in "Dynamic Image Provider"
+```
+
+This error fires when Jellyfin tries to render a library thumbnail (collection folder image). It has two distinct root causes, both present on a fresh FreeBSD install. Apply both fixes.
+
+### Fix 1 — missing fonts
+
+The image renderer calls `SKTypeface.FromFamilyName("sans-serif")` via SkiaSharp. With no fonts registered in fontconfig the typeface lookup returns `null`, which surfaces as:
+```
 System.ArgumentNullException: Value cannot be null. (Parameter 'typeface')
    at SkiaSharp.HarfBuzz.SKShaper..ctor(SKTypeface typeface)
-   at Jellyfin.Drawing.Skia.StripCollageBuilder.MeasureAndDrawText(...)
 ```
 
-**Cause:** Jellyfin's image generator (used to draw library tile thumbnails) calls `SKTypeface.FromFamilyName("sans-serif")` via SkiaSharp. If no fonts are registered with fontconfig on the system, both the primary lookup and the fallback return `null`, causing this crash. The library browser still works but auto-generated collection thumbnails fail silently.
-
-**Verify:** confirm fontconfig has no fonts:
-```bash
-fc-list
-```
-Empty output confirms the problem.
-
-**Fix:** install the DejaVu font package, which provides the `sans-serif` generic family:
+Install the DejaVu font package:
 ```bash
 pkg install dejavu
+sudo fc-cache -fv
 ```
 
-No Jellyfin restart needed — the next library scan or thumbnail refresh will succeed automatically.
+Verify:
+```bash
+fc-list | grep -i dejavu
+```
+
+### Fix 2 — missing libHarfBuzzSharp native library
+
+Even with fonts installed, `SKShaper` tries to load `libHarfBuzzSharp.so` (the HarfBuzz C-API bridge used by the .NET HarfBuzzSharp wrapper). The Jellyfin FreeBSD package does not ship this library and there is no separate port for it. The standard system `libharfbuzz.so` exports the same symbols, so a symlink is sufficient:
+
+```bash
+ln -sf /usr/local/lib/libharfbuzz.so /usr/local/jellyfin/libHarfBuzzSharp.so
+```
+
+This error surfaces as:
+```
+System.DllNotFoundException: Unable to load shared library 'libHarfBuzzSharp' or one of its dependencies.
+   at HarfBuzzSharp.HarfBuzzApi.hb_blob_create(...)
+   at SkiaSharp.HarfBuzz.SKShaper..ctor(SKTypeface typeface)
+```
+
+Note: the symlink lives inside `/usr/local/jellyfin/` which is managed by the `jellyfin` package. It will be lost if `pkg upgrade jellyfin` replaces that directory. Re-create it after upgrades.
+
+### Apply both fixes
+
+```bash
+pkg install dejavu
+sudo fc-cache -fv
+ln -sf /usr/local/lib/libharfbuzz.so /usr/local/jellyfin/libHarfBuzzSharp.so
+service jellyfin restart
+```
+
+Then trigger **Dashboard → Libraries → Scan All Libraries** and verify no more errors:
+```bash
+tail -f /var/db/jellyfin/log/log_$(date +%Y%m%d).log | grep --line-buffered -E 'Dynamic Image|ERR'
+```
 
 ---
 
@@ -288,3 +322,43 @@ Confirm it worked — the log should show on startup:
 ```
 VAAPI device "/dev/dri/renderD128" is AMD GPU
 ```
+
+---
+
+# Jellyfin API with curl
+
+## Extract an access token
+
+Jellyfin tokens are stored in its SQLite database. The quickest way to grab one (pick any recent session):
+
+```bash
+sqlite3 /var/db/jellyfin/data/jellyfin.db \
+  'SELECT AccessToken, DeviceName, DateCreated FROM Devices ORDER BY DateCreated DESC LIMIT 5'
+```
+
+## Using the API
+
+All API calls require the `Authorization` header with a `MediaBrowser Token=` prefix. Jellyfin redirects HTTP (port 8096) to HTTPS (port 8920); use `-sk` to follow redirects and skip certificate verification when calling from localhost:
+
+```bash
+TOKEN="9fc8945e60464fcd95bc3bc880be8ef2"
+
+# List scheduled tasks
+curl -sk "https://localhost:8920/ScheduledTasks" \
+  -H "Authorization: MediaBrowser Token=${TOKEN}"
+
+# Find the ID of a specific task (example: Scan Media Library)
+curl -sk "https://localhost:8920/ScheduledTasks" \
+  -H "Authorization: MediaBrowser Token=${TOKEN}" \
+  | tr '{' '\n' | grep -i 'scan media'
+
+# Run a scheduled task by ID
+curl -sk -X POST "https://localhost:8920/ScheduledTasks/Running/<task-id>" \
+  -H "Authorization: MediaBrowser Token=${TOKEN}"
+
+# Trigger a full library refresh (equivalent to Dashboard → Libraries → Scan All)
+curl -sk -X POST "https://localhost:8920/Library/Refresh" \
+  -H "Authorization: MediaBrowser Token=${TOKEN}"
+```
+
+Scan Media Library task ID (stable across restarts): `7738148ffcd07979c7ceb148e06b3aed`
