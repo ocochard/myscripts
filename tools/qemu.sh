@@ -103,35 +103,26 @@ if $NETBOOT; then
 	EFI_VARS="/tmp/qemu-efi-vars-$ARCH.fd"
 	cp "$EFI_VARS_TEMPLATE" "$EFI_VARS"
 
+	QEMU_CMD="$QEMU_BIN \
+		-M $QEMU_MACHINE \
+		-cpu $QEMU_CPU \
+		-m 512M \
+		-nographic \
+		-device virtio-rng-pci \
+		-drive if=pflash,format=raw,readonly=on,file=$EFI_CODE \
+		-drive if=pflash,format=raw,file=$EFI_VARS \
+		-nic user,bootfile=$NETBOOT_URL \
+		-fw_cfg name=opt/org.tianocore/IPv4PXESupport,string=no \
+		-fw_cfg name=opt/org.tianocore/IPv6PXESupport,string=no"
+
 	echo "Starting QEMU (${QEMU_BIN}) — UEFI HTTP boot from $NETBOOT_URL"
 	echo "  UEFI code : $EFI_CODE"
 	echo "  UEFI vars : $EFI_VARS"
 	echo ""
-	echo "Command:"
-	echo "  $QEMU_BIN \\"
-	echo "    -M $QEMU_MACHINE \\"
-	echo "    -cpu $QEMU_CPU \\"
-	echo "    -m 512M \\"
-	echo "    -nographic \\"
-	echo "    -device virtio-rng-pci \\"
-	echo "    -drive if=pflash,format=raw,readonly=on,file=$EFI_CODE \\"
-	echo "    -drive if=pflash,format=raw,file=$EFI_VARS \\"
-	echo "    -nic user,bootfile=$NETBOOT_URL \\"
-	echo "    -fw_cfg name=opt/org.tianocore/IPv4PXESupport,string=no \\"
-	echo "    -fw_cfg name=opt/org.tianocore/IPv6PXESupport,string=no"
+	echo "Command: $QEMU_CMD"
 	echo ""
 
-	exec "$QEMU_BIN" \
-		-M "$QEMU_MACHINE" \
-		-cpu "$QEMU_CPU" \
-		-m 512M \
-		-nographic \
-		-device virtio-rng-pci \
-		-drive if=pflash,format=raw,readonly=on,file="$EFI_CODE" \
-		-drive if=pflash,format=raw,file="$EFI_VARS" \
-		-nic user,bootfile="$NETBOOT_URL" \
-		-fw_cfg name=opt/org.tianocore/IPv4PXESupport,string=no \
-		-fw_cfg name=opt/org.tianocore/IPv6PXESupport,string=no
+	exec $QEMU_CMD
 else
 	usage
 fi

@@ -121,6 +121,46 @@ EOF
 qwen
 ```
 
+### Speculative decoding with Multi-Token Prediction (MTP)
+
+Since llama.cpp b9878 (PR [#22673](https://github.com/ggml-org/llama.cpp/pull/22673)
+merged as commit `255582687`, plus follow-up fixes), the server supports MTP — a form
+of speculative decoding where the draft heads are baked into the main model (no
+separate draft model needed). Best gains are on dense models with structured output
+(code, reasoning). MoE models already stream fast enough that MTP is often neutral or
+negative there.
+
+The model must be an MTP-fine-tuned variant (extra NextN/MTP tensors). For Qwen3.6-27B
+dense, `havenoammo/Qwen3.6-27B-MTP-UD-GGUF` is a working choice:
+
+```
+build/bin/llama-server \
+  -hf havenoammo/Qwen3.6-27B-MTP-UD-GGUF:UD-Q8_K_XL \
+  --device Vulkan0 \
+  --flash-attn on \
+  --batch-size 2048 --ubatch-size 512 \
+  --ctx-size 65536 --parallel 1 \
+  --spec-type draft-mtp
+```
+
+Notes:
+- Flag value renamed from `--spec-type mtp` (early PR builds) to `--spec-type draft-mtp`
+  in b9878. The full set: `none, draft-simple, draft-eagle3, draft-mtp, draft-dflash,
+  ngram-simple, ngml-map-k, ngram-map-k4v, ngram-mod, ngram-cache`.
+- The server prints `slot print_timing: id 0 | task 0 | draft acceptance = 0.81395
+  ( 105 accepted / 129 generated), mean len = 3.44` per request — acceptance rate is
+  the number to watch (~80 % is normal on coding prompts).
+- Chat responses expose `reasoning_content` (the `<think>…</think>` block) and
+  `content` (final answer) as separate fields in `/v1/chat/completions`. `--jinja` is
+  default-on since b9878; the old `--chat-template-kwargs {"preserve_thinking":true}`
+  hack is no longer required.
+- On Strix Halo Q8 dense, MTP roughly doubles decode throughput (see
+  [LLM.benches.FrameWork-Desktop.md](LLM.benches.FrameWork-Desktop.md) Stage 5).
+  Prefill (TTFT) gets slightly worse (~10 %) because the draft heads also run during
+  prefill.
+- `--spec-draft-n-max N` caps proposals per verify step (default 16); on Strix Halo,
+  16 is best.
+
 ## Unified Memory Architecture with AMD iGPU
 
 Laptops and miniPC are using APU (SoC that include CPU and iGPU with RAM shared between both).
@@ -334,6 +374,31 @@ Device  Node  IDs              Temp    Power     Partitions          SCLK  MCLK 
 
 Conclusion: It is indeed able to load big model and using the iGPU, but more important, Vulkan
 is twice faster than ROCm 7.2.
+
+Warning: to be able to load large model, some kernel/amdgpu drivers tunning are mandatory
+Example with AMD Strix Halo that only use half available (128GB shared RAM here):
+Default values allows only using 64GB:
+```
+$ sudo dmesg | grep "amdgpu.*memory"
+[    3.787124] amdgpu 0000:c2:00.0: amdgpu: amdgpu: 512M of VRAM memory ready
+[    3.787128] amdgpu 0000:c2:00.0: amdgpu: amdgpu: 62892M of GTT memory ready.
+```
+
+So let’s update it to 120GB (8GB preserved for the OS), need to tune the TTM pages (expressed in 4 KB pages).
+So we need to calculate ([size in GB] * 1024 * 1024) / 4096
+Then adding "amdttm.pages_limit=32768000 amdttm.page_pool_size=32768000" in kernel cmd line grub config file:
+
+```
+$ sudo dmesg | grep "amdgpu.*memory"
+[    3.884043] amdgpu 0000:c2:00.0: amdgpu: amdgpu: 512M of VRAM memory ready
+[    3.884045] amdgpu 0000:c2:00.0: amdgpu: amdgpu: 120000M of GTT memory ready.
+$ build/bin/llama-cli --list-devices
+ggml_cuda_init: found 1 ROCm devices (Total VRAM: 120000 MiB):
+  Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32, VRAM: 120000 MiB
+Available devices:
+  ROCm0: AMD Radeon Graphics (120000 MiB, 124096 MiB free)
+```
+
 
 ## Intel iGPU (Arc graphics)
 

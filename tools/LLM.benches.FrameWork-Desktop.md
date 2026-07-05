@@ -234,10 +234,24 @@ use b9124. Treat the MTP-off ~4 k / ~32 k rows in the table below as the like-fo
 for the MTP rows; the Stage 4 Q8 dense rows are the same hardware/model but a different upstream
 snapshot and serve as a cross-check (Total TPS within 2 %).
 
+**Update (2026-07-06)**: PR #22673 has been merged into upstream master (commit
+`255582687`) since 2026-06, plus a stack of follow-up fixes. Verified running on
+FreeBSD `frwk-bsd` at `2da668617` (b9878) — MTP smoke-test with the same
+`havenoammo/Qwen3.6-27B-MTP-UD-GGUF:UD-Q8_K_XL` model produced draft acceptance
+`105/129 = 81.4 %` (via llama-server direct) and `57/66 = 86.4 %` (via `llmsrv.sh
+MODEL=mtp`), decode `15.6 t/s` and `16.6 t/s` respectively on a short prompt
+(no context depth). **Breaking flag rename**: `--spec-type mtp` → `--spec-type
+draft-mtp` as part of the spec-type namespace cleanup (`draft-simple`,
+`draft-eagle3`, `draft-mtp`, `draft-dflash`, etc.). `--chat-template-kwargs
+{"preserve_thinking":true}` still accepted but no longer required — `--jinja` is
+default-on and the jinja template auto-routes `<think>…</think>` into
+`reasoning_content`. The Stage 5 rows below are **not** re-benched on b9878; the
+build snapshot is documented for reproducibility.
+
 Server flags (Strix Halo, FreeBSD, Vulkan, gfx1151): same as Stage 4 dense Q8 recipe plus
-`--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type mtp`. Bench harness
-identical to Stage 4: `bench_model.py -t 256 -r 2` against `coding_prompt.txt` and
-`coding_prompt_32k.txt`.
+`--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type mtp` (rename
+to `--spec-type draft-mtp` on b9878+). Bench harness identical to Stage 4:
+`bench_model.py -t 256 -r 2` against `coding_prompt.txt` and `coding_prompt_32k.txt`.
 
 | Host     | MTP | Depth | TTFT (ms) | PP t/s | Total TPS | vs MTP-off |
 |----------|-----|-------|----------:|-------:|----------:|-----------:|

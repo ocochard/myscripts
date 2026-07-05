@@ -19,7 +19,8 @@
 #   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL
 #   HOST=0.0.0.0 ./llmsrv.sh     # listen on all interfaces (default: 127.0.0.1)
 #   LLAMA_DIR=~/llama-am17an ./llmsrv.sh   # override llama.cpp build dir
-#                                          # (MTP needs ~/llama.cpp with PR #22673)
+#                                          # (MTP needs llama.cpp >= b9878 — PR #22673
+#                                          #  is in upstream master since 2026-06)
 set -eu
 
 usage() {
@@ -36,7 +37,7 @@ Environment variables:
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
   LLAMA_DIR=dir llama.cpp build dir (default: ~/llama.cpp for all models;
-                MTP requires the PR #22673 merge in ~/llama.cpp)
+                MTP requires llama.cpp >= b9878, in upstream master since 2026-06)
 EOF
   exit 0
 }
@@ -163,11 +164,10 @@ case "${MODEL}" in
     ;;
   mtp)
     # Qwen3.6-27B-MTP (havenoammo): dense 27B fine-tuned with Multi-Token
-    # Prediction heads + thinking traces. Requires an llama.cpp build with
-    # upstream PR #22673 ("llama + spec: MTP Support") merged in — ~/llama.cpp
-    # has this merged at commit c0b933255 (master). The am17an fork's own
-    # MTP implementation has an incompatible tensor layout and fails to load
-    # this GGUF with "missing tensor 'blk.64.ssm_conv1d.weight'".
+    # Prediction heads + thinking traces. PR #22673 ("llama + spec: MTP Support")
+    # is in upstream master since 2026-06; requires llama.cpp >= b9878. The
+    # am17an fork's own MTP implementation has an incompatible tensor layout
+    # and fails to load this GGUF with "missing tensor 'blk.64.ssm_conv1d.weight'".
     LLAMA_DIR=${LLAMA_DIR:-${HOME}/llama.cpp}
     hf_repo="havenoammo/Qwen3.6-27B-MTP-UD-GGUF"
     hf_file="Qwen3.6-27B-MTP-UD-Q8_K_XL.gguf"
@@ -180,16 +180,18 @@ case "${MODEL}" in
     # OpenAI-compatible chat completions (per the model card / friend's
     # working config). The embedded chat_template is used; no template
     # file needed.
-    # --spec-type mtp: enable MTP-based speculative decoding using the
+    # --spec-type draft-mtp: enable MTP-based speculative decoding using the
     #   draft head embedded in the GGUF (no separate draft model needed).
-    #   Added by PR #22673 ("spec: support MTP"). Whole point of this model.
+    #   Added by PR #22673 ("spec: support MTP"). Renamed from `mtp` to
+    #   `draft-mtp` in b9878 as part of the spec-type namespace cleanup.
+    #   Whole point of this model.
     # NOT carrying over from friend's config on this hardware:
     #   -ctk q4_0 -ctv q4_0  : quantized KV crashes Vulkan on FreeBSD,
     #                          ~no benefit on Ubuntu (see Framework-desktop.md)
     #   --no-mmap            : wedges the FreeBSD GPU
     #   -t 6                 : threads irrelevant when fully GPU-offloaded
     #   --chat-template-file : friend's local file; this GGUF has it embedded
-    model_extra='--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type mtp'
+    model_extra='--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type draft-mtp'
     ;;
   med)
     # Qwen3.5-122B-A10B (MoE, 122B total / 10B active).

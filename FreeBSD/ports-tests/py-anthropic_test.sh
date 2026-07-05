@@ -8,47 +8,58 @@
 #
 # Does NOT call the live Anthropic API (no key required); the goal is to
 # catch packaging breakage, not test the upstream SDK.
+#
+# The FreeBSD package name carries the active python flavor prefix
+# (py311-, py312-, ...).  This script derives the prefix from the pkg
+# file itself so it keeps working when the tree's default python flips.
 set -eu
 
-PORT_NAME=py311-anthropic
+PORT_BASE=anthropic         # module + suffix of the pkg name
 JAIL=builder
 TREE=official
 PKGDIR=/usr/local/poudriere/data/packages/${JAIL}-${TREE}/.latest/All
 
+# Discover the freshly-built package: py3XX-anthropic-<ver>.pkg
+PKG=$(ls -t ${PKGDIR}/py3*-${PORT_BASE}-*.pkg 2>/dev/null | head -1)
+[ -n "${PKG}" ] || {
+	echo "FAIL  no py3*-${PORT_BASE}-*.pkg in ${PKGDIR}"
+	exit 1
+}
+PKG_NAME=$(basename "${PKG}" | sed -E 's/-[0-9].*$//')  # py3XX-anthropic
+
 # Skip uninstall if something else on the host depends on the package
-# (e.g. hermes-agent depends on py311-anthropic).  `pkg delete -y` would
+# (e.g. hermes-agent depends on py-anthropic).  `pkg delete -y` would
 # cascade and remove the consumer too.
 PREEXISTED=0
 HAS_REVDEPS=0
 
 cleanup() {
 	if [ "${HAS_REVDEPS}" = 1 ]; then
-		echo "Leaving ${PORT_NAME} installed (other packages depend on it)"
+		echo "Leaving ${PKG_NAME} installed (other packages depend on it)"
 	elif [ "${PREEXISTED}" = 0 ]; then
-		sudo pkg delete -y "${PORT_NAME}" 2>/dev/null || true
+		sudo pkg delete -y "${PKG_NAME}" 2>/dev/null || true
 	else
-		echo "Leaving ${PORT_NAME} installed (was present before test)"
+		echo "Leaving ${PKG_NAME} installed (was present before test)"
 	fi
 }
 trap cleanup EXIT INT TERM
 
 # 0. Record pre-test state
-if pkg info -E "${PORT_NAME}" >/dev/null 2>&1; then
+if pkg info -E "${PKG_NAME}" >/dev/null 2>&1; then
 	PREEXISTED=1
 fi
-if [ -n "$(pkg query '%rn-%rv' ${PORT_NAME} 2>/dev/null)" ]; then
+if [ -n "$(pkg query '%rn-%rv' ${PKG_NAME} 2>/dev/null)" ]; then
 	HAS_REVDEPS=1
-	echo "Note: ${PORT_NAME} has reverse dependencies — will not uninstall after test:"
-	pkg query '  %rn-%rv' "${PORT_NAME}" 2>/dev/null
+	echo "Note: ${PKG_NAME} has reverse dependencies — will not uninstall after test:"
+	pkg query '  %rn-%rv' "${PKG_NAME}" 2>/dev/null
 fi
 
 # 1. Install fresh package
-PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
 echo "Installing ${PKG}"
 sudo pkg add -f "${PKG}"
 
 # 2. Verify python import + version
-PKG_VER=$(pkg query '%v' ${PORT_NAME})
+PKG_VER=$(pkg query '%v' ${PKG_NAME})
 PY_VER=$(python3 -c 'import anthropic; print(anthropic.__version__)')
 echo "Package version: ${PKG_VER}   anthropic.__version__: ${PY_VER}"
 [ "${PKG_VER%_*}" = "${PY_VER}" ] || {
@@ -75,4 +86,4 @@ print(f"PASS  Anthropic client constructed (base_url={c.base_url})")
 print(f"PASS  types: Message, MessageParam, TextBlock importable")
 PY
 
-echo "PASS  py-anthropic ${PKG_VER}"
+echo "PASS  ${PKG_NAME} ${PKG_VER}"

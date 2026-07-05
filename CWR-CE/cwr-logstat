@@ -1,0 +1,484 @@
+#!/usr/bin/env python3
+"""
+cwr-logstat — one-pass summary of CWR-CE (Poseidon engine) trace logs.
+
+Reads a log file (or stdin) written by:
+    cwr-ce --log-level trace --log-file /tmp/cwr.log --log-format text
+
+Produces a terse stdout summary:
+  - counts per level/category
+  - top-N error/warning templates with first/last timestamps
+  - timeline gaps > threshold (potential hang windows)
+  - suspicious patterns (repeated asserts, uninit brain, msgCmd mismatches)
+
+Stream-based; safe on multi-GB logs. Stdlib only.
+
+Or with --journal, emits a per-event session journal (camera POV changes,
+supply chain, AI orders, pathing failures, mission loads) — a readable
+narrative of what happened in the session.
+
+Usage:
+    cwr-logstat /tmp/cwr.log
+    ssh ser6fbsd 'cat /tmp/cwr.log' | cwr-logstat
+    cwr-logstat --gap-threshold 5 --top 20 /tmp/cwr.log
+    cwr-logstat --journal /tmp/cwr.log
+    cwr-logstat --journal --journal-kinds=camera,supply /tmp/cwr.log
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Iterable
+
+# ANSI SGR escape sequence — spdlog color-console output leaks into log files
+# when stdout is redirected without --log-format text respecting a TTY check.
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# One canonical log line:
+#   [2026-07-02 12:08:19.159] [app-0f5e] [TRCE] [CONFIG]    message text
+LINE_RE = re.compile(
+    r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\] "
+    r"\[(?P<logger>[^\]]+)\] "
+    r"\[(?P<level>[A-Z]+)\] "
+    r"\[(?P<cat>[A-Z0-9_]+)\]\s*"
+    r"(?P<msg>.*)$"
+)
+
+# Normalize per-instance variants to a template:
+#   "check failed for pid=12345" -> "check failed for pid=<N>"
+#   "Loading '/home/foo/bar.cfg'" -> "Loading '<S>'"
+#   "0x7ff8abcd1234" -> "<H>"
+#   "1.234" / "-0.5" -> "<F>"
+TEMPLATE_SUBS = [
+    (re.compile(r"0x[0-9a-fA-F]+"), "<H>"),
+    (re.compile(r"'[^']{0,200}'"), "'<S>'"),
+    (re.compile(r'"[^"]{0,200}"'), '"<S>"'),
+    (re.compile(r"[-+]?\d+\.\d+([eE][-+]?\d+)?"), "<F>"),
+    (re.compile(r"[-+]?\b\d+\b"), "<N>"),
+]
+
+# Mission/world identifiers as they appear in log lines. The engine writes
+# the mission slot path (e.g. "missions/__cur_sp.eden/description.ext") when
+# a mission is selected — the trailing ".<island>" names the island (eden =
+# Malden, abel = Everon, cain = Kolgujev, noe = Nogova, intro/intro1 =
+# intro cutscenes). Campaign dialogue audio files follow the pattern
+# c<NN>r<NN>.ogg (chapter/radio-cue), which reveals the campaign chapter
+# when the mission's own display name isn't logged.
+# Retail island code → human name. `eden` is the Remaster's rename of Malden;
+# `abel` / `cain` / `noe` are the 2001 island filenames still shipped in
+# retail data.
+ISLAND_HINTS = {
+    "eden": "Malden (Remaster)",
+    "abel": "Everon",
+    "cain": "Kolgujev",
+    "noe":  "Nogova",
+    "intro": "intro cutscene",
+    "intro1": "intro cutscene",
+}
+
+MISSION_PATH_RE = re.compile(
+    r"missions[/\\](?P<slot>[^/\\]+?)\.(?P<island>[a-z0-9_]+)[/\\]"
+)
+INTRO_PATH_RE = re.compile(
+    r"anims[/\\](?P<name>[^/\\]+?)\.(?P<island>[A-Za-z0-9_]+)[/\\]mission\.sqm"
+)
+CAMPAIGN_DIALOG_RE = re.compile(
+    r"missions[/\\][^/\\]+[/\\]sound[/\\](?P<code>c\d+r\d+)\.ogg",
+    re.IGNORECASE,
+)
+
+# ── Journal mode ─────────────────────────────────────────────────────────────
+# One handler per gameplay-relevant line shape. Each JOURNAL_RULES entry is
+# (kind, category, compiled-regex, formatter). The formatter receives the
+# regex match and returns the human-readable event summary. `category` is
+# checked against the parsed log category so the regex only runs on lines
+# where it could plausibly match.
+#
+# Kinds are broad buckets the user can enable/disable via --journal-kinds:
+#   camera   — POV changes ("Camera switched to ...")
+#   mission  — mission/intro slot loads, campaign-dialogue plays
+#   supply   — the vehicle-supply lifecycle (Started/Finished/Allocated,
+#              plus the AI ProcessSupply order that precedes it)
+#   path     — AI pathing failures (Operative path not found, Start point,
+#              iteration counter)
+#   world    — misc world events (unit moved from landscape, vanished-
+#              vehicle visibility queries, fail command)
+
+JOURNAL_KINDS = ("camera", "mission", "supply", "path", "world")
+
+CAMERA_RE = re.compile(r"^Camera switched to (?P<unit>.+?) \((?P<player>.+?)\)$")
+SUPPLY_STARTED_RE = re.compile(r"^(?P<sup>\S+ \S+ \S+:\d+) SupplyStarted for (?P<rec>\S+ \S+ \S+:\d+)$")
+SUPPLY_FINISHED_RE = re.compile(r"^(?P<sup>\S+ \S+ \S+:\d+) SupplyFinished for (?P<rec>\S+ \S+ \S+:\d+)$")
+SUPPLY_ALLOC_RE = re.compile(r"^(?P<sup>\S+ \S+ \S+:\d+) Allocated for (?P<rec>\S+ \S+ \S+:\d+|nullptr)$")
+PROCESS_SUPPLY_RE = re.compile(r"^(?P<unit>\S+ \S+ \S+:\d+) ProcessSupply (?P<target>\S+ \S+ \S+:\d+)$")
+PATH_ITER_RE = re.compile(r"^(?P<unit>\S+ \S+ \S+:\d+): path not found - iteration (?P<n>\d+)$")
+PATH_OPERATIVE_RE = re.compile(r"^Unit (?P<unit>\S+ \S+ \S+:\d+): Operative path not found$")
+PATH_START_RE = re.compile(r"^Unit (?P<unit>\S+ \S+ \S+:\d+): Start point not found$")
+MOVE_LAND_RE = re.compile(r"^Moving (?P<unit>\S+ \S+ \S+:\d+) from landscape$")
+VANISHED_RE = re.compile(r"^Patch: vanished vehicle visibility queried \((?P<a>[^)]+) to (?P<b>[^)]+)\)$")
+FAIL_CMD_RE = re.compile(r"^fail command$")
+
+
+@dataclass
+class JournalRule:
+    kind: str
+    category: str
+    pattern: re.Pattern[str]
+    fmt: object  # Callable[[re.Match[str]], str]
+
+
+JOURNAL_RULES: list[JournalRule] = [
+    JournalRule("camera",  "WORLD",   CAMERA_RE,          lambda m: f"CAMERA   → {m['unit']}  (player {m['player']})"),
+    JournalRule("supply",  "PHYSICS", SUPPLY_STARTED_RE,  lambda m: f"SUPPLY   {m['sup']}  →  {m['rec']}  (started)"),
+    JournalRule("supply",  "PHYSICS", SUPPLY_FINISHED_RE, lambda m: f"SUPPLY   {m['sup']}  →  {m['rec']}  (finished)"),
+    JournalRule("supply",  "PHYSICS", SUPPLY_ALLOC_RE,    lambda m: f"SUPPLY   {m['sup']}  allocates {m['rec']}"),
+    JournalRule("supply",  "AI",      PROCESS_SUPPLY_RE,  lambda m: f"ORDER    {m['unit']}  →  resupply {m['target']}"),
+    JournalRule("path",    "AI",      PATH_OPERATIVE_RE,  lambda m: f"PATH     {m['unit']}  operative path not found"),
+    JournalRule("path",    "AI",      PATH_START_RE,      lambda m: f"PATH     {m['unit']}  start point not found"),
+    JournalRule("path",    "AI",      PATH_ITER_RE,       lambda m: f"PATH     {m['unit']}  retry iteration {m['n']}"),
+    JournalRule("world",   "WORLD",   MOVE_LAND_RE,       lambda m: f"MOVE     {m['unit']}  removed from landscape"),
+    JournalRule("world",   "WORLD",   VANISHED_RE,        lambda m: f"VANISH   {m['a']}  → visibility to  {m['b']}"),
+    JournalRule("world",   "AI",      FAIL_CMD_RE,        lambda m: "ORDER    fail command"),
+]
+
+
+def journal_stream(lines: Iterable[str], enabled_kinds: set[str]) -> Iterable[tuple[str, str, str]]:
+    """Yield (ts, kind, summary) for each gameplay-relevant line.
+
+    Mission/intro slot loads and campaign-dialogue codes are emitted at their
+    first sighting; we dedup slot events like the stats pass does.
+    """
+    last_mission: tuple[str, str] | None = None
+    seen_dialog: set[str] = set()
+
+    # Precompute rules-by-category so a line only checks a small subset.
+    rules_by_cat: dict[str, list[JournalRule]] = defaultdict(list)
+    for r in JOURNAL_RULES:
+        if r.kind in enabled_kinds:
+            rules_by_cat[r.category].append(r)
+    want_mission = "mission" in enabled_kinds
+
+    for raw in lines:
+        line = ANSI_RE.sub("", raw.rstrip("\n"))
+        m = LINE_RE.match(line)
+        if not m:
+            continue
+        ts = m["ts"]
+        cat = m["cat"]
+        msg = m["msg"].strip()
+
+        for rule in rules_by_cat.get(cat, ()):
+            rm = rule.pattern.match(msg)
+            if rm:
+                yield ts, rule.kind, rule.fmt(rm)
+                break
+
+        if want_mission:
+            mm = MISSION_PATH_RE.search(msg)
+            if mm:
+                key = (mm["slot"], mm["island"])
+                if key != last_mission:
+                    last_mission = key
+                    hint = ISLAND_HINTS.get(key[1].lower(), key[1])
+                    yield ts, "mission", f"MISSION  load slot={key[0]}  island={hint}"
+                continue
+            im = INTRO_PATH_RE.search(msg)
+            if im:
+                key = (im["name"], im["island"])
+                if key != last_mission:
+                    last_mission = key
+                    hint = ISLAND_HINTS.get(key[1].lower(), key[1])
+                    yield ts, "mission", f"INTRO    load name={key[0]}  island={hint}"
+                continue
+            cm = CAMPAIGN_DIALOG_RE.search(msg)
+            if cm:
+                code = cm["code"].lower()
+                if code not in seen_dialog:
+                    seen_dialog.add(code)
+                    yield ts, "mission", f"DIALOG   campaign cue {code} (first play)"
+
+# Assertion/check patterns worth calling out separately even at low counts.
+SUSPICIOUS_PATTERNS = [
+    (re.compile(r"check failed", re.IGNORECASE), "engine check failed"),
+    (re.compile(r"Assertion failed", re.IGNORECASE), "assertion failed"),
+    (re.compile(r"\bnullptr\b|null pointer", re.IGNORECASE), "null pointer"),
+    (re.compile(r"SIGSEGV|SIGABRT|SIGBUS|SIGILL|SIGFPE"), "signal delivered"),
+    (re.compile(r"\bdead-?lock(ed)?\b", re.IGNORECASE), "deadlock word"),
+    # word-boundary on both sides — "changed", "hanger", "hangar" must not match
+    (re.compile(r"\b(stuck|hang|frozen|wedged)\b", re.IGNORECASE), "hang word"),
+]
+
+
+def normalize(msg: str) -> str:
+    out = msg
+    for pat, repl in TEMPLATE_SUBS:
+        out = pat.sub(repl, out)
+    return out
+
+
+def parse_ts(s: str) -> datetime:
+    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S.%f")
+
+
+@dataclass
+class Bucket:
+    count: int = 0
+    first_ts: str = ""
+    last_ts: str = ""
+    sample: str = ""
+
+    def add(self, ts: str, msg: str) -> None:
+        if self.count == 0:
+            self.first_ts = ts
+            self.sample = msg
+        self.count += 1
+        self.last_ts = ts
+
+
+@dataclass
+class MissionEvent:
+    ts: str
+    slot: str        # e.g. "__cur_sp", "intro", "intro1"
+    island: str      # e.g. "eden", "abel"
+    kind: str        # "mission" or "intro"
+
+
+@dataclass
+class Stats:
+    lines_total: int = 0
+    lines_parsed: int = 0
+    lines_unparsed: int = 0
+    by_level: Counter = field(default_factory=Counter)
+    by_category: Counter = field(default_factory=Counter)
+    by_level_cat: Counter = field(default_factory=Counter)
+    templates: dict[tuple[str, str, str], Bucket] = field(default_factory=dict)
+    suspicious: dict[str, Bucket] = field(default_factory=lambda: defaultdict(Bucket))
+    gaps: list[tuple[str, str, float]] = field(default_factory=list)
+    first_ts: str = ""
+    last_ts: str = ""
+    mission_events: list[MissionEvent] = field(default_factory=list)
+    campaign_dialog: dict[str, Bucket] = field(default_factory=dict)
+
+
+def process(lines: Iterable[str], gap_threshold_s: float) -> Stats:
+    st = Stats()
+    prev_ts_obj: datetime | None = None
+    prev_ts_str: str = ""
+
+    for raw in lines:
+        st.lines_total += 1
+        line = ANSI_RE.sub("", raw.rstrip("\n"))
+        m = LINE_RE.match(line)
+        if not m:
+            st.lines_unparsed += 1
+            continue
+        st.lines_parsed += 1
+        ts = m["ts"]
+        level = m["level"]
+        cat = m["cat"]
+        msg = m["msg"].strip()
+
+        st.by_level[level] += 1
+        st.by_category[cat] += 1
+        st.by_level_cat[(level, cat)] += 1
+        if not st.first_ts:
+            st.first_ts = ts
+        st.last_ts = ts
+
+        # Gap detection — big deltas between adjacent lines = engine paused
+        # (frozen main thread, blocking IO, garbage collection, whatever).
+        try:
+            ts_obj = parse_ts(ts)
+        except ValueError:
+            ts_obj = None
+        if ts_obj and prev_ts_obj:
+            delta = (ts_obj - prev_ts_obj).total_seconds()
+            if delta >= gap_threshold_s:
+                st.gaps.append((prev_ts_str, ts, delta))
+        if ts_obj:
+            prev_ts_obj = ts_obj
+            prev_ts_str = ts
+
+        # Group similar messages so per-frame variants collapse to one row.
+        tmpl = normalize(msg)
+        key = (level, cat, tmpl)
+        bucket = st.templates.get(key)
+        if bucket is None:
+            bucket = Bucket()
+            st.templates[key] = bucket
+        bucket.add(ts, msg)
+
+        # Independent suspicious-pattern scan (over the raw msg, not the template)
+        for pat, label in SUSPICIOUS_PATTERNS:
+            if pat.search(msg):
+                st.suspicious[label].add(ts, msg)
+
+        # Mission / campaign identification. Dedup consecutive events for the
+        # same slot+island — the engine loads description.ext several times
+        # per mission-start (path normalization roundtrip → each variant is
+        # logged separately).
+        mm = MISSION_PATH_RE.search(msg)
+        if mm:
+            ev = MissionEvent(ts=ts, slot=mm["slot"], island=mm["island"], kind="mission")
+            if not st.mission_events or (
+                st.mission_events[-1].slot != ev.slot
+                or st.mission_events[-1].island != ev.island
+            ):
+                st.mission_events.append(ev)
+        else:
+            im = INTRO_PATH_RE.search(msg)
+            if im:
+                ev = MissionEvent(ts=ts, slot=im["name"], island=im["island"], kind="intro")
+                if not st.mission_events or (
+                    st.mission_events[-1].slot != ev.slot
+                    or st.mission_events[-1].island != ev.island
+                ):
+                    st.mission_events.append(ev)
+
+        cm = CAMPAIGN_DIALOG_RE.search(msg)
+        if cm:
+            code = cm["code"].lower()
+            b = st.campaign_dialog.get(code)
+            if b is None:
+                b = Bucket()
+                st.campaign_dialog[code] = b
+            b.add(ts, msg)
+
+    return st
+
+
+def fmt_int(n: int) -> str:
+    return f"{n:,}".replace(",", "_")
+
+
+def print_report(st: Stats, top: int) -> None:
+    p = print
+    span_s = ""
+    if st.first_ts and st.last_ts and st.first_ts != st.last_ts:
+        try:
+            dt = (parse_ts(st.last_ts) - parse_ts(st.first_ts)).total_seconds()
+            span_s = f"  (span {dt:.1f}s)"
+        except ValueError:
+            pass
+
+    p("=" * 78)
+    p(f"cwr-logstat  lines={fmt_int(st.lines_total)} "
+      f"parsed={fmt_int(st.lines_parsed)} "
+      f"unparsed={fmt_int(st.lines_unparsed)}")
+    if st.first_ts:
+        p(f"timerange   {st.first_ts}  →  {st.last_ts}{span_s}")
+    p("=" * 78)
+
+    if st.mission_events or st.campaign_dialog:
+        p("\n-- session content --")
+        for ev in st.mission_events:
+            island_hint = ISLAND_HINTS.get(ev.island.lower(), "")
+            hint = f"  ({island_hint})" if island_hint else ""
+            p(f"  {ev.ts[11:23]}  {ev.kind:<7} slot={ev.slot}  island={ev.island}{hint}")
+        if st.campaign_dialog:
+            codes = sorted(st.campaign_dialog.keys())
+            chapters = sorted({c[:3] for c in codes if c.startswith("c")})
+            p(f"  campaign dialogue codes seen: {', '.join(codes)}")
+            if chapters:
+                p(f"  → campaign chapter(s): {', '.join(chapters)}")
+
+    if st.by_level:
+        p("\n-- by level --")
+        for lvl, n in st.by_level.most_common():
+            p(f"  {lvl:<6} {fmt_int(n):>12}")
+
+    if st.by_category:
+        p("\n-- by category (top 15) --")
+        for cat, n in st.by_category.most_common(15):
+            p(f"  {cat:<10} {fmt_int(n):>12}")
+
+    # Errors + warnings, top templates
+    for want_level in ("CRIT", "ERRR", "WARN"):
+        rows = [
+            (bucket.count, level, cat, tmpl, bucket)
+            for (level, cat, tmpl), bucket in st.templates.items()
+            if level == want_level
+        ]
+        if not rows:
+            continue
+        rows.sort(reverse=True)
+        p(f"\n-- top {want_level} templates (count / cat / first→last / sample) --")
+        for count, _lvl, cat, _tmpl, bucket in rows[:top]:
+            span = ""
+            try:
+                span = f" ({(parse_ts(bucket.last_ts) - parse_ts(bucket.first_ts)).total_seconds():.1f}s)"
+            except ValueError:
+                pass
+            p(f"  {fmt_int(count):>10}  {cat:<9}  "
+              f"{bucket.first_ts[11:23]} → {bucket.last_ts[11:23]}{span}")
+            p(f"             {bucket.sample[:140]}")
+
+    if st.suspicious:
+        p("\n-- suspicious patterns (independent scan) --")
+        for label, bucket in st.suspicious.items():
+            if bucket.count == 0:
+                continue
+            p(f"  {label:<22}  count={fmt_int(bucket.count):>10}  "
+              f"first={bucket.first_ts[11:23]}  last={bucket.last_ts[11:23]}")
+            p(f"    sample: {bucket.sample[:140]}")
+
+    if st.gaps:
+        p("\n-- timeline gaps (log went silent — possible hang windows) --")
+        # Show worst 20 by duration
+        worst = sorted(st.gaps, key=lambda x: -x[2])[:20]
+        for prev_ts, next_ts, delta in worst:
+            p(f"  {delta:8.2f}s   {prev_ts[11:23]}  →  {next_ts[11:23]}")
+    else:
+        p("\n-- timeline gaps: none above threshold --")
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        description="Summarize CWR-CE trace logs into stats, top errors, gap windows."
+    )
+    ap.add_argument("path", nargs="?", default="-",
+                    help="log file path, or - for stdin (default: -)")
+    ap.add_argument("--top", type=int, default=10,
+                    help="top N templates per level (default: 10)")
+    ap.add_argument("--gap-threshold", type=float, default=2.0,
+                    help="report gaps ≥ N seconds between adjacent log lines (default: 2.0)")
+    ap.add_argument("--journal", action="store_true",
+                    help="emit a per-event session journal instead of the stats summary "
+                         "(camera switches, supply lifecycle, AI orders, pathing failures, "
+                         "mission loads, vanished-target queries)")
+    ap.add_argument("--journal-kinds", default=",".join(JOURNAL_KINDS),
+                    help=f"comma-separated event kinds to include in --journal mode "
+                         f"(default: all; choices: {','.join(JOURNAL_KINDS)})")
+    args = ap.parse_args(argv)
+
+    if args.path == "-":
+        stream: Iterable[str] = sys.stdin
+    else:
+        stream = open(args.path, "r", errors="replace")
+
+    try:
+        if args.journal:
+            enabled = {k.strip() for k in args.journal_kinds.split(",") if k.strip()}
+            unknown = enabled - set(JOURNAL_KINDS)
+            if unknown:
+                sys.stderr.write(f"warning: unknown journal kind(s): {','.join(sorted(unknown))}\n")
+            for ts, _kind, summary in journal_stream(stream, enabled):
+                # HH:MM:SS.mmm prefix — full date is uninteresting in a session log
+                print(f"{ts[11:23]}  {summary}")
+        else:
+            st = process(stream, args.gap_threshold)
+            print_report(st, args.top)
+    finally:
+        if args.path != "-":
+            stream.close()  # type: ignore[union-attr]
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
