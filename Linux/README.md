@@ -456,6 +456,125 @@ vkcube
 
 Use [radeontop](https://github.com/clbr/radeontop) to see GPU usage
 
+# Firmware (fwupd)
+
+[fwupd](https://fwupd.org/) uses the [Linux Vendor Firmware Service](https://fwupd.org/lvfs/)
+(LVFS) to distribute firmware for BIOS/UEFI, GPU, SSD, TPM, EC, docks, etc.
+
+Two front-ends:
+- `fwupdmgr`: talks to the running `fwupd` daemon (needs it enabled/running).
+- `fwupdtool`: runs plugins directly, no daemon required (useful in initrd / debug).
+
+## List devices and available updates
+
+Refresh metadata from LVFS (default remote is `lvfs`; `lvfs-testing` exists but is
+disabled by default):
+```
+sudo fwupdmgr refresh --force
+fwupdmgr get-remotes
+```
+
+List every device fwupd knows about with its current firmware version:
+```
+fwupdmgr get-devices
+```
+
+Only show devices that have an update available:
+```
+fwupdmgr get-updates
+```
+
+Example on a Framework Desktop (Ryzen AI MAX 300):
+```
+$ fwupdmgr get-updates
+Devices with no available firmware updates:
+ • QuadraT1M
+ • USB2.1 Hub
+ • WDC CL SN720 SDAQNTX-2T00-2000
+Framework Desktop (AMD Ryzen AI Max 300 Series)
+│
+└─System Firmware:
+  │   Device ID:          f8571b257837e7537ea0508dc9793e90f594fdb2
+  │   Current version:    0.0.3.4
+  │   Vendor:             Framework (DMI:INSYDE Corp.)
+  └─Desktop Ryzen AI MAX 300 System Update:
+        New version:      0.0.3.5
+        Remote ID:        lvfs
+        Size:             36.1 MB
+```
+
+Show all releases (past + current + upgrades) for one device:
+```
+fwupdmgr get-releases <DEVICE-ID>
+```
+
+Machine-readable output (has the `Uri` / `Locations` fields with the direct
+LVFS URL of the `.cab`):
+```
+fwupdmgr get-releases <DEVICE-ID> --json
+```
+
+## Download firmware without installing
+
+To grab the `.cab` file locally (audit, offline install on another host, keep a
+backup before flashing):
+```
+fwupdmgr download <URI-from-get-releases-json>
+```
+Example:
+```
+$ fwupdmgr download https://fwupd.org/downloads/7d4f...-Framework_Desktop_Ryzen_AI_MAX_300_fwupd_3.05.cab
+$ ls -la *.cab
+-rw-rw-r-- 1 olivier olivier 36175710 Jul  6 19:08 7d4f...-Framework_Desktop_Ryzen_AI_MAX_300_fwupd_3.05.cab
+```
+
+Inspect a downloaded cab before flashing:
+```
+fwupdmgr get-details ./firmware.cab
+```
+
+Install from a local cab (useful for offline / air-gapped hosts):
+```
+sudo fwupdmgr local-install ./firmware.cab
+```
+
+## Applying updates
+
+Interactive, applies every pending update:
+```
+sudo fwupdmgr update
+```
+
+Non-interactive (for scripts):
+```
+sudo fwupdmgr update -y --no-reboot-check
+```
+
+UEFI capsule updates need EFI System Partition space and a reboot; fwupd stages
+the capsule and the firmware is flashed on next boot.
+
+## Without the daemon (fwupdtool)
+
+Same read-side commands, no `fwupd.service` needed. Handy on a live/rescue
+image or when debugging:
+```
+sudo fwupdtool get-devices
+sudo fwupdtool get-updates
+sudo fwupdtool refresh
+sudo fwupdtool install ./firmware.cab
+```
+
+`fwupdtool` also exposes low-level firmware operations (`firmware-parse`,
+`firmware-extract`, `firmware-dump`, `esp-list`, `hwids`, ...) that
+`fwupdmgr` does not.
+
+## Report back to LVFS
+
+After a successful update, share the result so vendors get coverage data:
+```
+fwupdmgr report-history
+```
+
 ## Nvidia Tesla
 -------------
 
