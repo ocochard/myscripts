@@ -38,6 +38,16 @@ Environment variables:
   PORT=port     Listen port (default: 8080)
   LLAMA_DIR=dir llama.cpp build dir (default: ~/llama.cpp for all models;
                 MTP requires llama.cpp >= b9878, in upstream master since 2026-06)
+  JINJA=1       Force --jinja (embedded chat template). Auto-on for mtp.
+                Try when an agent client (qwen-code, aider) loops repeating
+                the same tool-call block — usually means the default template
+                is mangling tool-call boundaries.
+  DRY=1         Enable the DRY sampler. Targets structural repetition without
+                punishing legitimate code-syntax repeats the way rep-penalty
+                does. Try when the model loops on prose/code blocks.
+  DRY_MULT=f    DRY multiplier      (default: 0.8; llama.cpp author-recommended)
+  DRY_BASE=f    DRY base            (default: 1.75)
+  DRY_ALLOWED=N DRY allowed length  (default: 4; llama.cpp default is 2)
 EOF
   exit 0
 }
@@ -47,6 +57,11 @@ EOF
 MODEL=${MODEL:-moe}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8080}
+JINJA=${JINJA:-0}
+DRY=${DRY:-0}
+DRY_MULT=${DRY_MULT:-0.8}
+DRY_BASE=${DRY_BASE:-1.75}
+DRY_ALLOWED=${DRY_ALLOWED:-4}
 
 OS=$(uname -s)
 
@@ -237,6 +252,21 @@ fi
 # n_predict / inline `/no_think` in the prompt instead.
 extra='--temperature 0.6 --top-p 0.95 --top-k 20 --min-p 0.0'
 
+# Opt-in loop-mitigation flags. Both default off so bench numbers stay
+# comparable to prior runs; enable per-session when a client is looping.
+extra_sampler=""
+[ "${DRY}" = "1" ] && \
+  extra_sampler="--dry-multiplier ${DRY_MULT} --dry-base ${DRY_BASE} --dry-allowed-length ${DRY_ALLOWED}"
+
+# --jinja uses the GGUF's embedded chat template instead of llama.cpp's
+# built-in guesser. Required for correct tool-call parsing with agent
+# clients (qwen-code, aider). mtp already sets it via model_extra; skip
+# to avoid duplicate flag.
+jinja_flag=""
+if [ "${JINJA}" = "1" ] && [ "${MODEL}" != "mtp" ]; then
+  jinja_flag="--jinja"
+fi
+
 # Notes on flags intentionally NOT set (see Framework-desktop.md):
 # --no-mmap / --direct-io        : wedge the FreeBSD GPU; ~no benefit on Ubuntu
 # --ctk q8_0 / --ctv q8_0        : crash Vulkan on FreeBSD; ~no benefit on Ubuntu
@@ -257,6 +287,8 @@ exec env ${radv_env} build/bin/llama-server \
   --flash-attn on \
   ${nohost_flag} \
   ${extra} \
+  ${extra_sampler} \
+  ${jinja_flag} \
   ${extra_perf} \
   ${model_extra} \
   --batch-size 2048 --ubatch-size 512 \
