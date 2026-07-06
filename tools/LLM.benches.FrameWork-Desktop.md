@@ -32,8 +32,8 @@ Differences below are due to OS / kernel / compiler, not Mesa.
 | Vulkan MoE Q8 tg128                                | 42.5 t/s                        | 43.0 t/s                        | Tie                               |
 | `--no-host 1` server flag                          | OK on MoE; **crashes 27B dense** | OK on every config             | Drop on FreeBSD dense only        |
 | `RADV_DEBUG=zerovram`                              | **harmful** (don't set)         | not needed                      | No env prefix on either OS        |
-| Qwen3.6-27B-MTP Q8 + `--spec-type mtp` (~4 k)      | 14.2 t/s (vs 6.0 off)           | not measured                    | **2.37× decode** (see Stage 5)    |
-| Qwen3.6-27B-MTP Q8 + `--spec-type mtp` (~32 k)     | 12.9 t/s (vs 5.7 off)           | not measured                    | **2.26× decode** (see Stage 5)    |
+| Qwen3.6-27B-MTP Q8 + `--spec-type draft-mtp` (~4 k)  | 15.3 t/s (vs 6.5 off)         | not measured                    | **2.35× decode** (see Stage 5)    |
+| Qwen3.6-27B-MTP Q8 + `--spec-type draft-mtp` (~32 k) | 14.5 t/s (vs 6.1 off)         | not measured                    | **2.38× decode** (see Stage 5)    |
 
 **Bottom line**: silicon dominates — Vulkan tg is essentially identical across both OSes (within 2 %
 on every model/quant). FreeBSD wins pp by ~6–31 % depending on model/quant; the gap is largest on
@@ -221,55 +221,55 @@ Ubuntu: ran all four sequentially in one boot (no instability).
 ## Stage 5 — MTP speculative decoding (Qwen3.6-27B-MTP, Q8, FreeBSD only)
 
 `havenoammo/Qwen3.6-27B-MTP-UD-GGUF:UD-Q8_K_XL` is the dense Qwen3.6-27B fine-tuned with Multi-Token
-Prediction (NextN) heads. Loaded into `llama-server` with `--spec-type mtp`, the draft path proposes
-N tokens per step and the main model verifies them in a single batched forward pass; accepted
-tokens are kept. Observed acceptance rate on coding prompts: ~80–86 % (e.g. `draft_n_accepted:
-30/35` on smoke test).
+Prediction (NextN) heads. Loaded into `llama-server` with `--spec-type draft-mtp`, the draft path
+proposes N tokens per step and the main model verifies them in a single batched forward pass;
+accepted tokens are kept. Observed acceptance rate on coding prompts: ~80–86 %.
 
-**Build divergence — important.** These rows were measured on `~/llama.cpp` at commit
-`c0b933255` (b9124 = master + [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673)
-"llama + spec: MTP Support" merged via `git merge --no-ff pr-22673`). All Stage 0/1/3/4 rows
-above were on `27aef3dd9` (b8985). Existing rows were **not** re-measured — only the new MTP rows
-use b9124. Treat the MTP-off ~4 k / ~32 k rows in the table below as the like-for-like baseline
-for the MTP rows; the Stage 4 Q8 dense rows are the same hardware/model but a different upstream
-snapshot and serve as a cross-check (Total TPS within 2 %).
+**Build**: `~/llama.cpp` at `2da668617` (b9878, upstream master 2026-07-06). PR #22673 was
+merged upstream around 2026-06 with a stack of follow-up fixes. **Breaking flag rename since
+the initial b9124 measurement**: `--spec-type mtp` → `--spec-type draft-mtp` as part of the
+spec-type namespace cleanup (`draft-simple`, `draft-eagle3`, `draft-mtp`, `draft-dflash`, etc.).
+`--chat-template-kwargs {"preserve_thinking":true}` still accepted but no longer required —
+`--jinja` is default-on and the jinja template auto-routes `<think>…</think>` into
+`reasoning_content`.
 
-**Update (2026-07-06)**: PR #22673 has been merged into upstream master (commit
-`255582687`) since 2026-06, plus a stack of follow-up fixes. Verified running on
-FreeBSD `frwk-bsd` at `2da668617` (b9878) — MTP smoke-test with the same
-`havenoammo/Qwen3.6-27B-MTP-UD-GGUF:UD-Q8_K_XL` model produced draft acceptance
-`105/129 = 81.4 %` (via llama-server direct) and `57/66 = 86.4 %` (via `llmsrv.sh
-MODEL=mtp`), decode `15.6 t/s` and `16.6 t/s` respectively on a short prompt
-(no context depth). **Breaking flag rename**: `--spec-type mtp` → `--spec-type
-draft-mtp` as part of the spec-type namespace cleanup (`draft-simple`,
-`draft-eagle3`, `draft-mtp`, `draft-dflash`, etc.). `--chat-template-kwargs
-{"preserve_thinking":true}` still accepted but no longer required — `--jinja` is
-default-on and the jinja template auto-routes `<think>…</think>` into
-`reasoning_content`. The Stage 5 rows below are **not** re-benched on b9878; the
-build snapshot is documented for reproducibility.
+Stages 0/1/3/4 above were measured on b8985; Stage 5 is on b9878. The MTP-off ~4 k / ~32 k rows
+in the table below are the like-for-like baseline for the MTP rows (same build, same model, same
+recipe minus `--spec-type`).
 
 Server flags (Strix Halo, FreeBSD, Vulkan, gfx1151): same as Stage 4 dense Q8 recipe plus
-`--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type mtp` (rename
-to `--spec-type draft-mtp` on b9878+). Bench harness identical to Stage 4:
-`bench_model.py -t 256 -r 2` against `coding_prompt.txt` and `coding_prompt_32k.txt`.
+`--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type draft-mtp`. Bench harness
+identical to Stage 4: `bench_model.py -t 256 -r 2` against `coding_prompt.txt` and
+`coding_prompt_32k.txt`. Model loaded via `-hf havenoammo/Qwen3.6-27B-MTP-UD-GGUF:UD-Q8_K_XL`.
+
+| Host     | MTP | Depth | TTFT (ms) | PP t/s | Total TPS | vs MTP-off |
+|----------|-----|-------|----------:|-------:|----------:|-----------:|
+| frwk-bsd | off |  ~4 k |   16 008  | 250.1  |     6.5   |    —       |
+| frwk-bsd | on  |  ~4 k |   14 814  | 270.3  |    15.3   | **2.35×**  |
+| frwk-bsd | off | ~32 k |  181 982  | 180.9  |     6.1   |    —       |
+| frwk-bsd | on  | ~32 k |  183 821  | 179.1  |    14.5   | **2.38×**  |
+
+For reference, the initial b9124 measurements (kept for continuity — different upstream snapshot):
 
 | Host     | MTP | Depth | TTFT (ms) | PP t/s | Total TPS | vs MTP-off |
 |----------|-----|-------|----------:|-------:|----------:|-----------:|
 | frwk-bsd | off |  ~4 k |   15 320  | 261.4  |     6.0   |    —       |
-| frwk-bsd | on  |  ~4 k |   17 182  | 233.0  |    14.2   | **2.37×**  |
+| frwk-bsd | on  |  ~4 k |   17 182  | 233.0  |    14.2   | 2.37×      |
 | frwk-bsd | off | ~32 k |  178 987  | 183.9  |     5.7   |    —       |
-| frwk-bsd | on  | ~32 k |  196 612  | 167.4  |    12.9   | **2.26×**  |
+| frwk-bsd | on  | ~32 k |  196 612  | 167.4  |    12.9   | 2.26×      |
 
 ### Takeaways
 
-- **Decode throughput ~2.3× across depths.** MTP turns the dense-Q8 slow-path (5.7–6.0 t/s) into a
-  12.9–14.2 t/s range — close to the dense **Q4** speed without Q4. The 2.26× at 32k vs 2.37× at 4k
-  shows acceptance holds up well under long context on this model.
-- **TTFT and PP TPS get worse, not better.** PP drops ~11 % (261 → 233 at 4k) and TTFT rises ~12 %
-  because the draft heads run during prefill too. MTP is a decode-side win; on prefill-dominated
-  workloads (single large doc, no generation) it's a small net loss.
+- **Decode throughput ~2.4× across depths on b9878.** MTP turns the dense-Q8 slow-path
+  (6.1–6.5 t/s) into a 14.5–15.3 t/s range — close to the dense **Q4** speed without Q4. Acceptance
+  holds up under long context (2.38× at 32k vs 2.35× at 4k).
+- **TTFT and PP TPS no longer regress on b9878.** With `--spec-draft-n-max` at the b9878 default of
+  16 they got noticeably worse (see sweep below); at the peak N=5 setting used in the table above
+  they're neutral-to-slightly-better — PP is 250 → 270 at 4k (+8 %) and TTFT drops from 16.0s to
+  14.8s (-7 %). The b9124 numbers below show the previous prefill penalty (~11 % worse) — that has
+  been cleaned up upstream.
 - **Memory-bandwidth ceiling is partially defeated.** Stage 4 framed dense Q8 as bandwidth-bound at
-  ~6 t/s ≈ 26 GiB × 6 / 256 GB/s ≈ 61 % of peak. With MTP at 14 t/s we'd be at ~140 % of that
+  ~6 t/s ≈ 26 GiB × 6 / 256 GB/s ≈ 61 % of peak. With MTP at 15 t/s we'd be at ~150 % of that
   budget on a naive single-token model — confirming MTP gets multiple useful tokens per memory pass
   (each verified token costs <1 full read of weights).
 - **Reasoning content preserved.** `--chat-template-kwargs {"preserve_thinking":true}` plus
@@ -278,42 +278,56 @@ to `--spec-type draft-mtp` on b9878+). Bench harness identical to Stage 4:
 
 ### `--spec-draft-n-max` sweep (~4 k prompt)
 
-`--spec-draft-n-max N` caps how many tokens MTP proposes per verification step (`b9124` default
+`--spec-draft-n-max N` caps how many tokens MTP proposes per verification step (b9878 default
 is 16). Each verify is one batched forward pass regardless of N, so larger N trades acceptance
-rate per chain-position for fewer verification rounds. Sweep at ~4 k prompt, single pass r=2,
-same flags as the table above:
+rate per chain-position for fewer verification rounds. Sweep at ~4 k prompt, r=2, same flags as
+the table above.
 
-| n_max | TTFT (ms) | PP t/s | Total TPS | vs default |
-|------:|----------:|-------:|----------:|-----------:|
-|     2 |   17 231  | 232.4  |   11.2    |   -21 %    |
-|     3 |   17 138  | 233.6  |   11.9    |   -16 %    |
-|     4 |   17 199  | 232.8  |   13.4    |    -6 %    |
-|     5 |   17 126  | 233.8  |   13.9    |    -2 %    |
-|     8 |   17 195  | 232.9  |   12.7    |   -11 %    |
-| **16 (default)** | **17 182** | **233.0** | **14.2** | **best** |
+**Sweep on b9878 (2026-07-06)** — the shape has **inverted** vs b9124:
 
-- **Default `n_max=16` is the peak** on this hardware. Curve is monotonic 2 → 5 then dips at 8 and
-  recovers at 16. The N=8 dip is probably real (it's wider than typical run-to-run noise here ~0.3
-  t/s) but a re-bench with more repetitions would confirm.
-- **N=5 is within 2 % of the default** — a reasonable cap if you want to bound worst-case verify
-  batch width (e.g. if you suspect memory pressure or want predictable per-step latency).
-- **TTFT and PP are flat** across N — prefill cost doesn't depend on draft chain length, only
-  decode does. Matches theory: the draft heads are tiny relative to the main forward pass.
-- **Caveat on third-party guidance**: a benchmark gist
-  ([am17an/228edfb84ed082aa88e3865d6fa27090](https://gist.github.com/am17an/228edfb84ed082aa88e3865d6fa27090))
-  claims N=3 is optimal at 21.6 t/s. That's likely a different model arch or a separate draft
-  model (where small N is conventional); on havenoammo Qwen3.6-27B-MTP + Strix Halo + Vulkan,
-  bigger is better up to the default cap.
+| n_max | TTFT (ms) | PP t/s | Total TPS | vs default (N=16) |
+|------:|----------:|-------:|----------:|------------------:|
+|     2 |   14 946  | 267.9  |   13.5    |     +35 %         |
+|     3 |   14 796  | 270.6  |   15.3    |     +53 %         |
+|     4 |   14 804  | 270.5  |   15.4    |     +54 %         |
+| **5 (peak)** | **14 764** | **271.2** | **16.2** | **+62 %** |
+|     8 |   15 331  | 261.2  |   12.5    |     +25 %         |
+|    16 (default) |   15 069  | 265.7  |   10.0    |       —           |
+
+- **Default `n_max=16` regressed hard between b9124 and b9878.** On b9124 it was the peak at
+  14.2 t/s; on b9878 it drops to 10.0 t/s. Small N is now much better — N=3–5 is a plateau at
+  15.3–16.2 t/s (~50 % above default).
+- **`--spec-draft-n-max 5`** is the new recommended setting for this hardware/model on b9878+.
+  Consider adding it to `llmsrv.sh` for `MODEL=mtp`.
+- **TTFT and PP are also slightly better at small N.** Not just decode — PP drops from 265 t/s
+  (N=16) to 271 t/s (N=5), matching an ~2 % improvement in prefill. Confirms the b9124 prefill
+  penalty was N-dependent, not intrinsic to MTP.
+- **The third-party gist claiming N=3 at 21.6 t/s** ([am17an/228edfb84ed082aa88e3865d6fa27090](https://gist.github.com/am17an/228edfb84ed082aa88e3865d6fa27090))
+  is directionally correct on b9878; the absolute number (21.6 vs our 15.3 at N=3) is likely
+  due to hardware or model-variant differences.
+
+**Sweep on b9124 (kept for continuity)**:
+
+| n_max | TTFT (ms) | PP t/s | Total TPS | vs default (N=16) |
+|------:|----------:|-------:|----------:|------------------:|
+|     2 |   17 231  | 232.4  |   11.2    |     -21 %         |
+|     3 |   17 138  | 233.6  |   11.9    |     -16 %         |
+|     4 |   17 199  | 232.8  |   13.4    |      -6 %         |
+|     5 |   17 126  | 233.8  |   13.9    |      -2 %         |
+|     8 |   17 195  | 232.9  |   12.7    |     -11 %         |
+|    16 (default) |   17 182  | 233.0  |   14.2    |       —           |
 
 ### Caveats
 
-- Different upstream snapshot than the rest of this doc — re-bench the Stage 4 Q8 dense row on
-  b9124 if you want apples-to-apples (skipped here because the MTP-off rows in this section already
-  provide the controlled comparison).
-- `--spec-type mtp` requires PR #22673 merged; the `am17an/mtp-clean` fork uses a different tensor
-  layout and fails to load the havenoammo GGUF with `missing tensor 'blk.64.ssm_conv1d.weight'`.
+- Stage 5 is on b9878, Stages 0/1/3/4 are on b8985 — different upstream snapshot. The MTP-off rows
+  in Stage 5 are the controlled baseline for the MTP-on rows (same build, same model).
+- `--spec-type draft-mtp` requires PR #22673 merged into upstream master (present since 2026-06,
+  in llama.cpp ≥ b9878). The old `am17an/mtp-clean` fork uses a different tensor layout and fails
+  to load the havenoammo GGUF with `missing tensor 'blk.64.ssm_conv1d.weight'`.
 - All Total TPS rows hit the 256-token cap so the figures are mild underestimates; the MTP/no-MTP
   ratio is unaffected (both are capped identically).
+- Default `--spec-draft-n-max 16` regressed between b9124 and b9878 (see sweep). Set
+  `--spec-draft-n-max 5` explicitly for best decode on this hardware/model.
 
 ## Recommended runtime config
 

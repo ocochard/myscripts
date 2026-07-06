@@ -39,6 +39,39 @@ Some llama fork need to add this to be compiled on FreeBSD:
 -DCMAKE_MAKE_PROGRAM=/usr/local/bin/gmake
 ```
 
+### Link failure: undefined references to `*_cm2_*` shader symbols
+
+**Status (b9878, 2026-07-06)**: verified fixed upstream. A pristine build with
+`glslang-16.3.0 / shaderc-2026.2` on FreeBSD 16.0-CURRENT + AMD RADV succeeds
+without any patch — the probe correctly reports `GL_NV_cooperative_matrix_decode_vector
+not supported by glslc` and emits the missing cm2 shader `.cpp` sources
+(`flash_attn_cm2.comp.cpp`, `mul_mm_cm2.comp.cpp`) so the link resolves. Skip this
+whole workaround unless you see actual `undefined reference to *_cm2_*` errors.
+
+Historical context (pre-b9878, Vulkan SDK 1.4.350 era, llama.cpp `b0df4c0cf`
+version 9297): the link step failed with hundreds of `undefined reference to
+matmul_..._cm2_...` because the cmake probe unconditionally enabled
+`GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT` whenever `glslc` reported support for
+`GL_NV_cooperative_matrix2`, but `vulkan-shaders-gen` only emitted 2 of ~412 cm2
+sources. cm2 is NVIDIA-only, so on AMD/Intel the workaround was:
+```
+# Only if the pristine build fails with cm2 linker errors.
+# The regex here is fragile — CMakeLists structure has changed multiple times.
+# Verify with `grep -n GL_NV_cooperative_matrix2 ggml/src/ggml-vulkan/CMakeLists.txt`
+# and hand-edit if the sed pattern produces a syntax error.
+python3 -c "
+import re
+p='ggml/src/ggml-vulkan/CMakeLists.txt'
+s=open(p).read()
+new=re.sub(r'\n    test_shader_extension_support\(\n        \"GL_NV_cooperative_matrix2\"\n[^)]*\)\n','\n',s,count=1)
+open(p,'w').write(new)"
+rm -rf build
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build --config Release -- -j $(nproc)
+```
+The full build directory must be wiped — the generator caches outputs and won't
+re-emit headers on its own.
+
 ## Usage
 
 ### Start Web UI with specific model
@@ -140,7 +173,8 @@ build/bin/llama-server \
   --flash-attn on \
   --batch-size 2048 --ubatch-size 512 \
   --ctx-size 65536 --parallel 1 \
-  --spec-type draft-mtp
+  --spec-type draft-mtp \
+  --spec-draft-n-max 5
 ```
 
 Notes:
@@ -154,12 +188,12 @@ Notes:
   `content` (final answer) as separate fields in `/v1/chat/completions`. `--jinja` is
   default-on since b9878; the old `--chat-template-kwargs {"preserve_thinking":true}`
   hack is no longer required.
-- On Strix Halo Q8 dense, MTP roughly doubles decode throughput (see
-  [LLM.benches.FrameWork-Desktop.md](LLM.benches.FrameWork-Desktop.md) Stage 5).
-  Prefill (TTFT) gets slightly worse (~10 %) because the draft heads also run during
-  prefill.
-- `--spec-draft-n-max N` caps proposals per verify step (default 16); on Strix Halo,
-  16 is best.
+- On Strix Halo Q8 dense at b9878, MTP with `--spec-draft-n-max 5` gives ~2.4× decode
+  (6.5 → 15.3 t/s at 4k, 6.1 → 14.5 t/s at 32k), with neutral-to-slightly-better prefill.
+  See [LLM.benches.FrameWork-Desktop.md](LLM.benches.FrameWork-Desktop.md) Stage 5.
+- `--spec-draft-n-max N` caps proposals per verify step. **Default (16) regressed between
+  b9124 and b9878** on Strix Halo — set `--spec-draft-n-max 5` explicitly for best decode.
+  N=3–5 is a plateau (~15–16 t/s); N=8 dips (~12 t/s); N=16 falls to ~10 t/s.
 
 ## Unified Memory Architecture with AMD iGPU
 

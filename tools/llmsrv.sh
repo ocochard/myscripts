@@ -185,13 +185,17 @@ case "${MODEL}" in
     #   Added by PR #22673 ("spec: support MTP"). Renamed from `mtp` to
     #   `draft-mtp` in b9878 as part of the spec-type namespace cleanup.
     #   Whole point of this model.
+    # --spec-draft-n-max 5: cap draft chain length. Default (16) regressed
+    #   between b9124 and b9878 (~60 % slower decode on Strix Halo). N=5 is
+    #   the measured peak on b9878 (16.2 t/s vs 10.0 at default). See
+    #   LLM.benches.FrameWork-Desktop.md Stage 5 sweep.
     # NOT carrying over from friend's config on this hardware:
     #   -ctk q4_0 -ctv q4_0  : quantized KV crashes Vulkan on FreeBSD,
     #                          ~no benefit on Ubuntu (see Framework-desktop.md)
     #   --no-mmap            : wedges the FreeBSD GPU
     #   -t 6                 : threads irrelevant when fully GPU-offloaded
     #   --chat-template-file : friend's local file; this GGUF has it embedded
-    model_extra='--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type draft-mtp'
+    model_extra='--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type draft-mtp --spec-draft-n-max 5'
     ;;
   med)
     # Qwen3.5-122B-A10B (MoE, 122B total / 10B active).
