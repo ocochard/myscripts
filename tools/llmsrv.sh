@@ -12,12 +12,17 @@
 #
 # Usage:
 #   ./llmsrv.sh                  # default: MoE 35B-A3B Q4 (fast, fine for code)
+#   USAGE=coding ./llmsrv.sh     # alias for MODEL=moe    (matches bench doc)
+#   USAGE=doc    ./llmsrv.sh     # alias for MODEL=moe-q8 (matches bench doc)
 #   MODEL=moe-q8 ./llmsrv.sh     # MoE 35B-A3B Q8 (slower, better prose for docs)
 #   MODEL=dense ./llmsrv.sh      # fall back to dense 27B (older quality cap)
 #   MODEL=mtp ./llmsrv.sh        # Qwen3.6-27B-MTP Q8 (havenoammo, thinking)
 #   MODEL=big ./llmsrv.sh        # Qwen3.5-397B-A17B IQ2_XXS
 #   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL
 #   HOST=0.0.0.0 ./llmsrv.sh     # listen on all interfaces (default: 127.0.0.1)
+#   CTX=131072 ./llmsrv.sh       # extend ctx past 65536 (TTFT collapses past ~30k
+#                                # on Strix Halo — see LLM.benches.FrameWork-Desktop.md)
+#   JINJA=0 ./llmsrv.sh          # disable embedded jinja template (default is on)
 #   LLAMA_DIR=~/llama-am17an ./llmsrv.sh   # override llama.cpp build dir
 #                                          # (MTP needs llama.cpp >= b9878 — PR #22673
 #                                          #  is in upstream master since 2026-06)
@@ -28,6 +33,8 @@ usage() {
 Usage: [ENV=val ...] $(basename "$0") [-h]
 
 Environment variables:
+  USAGE=coding  Alias for MODEL=moe    (matches bench doc naming)
+  USAGE=doc     Alias for MODEL=moe-q8 (matches bench doc naming)
   MODEL=moe     Qwen3.6-35B-A3B MoE Q4_K_XL (default — fast, fine for code)
   MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (slower, better prose for docs)
   MODEL=dense   Qwen3.6-27B dense
@@ -36,12 +43,14 @@ Environment variables:
   MODEL=big     Qwen3.5-397B-A17B MoE
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
+  CTX=N         --ctx-size (default: 65536 — Strix Halo working ceiling.
+                TTFT collapses past d ~30k regardless of OS. Bump to 131072
+                if you need the headroom and can accept the prefill cost.)
   LLAMA_DIR=dir llama.cpp build dir (default: ~/llama.cpp for all models;
                 MTP requires llama.cpp >= b9878, in upstream master since 2026-06)
-  JINJA=1       Force --jinja (embedded chat template). Auto-on for mtp.
-                Try when an agent client (qwen-code, aider) loops repeating
-                the same tool-call block — usually means the default template
-                is mangling tool-call boundaries.
+  JINJA=0       Disable --jinja (default is on — uses the GGUF's embedded
+                chat template, routes <think> blocks into reasoning_content,
+                and gives agent clients correct tool-call boundaries).
   DRY=1         Enable the DRY sampler. Targets structural repetition without
                 punishing legitimate code-syntax repeats the way rep-penalty
                 does. Try when the model loops on prose/code blocks.
@@ -54,10 +63,21 @@ EOF
 
 [ "${1:-}" = "-h" ] && usage
 
+# USAGE= is the naming used in LLM.benches.FrameWork-Desktop.md; translate to
+# the MODEL= slots the rest of the script switches on. Explicit MODEL= wins.
+if [ -n "${USAGE:-}" ] && [ -z "${MODEL:-}" ]; then
+  case "${USAGE}" in
+    coding) MODEL=moe    ;;
+    doc)    MODEL=moe-q8 ;;
+    *) echo "unknown USAGE='${USAGE}' (use coding|doc)" >&2; exit 1 ;;
+  esac
+fi
+
 MODEL=${MODEL:-moe}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8080}
-JINJA=${JINJA:-0}
+CTX=${CTX:-65536}
+JINJA=${JINJA:-1}
 DRY=${DRY:-0}
 DRY_MULT=${DRY_MULT:-0.8}
 DRY_BASE=${DRY_BASE:-1.75}
@@ -292,6 +312,6 @@ exec env ${radv_env} build/bin/llama-server \
   ${extra_perf} \
   ${model_extra} \
   --batch-size 2048 --ubatch-size 512 \
-  --ctx-size 131072 --parallel 1 \
+  --ctx-size "${CTX}" --parallel 1 \
   --log-file /tmp/llama-server.log \
   --host "${HOST}" --port "${PORT}"

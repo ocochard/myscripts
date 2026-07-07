@@ -329,6 +329,78 @@ the table above.
 - Default `--spec-draft-n-max 16` regressed between b9124 and b9878 (see sweep). Set
   `--spec-draft-n-max 5` explicitly for best decode on this hardware/model.
 
+## Stage 6 — Vulkan rerun on b9889 + ROCm 7.2.4 dead-end (framework2, 2026-07-07)
+
+Retested the Stages 0/1 configs on Ubuntu `framework2` with the current llama.cpp
+tip and current AMD stack:
+
+- llama.cpp **b9889** (`9abce7473`)
+- ROCm **7.2.4** userspace + amdgpu-dkms 6.16.13 (from repo 30.30.4)
+- kernel 6.17.0-35-generic
+- Vulkan SDK 1.4.350 / Mesa unchanged (25.2.8 series)
+
+Built with `cmake -DGGML_VULKAN=ON -DGGML_HIP=ON -DGPU_TARGETS=gfx1151
+-DGGML_HIP_ROCWMMA_FATTN=ON` (both backends in one tree, single `~/llama.cpp/build`).
+`llama-cli --list-devices` reports both `ROCm0` and `Vulkan0`.
+
+### Vulkan half — clean, tracks b8985 baseline
+
+Same recipe as Stage 1 (`-p 2048,8192 -n 128 --batch-size 2048 --ubatch-size 512
+--mmap 1 --threads 16 --repetitions 2 --flash-attn 0,1`), 8 fresh invocations (one
+per model+device), no multi-value sweep (see Known crash signatures).
+
+| Model             | Quant | fa | pp2048          | pp8192          | tg128         | vs b8985 tg128 |
+|-------------------|-------|---:|----------------:|----------------:|--------------:|---------------:|
+| Qwen3.6-27B dense | Q4    | 0  | 276.19 ± 1.60   | 261.53 ± 0.13   | 12.17 ± 0.00  | +0.5 %         |
+| Qwen3.6-27B dense | Q4    | 1  | 280.31 ± 0.05   | 267.34 ± 0.07   | 12.19 ± 0.00  | +0.3 %         |
+| Qwen3.6-27B dense | Q8    | 0  | 221.16 ± 0.58   | 213.15 ± 0.00   |  6.53 ± 0.00  | +6.5 %         |
+| Qwen3.6-27B dense | Q8    | 1  | 226.95 ± 0.54   | 218.64 ± 0.01   |  6.53 ± 0.00  | +6.2 %         |
+| Qwen3.6-35B-A3B   | Q4    | 0  | 912.61 ± 2.07   | 833.61 ± 8.23   | 58.58 ± 0.00  | +5.7 %         |
+| Qwen3.6-35B-A3B   | Q4    | 1  | 931.07 ± 4.97   | 884.79 ± 3.46   | 58.85 ± 0.06  | +6.3 %         |
+| Qwen3.6-35B-A3B   | Q8    | 0  | 833.14 ± 2.21   | 762.33 ± 7.72   | 46.19 ± 0.03  | +7.4 %         |
+| Qwen3.6-35B-A3B   | Q8    | 1  | 842.93 ± 4.73   | 806.42 ± 3.58   | 46.34 ± 0.05  | +7.8 %         |
+
+**Delta vs b8985**: tg128 uniformly ~+6-8 % on MoE and dense Q8; dense Q4 tg is flat
+(within noise). PP is within ±5 % everywhere. No regressions.
+
+### ROCm 7.2.4 half — every dispatch faults, no rows produced
+
+Every ROCm invocation crashes with a GPU page fault ~1-2 s after model warmup,
+regardless of model, quant, or `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1`. Process stays
+in R state spinning on the wedged GPU (util 0 %, SCLK idle, PPT 20 W) until killed.
+No table rows are produced. GPU only recovers after reboot; a userspace-level
+reload of amdgpu does not restore dispatch.
+
+```
+amdgpu 0000:c2:00.0: amdgpu: [gfxhub] page fault (src_id:0 ring:153 vmid:8 pasid:32770)
+amdgpu 0000:c2:00.0: amdgpu:  Process llama-bench pid X thread llama-bench pid X
+amdgpu 0000:c2:00.0: amdgpu:   in page starting at address 0x...
+amdgpu 0000:c2:00.0: amdgpu: GCVM_L2_PROTECTION_FAULT_STATUS:0x00800932
+amdgpu 0000:c2:00.0: amdgpu:      Faulty UTCL2 client ID: CPF (0x4)
+amdgpu 0000:c2:00.0: amdgpu:      WALKER_ERROR: 0x1
+amdgpu 0000:c2:00.0: amdgpu:      PERMISSION_FAULTS: 0x3
+amdgpu 0000:c2:00.0: amdgpu:      MAPPING_ERROR: 0x1
+```
+
+Signature exactly matches a known **AMD firmware bug** (MES 0x83), not a llama.cpp
+issue. Tracked upstream in:
+
+- [ROCm/ROCm#5890 — amdgpu pagefault under rocm7.2 on gfx1151](https://github.com/ROCm/ROCm/issues/5890)
+- [ROCm/ROCm#6186 — gfx1151 Constant PERMISSION_FAULTS on Strix Halo during ROCm workloads](https://github.com/ROCm/ROCm/issues/6186)
+- [ROCm/ROCm#5724 — amdgpu firmware (MES 0x83) causing GPU Hang / Memory access fault w/ Strix Halo](https://github.com/ROCm/ROCm/issues/5724)
+- [ROCm/ROCm#5534 — ROCm 7.0.2 crashing instantly on gfx1151 with latest llama.cpp](https://github.com/ROCm/ROCm/issues/5534)
+- [ROCm/ROCm#6146 — [gfx1151] Page Fault on hipMemcpy() in ROCm 7.2.1](https://github.com/ROCm/ROCm/issues/6146)
+- [Arch Linux forum 310497 — solved by downgrading linux-firmware-amdgpu](https://bbs.archlinux.org/viewtopic.php?id=310497)
+
+Upstream-suggested workarounds (**not tested here**):
+- `amdgpu.cwsr_enable=0` on kernel cmdline (ROCm#5724)
+- Downgrade linux-firmware-amdgpu to pre-MES-0x83 (~251111 per Arch forum)
+- Roll ROCm back to 7.1 (last known good on Strix Halo per ROCm#5890)
+
+**Decision**: stay on Vulkan. It's ~2× faster than ROCm was on this hardware (per
+the original `LLM.md` sweep on ROCm 7.2), it's completely stable, and the b8985 →
+b9889 upgrade brought a free ~6-8 % tg gain on top.
+
 ## Recommended runtime config
 
 Same recipe on both OSes; the only OS-specific footnote is `--no-host` on FreeBSD dense.

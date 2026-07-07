@@ -293,6 +293,19 @@ system_info: n_threads = 16 (n_threads_batch = 16) / 32 | ROCm : NO_VMM = 1 | PE
 (...)
 ```
 
+> **Warning (2026-07-07):** the ROCm rows in the table below are historical
+> (ROCm 7.2 era, before the AMD firmware regression). On current firmware
+> (linux-firmware with MES 0x83, shipped by ROCm 7.2.x apt), **every ROCm
+> dispatch on gfx1151 faults at model warmup** with
+> `[gfxhub] page fault ... CPF (0x4) / WALKER_ERROR 0x1 / PERMISSION_FAULTS 0x3`.
+> Tracked upstream in [ROCm/ROCm#5890](https://github.com/ROCm/ROCm/issues/5890),
+> [#6186](https://github.com/ROCm/ROCm/issues/6186),
+> [#5724](https://github.com/ROCm/ROCm/issues/5724). Not a llama.cpp bug — no
+> upstream PR fixes it. Vulkan on the same silicon is unaffected and ~2×
+> faster than ROCm was anyway; use `--device Vulkan0`. See
+> [LLM.benches.FrameWork-Desktop.md](LLM.benches.FrameWork-Desktop.md) for the
+> current numbers.
+
 Some benches (notice the llama-bench is using -ngl 99 by default) with 2 models and with different backend (ROCM, Vulkan, CPU):
   - enables Flash Attention, an optimized algorithm designed to speed up the "Attention" mechanism—the most computationally expensive part of a Transformer model.
   - enables memory mapping, to tells the OS to map the model file directly into the process's virtual address space
