@@ -86,9 +86,17 @@ def is_placeholder(name: str) -> bool:
 
 _TRAILING_YEAR_RE = re.compile(r"[\s\-_.·]+[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$")
 
-# A year in parens/brackets anywhere — '(2001)' or '[1986]' — is a strong
-# filename-scrape signal. Real display titles don't include the year.
-_YEAR_IN_BRACKETS_RE = re.compile(r"[\(\[](?:19|20)\d{2}[\)\]]")
+# A year inside parens/brackets anywhere — '(2001)', '[1986]', or a bracket
+# group whose contents include a year like '(HD WEB©2017)'. Strong signal
+# of a release-info suffix; real display titles don't embed the year.
+_YEAR_IN_BRACKETS_RE = re.compile(r"[\(\[][^\)\]]*(?:19|20)\d{2}[^\)\]]*[\)\]]")
+
+# Release-group tag at end of Name: ' - <token containing HD/BR/DL/RIP/WEB>'.
+# Catches '- PopHD', '- YTS.MX', '- BluRay-XXX', etc.
+_TRAILING_GROUP_RE = re.compile(
+    r"\s+[-–]\s*\S*(?:HD|BR|DL|RIP|WEB|MX|X26[45])\S*\s*$",
+    re.IGNORECASE,
+)
 
 
 def is_junk(name: str) -> bool:
@@ -99,6 +107,7 @@ def is_junk(name: str) -> bool:
         or bool(_JUNK_RE.search(name))
         or bool(_TRAILING_YEAR_RE.search(name))
         or bool(_YEAR_IN_BRACKETS_RE.search(name))
+        or bool(_TRAILING_GROUP_RE.search(name))
     )
 
 
@@ -151,6 +160,15 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
             if _is_shouty(cut):
                 reason += " — all-caps, edit needed"
             return (cut, reason)
+
+    # Trailing release-group tag ('- PopHD'): peel and use what's left.
+    grp = _TRAILING_GROUP_RE.search(name)
+    if grp:
+        cut = _rstrip_tail_junk(name[: grp.start()])
+        if _looks_like_title(cut):
+            if original and _canon(cut) == _canon(original):
+                return (original, "matched OriginalTitle (punctuation/accents)")
+            return (cut, "stripped release-group tag")
 
     # No junk found but caller flagged it — usually because the whole Name is
     # a single junk token like "1080P" or a punctuation-stripped filename.
