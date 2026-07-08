@@ -101,16 +101,36 @@ _TRAILING_GROUP_RE = re.compile(
 )
 
 
-def is_junk(name: str) -> bool:
+def is_junk(name: str, original: str = "") -> bool:
     return bool(name) and (
         is_placeholder(name)
         or _has_no_letters(name)
         or _is_dotted_filename(name)
+        or _is_release_group_token(name, original)
         or bool(_JUNK_RE.search(name))
         or bool(_TRAILING_YEAR_RE.search(name))
         or bool(_YEAR_IN_BRACKETS_RE.search(name))
         or bool(_TRAILING_GROUP_RE.search(name))
     )
+
+
+def _is_release_group_token(name: str, original: str) -> bool:
+    """A bare all-caps token unrelated to OriginalTitle — scene-release tag.
+
+    'STVFRV', 'YIFY', 'RARBG' — Names that are a single short uppercase word
+    with nothing in common with the OriginalTitle. Requires original to be
+    non-empty (otherwise we have no way to tell it from a legit acronym).
+    """
+    if not original or " " in name.strip():
+        return False
+    s = name.strip()
+    if not (3 <= len(s) <= 10):
+        return False
+    letters = [c for c in s if c.isalpha()]
+    if len(letters) < 3 or not all(c.isupper() for c in letters):
+        return False
+    co, cn = _canon(original), _canon(s)
+    return bool(co) and cn not in co and co not in cn
 
 
 def _has_no_letters(name: str) -> bool:
@@ -139,6 +159,9 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
 
     if is_placeholder(name):
         return (original, "placeholder Name") if original else ("", "no usable title")
+
+    if _is_release_group_token(name, original):
+        return (original, "release-group token unrelated to OriginalTitle")
 
     m = _CUT_RE.search(name)
     if m:
@@ -314,7 +337,7 @@ def render_table(rows, col_widths):
     print(hdr)
     print(sep)
     for _id, name, orig, year, path in rows:
-        marker = "⚠ " if is_junk(name) else "  "
+        marker = "⚠ " if is_junk(name, orig or "") else "  "
         line = (f"{marker}{trunc(name or '', W_T):<{W_T}}  "
                 f"{trunc(orig or '', W_O):<{W_O}}  "
                 f"{trunc(str(year or ''), W_Y):<{W_Y}}  "
@@ -326,7 +349,7 @@ def render_csv(rows) -> None:
     w = csv.writer(sys.stdout, delimiter="\t", lineterminator="\n")
     w.writerow(["junk", "id", "title", "original_title", "year", "path"])
     for _id, name, orig, year, path in rows:
-        w.writerow([int(is_junk(name)), _id, name or "", orig or "", year or "", path or ""])
+        w.writerow([int(is_junk(name, orig or "")), _id, name or "", orig or "", year or "", path or ""])
 
 
 # ---------------------------------------------------------------------------
@@ -509,13 +532,13 @@ def main() -> None:
     if not args.all:
         rows = [r for r in rows if (r[2] or "") and (r[1] or "") != (r[2] or "")]
     if args.junk_only or args.fix:
-        rows = [r for r in rows if is_junk(r[1] or "")]
+        rows = [r for r in rows if is_junk(r[1] or "", r[2] or "")]
 
     if args.csv:
         render_csv(rows)
         return
 
-    junk_n = sum(1 for r in rows if is_junk(r[1] or ""))
+    junk_n = sum(1 for r in rows if is_junk(r[1] or "", r[2] or ""))
     print(f"  {len(rows)} items ({junk_n} with junk-looking title)\n")
 
     if not rows:
