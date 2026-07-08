@@ -48,9 +48,10 @@ TYPE_VIDEO   = "MediaBrowser.Controller.Entities.Video"
 _JUNK_RE = re.compile(
     r"0{4,}\d|webrip|bluray|bdrip|brrip|web-dl|webdl|"
     r"dvdrip|hdtv|remux|vof|vff|vfq|vfi|truefrench|"
-    r"multi|sdr|hdr|dv\b|cnlp|\bx26[45]\b|hevc|h264|"
+    r"multi|sdr|hdr|\bdv\b|cnlp|x26[45]|hevc|h264|"
     r"\b\d{3,4}p\b|\b2160p\b|\b4k\b|dts|atmos|truehd|"
-    r"\bqtz\b|\bpulse\b|\bgaia\b",
+    r"\bqtz\b|\bpulse\b|\bgaia\b|"
+    r"\bvideo\b|\bbrd\b|\bkbps\b|www\.\S+|extreme-down",
     re.IGNORECASE,
 )
 
@@ -62,11 +63,14 @@ _CUT_RE = re.compile(
     r"(?:"
     r"[\(\[]?(?:19|20)\d{2}[\)\]]?"       # 2008, (2008), [2008]
     r"|\("                                # any parenthesized junk we'll drop
+    r"|www\.\S+"                          # URL prefix consumes rest of token
     r"|\b(?:blu[- ]?ray|webrip|bdrip|brrip|web[- ]?dl|"
     r"dvdrip|hdtv|remux|vof|vff|vfq|vfi|truefrench|multi|"
-    r"hybrid|sdr|hdr|dv|cnlp|x26[45]|hevc|h264|"
+    r"hybrid|sdr|hdr|dv|cnlp|hevc|h264|"
     r"\d{3,4}p|2160p|4k|4klight|dts|atmos|truehd|"
-    r"10bit|8bit|qtz|pulse|gaia)\b"
+    r"10bit|8bit|qtz|pulse|gaia|"
+    r"video|brd|kbps|extreme-down)\b"
+    r"|x26[45]"                           # boundary-free: matches x264_L4.1 too
     r")",
     re.IGNORECASE,
 )
