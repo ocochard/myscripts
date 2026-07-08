@@ -160,8 +160,10 @@ Since llama.cpp b9878 (PR [#22673](https://github.com/ggml-org/llama.cpp/pull/22
 merged as commit `255582687`, plus follow-up fixes), the server supports MTP — a form
 of speculative decoding where the draft heads are baked into the main model (no
 separate draft model needed). Best gains are on dense models with structured output
-(code, reasoning). MoE models already stream fast enough that MTP is often neutral or
-negative there.
+(code, reasoning) — Stage 5 measured ~2.35–2.38× decode on Qwen3.6-27B-MTP. **MoE
+MTP also delivers ~1.4× decode** on Agents-A1-MTP Q8_0 (Stage 7), contradicting the
+earlier assumption that MoE MTP is neutral — with the caveat that `--spec-draft-n-max`
+must be tuned tight (≤5) on MoE, else it falls off a cliff at N≥8.
 
 The model must be an MTP-fine-tuned variant (extra NextN/MTP tensors). For Qwen3.6-27B
 dense, `havenoammo/Qwen3.6-27B-MTP-UD-GGUF` is a working choice:

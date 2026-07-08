@@ -5,18 +5,20 @@
 #   - framework2 (Ubuntu 24.04,       Mesa 25.2.8, Vulkan)
 #   - mac        (macOS, Metal)
 #
-# Defaults to the Qwen3.6-35B-A3B MoE with thinking-coder sampling:
-# ~4x faster than the dense 27B on this hardware (TG ~50 vs ~12 t/s,
-# PP ~810 vs ~290 t/s at d=0). See FreeBSD/Framework-desktop.md and
-# tools/LLM.benches.FrameWork-Desktop.md for the bench data.
+# Default: agents-a1-mtp (Agents-A1 Q8_0 + MTP speculative decoding). ~77 t/s TG
+# at 4k on Strix Halo — Q8 weights + MTP beats plain Q4 (~66 t/s), and the
+# Agents-A1 fine-tune is tuned for agentic reasoning + tool calling. See Stage 7
+# in tools/LLM/benches.FrameWork-Desktop.md.
 #
 # Usage:
-#   ./llmsrv.sh                  # default: MoE 35B-A3B Q4 (fast, fine for code)
-#   USAGE=coding ./llmsrv.sh     # alias for MODEL=moe    (matches bench doc)
-#   USAGE=doc    ./llmsrv.sh     # alias for MODEL=moe-q8 (matches bench doc)
-#   MODEL=moe-q8 ./llmsrv.sh     # MoE 35B-A3B Q8 (slower, better prose for docs)
-#   MODEL=dense ./llmsrv.sh      # fall back to dense 27B (older quality cap)
-#   MODEL=mtp ./llmsrv.sh        # Qwen3.6-27B-MTP Q8 (havenoammo, thinking)
+#   ./llmsrv.sh                  # default: Agents-A1-MTP Q8 (fast + high quality)
+#   USAGE=coding ./llmsrv.sh     # alias for MODEL=agents-a1-mtp
+#   USAGE=doc    ./llmsrv.sh     # alias for MODEL=moe-q8 (plain Q8, no MTP cliff risk)
+#   MODEL=moe ./llmsrv.sh        # Qwen3.6-35B-A3B Q4 (older baseline; use only if 38 GB Q8 model too big)
+#   MODEL=moe-q8 ./llmsrv.sh     # Qwen3.6-35B-A3B Q8 (plain, no MTP)
+#   MODEL=dense ./llmsrv.sh      # dense 27B (higher quality but ~4x slower)
+#   MODEL=mtp ./llmsrv.sh        # Qwen3.6-27B-MTP Q8 (havenoammo, dense MTP 2.4x)
+#   MODEL=agents-a1 ./llmsrv.sh      # Agents-A1 Q4_K_M plain (no MTP)
 #   MODEL=big ./llmsrv.sh        # Qwen3.5-397B-A17B IQ2_XXS
 #   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL
 #   HOST=0.0.0.0 ./llmsrv.sh     # listen on all interfaces (default: 127.0.0.1)
@@ -33,12 +35,18 @@ usage() {
 Usage: [ENV=val ...] $(basename "$0") [-h]
 
 Environment variables:
-  USAGE=coding  Alias for MODEL=moe    (matches bench doc naming)
-  USAGE=doc     Alias for MODEL=moe-q8 (matches bench doc naming)
-  MODEL=moe     Qwen3.6-35B-A3B MoE Q4_K_XL (default — fast, fine for code)
-  MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (slower, better prose for docs)
-  MODEL=dense   Qwen3.6-27B dense
-  MODEL=mtp     Qwen3.6-27B-MTP Q8_K_XL (havenoammo, multi-token-pred + thinking)
+  USAGE=coding  Alias for MODEL=agents-a1-mtp (default coding recipe)
+  USAGE=doc     Alias for MODEL=moe-q8 (plain Q8, safer for long-form prose)
+  MODEL=agents-a1-mtp
+                protoLabsAI Agents-A1-MTP Q8_0 (default — 77 t/s TG at 4k,
+                Q8 MoE + speculative decoding, agentic fine-tune)
+  MODEL=agents-a1
+                InternScience Agents-A1 Q4_K_M (same fine-tune, plain Q4;
+                slightly slower + noisier than MTP but half the disk)
+  MODEL=moe     Qwen3.6-35B-A3B MoE Q4_K_XL (older Q4 baseline)
+  MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (older Q8 baseline, no MTP)
+  MODEL=dense   Qwen3.6-27B dense (higher quality but ~4x slower)
+  MODEL=mtp     Qwen3.6-27B-MTP Q8_K_XL (havenoammo, dense multi-token-pred)
   MODEL=med     Qwen3.5-122B-A10B MoE
   MODEL=big     Qwen3.5-397B-A17B MoE
   HOST=addr     Listen address (default: 127.0.0.1)
@@ -67,13 +75,13 @@ EOF
 # the MODEL= slots the rest of the script switches on. Explicit MODEL= wins.
 if [ -n "${USAGE:-}" ] && [ -z "${MODEL:-}" ]; then
   case "${USAGE}" in
-    coding) MODEL=moe    ;;
-    doc)    MODEL=moe-q8 ;;
+    coding) MODEL=agents-a1-mtp ;;   # Q8 MoE + MTP: 77 t/s TG at 4k, beats plain Q4
+    doc)    MODEL=moe-q8         ;;  # plain Q8 (no MTP): better prose than Q4, no draft-cliff risk
     *) echo "unknown USAGE='${USAGE}' (use coding|doc)" >&2; exit 1 ;;
   esac
 fi
 
-MODEL=${MODEL:-moe}
+MODEL=${MODEL:-agents-a1-mtp}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8080}
 CTX=${CTX:-65536}
@@ -96,7 +104,7 @@ case "${OS}" in
     #   Mesa 25.x: RADV_DEBUG=zerovram is HARMFUL — it crashes runs that
     #              succeed without it. First-run-after-boot is reliable
     #              with no env prefix.
-    # See tools/LLM.benches.FrameWork-Desktop.md for the bench data.
+    # See tools/LLM/benches.FrameWork-Desktop.md for the bench data.
     mesa_ver=$(pkg query %v mesa-libs 2>/dev/null | cut -d. -f1)
     if [ "${mesa_ver}" = "24" ]; then
       radv_env="RADV_DEBUG=zerovram"
@@ -232,6 +240,32 @@ case "${MODEL}" in
     #   --chat-template-file : friend's local file; this GGUF has it embedded
     model_extra='--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type draft-mtp --spec-draft-n-max 5'
     ;;
+  agents-a1)
+    # InternScience Agents-A1 Q4_K_M: agentic fine-tune of Qwen3.6-35B-A3B
+    # (same qwen3_5_moe arch, 35B total / ~3B active). Same runtime shape as
+    # MODEL=moe — expect ~50 t/s TG, ~900 PP at d~4k. 262k native RoPE ctx
+    # but TTFT collapses past d~30k on Strix Halo (bandwidth-bound); keep
+    # CTX at 65536 for daily use.
+    hf_repo="InternScience/Agents-A1-Q4_K_M-GGUF"
+    hf_file="Agents-A1-Q4_K_M.gguf"
+    model=$(hf_resolve "${HF_HUB}/models--InternScience--Agents-A1-Q4_K_M-GGUF" "${hf_file}")
+    alias="Agents-A1-Q4_K_M"
+    warmup_flag="--no-warmup"
+    ;;
+  agents-a1-mtp)
+    # protoLabsAI Agents-A1-MTP Q8_0: same weights as agents-a1 but with an
+    # MTP head grafted in for speculative decoding. Q8_0 (~37.8 GB). Requires
+    # llama.cpp >= b9878 (PR #22673). NVFP4 sibling in the repo is NVIDIA-only
+    # (skip). MoE MTP acceptance is often lower than dense (~3B active path,
+    # less predictable), so measure vs plain agents-a1 before adopting.
+    hf_repo="protoLabsAI/Agents-A1-MTP-GGUF"
+    hf_file="Agents-A1-MTP-Q8_0.gguf"
+    model=$(hf_resolve "${HF_HUB}/models--protoLabsAI--Agents-A1-MTP-GGUF" "${hf_file}")
+    alias="Agents-A1-MTP-Q8_0"
+    warmup_flag="--no-warmup"
+    # MoE + --no-host is safe on both OSes (unlike dense 27B on FreeBSD).
+    model_extra='--jinja --spec-type draft-mtp --spec-draft-n-max 5'
+    ;;
   med)
     # Qwen3.5-122B-A10B (MoE, 122B total / 10B active).
     [ "${OS}" = "Linux" ] || { echo "MODEL=med only available on Ubuntu host" >&2; exit 1; }
@@ -254,7 +288,7 @@ case "${MODEL}" in
     export GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
     ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|mtp|med|big)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|mtp|agents-a1|agents-a1-mtp|med|big)" >&2; exit 1 ;;
 esac
 
 # If the file isn't in the HF cache, hand off to llama-server's -hf/-hff so it
@@ -283,9 +317,10 @@ extra_sampler=""
 # clients (qwen-code, aider). mtp already sets it via model_extra; skip
 # to avoid duplicate flag.
 jinja_flag=""
-if [ "${JINJA}" = "1" ] && [ "${MODEL}" != "mtp" ]; then
-  jinja_flag="--jinja"
-fi
+case "${MODEL}" in
+  mtp|agents-a1-mtp) ;;  # already set in model_extra
+  *) [ "${JINJA}" = "1" ] && jinja_flag="--jinja" ;;
+esac
 
 # Notes on flags intentionally NOT set (see Framework-desktop.md):
 # --no-mmap / --direct-io        : wedge the FreeBSD GPU; ~no benefit on Ubuntu

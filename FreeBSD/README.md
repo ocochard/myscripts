@@ -5,7 +5,7 @@ To do: Convert my [Desktop install webpage tips](https://olivier.cochard.me/bido
 ## Index of notes and scripts in this directory
 
 Hardware / platform notes:
-- [Framework Desktop (Strix Halo) setup notes](Framework-desktop.md) — see also the cross-OS llama.cpp results in [../tools/LLM.benches.FrameWork-Desktop.md](../tools/LLM.benches.FrameWork-Desktop.md)
+- [Framework Desktop (Strix Halo) setup notes](Framework-desktop.md) — see also the cross-OS llama.cpp results in [../tools/LLM/benches.FrameWork-Desktop.md](../tools/LLM/benches.FrameWork-Desktop.md)
 - [Drivers notes](drivers.md)
 
 Install / system setup:
