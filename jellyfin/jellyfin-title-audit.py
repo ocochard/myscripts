@@ -51,7 +51,8 @@ _JUNK_RE = re.compile(
     r"multi|sdr|hdr|\bdv\b|cnlp|x26[45]|hevc|h264|"
     r"\b\d{3,4}p\b|\b2160p\b|\b4k\b|dts|atmos|truehd|"
     r"\bqtz\b|\bpulse\b|\bgaia\b|"
-    r"\bvideo\b|\bbrd\b|\bkbps\b|www\.\S+|extreme-down",
+    r"\bvideo\b|\bbrd\b|\bkbps\b|www\.\S+|extreme-down|"
+    r"\b\S+\.(?:org|com|net|mx|to|tv|cc|io|xyz|info|biz)\b",
     re.IGNORECASE,
 )
 
@@ -64,6 +65,7 @@ _CUT_RE = re.compile(
     r"[\(\[]?(?:19|20)\d{2}[\)\]]?"       # 2008, (2008), [2008]
     r"|\("                                # any parenthesized junk we'll drop
     r"|www\.\S+"                          # URL prefix consumes rest of token
+    r"|\S+\.(?:org|com|net|mx|to|tv|cc|io|xyz|info|biz)\b"
     r"|\b(?:blu[- ]?ray|webrip|bdrip|brrip|web[- ]?dl|"
     r"dvdrip|hdtv|remux|vof|vff|vfq|vfi|truefrench|multi|"
     r"hybrid|sdr|hdr|dv|cnlp|hevc|h264|"
@@ -156,6 +158,11 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
                 # canonically contains "legrimoiredarkandias").
                 if co and len(co) >= 6 and co in cc:
                     return (original, "OriginalTitle inside noisy strip")
+                # Strip result looks nothing like the OriginalTitle (no
+                # substring in either direction) and is all-caps — likely
+                # a pirate-tag prefix ('TOUT HUSH SUR ...'). Prefer original.
+                if co and _is_shouty(cut) and co not in cc and cc not in co:
+                    return (original, "shouty strip unrelated to OriginalTitle")
             reason = "stripped junk suffix"
             if _is_shouty(cut):
                 reason += " — all-caps, edit needed"
@@ -258,7 +265,7 @@ def type_where(t: str) -> str:
 def load_rows(db_path: str, type_filter: str, path_prefix: str | None):
     con = open_db(db_path)
     q = (f"SELECT Id, Name, OriginalTitle, ProductionYear, Path "
-         f"FROM BaseItems WHERE Path LIKE '%.mkv' AND {type_where(type_filter)}")
+         f"FROM BaseItems WHERE Path IS NOT NULL AND {type_where(type_filter)}")
     params: list = []
     if path_prefix:
         q += " AND Path LIKE ?"
