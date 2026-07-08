@@ -91,6 +91,7 @@ def is_junk(name: str) -> bool:
     return bool(name) and (
         is_placeholder(name)
         or _has_no_letters(name)
+        or _is_dotted_filename(name)
         or bool(_JUNK_RE.search(name))
         or bool(_TRAILING_YEAR_RE.search(name))
     )
@@ -99,6 +100,20 @@ def is_junk(name: str) -> bool:
 def _has_no_letters(name: str) -> bool:
     """True when Name has fewer than 2 letters — '^^', '---', '???', '1080P'."""
     return sum(1 for c in name if c.isalpha()) < 2
+
+
+def _is_dotted_filename(name: str) -> bool:
+    """True when Name has no spaces but has dots/underscores between word chars.
+
+    Matches 'A.Silent.Voice', 'The_Matrix', 'Le.voyage.de.Chihiro' — the shape
+    Jellyfin falls back to when it copies the filename verbatim into Name.
+    Leaves 'R.I.F.' alone (that stringHAS spaces? no — but leaves single
+    all-letter tokens like 'E.T.' by requiring at least two dot separators).
+    """
+    if " " in name:
+        return False
+    # Interior dot/underscore between word chars — 'A.B' shape.
+    return bool(re.search(r"\w[._]\w", name))
 
 
 def propose_fix(name: str, original: str) -> tuple[str, str]:
@@ -135,6 +150,9 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
     # No junk found but caller flagged it — usually because the whole Name is
     # a single junk token like "1080P" or a punctuation-stripped filename.
     if _looks_like_title(name):
+        despaced = _despace(name)
+        if despaced != name:
+            return (despaced, "de-dotted filename-style Name")
         return (name, "kept as-is (no clear junk boundary)")
 
     if original:
