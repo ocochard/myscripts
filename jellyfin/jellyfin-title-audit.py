@@ -84,9 +84,14 @@ def is_placeholder(name: str) -> bool:
     return bool(name) and name.strip().lower() in _PLACEHOLDER_NAMES
 
 
+_TRAILING_YEAR_RE = re.compile(r"[\s\-_.·]+[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$")
+
+
 def is_junk(name: str) -> bool:
     return bool(name) and (
-        is_placeholder(name) or bool(_JUNK_RE.search(name))
+        is_placeholder(name)
+        or bool(_JUNK_RE.search(name))
+        or bool(_TRAILING_YEAR_RE.search(name))
     )
 
 
