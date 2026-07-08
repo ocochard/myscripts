@@ -86,6 +86,10 @@ def is_placeholder(name: str) -> bool:
 
 _TRAILING_YEAR_RE = re.compile(r"[\s\-_.·]+[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$")
 
+# A year in parens/brackets anywhere — '(2001)' or '[1986]' — is a strong
+# filename-scrape signal. Real display titles don't include the year.
+_YEAR_IN_BRACKETS_RE = re.compile(r"[\(\[](?:19|20)\d{2}[\)\]]")
+
 
 def is_junk(name: str) -> bool:
     return bool(name) and (
@@ -94,6 +98,7 @@ def is_junk(name: str) -> bool:
         or _is_dotted_filename(name)
         or bool(_JUNK_RE.search(name))
         or bool(_TRAILING_YEAR_RE.search(name))
+        or bool(_YEAR_IN_BRACKETS_RE.search(name))
     )
 
 
