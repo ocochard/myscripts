@@ -58,7 +58,7 @@ _JUNK_RE = re.compile(
 # a parenthesized token containing a year, or a release tag. Whichever appears
 # first wins — the rest is release-tag garbage.
 _CUT_RE = re.compile(
-    r"\s*"                                # leading whitespace before junk
+    r"[\s/\\]*"                           # whitespace, slash, backslash before junk
     r"(?:"
     r"[\(\[]?(?:19|20)\d{2}[\)\]]?"       # 2008, (2008), [2008]
     r"|\("                                # any parenthesized junk we'll drop
@@ -83,14 +83,22 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
 
     m = _CUT_RE.search(name)
     if m:
-        cut = name[: m.start()].rstrip(" -_.·:")
+        cut = name[: m.start()].rstrip(" -_.·:/\\")
         cut = _despace(cut)
         if _looks_like_title(cut):
             # If OriginalTitle has the same letters/digits (differing only in
             # punctuation, accents, or case), prefer it — it's the properly
             # punctuated form.
-            if original and _canon(cut) == _canon(original):
-                return (original, "matched OriginalTitle (punctuation/accents)")
+            if original:
+                co, cc = _canon(original), _canon(cut)
+                if co and cc == co:
+                    return (original, "matched OriginalTitle (punctuation/accents)")
+                # Junk-prefix / trailing-debris case: strip result still
+                # contains the OriginalTitle in canonical form, wrapped in
+                # noise (e.g. "ZEST - zest le grimoire d arkandias 720"
+                # canonically contains "legrimoiredarkandias").
+                if co and len(co) >= 6 and co in cc:
+                    return (original, "OriginalTitle inside noisy strip")
             reason = "stripped junk suffix"
             if _is_shouty(cut):
                 reason += " — all-caps, edit needed"
