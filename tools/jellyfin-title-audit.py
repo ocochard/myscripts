@@ -58,7 +58,7 @@ _JUNK_RE = re.compile(
 # a parenthesized token containing a year, or a release tag. Whichever appears
 # first wins — the rest is release-tag garbage.
 _CUT_RE = re.compile(
-    r"[\s/\\]*"                           # whitespace, slash, backslash before junk
+    r"[\s/\\\[({]*"                       # whitespace/slash/bracket/paren before junk
     r"(?:"
     r"[\(\[]?(?:19|20)\d{2}[\)\]]?"       # 2008, (2008), [2008]
     r"|\("                                # any parenthesized junk we'll drop
@@ -83,7 +83,7 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
 
     m = _CUT_RE.search(name)
     if m:
-        cut = name[: m.start()].rstrip(" -_.·:/\\")
+        cut = _rstrip_tail_junk(name[: m.start()])
         cut = _despace(cut)
         if _looks_like_title(cut):
             # If OriginalTitle has the same letters/digits (differing only in
@@ -118,6 +118,25 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
 def _is_shouty(s: str) -> bool:
     letters = [c for c in s if c.isalpha()]
     return len(letters) >= 4 and sum(1 for c in letters if c.isupper()) / len(letters) > 0.9
+
+
+def _rstrip_tail_junk(s: str) -> str:
+    """Peel trailing punctuation, dangling brackets, and orphan short tokens.
+
+    The strip point sits before a junk word, but its opening context may
+    remain: '... - Les origines [UHD (QTZ™) dts' → cut before 'dts' leaves
+    '... - Les origines [UHD (QTZ™)' → we still need to drop the trailing
+    '(QTZ™)' bracket group, then the ' [UHD' orphan, then trailing dash.
+    """
+    prev = None
+    while s != prev:
+        prev = s
+        s = s.rstrip(" \t-_.·:/\\©™♥·⋆★·|+&")
+        # Balanced trailing bracket group: (…) or [ … ] or { … }
+        s = re.sub(r"[\[\(\{][^\[\](){}]*[\]\)\}]\s*$", "", s)
+        # Orphan opening bracket + up to next whitespace: '[UHD', '(FRENCH'
+        s = re.sub(r"[\[\(\{]\S*\s*$", "", s)
+    return s
 
 
 def _despace(s: str) -> str:
