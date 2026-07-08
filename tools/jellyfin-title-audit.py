@@ -84,6 +84,7 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
     m = _CUT_RE.search(name)
     if m:
         cut = name[: m.start()].rstrip(" -_.·:")
+        cut = _despace(cut)
         if _looks_like_title(cut):
             # If OriginalTitle has the same letters/digits (differing only in
             # punctuation, accents, or case), prefer it — it's the properly
@@ -109,6 +110,20 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
 def _is_shouty(s: str) -> bool:
     letters = [c for c in s if c.isalpha()]
     return len(letters) >= 4 and sum(1 for c in letters if c.isupper()) / len(letters) > 0.9
+
+
+def _despace(s: str) -> str:
+    """Turn filename-style separators (dots/underscores between words) into spaces.
+
+    Only fires when the string has no spaces at all but does have interior dots
+    or underscores between word characters — the "Mary.et.Max" shape. Leaves
+    strings that already contain spaces alone.
+    """
+    if " " in s:
+        return s
+    if not re.search(r"\w[._]\w", s):
+        return s
+    return re.sub(r"[._]+", " ", s).strip()
 
 
 def _canon(s: str) -> str:
