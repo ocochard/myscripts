@@ -46,10 +46,10 @@ TYPE_VIDEO   = "MediaBrowser.Controller.Entities.Video"
 
 # Same heuristic as jellyfin-mkv-audit.py — spot release-tag garbage in a title.
 _JUNK_RE = re.compile(
-    r"0{4,}\d|webrip|bluray|bdrip|brrip|web-dl|webdl|"
+    r"0{4,}\d|webrip|bluray|bdrip|brrip|web-dl|webdl|webhd|"
     r"dvdrip|hdtv|remux|vof|vff|vfq|vfi|truefrench|"
     r"multi|sdr|hdr|\bdv\b|cnlp|x26[45]|hevc|h264|"
-    r"\b\d{3,4}p\b|\b2160p\b|\b4k\b|dts|atmos|truehd|"
+    r"\b\d{3,4}[ip]\b|\b2160p\b|\b4k\b|dts|atmos|truehd|"
     r"\bqtz\b|\bpulse\b|\bgaia\b|"
     r"\bvideo\b|\bbrd\b|\bkbps\b|www\.\S+|extreme-down|"
     r"\b\S+\.(?:org|com|net|mx|to|tv|cc|io|xyz|info|biz)\b",
@@ -66,10 +66,10 @@ _CUT_RE = re.compile(
     r"|\("                                # any parenthesized junk we'll drop
     r"|www\.\S+"                          # URL prefix consumes rest of token
     r"|\S+\.(?:org|com|net|mx|to|tv|cc|io|xyz|info|biz)\b"
-    r"|\b(?:blu[- ]?ray|webrip|bdrip|brrip|web[- ]?dl|"
+    r"|\b(?:blu[- ]?ray|webrip|bdrip|brrip|web[- ]?dl|webhd|"
     r"dvdrip|hdtv|remux|vof|vff|vfq|vfi|truefrench|multi|"
     r"hybrid|sdr|hdr|dv|cnlp|hevc|h264|"
-    r"\d{3,4}p|2160p|4k|4klight|dts|atmos|truehd|"
+    r"\d{3,4}[ip]|2160p|4k|4klight|dts|atmos|truehd|"
     r"10bit|8bit|qtz|pulse|gaia|"
     r"video|brd|kbps|extreme-down)\b"
     r"|x26[45]"                           # boundary-free: matches x264_L4.1 too
@@ -107,6 +107,7 @@ def is_junk(name: str, original: str = "") -> bool:
         or _has_no_letters(name)
         or _is_dotted_filename(name)
         or _is_release_group_token(name, original)
+        or _is_short_unrelated(name, original)
         or bool(_JUNK_RE.search(name))
         or bool(_TRAILING_YEAR_RE.search(name))
         or bool(_YEAR_IN_BRACKETS_RE.search(name))
@@ -131,6 +132,23 @@ def _is_release_group_token(name: str, original: str) -> bool:
         return False
     co, cn = _canon(original), _canon(s)
     return bool(co) and cn not in co and co not in cn
+
+
+def _is_short_unrelated(name: str, original: str) -> bool:
+    """Name is a very short string with no relation to a longer OriginalTitle.
+
+    Catches scraper leftovers like 'enjoy !', 'see u', 'thx' — the Name is
+    much shorter than the real title and shares no canonical substring.
+    """
+    if not original:
+        return False
+    cn, co = _canon(name), _canon(original)
+    if not cn or not co:
+        return False
+    # Name canonically <= 8 chars and much shorter than the original.
+    if len(cn) > 8 or len(cn) * 3 > len(co):
+        return False
+    return cn not in co and co not in cn
 
 
 def _has_no_letters(name: str) -> bool:
@@ -162,6 +180,9 @@ def propose_fix(name: str, original: str) -> tuple[str, str]:
 
     if _is_release_group_token(name, original):
         return (original, "release-group token unrelated to OriginalTitle")
+
+    if _is_short_unrelated(name, original):
+        return (original, "Name too short and unrelated to OriginalTitle")
 
     m = _CUT_RE.search(name)
     if m:
