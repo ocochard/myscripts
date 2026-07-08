@@ -72,14 +72,27 @@ _CUT_RE = re.compile(
 )
 
 
+_PLACEHOLDER_NAMES = {"video", "movie", "film", "untitled", "unknown"}
+
+
+def is_placeholder(name: str) -> bool:
+    """True when Name is a bare generic like 'Video' or 'Untitled'."""
+    return bool(name) and name.strip().lower() in _PLACEHOLDER_NAMES
+
+
 def is_junk(name: str) -> bool:
-    return bool(name and _JUNK_RE.search(name))
+    return bool(name) and (
+        is_placeholder(name) or bool(_JUNK_RE.search(name))
+    )
 
 
 def propose_fix(name: str, original: str) -> tuple[str, str]:
     """Return (proposed_name, reason). Empty proposed_name means give up."""
     if not name:
         return (original or "", "empty Name")
+
+    if is_placeholder(name):
+        return (original, "placeholder Name") if original else ("", "no usable title")
 
     m = _CUT_RE.search(name)
     if m:
