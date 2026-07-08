@@ -90,9 +90,15 @@ _TRAILING_YEAR_RE = re.compile(r"[\s\-_.·]+[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$")
 def is_junk(name: str) -> bool:
     return bool(name) and (
         is_placeholder(name)
+        or _has_no_letters(name)
         or bool(_JUNK_RE.search(name))
         or bool(_TRAILING_YEAR_RE.search(name))
     )
+
+
+def _has_no_letters(name: str) -> bool:
+    """True when Name has fewer than 2 letters — '^^', '---', '???', '1080P'."""
+    return sum(1 for c in name if c.isalpha()) < 2
 
 
 def propose_fix(name: str, original: str) -> tuple[str, str]:
