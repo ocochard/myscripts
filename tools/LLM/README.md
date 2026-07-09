@@ -9,7 +9,7 @@ git clone https://github.com/ggerganov/llama.cpp.git
 
 Install Vulkan headers on FreeBSD
 ```
-sudo pkg install -y vulkan-headers vulkan-loader glslang shaderc
+sudo pkg install -y vulkan-headers vulkan-loader glslang shaderc spirv-headers
 ```
 
 Or on Ubuntu:
@@ -28,7 +28,7 @@ Then build it using cmake:
 ```
 cd llama.cpp
 which -s apt && sudo apt install -y build-essential cmake libcurl4-openssl-dev
-test $(uname)=FreeBSD && sudo pkg install -y cmake
+test $(uname)=FreeBSD && sudo pkg install -y cmake curl
 test $(uname)=Darwin && alias nproc="sysctl -n hw.physicalcpu"
 cmake --fresh -B build -DGGML_VULKAN=ON
 cmake --build build --config Release -- -j $(nproc)
