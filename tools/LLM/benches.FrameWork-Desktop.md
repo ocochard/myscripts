@@ -47,7 +47,7 @@ llama-server \
   --device Vulkan0 --flash-attn on --no-host --no-warmup --no-mmproj \
   --jinja --spec-type draft-mtp --spec-draft-n-max 5 \
   --batch-size 2048 --ubatch-size 512 \
-  --ctx-size 65536 --parallel 1
+  --ctx-size 131072 --parallel 1
 ```
 
 **Footnotes**:
@@ -56,11 +56,14 @@ llama-server \
 - FreeBSD post-boot: `sudo kldload amdgpu` (not autoloaded).
 - **Agents-A1-MTP Q8 native context = 262 144 tokens** (`qwen35moe.context_length`
   in the GGUF, extended RoPE theta 1e7 baked in — no YaRN scaling needed).
-  `--ctx-size 65536` is the daily-use default; **raising it up to 131072 (2×)
-  or higher is safe** — TG/PP are functions of *filled* depth, not the ceiling,
-  and the extra KV reservation (~140 KiB/token → ~9 GiB at 65 K, ~18 GiB at
-  131 K) fits in 93 GiB GTT with weights loaded. Cost lands entirely on cold
-  prefill at deep prompts — see the "Extended-depth sweep" table below.
+  Recommended `--ctx-size`:
+  - **`131072`** (default above) — the practical sweet spot. KV reservation
+    ~18 GiB in 93 GiB GTT; zero TG/PP cost until you actually fill past ~30 k.
+  - **`65536`** — pick this if you never work past ~30 k prompts and want the
+    smallest KV footprint (~9 GiB).
+  - **`262144`** (native max) — works, no OOM, but cold prefill at the ceiling
+    is ~20 minutes. Only worth it if you can amortize across many warm-cache
+    turns. See the "Extended-depth sweep" table below.
 - `--batch-size 2048 --ubatch-size 512` is peak; 4096/1024 is ~3 % slower.
 
 ## Hardware, software, and install
