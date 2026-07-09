@@ -51,11 +51,13 @@ Environment variables:
   MODEL=big     Qwen3.5-397B-A17B MoE
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
-  CTX=N         --ctx-size (default: 65536. Agents-A1-MTP native max is
-                262144 (256K); raising up to that is safe — TG/PP are functions
-                of filled depth, not the ceiling. Cost is entirely cold-prefill:
-                ~4 s at 4k, ~40 s at 32k, ~5 min at 128k, ~20 min at 256k on
-                Strix Halo. See benches.FrameWork-Desktop.md.)
+  CTX=N         --ctx-size (default: 131072 — practical sweet spot on Strix
+                Halo. Agents-A1-MTP native max is 262144 (256K); raising up to
+                that is safe — TG/PP are functions of filled depth, not the
+                ceiling. Cost is entirely cold-prefill: ~4 s at 4k, ~40 s at
+                32k, ~5 min at 128k, ~20 min at 256k. Drop to 65536 for a
+                smaller KV footprint if you never work past ~30 k prompts.
+                See benches.FrameWork-Desktop.md.)
   LLAMA_DIR=dir llama.cpp build dir (default: ~/llama.cpp for all models;
                 MTP requires llama.cpp >= b9878, in upstream master since 2026-06)
   JINJA=0       Disable --jinja (default is on — uses the GGUF's embedded
@@ -86,7 +88,7 @@ fi
 MODEL=${MODEL:-agents-a1-mtp}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8080}
-CTX=${CTX:-65536}
+CTX=${CTX:-131072}
 JINJA=${JINJA:-1}
 DRY=${DRY:-0}
 DRY_MULT=${DRY_MULT:-0.8}
@@ -247,8 +249,8 @@ case "${MODEL}" in
     # (same qwen3_5_moe arch, 35B total / ~3B active). Same runtime shape as
     # MODEL=moe — expect ~50 t/s TG, ~900 PP at d~4k. 262k native RoPE ctx;
     # TTFT scales super-linearly with depth (4s @ 4k, 40s @ 32k, 5min @ 128k,
-    # 22min @ 256k on Strix Halo). Keep CTX at 65536 for daily use; 131072
-    # is fine for occasional deep prompts with warm-cache follow-ups.
+    # 22min @ 256k on Strix Halo). Default CTX=131072 is the sweet spot;
+    # drop to 65536 if you never fill past ~30 k.
     hf_repo="InternScience/Agents-A1-Q4_K_M-GGUF"
     hf_file="Agents-A1-Q4_K_M.gguf"
     model=$(hf_resolve "${HF_HUB}/models--InternScience--Agents-A1-Q4_K_M-GGUF" "${hf_file}")
