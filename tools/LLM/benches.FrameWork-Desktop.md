@@ -54,7 +54,13 @@ llama-server \
 - FreeBSD dense 27B: **drop `--no-host`** (crashes on Q4; Q8 unreliable on Mesa 25).
   Applies to `MODEL=dense` and `MODEL=mtp`.
 - FreeBSD post-boot: `sudo kldload amdgpu` (not autoloaded).
-- `--ctx-size 65536` is the working ceiling; TTFT collapses past d ≈ 30 k.
+- **Agents-A1-MTP Q8 native context = 262 144 tokens** (`qwen35moe.context_length`
+  in the GGUF, extended RoPE theta 1e7 baked in — no YaRN scaling needed).
+  `--ctx-size 65536` is the daily-use default; **raising it up to 131072 (2×)
+  or higher is safe** — TG/PP are functions of *filled* depth, not the ceiling,
+  and the extra KV reservation (~140 KiB/token → ~9 GiB at 65 K, ~18 GiB at
+  131 K) fits in 93 GiB GTT with weights loaded. Cost lands entirely on cold
+  prefill at deep prompts — see the "Extended-depth sweep" table below.
 - `--batch-size 2048 --ubatch-size 512` is peak; 4096/1024 is ~3 % slower.
 
 ## Hardware, software, and install
@@ -215,6 +221,44 @@ dense quality justifies the cost.
 
 **MoE MTP works** — 1.4× at ~4 k, 1.28-1.35× at ~32 k. TTFT delta MTP-on vs
 off is < 5 % (no meaningful prefill penalty).
+
+### Extended-depth sweep — Agents-A1-MTP with `--ctx-size 262144` (native max)
+
+The GGUF advertises `qwen35moe.context_length = 262144` (extended RoPE theta
+1e7 baked in — no YaRN scaling). This table measures MTP-on N=5 at the two
+depths past the ~32 k reference point, plus a run near the model's ceiling.
+Same `llmsrv.sh` config as above, only `--ctx-size` raised to 131072 (for
+~64 k / ~128 k) and 262144 (for ~256 k). `bench_model.py -t 256 -r 2 --cache-prompt` default off (cold prefill per run). b9925, 2026-07-09.
+
+| Host       | Depth  | Prompt tok | TTFT (s) | PP t/s | Total TPS |
+|------------|--------|-----------:|---------:|-------:|----------:|
+| frwk-bsd   |  ~64 k |    70 919  |   112    |  631.6 |   49.3    |
+| frwk-bsd   | ~128 k |   126 819  |   282    |  449.6 |   42.1    |
+| frwk-bsd   | ~256 k |   256 119  | **1 304**|  196.4 |   27.5    |
+| frwk-linux |  ~64 k |    70 919  |   126    |  560.9 |   48.9    |
+| frwk-linux | ~128 k |   126 819  |   313    |  405.6 |   43.3    |
+| frwk-linux | ~256 k |   256 119  | **1 181**|  216.9 |   28.9    |
+
+Observations:
+
+- **KV allocation is free up to 131072** and cheap up to 262144 — server loads
+  in seconds at either ceiling, no OOM. Raising `--ctx-size` has zero TG/PP
+  cost until you actually fill it.
+- **PP TPS decays with filled depth**, matching the O(n²) attention shape:
+  ~950 t/s at 4 k → ~800 at 32 k → ~500 at 64 k → ~430 at 128 k → ~210 at
+  256 k. Halving happens roughly every 4× depth increase.
+- **TG decays too** but far more gently: ~76 → ~57 → ~49 → ~42 → ~28 t/s
+  (still 3.6× the dense-27B baseline even at the ceiling).
+- **Cold prefill dominates the user-visible cost.** TTFT scales super-linearly
+  with depth: 4 k = 4 s, 32 k = 40 s, 64 k ≈ 120 s, 128 k ≈ 300 s, **256 k ≈
+  22 minutes**. Warm reuse via prompt-cache (~88×) is the only way to make
+  deep depths interactive.
+- **Ubuntu wins PP at 256 k** (+10 %) — same cross-OS flip observed on dense
+  Q8 at 32 k. Likely GTT-paging behaviour once KV working set exceeds a
+  Linux-favourable threshold; not a stable finding.
+- **Practical recommendation**: `--ctx-size 131072` is the sweet spot for
+  daily use. `--ctx-size 262144` works but only makes sense if you can
+  amortize the 20-minute cold prefill across many warm-cache turns.
 
 ### `--spec-draft-n-max` sweep at ~4 k
 

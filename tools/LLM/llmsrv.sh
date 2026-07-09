@@ -51,9 +51,11 @@ Environment variables:
   MODEL=big     Qwen3.5-397B-A17B MoE
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
-  CTX=N         --ctx-size (default: 65536 — Strix Halo working ceiling.
-                TTFT collapses past d ~30k regardless of OS. Bump to 131072
-                if you need the headroom and can accept the prefill cost.)
+  CTX=N         --ctx-size (default: 65536. Agents-A1-MTP native max is
+                262144 (256K); raising up to that is safe — TG/PP are functions
+                of filled depth, not the ceiling. Cost is entirely cold-prefill:
+                ~4 s at 4k, ~40 s at 32k, ~5 min at 128k, ~20 min at 256k on
+                Strix Halo. See benches.FrameWork-Desktop.md.)
   LLAMA_DIR=dir llama.cpp build dir (default: ~/llama.cpp for all models;
                 MTP requires llama.cpp >= b9878, in upstream master since 2026-06)
   JINJA=0       Disable --jinja (default is on — uses the GGUF's embedded
@@ -243,9 +245,10 @@ case "${MODEL}" in
   agents-a1)
     # InternScience Agents-A1 Q4_K_M: agentic fine-tune of Qwen3.6-35B-A3B
     # (same qwen3_5_moe arch, 35B total / ~3B active). Same runtime shape as
-    # MODEL=moe — expect ~50 t/s TG, ~900 PP at d~4k. 262k native RoPE ctx
-    # but TTFT collapses past d~30k on Strix Halo (bandwidth-bound); keep
-    # CTX at 65536 for daily use.
+    # MODEL=moe — expect ~50 t/s TG, ~900 PP at d~4k. 262k native RoPE ctx;
+    # TTFT scales super-linearly with depth (4s @ 4k, 40s @ 32k, 5min @ 128k,
+    # 22min @ 256k on Strix Halo). Keep CTX at 65536 for daily use; 131072
+    # is fine for occasional deep prompts with warm-cache follow-ups.
     hf_repo="InternScience/Agents-A1-Q4_K_M-GGUF"
     hf_file="Agents-A1-Q4_K_M.gguf"
     model=$(hf_resolve "${HF_HUB}/models--InternScience--Agents-A1-Q4_K_M-GGUF" "${hf_file}")
@@ -328,7 +331,10 @@ esac
 # --kv-unified                   : no effect for single-client (parallel slots only)
 # --cache-reuse N                : Qwen3 uses M-RoPE; KV-shifting unsupported
 # --batch-size 4096 / --ub 1024  : ~3% slower than 2048/512 on this build
-# --ctx-size > 131072            : 131072 is the model native max RoPE length
+# --ctx-size > 262144            : Agents-A1-MTP native max is 262144 (256K, extended
+#                                  RoPE theta 1e7 baked in); Qwen3.6-27B/35B-A3B base
+#                                  is 131072. Cold prefill at 256K takes ~20 minutes
+#                                  on Strix Halo — see benches.FrameWork-Desktop.md.
 # --parallel > 1                 : slots divide ctx; single-client gets full ctx with -p 1
 
 cd "${LLAMA_DIR}"
