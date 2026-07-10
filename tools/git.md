@@ -1,297 +1,283 @@
 # git
 
+Quick-reference cheat-sheet. Validated against git 2.54.0.
+
+Modern commands (`switch`, `restore`) are preferred over the older `checkout`
+for branch/file operations — since git 2.23 they split `checkout`'s two jobs
+apart, and git 2.54 updated its own advice messages to point at them.
+
 ## Sources
-https://docs.freebsd.org/en/articles/committers-guide/#git-primer
-https://blog.gitbutler.com/how-git-core-devs-configure-git/
+- https://docs.freebsd.org/en/articles/committers-guide/#git-primer
+- https://blog.gitbutler.com/how-git-core-devs-configure-git/
 
-## Definition
+---
 
-### merge
-
-Here is a fork of this other repository that contains some changes.
-Now record the changes from the upstream to my fork.
-Merge commit add useless commit, always avoid that to prefer rebase.
-
-### rebase
-
-Here is a fork of this other repository that contains a branch with some changes.
-Now remove all my changes, fetch all changes from upstream, then re-apply my changes
-on top of this up-to-date fork.
-
-In this order:
-1. Add the original-upstream repository as remote using "upstream" name
-2. Fetch all new data from this "upstream" repo
-3. Switch to your "main" branch
-4. Rebase your main branch with upstream
-5. Switch to your "working" branch
-6. Rebase your working branch with main
+## 1. The 25 commands you actually need
 
 ```
-git remote add upstream https://github.com/freebsd-net/tcp-testsuite.git
+# Get a repo
+git clone <url>
+git remote add upstream <url>
+
+# Inspect
+git status
+git log
+git diff
+git reflog
+
+# Stage + commit
+git add <path>            # or  git add .
+git commit -m "msg"
+git commit -am "msg"      # stage tracked + commit
+git commit --amend        # fix last commit
+
+# Sync
+git fetch <remote>
+git pull --ff-only
+git push
+git push -u origin <branch>
+
+# Branches
+git switch <branch>
+git switch -c <branch>    # create + switch
+git branch -D <branch>
+
+# Rewrite / integrate
+git rebase <base>
+git rebase -i HEAD~<N>
+git cherry-pick <hash>
+
+# Undo / rescue
+git restore <path>            # discard unstaged changes to file
+git restore --staged <path>   # unstage
+git reset --hard <ref>
+git stash / git stash pop / git stash list
+
+# Debug
+git bisect
+```
+
+Terminology:
+- **origin** = your fork (or the repo you cloned)
+- **upstream** = the canonical repo you track
+- **main** = the primary branch (was `master`)
+
+---
+
+## 2. Merge vs rebase
+
+**merge** — record upstream changes into your fork as a merge commit.
+Adds a noisy commit; prefer rebase for personal branches.
+
+**rebase** — reapply your commits on top of an updated base. Linear history.
+
+```
+git remote add upstream <url>
 git fetch upstream
 git switch main
 git rebase upstream/main
-git push
 git switch working
 git rebase main
-git push
 ```
 
-## Diff
+---
 
-Diff from a specific hash:
-```
-git diff b97a47e94662^!
-```
+## 3. Keep a branch in sync with upstream
 
-Create a patch from the last commit:
-```
-git format-patch HEAD^!
-```
+One canonical recipe — works for any fork (GitHub PR flow, FreeBSD ports,
+BSDRP, etc.):
 
-Create a patch from a specific hash:
 ```
-git format-patch b5711fa4a98^!
-```
+git switch main
+git pull --rebase upstream main   # fetch + rebase in one step
+git push origin main              # update your fork's main
 
-Diff from the last commit:
-```
-git diff HEAD^ HEAD
+git switch <working-branch>
+git rebase main
+git push --force-with-lease       # safer than -f: refuses if remote moved
 ```
 
-Between a mann and a feature branch:
+Use `--force-with-lease` instead of `-f` — it aborts the push if someone
+else pushed in the meantime.
+
+---
+
+## 4. Diff recipes
+
 ```
-git diff origin/main origin/feature
+git diff                          # unstaged
+git diff --staged                 # staged
+git diff HEAD^ HEAD               # last commit
+git diff <hash>^!                 # a specific commit
+git diff origin/main origin/feat  # between two branches
 ```
 
-## Apply git patch
+---
 
-Preserving original author name, and tunning commit if it needs:
+## 5. Patches (format-patch / am)
+
+Create:
+```
+git format-patch HEAD^!           # last commit
+git format-patch <hash>^!         # specific commit
+git format-patch -N               # last N commits
+```
+
+Apply (preserves author + date):
 ```
 git am file.patch
-git commit --amend
+git commit --amend                # only if you need to edit the message
 ```
 
-## Find data
+---
 
-### date
-
-When was the branch branched ?
+## 6. Squash last N commits
 
 ```
-$ git show --summary `git merge-base working-branch-name main`
-commit xxxxxx
-Merge: yyyyy
-Author: root
-Date:   Wed May 24 19:13:34 2023 +0000
-
-    Pull request #????: branch-xxx
-
-    Merge in xxx/yyy from branch-zzz to main
-
-    * commit 'xxxx'
-      blah.
+git log --oneline -N              # confirm what you're squashing
+git rebase -i HEAD~N
 ```
-
-When was that file detele?
+In the editor, keep `pick` on the first line, change the rest to `s`
+(squash). Save; edit the combined message; save.
 
 ```
-git log --all -1 -- path/to/file
+git push --force-with-lease origin <branch>
 ```
 
-What version was patched:
+---
 
-```
-git -C /usr/src rev-list --count --first-parent HEAD
-```
-patch?
+## 7. Undo
 
-## Keeping working branch up-to-date with origin
-
-Create a new branch:
+Discard unstaged changes in one file:
 ```
-git checkout -b new-branch
+git restore <path>
 ```
 
-hack....
-
-push changes:
+Discard all unstaged changes:
 ```
-git push origin -u new-branch
+git restore .
 ```
 
-But now, need to get new commit from the origin:
-
+Unstage a file (keep the edits):
 ```
-git switch new-name
-git fetch origin master
-git rebase FETCH_HEAD
-```
-=> resolve conflict (and commit it!) then git rebase --continue
-```
-git push
+git restore --staged <path>
 ```
 
-## Squash multiples commit in one
-
-Display all last commits to be squashed:
+Undo the last local commit, keep changes staged:
 ```
-git log --pretty=oneline
+git reset --soft HEAD~1
 ```
 
-Let’s use an example of 5 last commits here:
+Undo the last local commit, discard changes:
 ```
-git rebase -i HEAD~5
-```
-First text editor that open:
-- first line, kept the 'pick' keyword
-- all others 4 lines: Replace 'pick' by 's' (squash)
-=> save & exit
-- Adapt the squashed commit message
-=> save & exit
-
-Now push back your rebase:
-```
-git push origin +branch-name
+git reset --hard HEAD~1
 ```
 
-## Revert a rebase
-
-You’ve squashed a wrong commit, so your rebase need to be reverted.
-
-```
-git reset --hard origin/branch-name
-```
-
-## Revert last commit
-
-```
-git reset HEAD~1
-```
-
-## Revert a pushed commit with no log
-
-To be done on working branch only, not main:
-```
-git reset --hard last-hash-to-kept
-git push -f
-```
-
-## Forking FreeBSD port
-
-From git webui: Fork freebsd/freebsd-ports
-
-```
-git clone git@github.com:ocochard/freebsd-ports.git
-git clone git@github.com:ocochard/freebsd-src.git
-cd freebsd-ports
-git remote add upstream git@github.com:freebsd/freebsd-ports
-```
-
-Therminology:
- - Origin = own fork
- - upstream = FreeBSD official
- - main = name of the main branch (was called 'master' previously)
-
-Keeping fork up-to-date with upstream (pull --rebase will do a "fetch upstream):
-```
-git checkout main
-git pull --rebase upstream main
-git push origin main
-```
-
-# Creating a BSDRP branch
-
-From https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-and-Merging
-```
-git checkout -b BSDRP
-=> hack
-git commit
-```
-
-# Sending this local-only branch to upstream, need to create it remotely the first time:
-
-```
-git push -u origin BSDRP
-=> hack
-git commit
-git push
-```
-
-# keeping BSDRP branch with main up-to-date
-# Need to start with the main branch, then the BSDRP
-
-```
-git checkout main
-git pull --rebase upstream main
-git push origin main
-git checkout branch-name
-git rebase main
-git push -f
-```
-# => Now, local main is up-to-date with upstream
-```
-git checkout BSDRP
-#git rebase main
-git pull --rebase upstream main ?, this one is equivalent to git fetch + git rebase origin/master
-git push origin main ?
-```
-
-Or sync WIP branch with the main:
-```
-git checkout WIP
-git rebase master WIP
-```
-# https://stackoverflow.com/questions/42861353/git-pull-after-git-rebase/42862404
-
-# Cherry pick
-```
-git remote add motoprogger git@github.com:motoprogger/FreeVRRPd.git
-git checkout <branch>
-git fetch motoprogger
-git cherry-pick <commit-hash>
-git push <your-fork-alias>
-```
-
-# Taging a new release
-
-```
-git tag -a v1.992 -m "Releasing version v1.992"
-git push origin v1.992
-```
-
-# Branch
-
-## Deleting
-
-Local and remote:
-```
-git branch -d branch-name
-git push origin -d branch-name
-```
-
-## Reset all local change and replace with remote
-
-@{u} is shorthand for upstream branch
-
+Reset a local branch to match its upstream (`@{u}` = upstream shorthand):
 ```
 git reset --hard @{u}
 ```
 
-## Create a branch from a tag
-
+Revert a bad rebase (still known via reflog):
 ```
-git checkout -b newbranch tags/v1.0
-```
-
- Copying file between branch
-
-```
-git checkout otherbranch myfile.txt
+git reflog
+git reset --hard HEAD@{N}
 ```
 
-Or:
+Force-overwrite a pushed working branch (**never on main**):
+```
+git reset --hard <good-hash>
+git push --force-with-lease
+```
+
+---
+
+## 8. Branches
+
+Create a branch from a tag:
+```
+git switch -c newbranch tags/v1.0
+```
+
+Copy one file from another branch into the current one:
+```
+git restore --source=<other-branch> path/to/file
+```
+
+Delete a branch, locally and remotely:
+```
+git branch -d <branch>            # -D to force
+git push origin -d <branch>
+```
+
+Tag a release:
+```
+git tag -a v1.992 -m "Release v1.992"
+git push origin v1.992
+```
+
+---
+
+## 9. Cherry-pick from another fork
 
 ```
-git restore --source otherbranch path/to/myfile.txt
+git remote add someone <their-url>
+git fetch someone
+git switch <target-branch>
+git cherry-pick <hash>
+git push
 ```
+
+---
+
+## 10. Inspect history
+
+When was a branch created off main?
+```
+git show --summary "$(git merge-base <branch> main)"
+```
+
+When was a file deleted?
+```
+git log --all -1 -- path/to/file
+```
+
+Which patchlevel is /usr/src at?
+```
+git -C /usr/src rev-list --count --first-parent HEAD
+```
+
+---
+
+## 11. Bundle (offline repo transfer)
+
+```
+git bundle create repo.bundle --all
+git clone repo.bundle <newrepo>
+```
+
+---
+
+## 12. Fork a repo (GitHub-style)
+
+Real example — forking both FreeBSD ports and src. Fork each via the
+GitHub web UI first, then:
+
+```
+# freebsd-ports
+git clone git@github.com:<you>/freebsd-ports.git
+cd freebsd-ports
+git remote add upstream git@github.com:freebsd/freebsd-ports
+cd ..
+
+# freebsd-src
+git clone git@github.com:<you>/freebsd-src.git
+cd freebsd-src
+git remote add upstream git@github.com:freebsd/freebsd-src
+```
+
+After this, each clone has two remotes:
+- `origin`   → your GitHub fork (where `git push` lands)
+- `upstream` → the official FreeBSD repo (fetch-only in practice)
+
+Keep either fork current — see section 3.
