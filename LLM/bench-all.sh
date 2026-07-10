@@ -53,7 +53,7 @@ hf_resolve() {
 #   slot        — short label matched by ONLY=...
 #   hf_repo_dir — subdir of $HF_HUB
 #   gguf_name   — filename inside snapshots/*/
-#   family      — dense | moe   (dense drops --no-host on FreeBSD)
+#   family      — dense | moe   (informational; not used to switch flags)
 #   mtp         — 0 | 1         (1 = has draft-mtp head, do N-max sweep)
 #   display     — nice name for the tables
 # ---------------------------------------------------------------------------
@@ -139,21 +139,15 @@ start_server() {
   model_path=$1; alias=$2; family=$3; shift 3
   kill_server
   log "  starting server: ${alias} extras: $*"
-  # --no-host is safe on MoE; drop it on FreeBSD dense.
-  nohost="--no-host"
-  if [ "${OS}" = "FreeBSD" ] && [ "${family}" = "dense" ]; then
-    nohost=""
-  fi
   "${LLAMA_DIR}/build/bin/llama-server" \
     --model "${model_path}" \
     --alias "${alias}" \
     --device Vulkan0 \
     --flash-attn on \
-    ${nohost} \
     --no-warmup \
     --no-mmproj \
     --batch-size 2048 --ubatch-size 512 \
-    --ctx-size 65536 --parallel 1 \
+    --ctx-size 131072 --parallel 1 \
     --jinja \
     --host 127.0.0.1 --port "${PORT}" \
     "$@" \
@@ -188,7 +182,7 @@ run_bench() {
 stage_llama_bench() {
   emit "## llama-bench — depth sweep (Vulkan, fa=1, b=2048, ub=512, r=2)"
   emit
-  emit "\`--no-host 1\` on all except FreeBSD dense (crashes 27B dense on FreeBSD)."
+  emit "Recipe: no \`--no-host\` (A/B on framework2 showed it's a no-op on this stack; on FreeBSD dense at d=32k it costs 6-9 %). Q8 dense on FreeBSD can hit a cold-start GTT OOM — automatic retry once."
   emit
   emit "| Model                    | Quant   | depth | pp4096          | tg128         |"
   emit "|--------------------------|---------|------:|----------------:|--------------:|"
@@ -198,21 +192,29 @@ stage_llama_bench() {
     display=$(echo "${display}" | sed 's/^ *//;s/ *$//')
     [ -z "${slot}" ] && continue
     qfile=$(hf_resolve "${HF_HUB}/${repo}" "${file}") || { log "SKIP ${slot}: not cached"; continue; }
-    nohost=1
-    [ "${OS}" = "FreeBSD" ] && [ "${family}" = "dense" ] && nohost=0
     for depth in 0 8192 32768; do
-      log "llama-bench ${slot} d=${depth} nohost=${nohost}"
-      raw=$("${LLAMA_DIR}/build/bin/llama-bench" \
-        -m "${qfile}" \
-        --device Vulkan0 \
-        --flash-attn 1 \
-        --batch-size 2048 --ubatch-size 512 \
-        --n-prompt 4096 --n-gen 128 \
-        --n-depth "${depth}" \
-        --no-host ${nohost} \
-        --mmap 1 --threads "$(nproc_portable)" \
-        --repetitions 2 \
-        --output md 2>&1) || { log "  crashed"; raw="CRASH"; }
+      log "llama-bench ${slot} d=${depth}"
+      attempt=1
+      while [ ${attempt} -le 2 ]; do
+        raw=$("${LLAMA_DIR}/build/bin/llama-bench" \
+          -m "${qfile}" \
+          --device Vulkan0 \
+          --flash-attn 1 \
+          --batch-size 2048 --ubatch-size 512 \
+          --n-prompt 4096 --n-gen 128 \
+          --n-depth "${depth}" \
+          --mmap 1 --threads "$(nproc_portable)" \
+          --repetitions 2 \
+          --output md 2>&1) && break
+        # cold-start GTT OOM (observed on FreeBSD Mesa 26 Q8 dense): retry once
+        if echo "${raw}" | grep -q "ErrorOutOfDeviceMemory" && [ ${attempt} -eq 1 ]; then
+          log "  OOM on attempt 1, retrying"
+          attempt=$((attempt+1))
+          sleep 3
+          continue
+        fi
+        log "  crashed"; raw="CRASH"; break
+      done
       pp=$(echo "${raw}" | awk -F'|' '/pp4096/{gsub(/^ *| *$/,"",$(NF-1)); print $(NF-1); exit}')
       tg=$(echo "${raw}" | awk -F'|' '/tg128/{gsub(/^ *| *$/,"",$(NF-1)); print $(NF-1); exit}')
       # Split into "Model | Quant" if display has a space near end
