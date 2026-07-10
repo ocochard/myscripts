@@ -1,7 +1,8 @@
 # llama.cpp on Framework Desktop (Strix Halo) — FreeBSD vs Ubuntu
 
 Hardware: AMD Ryzen AI MAX+ 395 (Strix Halo) + Radeon 8060S iGPU (gfx1151),
-128 GB LPDDR5x UMA. Backend: Vulkan (Mesa RADV). Same silicon in both hosts —
+128 GB LPDDR5x UMA (Unified Memory Architecture). Backend: Vulkan (Mesa RADV,
+the open-source Vulkan driver for AMD Radeon). Same silicon in both hosts —
 `frwk-bsd` (FreeBSD 16-CURRENT) and `frwk-linux` (Ubuntu 24.04).
 
 **All measurements: llama.cpp b9925 (`ed8c26150`), 2026-07-10, single build on
@@ -11,30 +12,39 @@ Harness: `LLM/bench-all.sh`.
 
 ## TL;DR
 
-- **Default coding recipe: `MODEL=agents-a1-mtp`** — 75 t/s TG at 4k on FreeBSD,
-  73 t/s on Ubuntu. Q8 MoE + MTP + agentic fine-tune. Beats plain Q4 on speed
-  **and** quality.
-- **TG is OS-neutral** (memory-bandwidth bound at ~250 GB/s). **PP is
-  compiler/scheduler-bound**: FreeBSD wins by 5-40 % on dense at d=0 and MoE
-  d≥8k; Ubuntu wins on dense at d=32k.
+- **Default coding recipe: `MODEL=agents-a1-mtp`** — 75 t/s TG (Token
+  Generation, i.e. decode speed) at 4k on FreeBSD, 73 t/s on Ubuntu.
+  Q8 MoE (Mixture-of-Experts) + MTP (Multi-Token Prediction) + agentic
+  fine-tune. Beats plain Q4 on speed **and** quality.
+- **TG is OS-neutral** (memory-bandwidth bound at ~250 GB/s). **PP
+  (Prompt Processing, the prefill phase) is compiler/scheduler-bound**:
+  FreeBSD wins by 5-40 % on dense at d=0 and MoE d≥8k; Ubuntu wins on
+  dense at d=32k.
 - **MoE MTP works** — ~1.5× decode on Agents-A1-MTP Q8_0. Set
-  `--spec-draft-n-max 5`; N ≥ 8 is a cliff (Total TPS drops 50 % on MoE).
+  `--spec-draft-n-max 5`; N ≥ 8 is a cliff (Total TPS — Tokens Per Second
+  across the whole request — drops 50 % on MoE).
 - **Dense MTP** (Qwen3.6-27B-MTP Q8) delivers **2.5×** decode (6.4 → 16.1 t/s
   at ~4 k) — even higher gain than MoE MTP.
-- **ROCm is dead on gfx1151** (MES 0x83 firmware bug). Vulkan-only.
+- **ROCm is dead on gfx1151** (MES — MicroEngine Scheduler — 0x83 firmware
+  bug). Vulkan-only.
 
 ## Which recipe to use
 
-Total TPS from `bench_model.py -t 256 -r 2` on b9925. `frwk-bsd / frwk-linux`.
+Total TPS from `bench_model.py -t 256 -r 2` on b9925 — `-t 256` caps the
+**generated** output at 256 tokens; the `~4 k` / `~32 k` columns are the
+**prompt-length regime** (`LLM/coding_prompt.txt` = 4 004 tokens,
+`LLM/coding_prompt_32k.txt` = 32 919 tokens). Each cell is
+Total TPS = (prompt_tokens + generated_tokens) / wall_clock,
+formatted `frwk-bsd / frwk-linux`.
 
-| Recipe (`MODEL=`)    | Model                           | TG ~4 k     | TG ~32 k    | Notes                                        |
-|----------------------|---------------------------------|------------:|------------:|----------------------------------------------|
-| **`agents-a1-mtp`** ★| Agents-A1 Q8 + MTP N=5          | **75 / 73** | **56 / 61** | Default. Q8 + agentic fine-tune.             |
-| `agents-a1`          | Agents-A1 Q4_K_M                | 66 / 67     | 55 / 56     | Q4 + agentic tuning; half the disk.          |
-| `moe`                | Qwen3.6-35B-A3B Q4_K_XL         | 56 / 56     | 48 / 48     | Older Q4 baseline.                           |
-| `moe-q8`             | Qwen3.6-35B-A3B Q8_K_XL         | 44 / 45     | 39 / 40     | Plain Q8. `USAGE=doc` alias.                 |
-| `mtp`                | Qwen3.6-27B-MTP Q8_K_XL + N=5   | 16 / 17     | 15 / 15     | Dense MTP: 2.5× vs off, still ~5× slower TG than MoE. |
-| `dense`              | Qwen3.6-27B Q4_K_XL             | 12 / 12     | 11 / 11     | Highest quality per token; slow.             |
+| Recipe (`MODEL=`)    | Model                           | Total TPS @ ~4 k prompt | Total TPS @ ~32 k prompt | Notes                                        |
+|----------------------|---------------------------------|------------------------:|-------------------------:|----------------------------------------------|
+| **`agents-a1-mtp`** ★| Agents-A1 Q8 + MTP N=5          |         **75 / 73**     |         **56 / 61**      | Default. Q8 + agentic fine-tune.             |
+| `agents-a1`          | Agents-A1 Q4_K_M                |            66 / 67      |            55 / 56       | Q4 + agentic tuning; half the disk.          |
+| `moe`                | Qwen3.6-35B-A3B Q4_K_XL         |            56 / 56      |            48 / 48       | Older Q4 baseline.                           |
+| `moe-q8`             | Qwen3.6-35B-A3B Q8_K_XL         |            44 / 45      |            39 / 40       | Plain Q8. `USAGE=doc` alias.                 |
+| `mtp`                | Qwen3.6-27B-MTP Q8_K_XL + N=5   |            16 / 17      |            15 / 15       | Dense MTP: 2.5× vs off, still ~5× slower decode than MoE. |
+| `dense`              | Qwen3.6-27B Q4_K_XL             |            12 / 12      |            11 / 11       | Highest quality per token; slow.             |
 
 ★ = current default in `LLM/llmsrv.sh`. `USAGE=coding` → `agents-a1-mtp`;
 `USAGE=doc` → `moe-q8`.
@@ -60,13 +70,17 @@ llama-server \
   "dedicated VRAM" carve-out; see the BIOS section below.
 - FreeBSD post-boot: `sudo kldload amdgpu` (not autoloaded).
 - **Agents-A1-MTP Q8 native context = 262 144 tokens** (`qwen35moe.context_length`
-  in the GGUF, extended RoPE theta 1e7 baked in — no YaRN scaling needed).
+  in the GGUF, extended RoPE (Rotary Position Embedding) theta 1e7 baked in
+  — no YaRN (Yet another RoPE extensioN) scaling needed).
   Recommended `--ctx-size`:
-  - **`131072`** (default above) — the practical sweet spot. KV reservation
-    ~18 GiB in 93 GiB GTT; zero TG/PP cost until you actually fill past ~30 k.
+  - **`131072`** (default above) — the practical sweet spot. KV (Key-Value
+    attention cache) reservation ~18 GiB in 93 GiB GTT (Graphics Translation
+    Table, the GPU's system-RAM aperture); zero TG/PP cost until you actually
+    fill past ~30 k.
   - **`65536`** — pick this if you never work past ~30 k prompts and want the
     smallest KV footprint (~9 GiB).
-  - **`262144`** (native max) — works, no OOM, but cold prefill at the ceiling
+  - **`262144`** (native max) — works, no OOM (Out Of Memory), but cold
+    prefill at the ceiling
     is ~20 minutes. Only worth it if you can amortize across many warm-cache
     turns. See the "Extended-depth sweep" table below.
 - `--batch-size 2048 --ubatch-size 512` is peak; 4096/1024 is ~3 % slower.
@@ -85,7 +99,7 @@ run (same recipe on those slots, no drift).
 | Kernel          | 6.12-based via drm-kmod (`drm-latest-kmod 6.12.1600018_1`) | Linux 6.17.0-35-generic              |
 | GPU driver      | [`ocochard/drm-kmod` `strix` branch](https://github.com/ocochard/drm-kmod/tree/strix) | amdgpu in-tree |
 | GPU firmware    | `gpu-firmware-amd-kmod-* 20260519.1600018`              | linux-firmware (distro)                 |
-| Mesa            | **26.1.3** ([FreeBSD bug 294948](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=294948), `mesa-dri` ships RADV ICD) | **25.2.8-0ubuntu0.24.04.2** |
+| Mesa            | **26.1.3** ([FreeBSD bug 294948](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=294948), `mesa-dri` ships RADV ICD — Installable Client Driver) | **25.2.8-0ubuntu0.24.04.2** |
 | Vulkan API      | 1.4.348 (RADV)                                          | 1.4.318 (RADV)                          |
 | Compiler        | Clang 21.1.8                                            | gcc 13.3.0                              |
 | CPU governor    | `powerd` adaptive                                       | `performance`                           |
@@ -115,7 +129,8 @@ Driven by `~/myscripts/LLM/bench-all.sh`. Two harnesses:
 - **`llama-server` + `bench_model.py -t 256 -r 2`**: real client-server load.
   Server = canonical config, `--ctx-size 131072 --parallel 1`. Prompts:
   `LLM/coding_prompt.txt` (4 004 tok), `LLM/coding_prompt_32k.txt`
-  (32 919 tok). **PP TPS = `prompt_tokens / TTFT`** (cold prefill). Total TPS
+  (32 919 tok). **PP TPS = `prompt_tokens / TTFT`** (TTFT = Time To First
+  Token, i.e. cold prefill latency). Total TPS
   includes reasoning tokens (all runs hit 256-token cap, so Total TPS
   underestimates pure decode by a fixed amount that cancels in ratios).
 - **MTP sweep**: `--spec-draft-n-max N ∈ {2, 3, 4, 5, 8, 16}` at ~4 k prompt
@@ -377,8 +392,9 @@ Measured on HP ZBook (Ryzen AI MAX+ PRO 395) with identical software to
 
 ## Firmware power cap (`platform_profile` on laptops)
 
-HP firmware caps GPU PPT based on ACPI `platform_profile`; Framework Desktop
-does not.
+HP firmware caps GPU PPT (Package Power Tracking, the SoC-wide — System-on-Chip
+— power budget) based on ACPI (Advanced Configuration and Power Interface)
+`platform_profile`; Framework Desktop does not.
 
 | Host / profile        | PPT avg | PPT p95 | PPT max | GPU max freq | MoE Q4 PP at d≈4 k |
 |-----------------------|--------:|--------:|--------:|-------------:|-------------------:|
