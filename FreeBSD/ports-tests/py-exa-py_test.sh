@@ -10,10 +10,18 @@
 # packaging breakage, not test the upstream SDK.
 set -eu
 
-PORT_NAME=py311-exa-py
+PORT_BASE=exa-py            # module + suffix of the pkg name
 JAIL=builder
 TREE=official
 PKGDIR=/usr/local/poudriere/data/packages/${JAIL}-${TREE}/.latest/All
+
+# Discover the freshly-built package: py3XX-exa-py-<ver>.pkg
+PKG=$(ls -t ${PKGDIR}/py3*-${PORT_BASE}-*.pkg 2>/dev/null | head -1)
+[ -n "${PKG}" ] || {
+	echo "FAIL  no py3*-${PORT_BASE}-*.pkg in ${PKGDIR}"
+	exit 1
+}
+PORT_NAME=$(basename "${PKG}" | sed -E 's/-[0-9].*$//')  # py3XX-exa-py
 
 PREEXISTED=0
 HAS_REVDEPS=0
@@ -40,7 +48,6 @@ if [ -n "$(pkg query '%rn-%rv' ${PORT_NAME} 2>/dev/null)" ]; then
 fi
 
 # 1. Install fresh package
-PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
 echo "Installing ${PKG}"
 sudo pkg add -f "${PKG}"
 
