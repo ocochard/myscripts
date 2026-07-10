@@ -8,7 +8,7 @@
 # Default: agents-a1-mtp (Agents-A1 Q8_0 + MTP speculative decoding). ~77 t/s TG
 # at 4k on Strix Halo — Q8 weights + MTP beats plain Q4 (~66 t/s), and the
 # Agents-A1 fine-tune is tuned for agentic reasoning + tool calling. See Stage 7
-# in tools/LLM/benches.FrameWork-Desktop.md.
+# in LLM/benches.FrameWork-Desktop.md.
 #
 # Usage:
 #   ./llmsrv.sh                  # default: Agents-A1-MTP Q8 (fast + high quality)
@@ -108,7 +108,7 @@ case "${OS}" in
     #   Mesa 25.x: RADV_DEBUG=zerovram is HARMFUL — it crashes runs that
     #              succeed without it. First-run-after-boot is reliable
     #              with no env prefix.
-    # See tools/LLM/benches.FrameWork-Desktop.md for the bench data.
+    # See LLM/benches.FrameWork-Desktop.md for the bench data.
     mesa_ver=$(pkg query %v mesa-libs 2>/dev/null | cut -d. -f1)
     if [ "${mesa_ver}" = "24" ]; then
       radv_env="RADV_DEBUG=zerovram"

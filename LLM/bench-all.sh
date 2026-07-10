@@ -20,7 +20,7 @@ set -eu
 OUT=${OUT:-/tmp/bench-all.md}
 JSONLOG=${JSONLOG:-/tmp/bench-all.jsonl}
 LLAMA_DIR=${LLAMA_DIR:-${HOME}/llama.cpp}
-SCRIPTS_DIR=${SCRIPTS_DIR:-${HOME}/myscripts/tools/LLM}
+SCRIPTS_DIR=${SCRIPTS_DIR:-${HOME}/myscripts/LLM}
 HF_HUB=${HF_HUB:-${HOME}/.cache/huggingface/hub}
 PORT=${PORT:-8090}
 STAGES=${STAGES:-llama-bench,server,mtp-sweep}

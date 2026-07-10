@@ -6,10 +6,10 @@ The recipe is a header line, a sequence of trivial `fn_NNNN(x): return x + N`
 functions, and a single trailing question. With the Qwen3.6 tokenizer, the
 body costs ~17.9 tokens per function. Use -n to dial the prompt size:
 
-  -n 215   -> ~4 067  tokens   (default; matches tools/LLM/coding_prompt.txt)
-  -n 1700  -> ~30 400 tokens   (matches tools/LLM/coding_prompt_32k.txt)
-  -n 5105  -> ~91 380 tokens   (matches tools/LLM/coding_prompt_96k.txt)
-  -n 6395  -> ~114 480 tokens  (matches tools/LLM/coding_prompt_120k.txt)
+  -n 215   -> ~4 067  tokens   (default; matches LLM/coding_prompt.txt)
+  -n 1700  -> ~30 400 tokens   (matches LLM/coding_prompt_32k.txt)
+  -n 5105  -> ~91 380 tokens   (matches LLM/coding_prompt_96k.txt)
+  -n 6395  -> ~114 480 tokens  (matches LLM/coding_prompt_120k.txt)
 """
 import argparse
 import sys

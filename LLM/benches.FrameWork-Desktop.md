@@ -5,7 +5,7 @@ Hardware: AMD Ryzen AI MAX+ 395 (Strix Halo) + Radeon 8060S iGPU (gfx1151),
 `frwk-bsd` (FreeBSD 16-CURRENT) and `frwk-linux` (Ubuntu 24.04).
 
 **All measurements: llama.cpp b9925 (`ed8c26150`), 2026-07-08, single build on
-both hosts.** Harness: `tools/LLM/bench-all.sh`.
+both hosts.** Harness: `LLM/bench-all.sh`.
 
 ## TL;DR
 
@@ -34,12 +34,12 @@ Total TPS from `bench_model.py -t 256 -r 2` on b9925. `frwk-bsd / frwk-linux`.
 | `mtp`                | Qwen3.6-27B-MTP Q8_K_XL + N=5   | 16 / 16     | 15 / 14     | Dense MTP: 2.5× vs off, still ~5× slower TG than MoE. |
 | `dense`              | Qwen3.6-27B Q4_K_XL             | 12 / 12     | 11 / 11     | Highest quality per token; slow.             |
 
-★ = current default in `tools/LLM/llmsrv.sh`. `USAGE=coding` → `agents-a1-mtp`;
+★ = current default in `LLM/llmsrv.sh`. `USAGE=coding` → `agents-a1-mtp`;
 `USAGE=doc` → `moe-q8`.
 
 ## Recommended runtime config
 
-`tools/LLM/llmsrv.sh` auto-detects OS/model. Canonical llama-server invocation:
+`LLM/llmsrv.sh` auto-detects OS/model. Canonical llama-server invocation:
 
 ```sh
 llama-server \
@@ -98,13 +98,13 @@ Differences below are OS/kernel/compiler.
 
 ## Methodology
 
-Driven by `~/myscripts/tools/LLM/bench-all.sh`. Two harnesses:
+Driven by `~/myscripts/LLM/bench-all.sh`. Two harnesses:
 
 - **`llama-bench`**: raw kernel throughput. `pp4096 + tg128` at d=0, 8192,
   32768, fa=1, b=2048, ub=512, r=2, `--no-host` where safe, mmap on.
 - **`llama-server` + `bench_model.py -t 256 -r 2`**: real client-server load.
   Server = canonical config, `--ctx-size 65536 --parallel 1`. Prompts:
-  `tools/LLM/coding_prompt.txt` (4 004 tok), `tools/LLM/coding_prompt_32k.txt`
+  `LLM/coding_prompt.txt` (4 004 tok), `LLM/coding_prompt_32k.txt`
   (32 919 tok). **PP TPS = `prompt_tokens / TTFT`** (cold prefill). Total TPS
   includes reasoning tokens (all runs hit 256-token cap, so Total TPS
   underestimates pure decode by a fixed amount that cancels in ratios).
@@ -416,9 +416,9 @@ restore Vulkan probing.
 # On each host (framework, framework2):
 git clone https://github.com/ggerganov/llama.cpp && cd llama.cpp
 cmake -B build -DGGML_VULKAN=ON && cmake --build build --config Release
-# Then, from ~/myscripts/tools/LLM/:
+# Then, from ~/myscripts/LLM/:
 sh bench-all.sh   # ~4 h; produces /tmp/bench-all.md + .jsonl
 ```
 
-Full script: `~/myscripts/tools/LLM/bench-all.sh`. Model registry lives at the top
+Full script: `~/myscripts/LLM/bench-all.sh`. Model registry lives at the top
 of the file; add slots there to bench new GGUFs.

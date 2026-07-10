@@ -175,13 +175,13 @@ RADV_DEBUG=zerovram build/bin/llama-bench \
   -p 4096 -n 128 -d 0 -fa 1 --no-host 1 -r 2
 
 # End-to-end OpenAI-style streaming bench (requires running llama-server):
-python3 tools/LLM/bench_model.py -u http://127.0.0.1:8080 \
+python3 LLM/bench_model.py -u http://127.0.0.1:8080 \
   --prompt-file /tmp/coding_prompt.txt -t 256 -r 3
 ```
 
 Full sweep, per-flag rationale, crash signatures, and FreeBSD-vs-Ubuntu
 cross-OS comparison are in
-[../tools/LLM/benches.FrameWork-Desktop.md](../tools/LLM/benches.FrameWork-Desktop.md).
+[../LLM/benches.FrameWork-Desktop.md](../LLM/benches.FrameWork-Desktop.md).
 
 ## qwen-code (CLI agent)
 

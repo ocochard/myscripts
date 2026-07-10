@@ -2,12 +2,12 @@
 # Bench Agents-A1 Q4_K_M and MTP Q8_0 on the local host (Strix Halo, Vulkan).
 #
 # Produces markdown fragments suitable for pasting into
-# tools/LLM/benches.FrameWork-Desktop.md and a JSONL log for post-processing.
+# LLM/benches.FrameWork-Desktop.md and a JSONL log for post-processing.
 #
 # Requirements:
 # - llama.cpp built at ~/llama.cpp/build/bin (b9925+ for --spec-type draft-mtp)
 # - Both GGUFs already downloaded into ~/.cache/huggingface/hub/
-# - ~/myscripts/tools/LLM/bench_model.py, coding_prompt.txt, coding_prompt_32k.txt
+# - ~/myscripts/LLM/bench_model.py, coding_prompt.txt, coding_prompt_32k.txt
 #
 # Env knobs:
 #   STAGES=llama-bench,server-q4,server-mtp,mtp-sweep   (comma list)
@@ -20,7 +20,7 @@ set -eu
 OUT=${OUT:-/tmp/bench-agents-a1.md}
 JSONLOG=${JSONLOG:-/tmp/bench-agents-a1.jsonl}
 LLAMA_DIR=${LLAMA_DIR:-${HOME}/llama.cpp}
-SCRIPTS_DIR=${SCRIPTS_DIR:-${HOME}/myscripts/tools/LLM}
+SCRIPTS_DIR=${SCRIPTS_DIR:-${HOME}/myscripts/LLM}
 HF_HUB=${HF_HUB:-${HOME}/.cache/huggingface/hub}
 PORT=${PORT:-8090}
 STAGES=${STAGES:-llama-bench,server-q4,server-mtp,mtp-sweep}

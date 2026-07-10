@@ -198,7 +198,7 @@ def benchmark_stream(base_url, prompt, max_tokens, model="default", num_runs=10,
                     print(
                         f"\n  NOTE: prompt is short ({prompt_tokens} tok); PP TPS is dominated by request"
                         f"\n  setup, not prompt processing. Use --prompt-file with a larger prompt"
-                        f"\n  (e.g. tools/LLM/coding_prompt.txt) for meaningful PP TPS measurements."
+                        f"\n  (e.g. LLM/coding_prompt.txt) for meaningful PP TPS measurements."
                     )
                     warned_small_prompt = True
             else:
