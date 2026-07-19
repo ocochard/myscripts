@@ -78,6 +78,41 @@ Test target for briefing/mission bug lives on `ser6fbsd`; ship the
   `QIFStreamB::AutoOpen` returned the first-mounted `overview.html`
   regardless of which mission the user clicked.
 
+### Where the mission editor saves missions
+- The in-game editor (the "Arcade" map editor, `DisplayArcadeMap`) writes each
+  saved mission as `mission.sqm` inside a per-mission folder
+  `<Name>.<World>/`:
+  - SP:  `<UserContentDir>/missions/<Name>.<World>/mission.sqm`
+  - MP:  `<UserContentDir>/MPMissions/<Name>.<World>/mission.sqm`
+  - `<Name>` = text typed in the Save dialog; `<World>` = island
+    (`Glob.header.worldname`, e.g. `abel`, `noe`, `eden`, `demo`).
+- `<UserContentDir>` = `GamePaths::Instance().UserContentDir()` — the
+  discoverable content root, **not** the player profile: on Linux it is the
+  XDG data dir under the product name, e.g.
+  `~/.local/share/Cold War Assault/`; on Windows `Documents/<product>`.
+  Legacy `-oldpaths` mode falls back to the per-profile `Users\<profile>\`
+  dir.
+- Verified on this host (2026-07-18): the one editor-saved SP mission is
+  `~/.local/share/Cold War Assault/missions/load.demo/mission.sqm`
+  (Name `load`, world `demo`). `MPMissions/` was empty. Note this is the
+  live save path — the per-profile `~/.config/CWR/Users/<profile>/Saved/
+  missions/*` folders are empty save-slot placeholders, **not** editor
+  output; don't mistake them for saved missions.
+- Save handler: `engine/Poseidon/UI/Map/UIMapExtDisplay.cpp:2189`
+  (`DisplayArcadeMap::OnChildDestroyed`, `case IDD_TEMPLATE_SAVE`) → writes
+  at `:2216` via `SaveTemplates()`. SP vs MP is picked at `:2197` from the
+  `_multiplayer` member, choosing `GetMissionsDir()` = `"missions/"` vs
+  `GetMPMissionsDir()` = `"MPMissions/"` (`UI/OptionsUI.cpp:790-817`); the
+  dir is assembled by `GetMissionsDirectory()` (`OptionsUI.cpp:189`).
+- The loose `mission.sqm` folder is the authoritative editable copy. The
+  Save dialog's mode combo can additionally *pack* it into a `.pbo`
+  (`Missions\<name>.<world>.pbo`, `MPMissions\<name>.<world>.pbo`, or an
+  email export) — those are exports of the same folder.
+- **POSIX note:** the editor's loose-folder path uses lowercase `missions/`
+  deliberately (case-sensitive FS), but the packed-`.pbo` paths use
+  `Missions\` / `MPMissions\` with backslashes — the same separator/case
+  mismatch the `platformPath()` section above warns about.
+
 ### Logging
 - `LOG_ERROR(Core, "fmt {}", arg)` — spdlog + fmt-style formatting.
   Used during trace-instrumented builds to hunt the briefing bug.
@@ -137,6 +172,36 @@ verified none of them is a data-merge workaround.
    car classes. Fix: move the simulation dispatch out of the `scope > 0`
    guard so known `_simName` strings always get the specific `TypeInfo`.
 
+## Why the Steam demo is a required base (verified)
+
+Confirmed on 2026-07-18 by staging a retail-GOG-only data root on `t420`
+and booting it. Retail alone gets much further than expected: the engine
+parses `BIN/CONFIG.BIN`, preloads every vehicle class, loads textures,
+and logs `World initialized successfully` for the intro menu world. GOG
+is the complete 2001 game and misses nothing *original* — its fonts even
+ship in `DTA/Fonts.pbo`.
+
+It still cannot run the CE engine, blocked by two hard dependencies on
+the demo's remaster layer (fail in order):
+
+1. **Fonts.** `FontSystem::Initialize` aborts with `required font
+   missing: fonts\cwr_{title,body,mono,serif,hand}.ttf`. Those five
+   loose remaster TrueType fonts ship only with the Remaster Demo; the
+   CE UI does not use retail's `DTA/Fonts.pbo` bitmap fonts.
+2. **Sky.** With stand-in `.ttf` files satisfying FontSystem, the boot
+   advances to the first rendered frame and segfaults in
+   `Poseidon::Landscape::DrawSky` (null deref at +0x70). Retail
+   `CONFIG.BIN` has no `CfgLandscapeSky` / remaster sky models, so the
+   sky object is null. This is exactly the remaster-only config the
+   install helper's merge preserves by keeping the demo `CONFIG.BIN` as
+   base instead of overwriting it with retail's.
+
+So the demo is mandatory as the base layer (remaster fonts +
+`CfgLandscapeSky` + sky models); retail is the overlay that adds the full
+islands, vehicles, voices, and campaigns. Supplying just the five
+`cwr_*.ttf` and a retail-compatible sky config would in principle boot
+retail-only, but both only come from the demo.
+
 ## Port packaging quirks
 
 - `USES=dos2unix` + `DOS2UNIX_REGEX=.*\.(c|h|cpp|hpp)` — upstream
@@ -158,8 +223,13 @@ verified none of them is a data-merge workaround.
   `bin/config.bin` or `bin/CONFIG.BIN` exists, then execs `PoseidonGame
   -C <data-root> "$@"`. Prints install instructions and exits 1 if
   data missing.
-- `bin/install-cwr-data` — helper that unpacks the GOG installer via
-  `innoextract` into the expected layout under `~/.local/share/CWR/base`.
+- `bin/install-cwr-data` — helper that builds the data root from the
+  free Steam Remaster Demo zip (positional arg, the base), and optionally
+  overlays retail GOG content passed via `--gog` (unpacked with
+  `innoextract`, config class-merged into the demo `CONFIG.BIN`). GOG
+  alone is not a supported install: the demo supplies `fonts/` and the
+  base `bin/CONFIG.BIN` the overlay merges into. Layout lands under
+  `~/.local/share/CWR/base`.
 
 ## Upstream / PR state
 

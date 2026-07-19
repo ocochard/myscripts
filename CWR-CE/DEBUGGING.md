@@ -376,6 +376,185 @@ cwr-ce --mod ~/.local/share/Cold\ War\ Assault/Workshop/<MODNAME> \
 
 Semicolon-separated for multiple mods. Legacy alias: `-mod`.
 
+## Debugging low FPS / performance
+
+Worked example: a report of "stuck at ~20 FPS" on strong hardware (Ryzen 7
+7735HS + Radeon 680M). Full narrative in `PERF-low-fps-cpu-bound.md`;
+saved baselines in `perf-data/`. Follow this order.
+
+**Step 0 — `--fps` is a red herring.** `--fps` / `--show-fps` only toggles
+the on-screen overlay (`AppConfig.cpp:335`). It does not uncap anything, and
+FPS is drawn on screen only (`EngineDrawing.cpp:46-71`, iFPS/aFPS), never
+written to `--log-file`. Read it off the overlay.
+
+**Step 1 — capped or bound?** Rule out the deliberate limiters first:
+- Auto-detail balancer: `frameRate` in `UserInfo.cfg` sets a target FPS
+  band `frameRate*(10/15) .. frameRate*(20/15)` (`Scene.cpp:593-600`,
+  default 15 → 10–20 FPS at `Scene.cpp:640`). The balancer then trades LOD
+  detail to hit that band (`SceneDraw.cpp:780-926`) — so a low `frameRate`
+  parks you at ~20 by *adding* detail. Raise it (e.g. 60).
+- User cap: `gUserFpsCap` from the Graphics screen (`GameLoop.cpp:123-135`,
+  `GraphicsApply.cpp:98`, `graphics.cfg fpsCap`).
+- Vsync quantization: `graphics.cfg vsync=1` at 60Hz gives only 60/30/20/15
+  (÷N). Exactly-20 or exactly-30 is the tell. Test `env vblank_mode=0`.
+- Unfocused/rendering-disabled cap = 50 (`GameLoop.cpp:110`); cheat-key FPS
+  limiter = 40/coef (`GameLoop.cpp:80-89`).
+
+**Step 2 — GPU-bound or CPU-bound?** Per-thread CPU while running:
+```
+ps -H -o lwp,pcpu,time,comm -p $(pgrep -x PoseidonGame) | sort -k2 -rn | head
+```
+Main thread near 100% with `:gdrv0` (GPU driver) near 0% ⇒ **single-thread
+CPU-bound** (the engine does per-vertex software skinning on the main
+thread — `Object::AnimateGeometry`). A fast GPU cannot help. Confirm the GPU
+is even engaged (not llvmpipe) from the game's own log line
+`GL33: OpenGL … — <renderer>` (`EngineGL33.cpp:445`).
+
+**Step 3 — profile the main thread with pmcstat** (hwpmc works under the
+FreeBSD linuxlator):
+```
+sudo pmcstat -S ls_not_halted_cyc -O /tmp/pmc.out sleep 8
+pmcstat -R /tmp/pmc.out -G /tmp/pmc.graph
+grep -E "^[0-9]+\.[0-9]+%" /tmp/pmc.graph | grep -viE "Acpi|cpu_idle|lock_delay|doreti" | head -30
+```
+Filter the ACPI/idle noise: system-wide sampling captures the *other* idle
+cores running `acpi_cpu_idle → AcpiOsReadPort`; that is not the game.
+
+**Step 4 — is the shipped package even optimized?** A global `WITH_DEBUG`
+on the builder silently produces an `-O0` package: `bsd.port.mk` does
+`CFLAGS:= ${CFLAGS:N-O*} ${DEBUG_FLAGS}`, filtering out every `-O`. Symptoms:
+- Binary is huge and unstripped (a `WITH_DEBUG` build was ~213 MB vs ~13 MB
+  for `-O2` stripped).
+- Trivial accessors are fat: `Vector3P::X()` (`return _e[0];`) becomes a
+  ~60-instruction function with a stack frame, a stack canary, and a
+  per-read NaN-validation branch into spdlog:
+  ```
+  objdump -d -C /usr/local/bin/PoseidonGame | \
+    awk '/<Poseidon::Foundation::Vector3P::X\(\) const>:/{f=1} f{print} f&&/ret/{exit}'
+  ```
+  Optimized, this is ~2 instructions (`movss (%rdi),%xmm0; ret`).
+- Build log has no `-O2`: `grep -c -- -O2 <buildlog>` returns 0; the env
+  dump shows `WITH_DEBUG=yes` and `CFLAGS="… -g …"` with no `-O`.
+
+Fix: remove `WITH_DEBUG` from `/etc/make.conf` and the poudriere
+`make.conf` set, rebuild, reinstall. Verify `Vector3P::X()` collapses.
+
+**Profiling an optimized build needs symbols — use RelWithDebInfo, NOT
+`WITH_DEBUG`.** Normal `-O2` release packages are stripped (the engine's own
+`cmake/DistCopy.cmake:37` strips in Release), so live pmcstat can only name
+library frames, not Poseidon functions.
+
+Do **not** reach for `WITH_DEBUG` to get symbols: besides filtering `-O*` (see
+Step 4), it also **drops `NDEBUG`**, which flips `PoseidonAssert` on
+(`DebugLog.hpp:63`). Every `Vector3P` accessor then carries a
+`PoseidonAssert(_e[i] != FLT_MAX)` branch (+ stack canary) that the real
+release does not — so the accessors stop inlining and the profile *misreports*
+inlining/vectorization. Verified: a `WITH_DEBUG` build logs 0/1037 compiles
+with `-DNDEBUG`.
+
+The faithful recipe is `RelWithDebInfo`: `-O2 -g -DNDEBUG` — identical
+semantics to Release (asserts off, optimized) but with symbols, and because
+the build type is not `"Release"`, `DistCopy` skips its strip. In
+`/usr/local/etc/poudriere.d/<jail>-make.conf`:
+```
+CMAKE_BUILD_TYPE=RelWithDebInfo
+STRIP=
+```
+Verify the override before building (bare `make -V` reads `/etc/make.conf`,
+not the poudriere make.conf, so point it explicitly):
+```
+make __MAKE_CONF=/usr/local/etc/poudriere.d/<jail>-make.conf -V CMAKE_BUILD_TYPE
+# => RelWithDebInfo
+```
+Then `poudriere bulk -C -j <jail> games/CWR-CE` (the `-C` deletes the stale
+package so it actually rebuilds — without it poudriere sees the pkg as
+current and skips). Extract the unstripped `PoseidonGame` from the `.pkg`,
+run *that* binary, pmcstat/objdump it. Sanity-check faithfulness first:
+`Vector3P::X()` must be ~2 instructions (`movss (%rdi),%xmm0; ret`) with no
+canary and no assert branch — if it isn't, `NDEBUG` didn't take and you are
+profiling a debug build. Remove the make.conf afterward.
+
+**Known hotspot (optimized build): `std::nearbyint`.** On the `-O2` build
+the top non-idle cost is libm float→int rounding (`nearbyintf` + `fegetenv`
+~19%). `Foundation/Common/FltOpts.hpp` routes every `toInt` / `toLargeInt` /
+`toIntFloor/Ceil` / `fastRound` / `Fixed(float)` through `std::nearbyint`
+(`FltOpts.hpp:140,148,159-168`). Its comment claims a "single cvtss2si", but
+without `-fno-math-errno`/`-ffast-math` clang emits a real libm call (and it
+blocks vectorization). Candidate fix: `-fno-math-errno` on the hot TUs, or a
+direct SSE conversion (`_mm_cvtss_si32`/`lrintf`).
+
+## Measuring frame rate
+
+**The focus-throttle gotcha — read first.** The engine throttles rendering to
+~5 fps whenever its window loses focus. So *any* FPS captured while another
+window is active — a glance at the overlay, a log parsed from a terminal —
+is the throttled background rate, not the real one. This silently poisons
+background A/B measurements (a `--render-frame-log` capture taken while you are
+typing elsewhere shows ~5 fps / 12 s-per-60-frames). Every measurement must
+either keep the game window focused for the whole capture, or use a mode that
+runs to completion in the foreground.
+
+Ways to get a number, least → most rigorous:
+
+- **`--show-fps` overlay.** `EngineDrawing.cpp:46-47` draws `iFPS`
+  (`1000/last-frame-ms`) and `aFPS` (`1000/GetAvgFrameDuration`, an 8-frame
+  average). Read-once, imprecise, focus-dependent. Fine for a glance, not for
+  a 5%-level A/B.
+
+- **`--render-frame-log` + log math.** Emits one `render frame:` line every
+  *exactly* 60 frames (`WorldFrameObserver.cpp:196-203`, `s_statsCountdown=60`),
+  each carrying a millisecond log timestamp. Exact average over a window is
+  `60 × (N−1) / (t_last − t_first)` across N consecutive in-world lines. Filter
+  out sparse menu/unfocused lines by inter-line gap:
+  ```sh
+  grep "render frame" cwr.log | sed -E 's/\x1b\[[0-9;]*m//g' | awk '
+    { t=$2; gsub(/]/,"",t); split(t,a,":"); ts[NR]=a[1]*3600+a[2]*60+a[3] }
+    END { n=NR; s=n; for(i=n;i>1;i--){ if(ts[i]-ts[i-1]<8) s=i-1; else break }
+          d=ts[n]-ts[s]; if(d>0) printf "aFPS=%.3f over %d frames\n",(n-s)*60/d,(n-s)*60 }'
+  ```
+  Still focus-dependent — only valid if the window stayed focused throughout.
+
+- **`-benchmark` mode — rigorous, deterministic, logged.** `--benchmark`
+  auto-loads `Users\Test\Missions\Benchmark.Abel\mission.sqm`
+  (`GameApplication.cpp:1684-1687`); once in gameplay (`GModeArcade`) it counts
+  300 frames, logging `BENCHMARK: t=.. aFPS=..` each second and a final
+  `BENCHMARK RESULT: {frames} frames in {s}s = {fps} avg FPS`
+  (`GameApplication.cpp:1043,1059`), then exits. Parse `BENCHMARK RESULT` out of
+  `--log-file` — no screen reading, fixed mission + fixed 300-frame count =
+  reproducible. Caveats: (1) it only measures in `GModeArcade`, so the mission
+  must reach gameplay with no blocking briefing; (2) wall-clock over 300 frames
+  is still focus-sensitive, so keep the window focused for the (short) run.
+  Setup (per the OFP wiki startup-parameters page): make a `Test` profile,
+  build a mission on **Malden (= island "Abel")** in the editor, save it as
+  `benchmark` so it lands at `Users/Test/Missions/Benchmark.Abel/mission.sqm`.
+  A deterministic, no-combat, unit-heavy patrol scene (all one side, `CYCLE`
+  waypoint loops — see `PERF-hotspot-profile.md`) makes it a stable CPU bench.
+
+  **`--benchmark` was broken on POSIX by two bugs — fixed 2026-07-18 (branch
+  `benchmark-posix-fix`, port `patch-apps_cwr_Game_GameApplication.cpp`):**
+  1. The benchmark branch (`GameApplication.cpp:1684`) set `LoadFile` but not
+     `AutoTest`, unlike the test-mission branch at :1681. Only
+     `if (AutoTest) StartAutoTest()` (`WorldImpl.cpp:2235`) boots `LoadFile` into
+     gameplay, so the mission never loaded — the game idled at the menu
+     (`GModeIntro`) and the `GModeArcade`-gated FPS tracking never fired.
+  2. The hardcoded path used Windows backslashes (`Users\Test\...`), which are
+     not separator-normalized before `StartIntro`'s `FileExist()`
+     (`WorldImpl.cpp:2219`) on POSIX, so the mission was never found (no "could
+     not boot" error — the whole block is skipped). Use forward slashes.
+
+  With both fixes, `--benchmark` boots `Users/Test/Missions/Benchmark.Abel/
+  mission.sqm` (resolves under `user_dir`, e.g. `~/.config/CWR/Users/Test/...`),
+  runs 300 frames in `GModeArcade`, and logs `BENCHMARK RESULT: N frames in Xs =
+  Y avg FPS`. **It runs at full speed even when the window is unfocused** (not
+  subject to the ~5 fps focus throttle), which makes it the rigorous, automatable
+  FPS measurement: launch `--benchmark --log-file f`, grep `BENCHMARK RESULT`.
+  The `Benchmark.Abel` mission must have units on valid Abel/Malden land
+  (`draw > 0`) or the scene is empty and the number is meaningless.
+
+- **Script commands** (`GameStateExtTestAudio.cpp`): `triFps`
+  (`1000/GetLastFrameDuration`), `triFrameCount`, `triMemoryMB` — callable from
+  mission scripts for custom in-mission instrumentation.
+
 ## CLI flags reference (diagnostics)
 
 From `engine/Poseidon/Foundation/Platform/AppConfig.cpp`. Not exhaustive
