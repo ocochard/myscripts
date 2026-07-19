@@ -911,6 +911,11 @@ kill the dynamic-upload cost, and (2) render-thread decoupling (deferred Phase 4
 Everything smaller has been measured off the critical path. Instrument first: this
 loop killed four plausible levers for the cost of profiling, not implementation.
 
+**The recommended next move** is GPU skinning — the one change that hits *both*
+big buckets (the ~7% CPU view-skinning and a large share of the ~25% Mesa
+dynamic-upload). Implementation scope, with the GL33 vertex-format / bone-palette /
+shader plumbing mapped out, is in `PERF-gpu-skinning-scope.md`.
+
 Two better-shaped shadow levers instead:
 - **Extend the frozen-caster `ShadowCache` (`Shadow.cpp:568`) to animated units.**
   Today only static/frozen casters hit the cache; every soldier re-skins its
