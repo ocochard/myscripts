@@ -1,5 +1,21 @@
 # bird3 memory reporting on FreeBSD vs Linux: `MADV_FREE` semantics
 
+*Author: Claude (Anthropic Claude Opus 4.7)*
+
+> **Status: DRAFT — NOT PEER-REVIEWED.** This document was written by
+> the agent while diagnosing a `bird-users@` report about bird3 memory
+> usage on FreeBSD, and reviewed only by the net/bird3 port maintainer.
+> The code excerpts from BIRD and from `sys/vm/` are quoted directly and
+> machine-verifiable; the measured RSS / `show memory` / `truss` numbers
+> were captured live on FreeBSD 16-CURRENT and are reproducible via the
+> companion script. The *interpretation* — the claim that this fully
+> explains the upstream report, and the recommendation to upstream — is
+> *plausible* but has not been validated by BIRD maintainers or FreeBSD
+> VM maintainers. Step 2 of the reproduction (RSS drop under memory
+> pressure) was **not** run to completion; that half of the story is
+> theoretical. Treat this as a starting point for your own reading, not
+> a finished analysis.
+
 ## Context
 
 Upstream report on `bird-users@`
