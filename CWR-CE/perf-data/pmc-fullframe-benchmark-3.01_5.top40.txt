@@ -1,0 +1,43 @@
+# Full-frame --benchmark profile, ser6 vsync=0, 122-unit no-combat Benchmark.Abel, pkg _5
+# ls_not_halted_cyc, 816552 samples, 12s log-gated window. Unfiltered (Mesa/kernel kept).
+# self%   samples  function
+  7.16%     58436  _ZN8Poseidon11AnimationRT20ApplyMatricesComplexERKNS_18AnimationRTWeightsEPNS_8LODShapeEiRKNS_10Foundation15StaticArrayAutoINS6_8Matrix4PEEE @ /usr/local/bin/PoseidonGame
+  3.43%     28017  _ZNK8Poseidon9Landscape17CheckIntersectionERKNS_10Foundation8Vector3PES4_iiRf @ /usr/local/bin/PoseidonGame
+  2.78%     22692  _ZNK8Poseidon9Landscape19IntersectWithGroundEPNS_10Foundation8Vector3PERKS2_S5_ff @ /usr/local/bin/PoseidonGame
+  2.49%     20351  _ZN8Poseidon10Foundation8Vector3P16SetFastTransformERKNS0_8Matrix4PERKS1_ @ /usr/local/bin/PoseidonGame
+  2.43%     19869  AcpiOsReadPort @ /boot/kernel/kernel
+  1.40%     11441  memcpy @ /lib/libc.so.7
+  1.38%     11236  _ZN16VertexBufferGL3312CopyVerticesERKN8Poseidon5ShapeE @ /usr/local/bin/PoseidonGame
+  1.21%      9851  _ZNK8Poseidon9Landscape15GroundCollisionERNS_21GroundCollisionBufferEPNS_6ObjectERKNS_5FrameEffbb @ /usr/local/bin/PoseidonGame
+  1.20%      9818  _ZNK8Poseidon9Landscape12RoadSurfaceYERKNS_10Foundation8Vector3PEPfS5_PPNS_7TextureEPPNS_6ObjectE @ /usr/local/bin/PoseidonGame
+  1.20%      9791  _ZNK8Poseidon9Landscape15ObjectCollisionERNS_15CollisionBufferEPNS_6ObjectERKNS_5FrameEb @ /usr/local/bin/PoseidonGame
+  1.05%      8565  _ZN8Poseidon10Foundation5QSortINS0_3RefINS_10SortObjectEEEEEvPT_iPFiPKS5_S8_E @ /usr/local/bin/PoseidonGame
+  0.95%      7776  _ZN8Poseidon14PrepareTextureEPNS_7TextureEfif @ /usr/local/bin/PoseidonGame
+  0.94%      7658  _ZN8Poseidon6Object12RecalcShadowEiRKNS_9FrameBaseEbPNS_18LODShapeWithShadowE @ /usr/local/bin/PoseidonGame
+  0.86%      7001  lock_delay @ /boot/kernel/kernel
+  0.82%      6671  _ZN8Poseidon11AnimationRT19ApplyMatricesSimpleERKNS_18AnimationRTWeightsEPNS_8LODShapeEiRKNS_10Foundation15StaticArrayAutoINS6_8Matrix4PEEE @ /usr/local/bin/PoseidonGame
+  0.73%      5932  mi_page_thread_collect_to_local @ /usr/local/bin/PoseidonGame
+  0.72%      5908  _ZNK8Poseidon16AnimationSection10SetTextureEPNS_8LODShapeEiPNS_7TextureE @ /usr/local/bin/PoseidonGame
+  0.70%      5684  0x168488f @ /usr/local/lib/libgallium-26.1.4.so
+  0.69%      5633  _ZNK8Poseidon11VertexTable10ScanMinMaxEPNS_10Foundation8Vector3PE @ /usr/local/bin/PoseidonGame
+  0.68%      5581  _ZN8Poseidon10Foundation7InvSqrtEf @ /usr/local/bin/PoseidonGame
+  0.65%      5299  _ZNK8Poseidon9Landscape16PredictCollisionERNS_22VehicleCollisionBufferEPKNS_6EntityEfff @ /usr/local/bin/PoseidonGame
+  0.58%      4762  _ZNK8Poseidon10Foundation8Vector3P12CrossProductERKS1_ @ /usr/local/bin/PoseidonGame
+  0.55%      4484  memset @ /lib/libc.so.7
+  0.54%      4442  _ZNK8Poseidon9Landscape8SurfaceYEff @ /usr/local/bin/PoseidonGame
+  0.54%      4411  strcasecmp_l @ /lib/libc.so.7
+  0.54%      4369  _ZNK8Poseidon12PolyVertices12BackfaceCullERKNS_13TLVertexTableE @ /usr/local/bin/PoseidonGame
+  0.52%      4227  _ZNK8Poseidon10Foundation8Vector3P10NormalizedEv @ /usr/local/bin/PoseidonGame
+  0.48%      3938  _ZN8Poseidon10Foundation8Matrix4P11SetMultiplyERKS1_S3_ @ /usr/local/bin/PoseidonGame
+  0.48%      3892  zfs_lz4_compress @ /boot/kernel/zfs.ko
+  0.48%      3889  _ZN8Poseidon5Scene12DrawExShadowEPNS_10SortObjectE @ /usr/local/bin/PoseidonGame
+  0.45%      3677  _ZN8Poseidon5PlaneC1ERKNS_10Foundation8Vector3PES4_ @ /usr/local/bin/PoseidonGame
+  0.44%      3626  0x1b8fdb6 @ /usr/local/lib/libgallium-26.1.4.so
+  0.43%      3519  _ZN8Poseidon10Foundation8Matrix4P11SetMultiplyERKS1_f @ /usr/local/bin/PoseidonGame
+  0.39%      3217  _ZL13CmpSurfaceObjPKN8Poseidon10Foundation3RefINS_10SortObjectEEES5_ @ /usr/local/bin/PoseidonGame
+  0.38%      3111  _ZN8Poseidon8LODShape23CalculateBoundingSphereEv @ /usr/local/bin/PoseidonGame
+  0.38%      3096  _ZNK8Poseidon11FogFunctionclEf @ /usr/local/bin/PoseidonGame
+  0.38%      3073  _ZN8Poseidon12PolyVertices4ClipERNS_13TLVertexTableERS0_RKNS_10Foundation8Vector3PEf @ /usr/local/bin/PoseidonGame
+  0.37%      3050  0x1b8fdae @ /usr/local/lib/libgallium-26.1.4.so
+  0.37%      3047  _ZN8Poseidon13TLVertexTable13DoPerspectiveERKNS_6CameraEj @ /usr/local/bin/PoseidonGame
+  0.37%      3035  0x189d1ac @ /usr/local/lib/libgallium-26.1.4.so

@@ -1,0 +1,12 @@
+[2026-07-19 12:32:20.651] [app-291f] [INFO] [CORE]    BENCHMARK: t=1.0s frame=227 iFPS=226.8 aFPS=226.8 | seg=11300 hit=11300 miss=0 steps=0 avgStep=0 | ground=109Mc genSeg=0Mc frame=15Mc | draw=0 clip=0
+[2026-07-19 12:32:21.658] [app-291f] [INFO] [CORE]    BENCHMARK: t=2.0s frame=291 iFPS=63.6 aFPS=144.9 | seg=3200 hit=3200 miss=0 steps=0 avgStep=0 | ground=53Mc genSeg=0Mc frame=40Mc | draw=0 clip=0
+[2026-07-19 12:32:22.666] [app-291f] [INFO] [CORE]    BENCHMARK: t=3.0s frame=370 iFPS=78.4 aFPS=122.7 | seg=3950 hit=3950 miss=0 steps=0 avgStep=0 | ground=61Mc genSeg=0Mc frame=42Mc | draw=0 clip=0
+[2026-07-19 12:32:23.672] [app-291f] [INFO] [CORE]    BENCHMARK: t=4.0s frame=452 iFPS=81.5 aFPS=112.4 | seg=4100 hit=4100 miss=0 steps=0 avgStep=0 | ground=56Mc genSeg=0Mc frame=39Mc | draw=0 clip=0
+[2026-07-19 12:32:24.673] [app-291f] [INFO] [CORE]    BENCHMARK: t=5.0s frame=529 iFPS=76.9 aFPS=105.3 | seg=3850 hit=3850 miss=0 steps=0 avgStep=0 | ground=58Mc genSeg=0Mc frame=44Mc | draw=0 clip=0
+[2026-07-19 12:32:25.678] [app-291f] [INFO] [CORE]    BENCHMARK: t=6.0s frame=601 iFPS=71.6 aFPS=99.7 | seg=3600 hit=3600 miss=0 steps=0 avgStep=0 | ground=56Mc genSeg=0Mc frame=44Mc | draw=0 clip=0
+[2026-07-19 12:32:26.691] [app-291f] [INFO] [CORE]    BENCHMARK: t=7.0s frame=672 iFPS=70.1 aFPS=95.4 | seg=3550 hit=3550 miss=0 steps=0 avgStep=0 | ground=57Mc genSeg=0Mc frame=44Mc | draw=0 clip=0
+[2026-07-19 12:32:27.700] [app-291f] [INFO] [CORE]    BENCHMARK: t=8.1s frame=742 iFPS=69.4 aFPS=92.2 | seg=3500 hit=3500 miss=0 steps=0 avgStep=0 | ground=58Mc genSeg=0Mc frame=45Mc | draw=0 clip=0
+[2026-07-19 12:32:28.705] [app-291f] [INFO] [CORE]    BENCHMARK: t=9.1s frame=811 iFPS=68.7 aFPS=89.6 | seg=3450 hit=3450 miss=0 steps=0 avgStep=0 | ground=57Mc genSeg=0Mc frame=47Mc | draw=0 clip=0
+[2026-07-19 12:32:29.705] [app-291f] [INFO] [CORE]    BENCHMARK: t=10.1s frame=885 iFPS=74.0 aFPS=88.0 | seg=3700 hit=3700 miss=0 steps=0 avgStep=0 | ground=58Mc genSeg=0Mc frame=40Mc | draw=0 clip=0
+[2026-07-19 12:32:30.706] [app-291f] [INFO] [CORE]    BENCHMARK: t=11.1s frame=954 iFPS=68.9 aFPS=86.3 | seg=3450 hit=3450 miss=0 steps=0 avgStep=0 | ground=55Mc genSeg=0Mc frame=51Mc | draw=0 clip=0
+[2026-07-19 12:32:31.404] [app-291f] [INFO] [CORE]    BENCHMARK RESULT: 1000 frames in 11.8s = 85.1 avg FPS

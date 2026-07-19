@@ -293,6 +293,13 @@ non-animated, non-ClipLand obstacles (most trees/walls/rocks) that deformation
 is unnecessary. Skipping it there cuts cost from every raycast with no threading,
 helps t420, and is a prerequisite for any future parallelization.
 
+> **DEBUNKED (2026-07-19) — do not implement this. See "The `Object::Intersect`
+> rigid-skip is a non-win" below.** The audit above did not trace into
+> `AnimateComponentLevel`'s existing `IsAnimated` guard: the deformation it
+> proposes skipping is *already* skipped for rigid obstacles. The residual
+> cost is sub-noise, and rigid objects are already thread-safe, so it is not a
+> parallelization prerequisite either.
+
 If parallelization is ever revisited: parallelize Path B at row granularity over
 a deterministic dirty-cell batch (schedule kept identical across clients), after
 H1/H2 are fixed and the budget is lifted deterministically. Not before.
@@ -529,3 +536,386 @@ Net for the campaign: both opts are correct and reduce CPU work; ship them on
 the profile evidence. Their FPS payoff is small on ser6 (present-capped in
 normal play anyway) and concentrated in heavy combat on CPU-bound hardware
 (t420), where a clean FPS number is inherently hard to get.
+
+## The `Object::Intersect` rigid-skip is a non-win (2026-07-19)
+
+Scoped the "single-thread win worth doing regardless" flagged in the
+CheckVisibility audit above (skip `Animate`/`Deanimate` for rigid obstacles in
+the raycast path) as the next optimization. **Verdict: don't implement it — the
+deformation it proposes skipping is already gated off for rigid obstacles by
+existing code.** The audit did not trace into `AnimateComponentLevel`'s guard.
+
+**The raycast path.** `Landscape::Visible → CheckVisibility → Object::Intersect`
+reaches the line-intersection overload (`World/Scene/ObjectIntersect.cpp:744-928`),
+which calls `AnimateComponentLevel(geomLevel)` (`:753`) before the intersection
+math and `Deanimate(geomLevel)` (`:928`) after. `IsAnimated(geomLevel)` is even
+already computed at `:744` for the rejection factor.
+
+**Why the expensive work is already skipped for rigid obstacles.** The predicates
+line up exactly, so `IsAnimated(level)==false ⟺ Animate(level) mutates nothing`:
+
+- `AnimateComponentLevel(level)` (`World/Scene/Object.cpp:526`):
+  ```cpp
+  bool change = IsAnimated(level);
+  Animate(level);
+  if (change) _shape->InvalidateConvexComponents(level);
+  ```
+  For a rigid obstacle `change==false` → convex components are never invalidated.
+- `Animate(level)` (`Object.cpp:316`): its only costly work is two `O(NPos)`
+  vertex loops — the destruction morph (guarded `_isDestroyed && _destroyPhase>0
+  && GetDestructType()!=DestructTree`) and the ClipLand surface-conform loop
+  (guarded `GetOrHints() & (ClipLandKeep|ClipLandOn) && GLOB_LAND`). Those are the
+  **same two conditions** `IsAnimated` (`Object.cpp:205-231`) returns true for
+  (plus `GetTotalDammage()>0`, which alone triggers neither loop). So for a rigid,
+  undamaged, non-ClipLand tree/wall/rock, both branches are dead and `Animate` is
+  a no-op but for the guard checks.
+- Downstream re-derivation is consequently free: `RecalculateNormalsAsNeeded()`
+  is `if(!_faceNormalsValid) RecalculateNormals(true)` (`Graphics/.../Shape.hpp:436`)
+  → no-op, normals were never invalidated; `cc->RecalculateAsNeeded()` (`:769`)
+  → no-op, components were never invalidated.
+- `Deanimate(level)` (`Object.cpp:471`) residual for a rigid object = one
+  `VertexTable::RestoreMinMax()` = 4 vector copies + a bool (`Graphics/.../Vertex.cpp:318`).
+
+**What a "skip if rigid" guard would actually remove per rigid raycast:** ~2
+function calls, one `_shape->Level()` lookup, a few hint-mask reads, one redundant
+`IsAnimated` re-eval inside `AnimateComponentLevel`, and 4 vector copies. Sub-noise
+— on a campaign that already could not resolve a provable 2.5% CPU cut in FPS. The
+`CheckVisibility` 6.79% is real intersection math (the plane-clip loop at `:802-863`,
+`IntersectBBox`, the sensor matrix), not redundant animation.
+
+**Not a parallelization prerequisite either.** The H1 shared-`LODShape` race
+(audit above) exists only for *animated* objects — they mutate shared geometry.
+Rigid objects mutate nothing (`Animate` is a no-op), so they are already
+thread-safe. Skipping them changes nothing for a future job system; the real H1
+fix is thread-local scratch geometry for the *animated* case, unaffected by this.
+
+**Implication for what to profile next.** The campaign's sharpest earlier finding
+(this doc, "pmcstat during --benchmark"): Phase 1 provably removed ~2.57% CPU yet
+FPS did not move even on CPU-bound t420, because the `draw=0` frame is bound by a
+per-frame cost *off* the AI/collision critical path (terrain draw / present). Taken
+with this finding, the top of the pmcstat table (`CheckVisibility` and the collision
+cluster) is not what gates the frame, and it holds no cheap redundant work to remove.
+Next lever is therefore **not** another off-critical-path CPU micro-opt but to
+identify what actually bounds the frame: profile the terrain-draw / present path
+under `--benchmark`, and measure the render-submit path the `draw=0` bench excludes
+yet which still gates the frame.
+
+## Full-frame breakdown: what actually gates the frame (2026-07-19)
+
+Profiled the whole frame under `--benchmark` with **nothing filtered** (Mesa,
+`amdgpu.ko`, kernel kept — for this question the driver frames *are* the present
+path, unlike earlier profiles that treated them as noise). ser6, vsync=0
+(genuinely CPU-bound: **~70 iFPS steady**, main thread saturated), the 122-unit
+no-combat Benchmark.Abel scene, `ls_not_halted_cyc`, 816k samples over a
+log-gated 12 s window.
+
+### Harness (the invocation that actually works)
+
+The plain `--benchmark` auto-load is **broken in the shipped `_5` binary**: it
+sits at the menu forever (the benchmark branch never boots the mission), and
+`--no-splash` does **not** fix it. The reliable trigger is the explicit
+`--test-mission` path, which sets `AutoTest` + logs `Test mission: … -> …`:
+
+```
+# vsync=0 in ~/.config/CWR/graphics.cfg first (CPU-bound bench)
+PoseidonGame -C ~/.local/share/CWR/base \
+  --benchmark --test-mission ~/.config/CWR/Users/Test/Missions/Benchmark.Abel \
+  --no-splash --no-sound --log-file bench.log --timeout 120 &
+# wait for the first "BENCHMARK:" line (4 s warm-up done, steady state), then:
+sudo pmcstat -S ls_not_halted_cyc -O bench.pmc sleep 12
+```
+
+`draw={}` in the `BENCHMARK:` line = `tp.drawMeshCalls` (a terrain-mesh counter),
+**not** objects — objects *are* drawn (shadow + object passes). The old "draw=0
+⇒ nothing rendered" reading was wrong.
+
+### Subsystem breakdown (816k samples, unfiltered)
+
+| share | bucket | representative symbols |
+|------:|--------|------------------------|
+| **~25%** | Mesa/GPU submit + present | `libgallium-26.1.4.so` (mostly unsymbolized `0x…`), `amdgpu_device_rreg` |
+| **~15%** | **animation skinning, inside the draw path** | `AnimationRT::ApplyMatricesComplex` 7.1%, `Vector3P::SetFastTransform` 2.5%, `Object::RecalcShadow`, `Matrix4P::SetMultiply` |
+| ~23% | other engine (misc draw/sim) | not yet drilled |
+| **~11%** | terrain-collision queries | `Landscape::CheckIntersection` 3.4%, `IntersectWithGround` 2.8%, `GroundCollision`, `RoadSurfaceY`, `ObjectCollision` |
+| ~10% | kernel | `AcpiOsReadPort` (timekeeping), `lock_delay`, `zfs_lz4_compress` |
+| ~8% | terrain/mesh draw-prep | `VertexBufferGL33::CopyVertices`, `PrepareTexture`, `ScanMinMax` |
+| ~5% | libc/malloc | `memcpy`, `memset`, mimalloc |
+| ~2% | draw-order sort | `QSort<Ref<SortObject>>`, `CmpSurfaceObj` |
+
+### Findings
+
+1. **There is no single "terrain-draw wall." The frame is split** across GPU
+   submit (~25%), animation (~15%), terrain-collision (~11%), mesh-prep (~8%).
+   This *explains* the earlier "freed AI cycles land in slack" result: **~25%
+   of the frame sits in the Mesa driver on the main thread** (draw-call
+   submission + present), which no AI/collision micro-opt can touch. The "bound
+   by terrain draw / present" hypothesis was directionally right but conflated
+   two separate costs (driver-submit vs terrain compute).
+
+2. **`Landscape::CheckVisibility` — the post-Phase-1 #1 (6.79%) — is essentially
+   absent here.** It is combat-specific (sensor visibility matrix + firing LOS),
+   and this bench has no combat. Confirms the standing caveat: the no-combat
+   bench under-measures combat AI. It cleanly exposes the render/animation/terrain
+   baseline that combat *sits on top of* — so both profiles are needed, not one.
+
+3. **The #1 engine-optimizable cost is animation skinning during draw, not
+   terrain draw.** `ApplyMatricesComplex` splits roughly evenly between the
+   view-draw pass (`DrawObjectsAndShadowsPass1`, opaque draw at `drawLOD`,
+   ~1520 samples) and the shadow work invoked from `Pass2` (~1570) — each unit
+   is skinned ~twice per frame. **But the two skins are at DIFFERENT LODs, so
+   they are not naively redundant** — see the correction below. Still ~15% of
+   frame and the top engine lever.
+
+4. **`SetFastTransform` is 2.5% here** — directly contradicting the Phase-2
+   verdict ("SSE buys nothing"), which was measured on the *combat* profile where
+   skinning was a smaller share. In an animation-heavy scene the transform is a
+   real cost. (It is called from `ApplyMatricesComplex`, so hoisting redundant
+   per-bone work in the caller beats micro-opting the primitive.)
+
+5. **~50 terrain segments are drawn per frame** (`seg≈3500` at ~70 fps), each
+   likely its own draw call — a large part of the ~25% Mesa submit bucket.
+   **Batching terrain segments into fewer draw calls** is the lever for the
+   driver cost, but it is a render-architecture change, not a micro-opt.
+
+### Next levers (ranked by ROI)
+
+1. **Skin-once across the view + shadow skins** (~half of `ApplyMatricesComplex`
+   7%). **VERIFIED PARTIAL — see correction below.** The shadow skins a distinct
+   coarser `shadowLOD`, so the view skin cannot simply be reused; the win is
+   conditional (near units where `shadowLOD == drawLOD`) and smaller than a
+   blanket 2× would suggest.
+2. **Terrain draw-call batching** — attacks the ~25% Mesa submit bucket; largest
+   potential but a rendering-architecture change.
+3. **Terrain-collision caching** — units re-query ground height/collision every
+   frame (`RoadSurfaceY`/`SurfaceY`/`GroundCollision`, ~11%); cache per-unit
+   per-frame where the position is unchanged.
+
+Data: `perf-data/pmc-fullframe-benchmark-3.01_5.*` (archived). Note the
+`_5` binary carries terrain instrumentation ahead of the source HEAD
+(`ground`/`genSeg`/`frame` Mc + `draw`/`clip` counters in the `BENCHMARK:` line);
+that source is not in the current checkout.
+
+### Correction: the shadow skin is a distinct LOD, not a reusable duplicate (2026-07-19)
+
+Verified the "skin-once across passes" lever against the code. It is **weaker
+than first stated** — the two per-unit skins are at different LODs:
+
+- `SortObject` carries separate `drawLOD` and `shadowLOD` (`SceneDraw.cpp:667,
+  1140`), selected by different logic (`shadowLOD` via
+  `FindShadowLevelWithComplexity`, `:1016`).
+- `Object::Draw(drawLOD)` unconditionally `Animate(drawLOD)`s the view LOD
+  (`Object.cpp:857`) — skin #1, in `Pass1`.
+- The shadow work runs inside `Pass2`. With shadow-maps **off (the default,
+  `SceneDraw.cpp:1703`)** the projected path loops all casters and calls
+  `DrawExShadow` (`:1738-1746`) → `level = oi->shadowLOD` (`:1900`) →
+  `Object::PrepareShadow(shadowLOD)` → `Animate(shadowLOD)` + `RecalcShadow`
+  (`Shadow.cpp:551-554`; `RecalcShadow` is the 0.94% profile symbol) — skin #2,
+  at the **coarser shadow LOD**.
+- The newer shadow-map path (`SceneShadowPass.cpp:285-304`,
+  `RenderShadowMapDepthPass`, off by default) is already the optimized version:
+  it re-selects an even coarser caster LOD (`casterLodBias`, "never finer than
+  the draw LOD") and caches static casters (`s_staticCasterCache`).
+
+**Consequence.** You cannot reuse the view-LOD skinned mesh for the shadow — the
+shadow deliberately wants a coarser mesh. The "skin once" win is therefore
+conditional (only near units where `shadowLOD` happens to equal `drawLOD`), not
+a blanket ~3.5%. Two better-shaped shadow levers instead:
+
+### Prototype: coarser-shadowLOD bias (2026-07-19) — INCONCLUSIVE / no clear win
+
+Prototyped the "bias `shadowLOD` coarser" lever: at the projected-shadow
+`shadowLOD` selection (`SceneDraw.cpp:~1213`, `Scene::AdjustComplexity`),
+multiply the shadow complexity target by `shadowLodBias = 0.25` so
+`FindShadowLevelWithComplexity` picks a coarser level. Shipped as port patch
+`patch-engine_Poseidon_World_Scene_SceneDraw.cpp`, built RelWithDebInfo/unstripped
+via poudriere as `CWR-CE-3.01_6`, profiled with the same vsync=0 `--benchmark
+--test-mission` + log-gated pmcstat harness.
+
+Self-time, `_5` baseline (bench4) vs `_6` bias (bench6):
+
+| function | `_5` | `_6` |
+|----------|-----:|-----:|
+| `ApplyMatricesComplex` | 7.16% | 6.32% |
+| `ApplyMatricesSimple` | 0.82% | 0.69% |
+| `RecalcShadow` | 0.94% | **0.95%** |
+| `CheckIntersection` (terrain, control) | 3.43% | 3.26% |
+| `IntersectWithGround` (terrain, control) | 2.78% | 2.71% |
+
+**Verdict: not a demonstrated win.** Two reasons the ~0.84 pp `ApplyMatricesComplex`
+drop cannot be banked:
+1. **Confounded by scene variance.** bench6 frames were ~28% heavier (1207 vs
+   945 pmc samples/frame; steady iFPS ~66 vs ~72) — the no-combat patrol is not
+   a static scene, so unit positions (hence visible density and the %
+   denominator) differ run-to-run by more than the effect. Single before/after
+   pair can't resolve <1 pp against that.
+2. **`RecalcShadow` is flat.** It is a pure shadow-path cost that scales with
+   shadow-LOD vertex count; if the bias had actually coarsened shadow meshes it
+   would have dropped too. Flat `RecalcShadow` suggests the casters' shadow LOD
+   did *not* meaningfully coarsen — likely the soldier models have no coarser
+   shadow LOD to drop to (few LODs), or these casters get `shadowLOD` via a path
+   other than the patched general-loop site (e.g. the `level==0` pre-pass at
+   `:1159` or a `forceDrawLOD` case). FPS did not improve.
+
+**Before tuning the bias further, verify the mechanism takes effect** — instrument
+the runtime `shadowLOD` histogram (log per-LOD caster counts) with bias 1.0 vs
+0.25. If the distribution doesn't shift, the lever is dead for this content and
+the effort belongs on the frozen-caster `ShadowCache` extension instead. Guessing
+bias values against a ~10%-noise FPS/scene floor repeats the campaign's
+measurement-wall mistake. Data: `perf-data/pmc-shadowlodbias-3.01_6.*`.
+
+### Histogram verification (2026-07-19) — lever confirmed DEAD; two bugs found
+
+Built an instrumented `_8` that logs the runtime shadow-LOD histogram (unbiased
+vs biased level per caster). Two findings, one procedural, one substantive:
+
+**Bug 1 — the `_6` bias was dead code.** `SceneDraw.cpp` has *two*
+`Scene::AdjustComplexity()` bodies: `#if !DENSITY_LOD` (line ~778, the ACTIVE
+build) and `#else` (line ~1024). The `_6`/`_7` edits went in the `#else`
+(`DENSITY_LOD`) copy, which is not compiled — so the bias never ran and the `_6`
+"prototype" measured a binary identical to `_5` (the bench6 null result was
+100% scene noise). The instrumentation string being absent from the binary is
+what exposed this. The active shadow-LOD selection is a *separate* function,
+`Scene::AdjustShadowComplexity` (line 638), and it picks the LOD by **distance**
+(`LevelShadowFromDistance2`), not by the complexity budget. The corrected bias
+multiplies `distance2` (like the shadow-map path's `casterLodBias`).
+
+**Bug 2 — even correctly applied, the lever is negligible.** Instrumented run,
+300000 caster evaluations over 1000 frames (`shadowLodDistBias = 2.0`, i.e.
+distance²×4):
+
+```
+n=300000 shifted=705 same=10558 invis=288737 oneLevel=0
+baseHist=[2510,0,617,88,4735,3313,0,0]   (LOD 0..7)
+biasHist=[2510,0,  0, 0,5440,3313,0,0]
+```
+
+- **96.2% of evaluations are non-casters** (`invis`): only ~11 objects/frame cast
+  a shadow at all. The shadow-caster population is small.
+- **The bias shifts only 705 casters** (~0.7/frame, LOD2+LOD3 → LOD4); 94% are
+  unchanged.
+- **It misses the expensive casters:** the near, high-detail **LOD0 casters
+  (2510) do not move** — distance²×4 still resolves LOD0 — and the far LOD5
+  (3313) are already coarsest. Only cheap mid-distance casters coarsen. Since
+  shadow-skin vertex cost is dominated by the few near LOD0 casters, coarsening
+  the cheap far ones saves almost nothing.
+- `oneLevel=0`: models *have* multiple LODs, so it is not a missing-LOD problem —
+  the distance-bias simply can't touch the near casters without a much larger
+  bias that would visibly degrade near-unit shadows.
+
+**Conclusion: abandon the shadow-LOD-bias lever.** It is not where the skinning
+cost is. This also corrects the earlier "shadow skinning ≈ half of
+`ApplyMatricesComplex`" estimate (which came from the flawed Pass1/Pass2 arc
+split): with only ~11 shadow casters/frame vs ~122 view-drawn units,
+`ApplyMatricesComplex` is dominated by **view** skinning, not shadow. The real
+skinning lever, if any, is the view path (hoisting redundant per-bone work in
+`ApplyMatricesSimple`/`Complex`, or SoA batching), not shadows. Data:
+`perf-data/pmc-shadowlodbias-3.01_6.*` (dead-code `_6`) and the `_8` bench log.
+
+## View-skinning bone-run structure (2026-07-19) — instrumented
+
+Instrumented `ApplyMatricesComplex` (`RtAnimation.cpp:863`, the 7% hotspot) in an
+`_9` build to measure the per-vertex bone structure and test the doc's
+"re-extract `val.Orientation()` per vertex" redundancy hypothesis. Benchmark run,
+190000 calls / 58.1M vertices:
+
+```
+verts=58.1M bonePairs=63.7M ws=[0, 53.1M, 4.44M, 544k, 6.6k, 0,0,0]
+single=53.1M singleRunSame=40.3M multi=5.0M paletteMax=25
+```
+
+- **91.4% of vertices are single-bone** (`wsize==1`), 7.6% two-bone, ~1% three+.
+  Avg 1.095 bones/vertex. The shapes go through `ApplyMatricesComplex` (not the
+  cheaper `Simple`) only because ~8% of verts are multi-bone, which flips
+  `weights.IsSimple()` false for the whole shape.
+- **75.9% of single-bone vertices repeat the previous vertex's bone**
+  (`singleRunSame`) — long same-bone runs exist.
+- **Bone palette is tiny: 25 matrices**, vs 63.7M bone-pairs processed.
+
+**The doc's hypothesis is WRONG — no orientation redundancy to remove.**
+`Matrix4P::Orientation()` (`Math3DP.hpp:480`) is `__forceinline const Matrix3P&
+Orientation() const { return _orientation; }` — it returns a **const reference**
+to a stored member, zero cost. There is no per-vertex extraction to hoist, and no
+"orientation palette" to precompute (the orientation already lives in the matrix).
+Likewise `Matrix4Val mat = matrices[sel]` is a cheap indexed copy of a
+cache-resident 64-byte matrix, not a recompute. The per-vertex `SetMultiply`
+(matrix×vector) transforms are **genuine irreducible arithmetic** — each vertex
+must be transformed.
+
+**The one real (modest) lever the data exposes:** 91.4% of vertices are
+single-bone yet run through the multi-bone blend machinery — the `wsize>0` branch
+builds `res`/`resNorm`, applies `res *= pww` / `resNorm *= pww` (the weight, which
+for a single-bone vertex is effectively 1.0 — `ApplyMatricesSimple` ignores it
+entirely at `:977`), and sets up a `for w=1..wsize` loop that never iterates.
+A `wsize==1` fast path (direct `SetPos = mat*pos; SetNorm = mat.Orientation()*norm`,
+as `Simple` does) skips ~2 wasted vector×scalar multiplies + the blend scaffolding
+for 92% of 58M verts/run. Estimated ceiling ~1-1.5% of frame (a slice of the 7%),
+low-risk. The larger structural play is **SIMD over same-bone runs** (76% of
+single-bone verts share the prior bone → transform 4 verts × 1 matrix with the
+existing `V3Quad` SoA path), but that is a real refactor, not a micro-opt.
+
+**Verdict:** view skinning is mostly irreducible transform arithmetic; the only
+clean micro-lever is the single-bone fast path (~1%), and the original
+Orientation-redundancy premise does not hold. Data:
+`perf-data/viewskin-boneruns-3.01_9.txt`.
+
+## Terrain draw-call batching (2026-07-19) — DEAD LEVER (nothing to batch)
+
+Tested the "~25% Mesa = terrain draw-call submission, batch the segments" premise
+without any rebuild, using the existing `--render-frame-log` flag
+(`WorldFrameObserver.cpp:196`, logs `passes/draws/maxDrawsInPass` every ~60 frames):
+
+```
+render frame: passes=2 draws=31 maxDrawsInPass=29
+render frame: passes=2 draws=12 maxDrawsInPass=10
+```
+
+**The whole frame issues ~12-31 draw calls, not hundreds.** A frame is only
+draw-call-bound in the thousands; coarse OFP-era terrain draws in a handful of
+large HWTL segments (`Landscape::DrawGround → shape->Draw`, `LandscapeRender.cpp:1341`),
+not per-tile. There is nothing to batch.
+
+This also **falsifies the "~25% Mesa = draw submission" assumption** (from the
+full-frame breakdown above): you cannot spend 25% of a 14 ms frame submitting ~20
+draws. The `libgallium`/`amdgpu` cost is almost certainly **dynamic vertex
+streaming** — the CPU-transform pipeline (software skinning `ApplyMatrices*`,
+software terrain transform `DoTransformPoints`) regenerates geometry every frame
+and re-uploads it to GL buffers. That is per-vertex upload cost, not per-draw, and
+it is **architectural** (the fix is GPU-side transform: vertex-shader skinning +
+GPU terrain — a rewrite, not a tweak).
+
+**Measurement caveat:** the AutoTest benchmark camera under-renders (the software
+`DrawMesh` path is unused — `draw=0` in every `BENCHMARK:` line — and only ~20
+draws issue). It is a clean CPU-*simulation* bench but a poor *rendering* bench.
+To characterize the render/Mesa cost properly, profile **real gameplay with the
+player camera** driven into a terrain vista, not `--benchmark`. That render
+profile is the one gap this campaign never closed.
+
+## Levers investigated and killed (instrument-first summary)
+
+Each candidate was falsified by a cheap measurement (code read, histogram, or an
+existing counter) **before** a real implementation was spent on it:
+
+| lever | verdict | falsified by |
+|-------|---------|--------------|
+| `Object::Intersect` rigid-skip | already done by the existing `IsAnimated` guard | code read |
+| shadow-LOD bias | negligible — near LOD0 casters (the skin-cost-dominant ones) don't shift | runtime histogram (`_8`) |
+| orientation-precompute in `ApplyMatricesComplex` | non-lever — `Matrix4P::Orientation()` is a free `const&` | code read |
+| terrain draw-call batching | nothing to batch (~20 draws/frame) | `--render-frame-log` |
+| single-bone skinning fast path | real but ~1%, off critical path (present-bound), determinism-sensitive | view-skin histogram (`_9`) |
+
+**Campaign bottom line.** On ser6 + this workload the `--benchmark` frame is bound
+by present/GPU-driver work (dynamic vertex upload, ~25%) and irreducible per-object
+CPU math — no single cheaply-removable hotspot remains. The only levers that would
+move it are large: (1) GPU-side transform (vertex-shader skinning + GPU terrain) to
+kill the dynamic-upload cost, and (2) render-thread decoupling (deferred Phase 4).
+Everything smaller has been measured off the critical path. Instrument first: this
+loop killed four plausible levers for the cost of profiling, not implementation.
+
+Two better-shaped shadow levers instead:
+- **Extend the frozen-caster `ShadowCache` (`Shadow.cpp:568`) to animated units.**
+  Today only static/frozen casters hit the cache; every soldier re-skins its
+  shadow LOD each frame. A soldier whose pose changed little between frames could
+  reuse its prior shadow silhouette.
+- **Bias the projected-path `shadowLOD` coarser** (as the shadow-map path already
+  does via `casterLodBias`) so the shadow skin is over fewer vertices — the
+  cheapest change, at some shadow-silhouette fidelity cost.
