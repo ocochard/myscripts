@@ -58,8 +58,7 @@ awk '/^#define[[:space:]]+MADV_(FREE|DONTNEED|NORMAL|WILLNEED)[[:space:]]/' \
 ################################################################################
 banner "Generating configs (200k / 400k static routes)"
 
-python3 - <<'PY' 2>/dev/null || awk '
-BEGIN {
+awk 'BEGIN {
   print "log stderr all;"
   print "router id 10.0.0.1;"
   print "protocol device {}"

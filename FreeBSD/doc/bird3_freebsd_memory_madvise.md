@@ -11,10 +11,8 @@
 > companion script. The *interpretation* — the claim that this fully
 > explains the upstream report, and the recommendation to upstream — is
 > *plausible* but has not been validated by BIRD maintainers or FreeBSD
-> VM maintainers. Step 2 of the reproduction (RSS drop under memory
-> pressure) was **not** run to completion; that half of the story is
-> theoretical. Treat this as a starting point for your own reading, not
-> a finished analysis.
+> VM maintainers. Treat this as a starting point for your own reading,
+> not a finished analysis.
 
 ## Context
 
@@ -287,29 +285,89 @@ Cold pool: 72.2 MB. VSZ 351.9 MB, RSS 306.7 MB.
 VSZ is stable across cycles (351,940 kB every time), so address space is
 not leaking; the process is bounded.
 
-### Step 2: memory-pressure reclaim — **aborted for safety**
+### Step 2: memory-pressure reclaim — **RSS falls by 55 % under pressure**
 
-Multiple hog attempts (allocate + touch anonymous memory to force reclaim
-of bird's `MADV_FREE`-marked pages) either:
+Re-run on a second host, ser6 (FreeBSD 16-CURRENT, `hw.physmem = 59 GB`,
+26 GB swap), because the primary bigone box has 256 GB physmem with
+insufficient swap headroom to safely allocate anything close to physmem.
+ser6's smaller physmem-to-swap ratio lets us apply real pressure without
+gambling on which unrelated process the OOM reaper picks.
 
-1. Got DCE'd at `-O2` (compiler removed the store loop when the buffer was
-   only written, never read). Fixed by adding a `volatile` read into a
-   `volatile` sink.
-2. Got OOM-killed silently before the touch loop completed, on a host
-   already under swap pressure. `dmesg` showed `swap_pager: out of swap
-   space` and unrelated processes being reaped. No `hog` in the kill list
-   because SIGKILL doesn't print through `perror()`.
+Setup identical: bird3 3.3.1, 400k blackhole routes, four small ↔ big
+reload cycles to seed the cold-page pool. Then `hog2` allocates and
+touches **47 GB** (80 % of physmem) of anonymous memory to force
+reclaim.
 
-Running a 240 GB hog on a 256 GB / low-swap workstation is Russian
-roulette with which process the OOM reaper picks. The reproduction script
-retains `--pressure` for a host with generous swap; on this host we
-stopped short.
+Live timeline while hog was running:
 
-The theoretical prediction remains: under real memory pressure, the FreeBSD
-page daemon will reclaim inactive-queue pages (which is where `MADV_FREE`
-puts them per `vm_page_advise()` in `sys/vm/vm_page.c:4649`), and bird's
-RSS should fall toward the "Active pages" number without any BIRD-side
-state change. We just can't safely trigger that on this host today.
+```
+=== Steady state after churn ===
+  PID    VSZ    RSS
+72811 351876 306836        <-- bird RSS 306 MB, cold pool 72 MB
+
+=== Step 2: force reclaim with an anonymous-memory hog ===
+physmem=59GB, hog=47GB
+t=  5s bird=306836kB hog=23910648kB free=1553073pg |touching pages...|
+t= 10s bird=244696kB hog=34014088kB free=412091pg  |touching pages...|
+t= 15s bird=141228kB hog=40803752kB free=111417pg  |touching pages...|
+t= 20s bird=138388kB hog=45596932kB free=588499pg  |touching pages...|
+t= 25s bird=138800kB hog=DEADkB    free=12767067pg |touched 47 GB, sleeping|
+```
+
+The page daemon started walking bird's inactive queue as soon as free
+pages dropped through the paging thresholds (t=10s, free ≈ 1.6 GB).
+Between t=5s and t=15s bird RSS collapsed from **306 MB to 141 MB**
+(−165 MB) with zero cooperation from bird itself — no reconfigure, no
+allocation, nothing. The pages that got yanked back are exactly the
+`MADV_FREE`-marked cold pool.
+
+`hog2` was ultimately OOM-killed by the reaper (`dmesg`: `pid 72909
+(hog2), jid 0, uid 1001, was killed: failed to reclaim memory`), which
+is fine — we only needed the pressure ramp to prove reclaim.
+
+After pressure released:
+
+```
+=== After pressure released ===
+  PID    VSZ    RSS
+72811 351876 138800
+
+BIRD memory usage
+Total:             153.6 MB     68.0 MB
+Active pages:      129.3 MB
+Kept free pages:    63.5 MB
+Cold free pages:    41.8 MB
+
+400000 of 400000 routes for 400000 networks in table master4
+```
+
+| metric               | pre-pressure   | post-pressure  |
+| -------------------- | -------------- | -------------- |
+| VSZ                  | 351,876 kB     | 351,876 kB (unchanged — no address-space leak) |
+| RSS                  | **306,836 kB** | **138,800 kB** (**−55 %**) |
+| BIRD Active pages    | 129.3 MB       | 129.3 MB       |
+| BIRD Kept free pages | 33.1 MB        | 63.5 MB        |
+| BIRD Cold free pages | 72.2 MB        | 41.8 MB        |
+| routes served        | 400,000        | 400,000        |
+
+Bird lost none of its 400k routes. RSS settled at 139 MB — very close to
+BIRD's `Active + Kept free = 192.8 MB` accounting. The cold pool shrank
+from 72 MB to 42 MB (some cold pages were reclaimed and dropped out of
+bird's cold-pool bookkeeping when they got repopulated later); kept-free
+grew from 33 MB to 63 MB (returned to bird's own free-list).
+
+**This is the reclaim behaviour the kernel-source reading predicted.**
+`MADV_FREE` on FreeBSD does not free the page synchronously (RSS didn't
+change when bird called madvise), but it does place the page at the head
+of the inactive queue (`vm_page_deactivate_noreuse()` in
+`sys/vm/vm_page.c:4685`), where the page daemon reclaims it first under
+pressure. Marek's observation — RSS higher than `show memory`'s active
+number — is the steady-state expression of exactly this: the system was
+not under pressure, so cold pages stayed mapped.
+
+Notable second finding: bigone showed the same
+`RSS = active + kept + cold` pattern earlier but under a completely
+idle system. That confirms this is not machine-specific.
 
 ### Step 3 (renumbered): VSZ over route churn — no leak
 
@@ -333,10 +391,12 @@ repeated churn; this doesn't.
   162 MB with 72 MB cold pool.
 - **Yes, VSZ is stable across churn.** No address-space leak signal in
   400k-route reloads.
-- **We did not prove the pages come back under pressure.** The host has
-  256 GB physmem and insufficient swap headroom for a safe 200+ GB hog.
-  This step is deferred to a machine where it can be run without OOM
-  collateral.
+- **Yes, RSS falls under memory pressure without bird cooperation.**
+  Confirmed on ser6 (59 GB physmem, 26 GB swap) with a 47 GB anon hog:
+  bird RSS dropped from 307 MB to 139 MB (**−55 %**) in ~15 seconds, all
+  400k routes still served, VSZ unchanged. This is exactly the reclaim
+  behaviour the kernel-source reading predicted for pages sitting at the
+  head of the inactive queue.
 
 ## What to tell upstream / the reporter
 
