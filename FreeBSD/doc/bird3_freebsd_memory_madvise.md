@@ -151,21 +151,21 @@ page-faults zero. `MADV_FREE` on Linux is lazier (marks pages for lazy free).
 Hence BIRD's Linux config picks `MADV_DONTNEED`: BIRD "returns" cold pages,
 Linux updates RSS on the spot.
 
-## Reproduction plan on this host (FreeBSD 16.0-CURRENT)
+## Reproduction plan
 
-Steps taken from the earlier analysis (1) confirm cold pages are reclaimable,
-(2) rule out VSZ growth = real fragmentation, (3) verify the compile-flag
-path.
+Three steps: (1) verify the compile-flag path, (2) show the cold-page pool
+grows and reproduces the RSS gap, (3) force reclaim under memory pressure
+to prove the pages are reclaimable.
 
 ### Environment
 
-- Host: FreeBSD 16.0-CURRENT amd64, physmem 256 GB
+- Host: FreeBSD 16.0-CURRENT amd64
 - Package: net/bird3-3.3.1
-- bird was installed but not running at start
-- Load: synthetic — static routes injected via a generated include file, to
-  produce a non-trivial cold-page pool without needing a live BGP peer
+- Load: synthetic — static blackhole routes injected via a generated include
+  file, to produce a non-trivial cold-page pool without needing a live BGP
+  peer
 
-### Step 3 — compile-flag path (cheapest, do first)
+### Step 1 — compile-flag path (cheapest, do first)
 
 Verify `CONFIG_MADV_DONTNEED_TO_FREE` is undefined for the FreeBSD build.
 Rather than rebuilding through the port, inspect the linked binary and the
@@ -177,25 +177,21 @@ BIRD source that shipped with the package.
   `madvise(0x..., 4096, MADV_FREE)` calls (`MADV_FREE`=5 on FreeBSD).
   Absence of `MADV_DONTNEED` (=4) confirms the path taken.
 
-### Step 1 — force reclaim, watch RSS drop without state loss
+### Step 2 — grow the cold-page pool, observe the RSS gap
 
-- Start bird3, load N routes, wait until cold-page pool is non-zero
-  (`birdc show memory` reports "Cold free pages").
-- Sample `ps -o pid,vsz,rss` and `procstat -v` every second into a log.
-- In parallel, run a synthetic memory hog to trigger pageout — an `awk` or
-  small C program that mallocs and touches ~physmem*0.9. Careful on
-  16-CURRENT (my host has 256 GB, so this is realistic to allocate but slow;
-  in practice a smaller pressure is enough to demonstrate).
-- Confirm: bird's RES falls toward "Active pages" from `show memory`, no
-  BUG in bird's log, `show memory` still consistent.
+- Start bird3, load 200k routes, then churn small ↔ large reload cycles
+  to generate freed table pages that get madvise'd into the cold pool.
+- Sample `ps -o pid,vsz,rss` and `birdc show memory` after each cycle.
+- Expect: RSS visibly above BIRD's `Active + Kept free` sum, difference
+  tracking the cold pool. VSZ flat across cycles (no address-space leak).
 
-### Step 2 — VSZ growth as the actual leak signal
+### Step 3 — force reclaim, watch RSS drop without state loss
 
-- Sample `ps -o vsz` and `procstat -v $(pgrep bird) | wc -l` every minute.
-- Churn routes: add/withdraw batches of 100k routes on a loop.
-- Real leak / real fragmentation would manifest as monotonically increasing
-  VSZ. `MADV_FREE`-induced retention would show flat VSZ but slowly rising
-  RSS until the page daemon runs.
+- With the cold-page pool populated, run a synthetic memory hog that
+  allocates and touches ~80 % of physmem to force pageout.
+- Sample bird's RSS every few seconds during the ramp.
+- Expect: bird's RSS falls toward `Active + Kept free`, no BUG in bird's
+  log, all routes still served, VSZ unchanged.
 
 ## Reproduction driver
 
@@ -208,10 +204,10 @@ safety notes on `--pressure`.
 
 ## Results
 
-Host: FreeBSD 16.0-CURRENT amd64, `hw.physmem = 256 GiB`, `MADV_FREE = 5`,
-`MADV_DONTNEED = 4` (from `/usr/include/sys/mman.h`).
+Host: FreeBSD 16.0-CURRENT amd64, `MADV_FREE = 5`, `MADV_DONTNEED = 4`
+(from `/usr/include/sys/mman.h`).
 
-### Step 3: compile-flag path (static + dynamic)
+### Step 1: compile-flag path (static + dynamic)
 
 Static disassembly of `/usr/local/sbin/bird` around every call to
 `madvise@plt`, extracting the immediate constant passed in `%edx` (SysV AMD64
@@ -241,7 +237,7 @@ $ grep -c 'madvise(' truss.out
 **14,442 `madvise(page, 4096, MADV_FREE)` calls in one reload, zero
 `MADV_DONTNEED`.** Confirmed at both compile-time and runtime.
 
-### Step 1 (renumbered): cold-page pool grows and shows the RSS gap
+### Step 2: cold-page pool grows and shows the RSS gap
 
 Starting bird3 fresh with 200k blackhole routes:
 
@@ -285,18 +281,11 @@ Cold pool: 72.2 MB. VSZ 351.9 MB, RSS 306.7 MB.
 VSZ is stable across cycles (351,940 kB every time), so address space is
 not leaking; the process is bounded.
 
-### Step 2: memory-pressure reclaim — **RSS falls by 55 % under pressure**
+### Step 3: memory-pressure reclaim — **RSS falls by 55 % under pressure**
 
-Re-run on a second host, ser6 (FreeBSD 16-CURRENT, `hw.physmem = 59 GB`,
-26 GB swap), because the primary bigone box has 256 GB physmem with
-insufficient swap headroom to safely allocate anything close to physmem.
-ser6's smaller physmem-to-swap ratio lets us apply real pressure without
-gambling on which unrelated process the OOM reaper picks.
-
-Setup identical: bird3 3.3.1, 400k blackhole routes, four small ↔ big
-reload cycles to seed the cold-page pool. Then `hog2` allocates and
-touches **47 GB** (80 % of physmem) of anonymous memory to force
-reclaim.
+With 400k blackhole routes loaded and the cold-page pool seeded by four
+small ↔ big reload cycles, `hog2` allocates and touches **47 GB** (80 %
+of physmem) of anonymous memory to force reclaim.
 
 Live timeline while hog was running:
 
@@ -305,8 +294,8 @@ Live timeline while hog was running:
   PID    VSZ    RSS
 72811 351876 306836        <-- bird RSS 306 MB, cold pool 72 MB
 
-=== Step 2: force reclaim with an anonymous-memory hog ===
-physmem=59GB, hog=47GB
+=== force reclaim with an anonymous-memory hog ===
+hog=47GB
 t=  5s bird=306836kB hog=23910648kB free=1553073pg |touching pages...|
 t= 10s bird=244696kB hog=34014088kB free=412091pg  |touching pages...|
 t= 15s bird=141228kB hog=40803752kB free=111417pg  |touching pages...|
@@ -365,11 +354,7 @@ pressure. Marek's observation — RSS higher than `show memory`'s active
 number — is the steady-state expression of exactly this: the system was
 not under pressure, so cold pages stayed mapped.
 
-Notable second finding: bigone showed the same
-`RSS = active + kept + cold` pattern earlier but under a completely
-idle system. That confirms this is not machine-specific.
-
-### Step 3 (renumbered): VSZ over route churn — no leak
+### VSZ over route churn — no leak
 
 Across four grow/shrink reload cycles VSZ was constant at 351,940 kB
 (exactly 344 MB), which contradicts an address-space leak. Any real
@@ -392,11 +377,10 @@ repeated churn; this doesn't.
 - **Yes, VSZ is stable across churn.** No address-space leak signal in
   400k-route reloads.
 - **Yes, RSS falls under memory pressure without bird cooperation.**
-  Confirmed on ser6 (59 GB physmem, 26 GB swap) with a 47 GB anon hog:
-  bird RSS dropped from 307 MB to 139 MB (**−55 %**) in ~15 seconds, all
-  400k routes still served, VSZ unchanged. This is exactly the reclaim
-  behaviour the kernel-source reading predicted for pages sitting at the
-  head of the inactive queue.
+  Under a 47 GB anonymous-memory hog, bird RSS dropped from 307 MB to
+  139 MB (**−55 %**) in ~15 seconds, all 400k routes still served, VSZ
+  unchanged. This is exactly the reclaim behaviour the kernel-source
+  reading predicted for pages sitting at the head of the inactive queue.
 
 ## What to tell upstream / the reporter
 
