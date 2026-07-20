@@ -14,16 +14,37 @@ sketches in `PERF-hotspot-profile.md:180-203` with today's measured framing.
   (GPU + CPU both finish in ~half the 16.6 ms budget). Multithreading moves FPS
   ONLY where the main thread is the bound.
 
+## Goal (2026-07-20, clarified)
+
+Improve FPS on the **t420 (i5-2520M, 2c/4t, 2011) too**, and more broadly: add
+modern optimization techniques that **reduce CPU *and* GPU load** so the game runs
+better on *any* machine, old or modern. The load reduction is the portable win;
+whether it shows as FPS depends on each machine's bound.
+
+**Key correction from this session:** all measurement so far was on ser6, which is
+**present/vsync-bound** — so CPU/GPU-load cuts vanish into slack and FPS doesn't
+move. The **t420 is genuinely CPU-bound** (`PERF-low-fps-cpu-bound.md:48-58`, main
+thread ~90% of one core at ~20 fps), so the *same* load cuts should translate to
+FPS there. In particular **GPU skinning (~7-15% CPU removed) is likely a real t420
+FPS win that ser6 could not show** — untested only because the **t420 is powered
+off (~1 week)**. Re-run `prof_bench.sh` + `--gpu-timing` on the t420 when it's back
+to confirm, and to pick the next technique from *its* bottleneck (CPU-T&L vs
+GPU-fill vs submit) rather than ser6's.
+
 ## When this actually helps (set expectations)
 
 | config | bound | MT payoff |
 |---|---|---|
 | ser6, vsync=1 (60) | present/vblank wait | **none** — frame already idle-waits |
 | ser6, vsync=0 (~80) | main-thread CPU (~12.5 ms) | **yes** — the headroom lever |
-| t420, CPU-bound (~20) | main-thread CPU | **yes** — biggest relative win |
+| t420, CPU-bound (~20) | main-thread CPU (2c/4t) | **yes** — the FPS target |
 
-So MT is for **uncapped / high-refresh play and weak CPUs**, not the default 60-cap
-ser6. Worth doing, but not the thing that makes the *capped* game feel faster.
+MT spreads the single-threaded main loop across cores: modest on the t420's 4
+threads, larger on ser6's 16 — but it moves FPS only where the main thread is the
+bound (t420, or uncapped ser6), not the capped-60 default. Because the t420 is
+offline, near-term MT work is validated by **correctness** (determinism gate) +
+**work actually spreading off the main thread** (`pmcstat`/`ps -H` on ser6), with
+the FPS confirmation deferred to the t420.
 
 ## What is already parallel
 
