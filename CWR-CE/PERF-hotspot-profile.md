@@ -684,8 +684,11 @@ sudo pmcstat -S ls_not_halted_cyc -O bench.pmc sleep 12
    coarser `shadowLOD`, so the view skin cannot simply be reused; the win is
    conditional (near units where `shadowLOD == drawLOD`) and smaller than a
    blanket 2× would suggest.
-2. **Terrain draw-call batching** — attacks the ~25% Mesa submit bucket; largest
-   potential but a rendering-architecture change.
+2. **Terrain draw-call batching** — ~~attacks the ~25% Mesa submit bucket; largest
+   potential but a rendering-architecture change.~~ **KILLED — nothing to batch;
+   see the "Levers investigated and killed" table below (~20-28 draws/frame,
+   falsified by `--render-frame-log`). Re-confirmed 2026-07-20: live counter
+   `render frame: passes=2 draws=28`.**
 3. **Terrain-collision caching** — units re-query ground height/collision every
    frame (`RoadSurfaceY`/`SurfaceY`/`GroundCollision`, ~11%); cache per-unit
    per-frame where the position is unchanged.
