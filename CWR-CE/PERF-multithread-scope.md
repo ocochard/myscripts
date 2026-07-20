@@ -88,6 +88,38 @@ path, with a **read/compute phase then a serial apply/draw phase**:
 4. **Pipeline (B)** only if data parallelism plateaus and the snapshot surface is
    small enough (post-GPU-skinning) to be worth the risk.
 
+## Gate validation (2026-07-20)
+
+Built `--determinism-log` (World.cpp): each `Simulate()` tick logs an
+order-independent XOR of per-entity FNV-1a over `ID()` + the 12 affine floats of
+`WorldTransform()` (= authoritative `Transform()`), across `_vehicles` +
+`_fastVehicles`. Validated by diffing two `--benchmark` runs of the 122-unit
+patrol mission:
+
+| gate state | runs identical through | remaining source |
+|---|---|---|
+| raw | tick **4** | variable timestep |
+| + fixed dt (0.02 s) | tick **~897** | wall-clock RNG seed |
+| + fixed `GRandGen` seed | tick **~872** | a wall-clock-*timed* event |
+
+- **Fixed dt** (`World::Simulate` forces 0.02 s under the flag) killed the
+  timestep jitter — the dominant early divergence.
+- **Fixed seed** (`WorldInit.cpp` seeds `GRandGen` from a constant, not
+  `GlobalTickCount()+time()`) removed the RNG-stream difference.
+- **Residual:** still diverges at ~tick 872-898, at a *variable* tick across run
+  pairs, while every tick before it is **bit-identical**. That signature = a
+  discrete event triggered off **wall-clock/real time** (fires at the same real
+  second but a different tick number, since the benchmark's fps varies), mutating
+  a checksummed entity. Candidate: a periodic weather/effect or AI timer keyed to
+  `GlobalTickCount()` rather than sim `deltaT`. Route it through sim time for a
+  fully clean gate.
+
+**Usable now.** ~870 ticks (~14 s of sim) of bit-exact reproducibility is far more
+than enough to catch a parallelization determinism break — a race in
+`CheckVisibility`/`OcclusionView` would diverge in the *first* ticks, not at 870.
+So step 2 can proceed against this baseline; closing the residual (one more
+real-time -> sim-time fix) makes the gate airtight but is not a blocker.
+
 ## Measurement
 
 Uncapped (`vsync=0`) on the 197-unit `--benchmark` mission: `prof_bench.sh` for FPS
