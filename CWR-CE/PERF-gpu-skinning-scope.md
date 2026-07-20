@@ -6,6 +6,110 @@ campaign: it is the **only** lever that attacks *both* of the two biggest
 measured frame-cost buckets at once. Companion to `PERF-hotspot-profile.md`
 (measurements) — this doc is the implementation scope, not a repeat of the data.
 
+## Implementation status (2026-07-19)
+
+In progress on branch `ocochard/CWR-CE:gpu-skinning` (based on the freebsd+GOG
+tip `8fc693`, the FreeBSD-buildable tree — `main` lacks the portability fixes).
+Built via poudriere by repointing the port at the branch (jail `builder`, tree
+`default`; the README's `-p official` is stale). Everything below is inert until
+the master switch flips: `ENGINE_CONFIG.enableGpuSkinning` (default **off**), so
+the live renderer stays byte-identical until items 4+5 land.
+
+- **Item 1 — vertex format: DONE, built.** Corrected from the original plan:
+  do **not** extend `SVertex`. Its stride is shared by the global `_vaoMesh`
+  streaming VAO (`EngineGL33_2DRendering.cpp:44-48`, reads a TLVertex buffer at
+  `sizeof(SVertex)`), so growing it corrupts the 2D/streaming path. Added a
+  separate `SSkinnedVertex` (+`SetupSkinnedVertexLayout`, integer bone attribs,
+  weight rescaled /128 in the VS) used only by per-shape skinned VBOs.
+- **Item 2 — bone bindings + skinned VBO fill: DONE, built.** `SkinVertexBinding`
+  (u8×4 idx + u8×4 weight) stored on `VertexTable`, parallel to `_pos`; filled at
+  `Skeleton::Prepare` from `AnimationRTWeights[level]`, quantized identically to
+  the CPU `ApplyMatrices` path. `VertexBufferGL33` gained a `_skinned` mode
+  (`= GpuSkinningEnabled() && Shape::HasSkin()`).
+- **Item 3 — retain palette + BonePalette UBO: DONE (build pending).** Palette
+  retained per-object on `Man` (`AutoArray<Matrix4> _bonePalette`, filled in
+  `Animate` only when the switch is on) and exposed via a new virtual
+  `IAnimator::GetBonePalette`. `Shape::Draw` uploads it once per skinned shape
+  draw when `VertexBuffer::IsSkinned()`. `s_boneUBO` = `BonePalette{mat4
+  bones[128]}` at binding 3, cloned from the `WorldInstances` UBO plumbing.
+  `Matrix4` confirmed 64-byte 4×4 (uploaded like the world matrix, no expansion).
+- **Item 4 — skinning VS + program selection: DONE (build pending).** `vsSkinned`
+  is a standalone clone of `vsTransform` (same UBOs/outs/lit body verbatim, so the
+  hot-path shader is untouched) that blends ≤4 bone matrices from the `BonePalette`
+  UBO before the world transform; reproduces `ApplyMatricesComplex` exactly (Σw=1
+  ⇒ blend-then-transform ≡ transform-then-sum). New `VSSkinned` program row
+  (`NVertexShaders` 3→4). Selection: `Engine::SelectSkinnedMesh(bool)` brackets a
+  skinned shape's sections in `Shape::Draw`; a `_meshSkinnedActive` flag remaps
+  `VSTransform→VSSkinned` at the per-section `ApplyPassState` choke point (survives
+  per-section re-selection), shadow pass untouched. Both VS glslang-validated.
+- **Item 5 — static bind-pose view mesh + switch wiring: DONE (build pending).**
+  Shipped the *safe half* — GPU skinning now renders and the per-frame re-upload
+  is gone, with the CPU/sim paths bit-identical:
+  - (a) `CopyVertices` uploads `OrigPos`/`OrigNorm` (bind pose; falls back to
+    `Pos`/`Norm` if not yet saved) for skinned buffers — the VS re-skins from bind
+    pose, so uploading CPU-skinned verts would double-transform.
+  - (b) Skin bindings are **opt-in** (`Skeleton::Prepare`/`AnimationRT::Prepare`
+    `gpuSkin` flag, passed true only by infantry — the only object retaining a
+    palette) and **graphical-LOD-only** (`Resolution < 1000`). Geometry/shadow/
+    memory LODs stay CPU (MP determinism; shadow pass never sees the skinned
+    stride). Vehicles with skeletal anims (scud, parachute) stay CPU.
+  - (c) Skinned VBOs are `GL_STATIC_DRAW`, uploaded once; `Update()` skips the
+    per-frame re-copy → removes the dynamic-streaming (~libgallium) cost.
+  - (d) CLI `--gpu-skinning` → `ENGINE_CONFIG.enableGpuSkinning`.
+
+- **Item 5b — drop CPU skin for GPU-skinned view LODs: DONE (build pending).** The
+  second hotspot bucket. `Man::Animate` skips `AnimationRT::ApplyMatrices` when the
+  LOD is GPU-skinned (`shape->HasSkin() && enableGpuSkinning`) — the VBO holds the
+  static bind pose and the VS skins from the palette, so the per-vertex CPU
+  transform is pure waste. Palette still built/retained. Coarse LODs (no skin
+  bindings) still CPU-skin → collision/shadow/bounding bit-identical (determinism).
+  With CPU skin skipped, `Pos` stays bind pose → the item-5 `CopyVertices` fallback
+  uploads the correct bind pose. Also hardened `Shape::Draw`: a GPU-skinned shape
+  with no palette this frame draws its static bind pose through the normal mesh VS
+  (skinned VAO locations 0–2 read fine) rather than skinning from a stale shared
+  `BonePalette` UBO.
+  **Risk to confirm visually:** the view LOD's `Pos` is now bind pose, not
+  CPU-skinned — needs a pass to confirm nothing sync-uncritical reads it (muzzle /
+  attach points). The doc's determinism analysis says only coarse LODs feed those.
+
+- **Still deferred (item 5e):** vehicle/prop palette retention — replicate the `Man`
+  `GetBonePalette` seam on other skinned proxies before enabling their GPU skinning.
+
+## Benchmark A/B (2026-07-20) — FPS-neutral on ser6; CPU cut is profile-proven
+
+Measured with `prof_bench.sh` (this dir): `--benchmark --test-mission
+~/.config/CWR/Users/Test/Missions/Benchmark.Abel` (197 units, uncapped), 5 runs
+each via `ministat`.
+
+```
+        N    Min    Max   Median   Avg    Stddev
+base    5   75.2   85.5   77.1    79.94   5.03
+gpu     5   67.5   80.5   76.5    75.40   4.79
+No difference proven at 95.0% confidence
+```
+
+**Verdict: no significant FPS difference.** Same outcome, and same reason, as the
+CPU-opt campaign (see `PERF-hotspot-profile.md`): the frame is bound by a
+per-frame cost off the animation critical path (terrain/present), so a real
+CPU-work reduction does not move FPS on this scene/hardware.
+
+- **Profile (the acceptance evidence):** `AnimationRT::ApplyMatricesComplex` =
+  **6.75%** of frame CPU (3875 samples, 100% from `Man::Animate`) in baseline,
+  **0** with `--gpu-skinning`. The CPU skin of the view LOD is provably removed
+  (plus the per-frame view-mesh re-upload). This is the win; FPS just can't show
+  it here.
+- **Optimization passes** (both landed): (1) no per-frame palette `Realloc` +
+  orphaned `BonePalette` UBO; (2) batched the `VSTransform↔VSSkinned` program
+  switch across consecutive skinned draws (~394/frame → ~2). Neither moved FPS
+  out of the noise — expected, since FPS was never the bound.
+
+**Where it would pay off:** a genuinely animation-CPU-bound config (t420 ~20 FPS)
+or a present-bound one where the removed re-upload lowers the present ceiling.
+On ser6 it is correct and CPU-lighter but FPS-neutral. Lands **off by default**
+(`--gpu-skinning` / `ENGINE_CONFIG.enableGpuSkinning`); judge by the profile, per
+the campaign's own rule. Visual A/B: soldiers skin correctly; non-skinned meshes
+(terrain, trees, tanks) unaffected by the batched program-switch.
+
 ## Why (the two buckets it hits)
 
 From the full-frame `--benchmark` profile (see `PERF-hotspot-profile.md`,
@@ -79,10 +183,11 @@ skin step ahead of the existing transform.
 
 ### Work items
 
-1. **Vertex format — add bone attributes.** Extend `SVertex` with
-   `u8vec4 boneIdx` (loc 3) and `u8vec4 boneWeight` (loc 4, normalized) — +8 B/vtx.
-   Wire in `SetupSVertexLayout` (`GLVertexAttribLayouts.hpp:61`). The
-   `AnimationRTPair{char sel; u8 weight}` format maps 1:1.
+1. **Vertex format — add bone attributes.** (Superseded — see Implementation
+   status: use a *separate* `SSkinnedVertex`, not an extension of `SVertex`,
+   because `_vaoMesh` shares the `SVertex` stride.) Bone attributes at loc 3/4,
+   read as *integer* attribs (weight rescaled /128 in the VS, not GL-normalized).
+   The `AnimationRTPair{char sel; u8 weight}` format maps 1:1.
 
 2. **Fill bone attributes (static).** In `VertexBufferGL33::CopyVertices`
    (`EngineGL33_VertexBuffer.cpp:93`), populate boneIdx/weight from the shape's

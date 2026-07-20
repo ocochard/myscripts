@@ -551,6 +551,23 @@ Ways to get a number, least → most rigorous:
   The `Benchmark.Abel` mission must have units on valid Abel/Malden land
   (`draw > 0`) or the scene is empty and the number is meaningless.
 
+  **Exact command (ser6, verified 2026-07-20) — copy this, do not improvise:**
+  ```
+  env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/xdg \
+    PoseidonGame -C ~/.local/share/CWR/base --no-splash --benchmark \
+    --test-mission ~/.config/CWR/Users/Test/Missions/Benchmark.Abel [--gpu-skinning]
+  ```
+  The load-bearing part is `--test-mission` pointing at the **Test-profile**
+  mission `~/.config/CWR/Users/Test/Missions/Benchmark.Abel` (197 units,
+  ~120 FPS). Pitfalls that wasted a whole session: `--benchmark` **alone** sits
+  at the menu here; and `--test-mission ~/.local/share/Cold War Assault/missions/
+  benchmark.abel` is the WRONG (empty) mission — renders ~1500 FPS, meaningless.
+  `draw=0` is normal and does NOT mean nothing renders — it is `tp.drawMeshCalls`,
+  a terrain-mesh-path counter; objects (soldiers, tanks, shadows) still render
+  fully (see PERF-hotspot-profile.md:628). So this is a real rendered-scene
+  benchmark, not CPU-sim-only. Frame count = `benchmarkMaxFrames` in the port
+  patch (keep ~1000 ≈ 8 s; 10000 ≈ 83 s/run).
+
 - **Script commands** (`GameStateExtTestAudio.cpp`): `triFps`
   (`1000/GetLastFrameDuration`), `triFrameCount`, `triMemoryMB` — callable from
   mission scripts for custom in-mission instrumentation.
