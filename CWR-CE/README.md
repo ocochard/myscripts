@@ -3,6 +3,38 @@
 Living reference for the CWR-CE (Arma: Cold War Assault - Remastered Community
 Edition) port + upstream contributions. Not a spec — updated as we learn.
 
+## START HERE (fresh session onboarding)
+
+Read in this order, then open the one scope doc for the thread you're resuming:
+
+1. **`DEBUGGING.md`** — build/run loop + the **exact benchmark command line**
+   (`--no-splash --benchmark --test-mission ~/.config/CWR/Users/Test/Missions/Benchmark.Abel`),
+   what `draw=` means, poudriere loop. Read this FIRST — it's the recurring
+   time-sink if skipped.
+2. This README (orientation: checkouts, branches, build override).
+3. The **`PERF-*.md`** scope doc for the active work (see *Performance work* below).
+
+**Build config is currently in dev state:** the port
+(`~/freebsd-ports/games/CWR-CE/Makefile`) points at `GH_ACCOUNT=ocochard`,
+`GH_TAGNAME=gpu-skinning` (fork branch), not the stock upstream tag — revert
+to stock when the feature work lands. This host is **ser6** (present/vsync-bound;
+FPS-neutral); FPS wins are validated on **t420** (CPU-bound) when it's online.
+
+## Performance work (scope + findings docs)
+
+- `PERF-multithread-scope.md` — **most recent thread.** MT main-loop (task-pool
+  parallel-for), the `--mt-lod` pattern, CPU-load distribution, and the
+  **determinism gate + rare-Heisenbug hunt** (categorization closed as
+  document-and-move-on).
+- `PERF-gpu-skinning-scope.md` — GPU vertex-shader skinning (implemented, off by
+  default via `--gpu-skinning`; item 5e vehicle/prop skinning still open).
+- `PERF-gpu-frametime-scope.md` — `--gpu-timing` GL_TIMESTAMP breakdown; ser6 =
+  present-bound.
+- `PERF-hotspot-profile.md` — pmcstat hotspots; terrain draw-call batching
+  investigated and **KILLED** (don't re-derive).
+- `PERF-low-fps-cpu-bound.md` — the CPU-bound-on-old-hardware framing.
+- `prof_bench.sh` — 5-run ministat FPS harness.
+
 ## Companion docs in this directory
 
 - `DEBUGGING.md` — hangs, crashes, logging, CLI flags, `--mod`
