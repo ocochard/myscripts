@@ -196,6 +196,34 @@ NOT determinism-critical (render-only), so the runtime verify is the whole gate:
 determinism-gated draw-loop / sim restructure — the Phase-4/5 lift — and are
 unmeasurable until the t420. GPU skinning is the key enabler for the animation one.
 
+## CPU-load measurement (2026-07-21) — pattern distributes, but LOD is too fine-grained
+
+Can't measure FPS on ser6 (present-bound), but CPU-load distribution IS measurable
+here. Split `--mt-verify` out of `--mt-lod` so a plain `--mt-lod` run measures true
+parallel load, then pmcstat (`ls_not_halted_cyc`) on the 197-unit scene, serial vs
+`--mt-lod`, ~10 s each:
+
+- **Distribution PROVEN.** The `--mt-lod` call graph shows the LOD work on the
+  **enkiTS task threads** — `Poseidon::(anon)::RangeTask::ExecuteRange(enki::
+  TaskSetPartition)` ← `TaskPool::ParallelFor`. That symbol is absent in the serial
+  run. The pattern genuinely spreads per-object work across cores.
+- **But load impact is NEGATIVE for these loops.** Total samples: serial **427k**
+  vs `--mt-lod` **473k** (**~+11% CPU**), and the main thread now shows
+  `enki::TaskScheduler::WaitforTask` — it dispatches the tiny LOD work then blocks
+  on it. No main-thread reduction.
+- **Why:** LOD selection over ~122 objects is ~microseconds; the enkiTS dispatch +
+  `WaitforTask` + task-thread spin overhead exceeds the work saved. Classic
+  too-fine-grained parallelism.
+
+**Rule this establishes (for the next person):** the parallel-for pattern is
+correct and distributes, but **only parallelize loops where per-object work ≫ the
+~µs dispatch cost.** The cheap analysis loops (LOD, shadow-LOD) fail that test —
+`--mt-lod` proves the machinery but is net-negative and **should stay off**. Go
+straight for the **heavy** per-object work (animation ~15%, collision ~11%), which
+clears the bar — but those are the loops behind the determinism-gated Phase-4/5
+restructure. So: no more parallelizing analysis loops; the next real step is the
+restructure, measured on the t420.
+
 ## Measurement
 
 Uncapped (`vsync=0`) on the 197-unit `--benchmark` mission: `prof_bench.sh` for FPS
