@@ -262,6 +262,51 @@ log-diffing — **valgrind memcheck / MSAN** for the uninitialized read, or
 confirm/deny a race or pointer-order dependence. That's the right next tool if/when
 airtight MP determinism is the goal; it's not a blocker for the MT validation work.
 
+### Follow-up (2026-07-21) — categorization attempts, both inconclusive; bug is rarer than first measured
+
+Tried the two categorizing tools above. Neither pinned it — and the reason is
+informative: **the divergence is far rarer than the early 1-2/10 suggested.**
+
+- **valgrind — blocked, not usable as-is.** Three obstacles, in order:
+  1. **mimalloc.** The binary statically links `mimalloc-static` built `MI_OVERRIDE=ON`
+     (owns global `new`/`delete`; `Core/GlobalOperators.cpp` excluded to avoid dup
+     symbols — see `engine/Poseidon/CMakeLists.txt:67-71,351-352`). valgrind's own
+     malloc/new interception collides with mimalloc's arena → **SIGSEGV in early
+     init**. `--soname-synonyms=somalloc=nouserintercepts` cut errors 95k→209 but
+     didn't fix the crash.
+  2. **`--simulate` (the ideal headless, no-GL target) is itself broken** — SIGSEGVs
+     *natively* too (not valgrind): NULL-deref at `WorldInit.cpp:117`
+     (`_scene.Init(_engine, nullptr)` — `_engine` is null in headless). The game's own
+     `CrashHandler` catches it. So a clean valgrind run would need the full GL
+     `--benchmark` (slow, Mesa noise) unless `--simulate` is fixed first.
+  3. FreeBSD valgrind (3.27.1) is less mature than Linux's.
+  To make valgrind viable = a **no-mimalloc poudriere rebuild** (drop `libmimalloc.so`
+  from `LIB_DEPENDS`, re-enable `GlobalOperators.cpp`) **plus** fixing `--simulate` or
+  eating GL noise. Real yak-shave; deferred. (valgrind *did* prove it can flag
+  uninitialized reads in the game's own code — benign `strcatLtd`/`Bstring.hpp`
+  fixed-buffer hits — once it runs, so the mechanism works.)
+- **ASLR-off A/B — ran clean, inconclusive.** Clean-gate binary (no per-entity log),
+  15 runs each under `proccontrol -m aslr -s disable` vs stock:
+  `ASLR-off: 0/15`, `ASLR-on: 0/15`. The A/B can only categorize if the **baseline**
+  reproduces the divergence — it didn't fire at all.
+- **The real finding: the rate is a few percent, not ~10-15%.** Across the recent
+  clean-gate + per-entity-log builds the divergence hit **0 times in ~85 runs**
+  (0/35 + 0/30 ASLR + 0/20), while the *earliest* builds hit 1/6 and 1/10. At a ~3%
+  true rate, 0/85 is plausible (the early 1/6 was the unlucky tail). No code change
+  fixed it (the diverging serial-terrain build and the clean-gate build share
+  fixed-dt+seed+parallel-terrain); it's the **same rare bug**, just too infrequent to
+  catch reliably in 15-30-run batches — which is exactly why every categorization
+  (log-diff, ASLR) keeps coming up empty.
+
+**Net:** the residual is a **rare (~few-%) intermittent** that resists cheap
+categorization. The gate's usability verdict is **unchanged and, if anything,
+stronger** — the sim reproduces bit-exact in ~95-98% of runs, so a parallelization
+break (early + every run) is trivially distinguishable. **Decision: document and move
+on.** Pinning it would need either large batches (100+ runs to catch it, then
+categorize) or a CPU-contention batch (loads all cores to widen a race window — the
+discriminating test for "race"), on top of the no-mimalloc valgrind rebuild. Not worth
+it unless airtight MP determinism becomes a hard requirement.
+
 ## Measurement
 
 Uncapped (`vsync=0`) on the 197-unit `--benchmark` mission: `prof_bench.sh` for FPS
