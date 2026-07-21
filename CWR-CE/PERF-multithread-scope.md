@@ -224,6 +224,44 @@ clears the bar — but those are the loops behind the determinism-gated Phase-4/
 restructure. So: no more parallelizing analysis loops; the next real step is the
 restructure, measured on the t420.
 
+## Determinism residual hunt (2026-07-21) — a rare Heisenbug; gate is usable-but-not-airtight
+
+Hunted the tick-~873 divergence the gate surfaced. Findings:
+
+- **It's intermittent and rare** — ~1-2 of 10 runs diverge (at ~tick 873); the rest
+  reproduce **bit-exact for 1000+ ticks**. A deterministic-sim event would diverge
+  every run at the same tick; this doesn't, so it's a **race / nondeterministic
+  input**, not a missed constant.
+- **Ruled out** (each verified): variable timestep (fixed 0.02), the `GRandGen`
+  wall-clock seed (fixed), other RNG instances (none — all use `GRandGen`),
+  wall-clock reads in AI/entities (none), stateful `GRandGen` on task threads
+  (terrain/clutter use the position-seeded *stateless* variant; `RandomValue()`
+  does `_seed++`, not thread-safe, but nothing off-main-thread calls it), audio
+  (`DynSound::Simulate` is main-thread), and **parallel terrain-segment generation**
+  (forcing it serial did NOT fix it — so it's not that thread, and not the only
+  frame-level parallelism after all).
+- **It's a Heisenbug.** Adding per-entity hash logging (to pinpoint the culprit
+  entity) **suppressed it — 0 of 35 runs diverged** vs 1-2/10 without. So the
+  observation perturbs the timing/layout that triggers it. Log-diffing can't
+  localize it.
+
+**Most likely: uninitialized memory or a subtle non-terrain race** (both timing/
+layout-sensitive, matching the Heisenberg behaviour). This is the classic kind of
+rare MP-desync bug.
+
+**Consequence for the gate:** it's **usable-but-not-airtight**. 1000+ ticks of
+bit-exact reproducibility in ~90% of runs is enough to validate a parallelization —
+a real break would diverge **early and every run** (from the first ticks),
+trivially distinguishable from this rare late flake. So sim-side parallelization can
+proceed against it; just run a few times and treat an *early, consistent*
+divergence as the real signal.
+
+**To close it definitively (separate effort):** a non-perturbing tool, not more
+log-diffing — **valgrind memcheck / MSAN** for the uninitialized read, or
+**helgrind/drd** / an ASLR-off A/B (`proccontrol -m aslr -s disable`) to
+confirm/deny a race or pointer-order dependence. That's the right next tool if/when
+airtight MP determinism is the goal; it's not a blocker for the MT validation work.
+
 ## Measurement
 
 Uncapped (`vsync=0`) on the 197-unit `--benchmark` mission: `prof_bench.sh` for FPS
