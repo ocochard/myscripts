@@ -163,6 +163,39 @@ thread-safe reads, and the read/apply pattern is proven. Off by default.
   Drop the serial-verify (make it a separate flag) before the perf run — with
   verify on, `--mt-lod` does 2x the LOD work by design.
 
+## Findings: what is (and isn't) a clean parallel-for (2026-07-21)
+
+Investigated the heavy per-object loops. They split into two classes:
+
+**Cleanly parallelizable — render-side ANALYSIS loops** (iterate a flat draw list,
+write only that object's `SortObject` slot, plus an integer reduction). These take
+the pattern directly (`ParallelFor` + atomic reduction + serial verify), and are
+NOT determinism-critical (render-only), so the runtime verify is the whole gate:
+- `Scene::AdjustComplexity` — draw-LOD selection. **DONE** (`--mt-lod`, verified).
+- `Scene::AdjustShadowComplexity` — shadow-LOD selection. **DONE** (below).
+- Occlusion/visibility culling passes — same shape, candidates.
+
+**NOT clean loops — heavy sim work embedded in the serial per-entity `Simulate`
+/ `Draw`.** These are the docs' Phase-4/5 barrier, not template drop-ins:
+- **Animation-prep** (`Man::Animate` → `ApplyMatrices`) writes the **shared**
+  `LODShape::SetPos` (instances share one shape) — parallel `Animate` would corrupt
+  it. `Object::Draw` does `Animate → draw → Deanimate` inline. **GPU skinning lifts
+  the barrier** (item 5b skips the shared-shape write, keeps a per-object palette),
+  but it still needs `Animate` hoisted out of `Object::Draw` into a parallel
+  pre-pass — a real draw-loop refactor.
+- **Collision** (`Landscape::ObjectCollision`) is a read-only per-*entity* query,
+  but called ad-hoc **inside each entity's serial `Simulate`**, with its result
+  feeding that entity's immediate movement/response. No hoistable "detect-all"
+  loop; parallelizing needs a detect(parallel)/respond(serial) split — and it is
+  **sim-side**, so it must be validated by the **determinism gate**, not a serial
+  verify. Higher risk; do behind the gate, and (per the docs) caching per-object
+  ground queries may beat parallelizing them.
+
+**Takeaway:** the pattern extends freely across the render-side analysis loops
+(cheap, safe, verifiable now). The big CPU wins (animation, collision) require the
+determinism-gated draw-loop / sim restructure — the Phase-4/5 lift — and are
+unmeasurable until the t420. GPU skinning is the key enabler for the animation one.
+
 ## Measurement
 
 Uncapped (`vsync=0`) on the 197-unit `--benchmark` mission: `prof_bench.sh` for FPS
