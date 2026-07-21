@@ -141,6 +141,28 @@ than enough to catch a parallelization determinism break — a race in
 So step 2 can proceed against this baseline; closing the residual (one more
 real-time -> sim-time fix) makes the gate airtight but is not a blocker.
 
+## Step 2 result (2026-07-21) — `--mt-lod` implemented + verified correct
+
+Parallelized `Scene::AdjustComplexity` (per-object draw-LOD/`passNum` selection)
+across the task pool via `ParallelFor`, with an order-independent atomic
+complexity reduction. Because ser6 gives no FPS signal (present-bound) and can't
+surface visual artifacts, `--mt-lod` also runs a serial reference each call and
+logs `MT-LOD verify FAILED` on any per-object or total mismatch.
+
+**Validated on ser6:** `--benchmark --mt-lod`, ~960 frames, **0 verify failures**,
+clean shutdown, 8-thread pool active. So the parallel result is byte-identical to
+serial — the callees (`LevelFromDistance2`, `PassNum`, `GetComplexity`) are
+thread-safe reads, and the read/apply pattern is proven. Off by default.
+
+- **What this establishes:** the reusable, determinism-safe parallel-for pattern
+  (disjoint per-object writes + atomic reduction + runtime serial verify) for the
+  remaining per-object loops. `AdjustComplexity` itself is a modest cost; the same
+  template applies to the heavier per-object work (animation prep, collision).
+- **FPS payoff: pending the t420.** ser6 (present-bound) cannot show it; measure
+  `prof_bench.sh` with/without `--mt-lod` on the CPU-bound t420 when it is back.
+  Drop the serial-verify (make it a separate flag) before the perf run — with
+  verify on, `--mt-lod` does 2x the LOD work by design.
+
 ## Measurement
 
 Uncapped (`vsync=0`) on the 197-unit `--benchmark` mission: `prof_bench.sh` for FPS
