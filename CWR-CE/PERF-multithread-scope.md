@@ -322,3 +322,63 @@ actually spread off the main thread. Determinism: sim-state checksum per tick,
 - **Payoff:** the only lever with real headroom on modern many-core hardware once
   the render side is confirmed cheap and vsync is uncapped — but **zero on the
   vsync-capped default**, so scope the expectation honestly before building.
+
+## Phase-4/5 worth-it assessment (2026-07-22) — DEFER, gated on the t420
+
+Asked whether to pick up the Phase-4/5 sim-side parallelization next. **Verdict:
+not now.** The blocker is *measurement*, not engineering readiness — and the
+cheapest lever in this whole area (GPU skinning) is already done and unvalidated.
+
+**The addressable CPU (post-Phase-1 self-time, `PERF-hotspot-profile.md:225-242`):**
+
+| loop | self-time | side | clean parallel? |
+|---|---|---|---|
+| `CheckVisibility` | 6.79% | render | **No** — recurses `Object::Intersect` into the shared collision/animation core (audit `:250-286` DEFERRED it as "largest, riskiest") |
+| `OcclusionView` | 2.05% | render | closest to clean, but modest |
+| `PredictCollision`+`Ground`+`Object` collision | ~5.4% | **sim** | determinism-gated; docs suggest *caching* may beat parallelizing |
+| `ApplyMatrices*` (residual) | ~3% | mixed | view LOD already GPU-offloaded; the rest is coarse LODs that **must** stay CPU |
+
+**Amdahl ceiling is small for the safe subset.** The only *cleanly* parallel,
+determinism-free loops are the render-side analysis ones — and those were already
+proven **net-negative** (`--mt-lod`, `+11% CPU`, too fine-grained). The one big
+render-side item (`CheckVisibility`, 6.79%) is *not* clean. So the "easy" data
+parallelism (Phase 5) tops out around a **~10% frame-time** ceiling *if* the hard
+`CheckVisibility` refactor lands, and less otherwise. The real 2x is the **Phase-4
+pipeline** (overlap sim(N)/render(N-1)) — but that needs the double-buffered render
+snapshot, a one-frame lag, and must not change sim results: **high risk**.
+
+**Three hard blockers, in priority order:**
+1. **The t420 is offline** — it is the *only* CPU-bound machine, so it is the only
+   place any of this can be FPS-validated. ser6 is present-bound → **zero FPS
+   signal** (proven repeatedly). Building a large, risky restructure whose entire
+   justification is CPU-bound FPS, with no way to measure it, is premature.
+2. **The highest-leverage CPU cut is already built and unmeasured** — GPU skinning
+   removed the view-LOD skin + re-upload (`~7-15% CPU`, off by default). On the
+   t420 that is *likely a real FPS win by itself* and needs **zero new code** —
+   just a `prof_bench.sh` run. Spend that first; it may make Phase-4/5 unnecessary.
+3. **The determinism gate isn't airtight** (rare ~few-% Heisenbug). Fine for
+   render-side (serial-verify is the gate), but the collision work is sim-side and
+   leans on the gate — added risk until closed.
+
+**Recommended sequence (when the t420 is back):**
+1. `prof_bench.sh` ± `--gpu-skinning` and `--gpu-timing` on the t420 → confirm the
+   CPU bound and **cash in the already-done GPU-skinning win**. Free, decisive.
+2. Only if that leaves the frame animation-CPU-bound: hoist `Man::Animate` out of
+   `Object::Draw` into a parallel pre-pass (GPU skinning is the enabler, item 5b).
+   Higher leverage than the render-side analysis loops, and clears the grain-size
+   bar the LOD loops failed.
+3. Collision (sim-side) behind the determinism gate — or cache the per-object
+   ground queries instead (docs' hint), which may beat parallelizing outright.
+4. Phase-4 pipeline last, only if data parallelism plateaus.
+
+**One t420-independent thing worth doing now (a prerequisite, not Phase-4/5):**
+fix the `--simulate` headless null-deref (`WorldInit.cpp:117`, `_engine` null in
+headless — `:277-281`). It unblocks headless determinism/perf runs *without* GL/Mesa
+noise and is a hard prerequisite for the valgrind determinism close-out. Small,
+low-risk, enables everything downstream.
+
+**Bottom line:** the parallel-for machinery is proven and the plan is sound, but
+Phase-4/5 is a high-effort, high-risk restructure that cannot be validated on the
+only online machine and whose thesis (CPU-cuts → FPS) is cheaper to test first via
+the GPU-skinning build already sitting on the branch. **Don't start it until the
+t420 confirms there's FPS to be won that GPU skinning didn't already capture.**
