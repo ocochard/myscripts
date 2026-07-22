@@ -675,13 +675,23 @@ Help mode dispatch is at `AppConfig.cpp:143-164`.
 ### Highest-leverage flags (the ones worth memorizing)
 
 - **`--viewer -m <model.p3d> -a <anim.rtm>`** — standalone **model + animation
-  viewer**: skips splash + menu, loads one model with one RTM bound. Plus
-  `--anim-speed <0..10>`, `--anim-loop none|repeat|ping-pong`, `--loose-textures`
-  (accept `.png`/`.tga` beside expected `.paa`), `--no-help` (hide overlay). This
-  is the clean way to A/B a **skinning** change in isolation (e.g. a soldier or
-  the parachute canopy) — no mission, no scene, deterministic camera. Combine with
-  `--auto-screenshot` for a headless render A/B; would have replaced the whole
-  scripted-paradrop dance above.
+  viewer**: skips splash + menu, loads one model with one RTM bound (data banks
+  still mount, so textures/config resolve). Plus `--anim-speed <0..10>`,
+  `--anim-loop none|repeat|ping-pong`, `--loose-textures` (accept `.png`/`.tga`
+  beside expected `.paa`), `--no-help` (hide overlay). `-m`/`-a` need **loose
+  files** (`CLI::ExistingFile`), so extract from PBOs first, e.g.
+  `PoseidonTools pbo extract dta/Data3D.pbo out -f para.p3d` and
+  `... dta/Anim.pbo out -f opened_para_stat.rtm`. Combine with `--auto-screenshot`
+  for a headless isolated render — the clean way to eyeball a model/anim (see
+  `~/cwr-5e-visual/viewer_parachute_canopy.png`).
+  - **GPU-skinning A/B:** `--viewer --gpu-skinning` exercises the real GPU-skin
+    path in isolation (no mission/scene/scripted camera). This required wiring the
+    viewer's `AnimationRT::Prepare`/`Apply` to the `gpuSkin` seam
+    (`Viewer.cpp:173/181`) — **before that, `--gpu-skinning` was a silent no-op in
+    viewer mode** (the gpuSkin opt-in only lived in `ParachuteType::InitShape`),
+    which is why the item-5e canopy A/B needed the scripted-paradrop mission
+    instead. With the wiring, the viewer is now the preferred isolated skinning
+    A/B tool.
 - **`--auto-screenshot "FRAME:PATH"`** — GL-framebuffer capture at gameplay frame
   FRAME, then exit. The reliable headless screenshot (see "Visual A/B" above).
   Companions: `--screenshot-delay N` (frames to wait, default 10),
