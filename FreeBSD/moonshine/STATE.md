@@ -355,7 +355,127 @@ range-coder-compressed control packets that moonshine drops — but
 audio decoding also worked, so the control stream isn't fully
 dead. Filed under backlog for now.
 
-### 15. Packet-capture diff (ser6 rge0 vs Mac utun4) — DONE
+### 16. Six-run packet-size experiment matrix — CORRECTED DIAGNOSIS
+
+Mac session ran the full recipe (baseline, packet900, packet700,
+h264, bitrate2m, dualpcap). Results contradict §15's Path-MTU
+hypothesis. **All 5 non-baseline runs got video packets arriving on
+utun4 in ten-thousand-count quantities. Every run still failed
+identically with "No video traffic was ever received."**
+
+Filtered to ser6 IPv6 traffic only (excluding Moonlight's separate
+`moonlight-ctest` NAT-traversal probes to 34.74.124.204 which polluted
+earlier tallies):
+
+| run | shard size | video pkts on utun4 | outcome |
+|---|---:|---:|---|
+| baseline | 1040 | 0 | no video (anomaly — see below) |
+| packet900 | 912 | **56029** | no video |
+| packet700 | 704 | 9180 | no video |
+| h264 | 1040 | 10305 | no video |
+| bitrate2m | 1040 | 37 (low bitrate) | no video |
+| dualpcap | 1040 | 10129 | no video |
+
+Baseline's 0-packets was an anomaly: probably an ephemeral-port
+race where moonshine kept sending to a stale port from a previous
+session while the current pcap captured only the new client-side
+port. `dualpcap` reran with 1040-byte shards and got 10K packets.
+
+**§15's Path-MTU-on-tunnel diagnosis was wrong.** The tunnel passes
+1040-byte packets fine. Also §14's ENet-compressor H1 was
+unrelated — control channel had perfect 138/137 parity in every run.
+
+### 17. Where the wall actually is — Moonlight-qt receive path
+
+Moonlight-common-c's `VideoReceiveThreadProc` logs `"Received first
+video packet after N ms"` the instant `recvUdpSocket(rtpSocket, ...)`
+returns >0 bytes. **No RTP-parsing, no payload-type filter, no
+sequence-number checks, no source-address whitelist.** The log
+line fires before any validation.
+
+Since Moonlight-qt never prints that line — but tcpdump proves
+10000+ UDP packets arrive on `utun4` at the destination the client
+advertised via its own PING source port — **the packets reach
+kernel-level on the Mac but never emerge from `recvUdpSocket()`
+in Moonlight-qt.**
+
+Verified moonshine's send-side is correct:
+- Source port: 47998 (well-known, matches SDP).
+- Destination address: client's video-PING source
+  (`[<mac-v6>]:53919` for h264 run) — extracted via
+  `spawn_handle_video_packets`'s `client_address = Some(address)`
+  in the recv-loop. Confirmed distinct from the audio PING source
+  port (`54221`), so no cross-flow contamination.
+- Payload framing: 12-byte RTP header (V=2 correct, seq
+  monotonically incrementing 0,1,2,…), 4-byte padding, 16-byte
+  NvVideoPacket, then H.264/HEVC NAL payload. Timestamp is 0
+  (moonshine bug: `packet.pts * 90000 / fps` where `packet.pts`
+  from pixelforge's encoder is always 0). SSRC is 0 (also bug).
+  Neither field is likely fatal to Moonlight — Sunshine tolerates
+  them too.
+
+Audio (48000, 76-88 byte packets) DOES get through — Moonlight-qt
+logs `Received first audio packet after 100 ms` in every run.
+Audio and video use the identical socket-setup code path in
+moonlight-common-c (`bindUdpSocket` + PING thread + receive
+thread). So it's not a fundamental v6/ephemeral-port bug — it's
+something specific to the video path.
+
+## Current wall
+
+Truly unresolved. Data-driven candidates:
+
+1. **macOS pf or built-in firewall silently discards inbound IPv6
+   UDP on ephemeral ports when the packet exceeds some threshold.**
+   Would explain 76-88-byte audio being delivered while
+   704-1040-byte video is not — but the tcpdump on `utun4`
+   proves the packets DID cross that interface. Unless the
+   Application Firewall filters between the socket buffer and
+   `recvfrom()`, which is architecturally possible on macOS but
+   would be very unusual.
+
+2. **Moonlight-qt (or moonlight-common-c) has a bug specific to
+   IPv6 video-recv over ephemeral tunnel interfaces on macOS.**
+   Nothing surfaced this in a quick web search.
+
+3. **Some framing detail moonshine gets subtly wrong that
+   trips a silent drop deep in Moonlight-common-c's RTP-layer,
+   AFTER the "Received first video packet" log should have fired
+   but before any user-visible signal.** Contradicted by the
+   source I read (the log fires before validation), but I read
+   only one file — worth verifying against the actual
+   moonlight-qt build version.
+
+4. **A macOS SO_RCVBUF overrun causing kernel drops** — but that
+   would show as pf/socket stats, not silent invisibility.
+
+## Next step
+
+Not obvious. Options:
+
+- **On the Mac**: run `lsof -iUDP -a -p <moonlight-pid>` while
+  streaming to see what sockets Moonlight actually opened, and
+  `dtruss -p <moonlight-pid> -t recvfrom` to see if `recvfrom` is
+  being called on the right socket. This would definitively rule
+  in/out theory (2).
+- **On ser6**: try running against a REAL Sunshine host (Linux VM)
+  from the same Mac to see if it works. If yes, framing diff
+  between Sunshine and moonshine is the culprit. If no, the Mac's
+  network stack is the bug and moonshine is fine.
+- **Alternative client**: try `moonlight-embedded` from a
+  Linux/FreeBSD box on the same LAN as ser6. Skips the tunnel
+  entirely and validates moonshine's send path against a known-
+  working client on a simpler network path.
+
+Given the amount of energy already spent on network-layer
+diagnosis, **the fastest confidence-building step is the last
+one: test moonshine's server against a different client on a
+simpler network path.** If moonlight-embedded on LAN works,
+moonshine is correct and the Mac side is doomed by something
+peculiar about its network. If it also fails, moonshine's payload
+is malformed and we need to diff against Sunshine.
+
+### 15. (superseded) Old Path-MTU diagnosis
 
 Ran `tcpdump` simultaneously on both sides during a repro stream.
 Filter: `udp and (port 47998 or 47999 or 48000)`.
