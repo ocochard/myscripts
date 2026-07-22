@@ -274,11 +274,13 @@ informative: **the divergence is far rarer than the early 1-2/10 suggested.**
      malloc/new interception collides with mimalloc's arena → **SIGSEGV in early
      init**. `--soname-synonyms=somalloc=nouserintercepts` cut errors 95k→209 but
      didn't fix the crash.
-  2. **`--simulate` (the ideal headless, no-GL target) is itself broken** — SIGSEGVs
-     *natively* too (not valgrind): NULL-deref at `WorldInit.cpp:117`
-     (`_scene.Init(_engine, nullptr)` — `_engine` is null in headless). The game's own
-     `CrashHandler` catches it. So a clean valgrind run would need the full GL
-     `--benchmark` (slow, Mesa noise) unless `--simulate` is fixed first.
+  2. **`--simulate` was itself broken — FIXED 2026-07-22** (`08e850c`). It kept
+     the default `gl33` backend, which fails headless → `GEngine` null →
+     `Scene::Init` null-derefs `GEngine->TextBank()` (`Scene.cpp:165`), SIGSEGV at
+     `WorldInit.cpp:117`. Fix: `--simulate` now defaults to the **dummy** (no-GL)
+     backend unless `--render` is explicit. Verified: `--simulate <mission>` with
+     no display runs headless (0 GL init, dummy 160x120 viewport, world + mission
+     load, no crash). So the ideal no-GL valgrind target now exists.
   3. FreeBSD valgrind (3.27.1) is less mature than Linux's.
   To make valgrind viable = a **no-mimalloc poudriere rebuild** (drop `libmimalloc.so`
   from `LIB_DEPENDS`, re-enable `GlobalOperators.cpp`) **plus** fixing `--simulate` or
@@ -371,11 +373,11 @@ snapshot, a one-frame lag, and must not change sim results: **high risk**.
    ground queries instead (docs' hint), which may beat parallelizing outright.
 4. Phase-4 pipeline last, only if data parallelism plateaus.
 
-**One t420-independent thing worth doing now (a prerequisite, not Phase-4/5):**
-fix the `--simulate` headless null-deref (`WorldInit.cpp:117`, `_engine` null in
-headless — `:277-281`). It unblocks headless determinism/perf runs *without* GL/Mesa
-noise and is a hard prerequisite for the valgrind determinism close-out. Small,
-low-risk, enables everything downstream.
+**One t420-independent prerequisite — DONE (2026-07-22, `08e850c`):** the
+`--simulate` headless null-deref is fixed (defaults to the dummy no-GL backend;
+`:277`). `--simulate <mission>` now runs headless with no display, which unblocks
+headless determinism/perf runs *without* GL/Mesa noise and is the no-GL target the
+valgrind determinism close-out needs.
 
 **Bottom line:** the parallel-for machinery is proven and the plan is sound, but
 Phase-4/5 is a high-effort, high-risk restructure that cannot be validated on the
