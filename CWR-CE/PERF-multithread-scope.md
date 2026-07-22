@@ -309,6 +309,43 @@ categorize) or a CPU-contention batch (loads all cores to widen a race window �
 discriminating test for "race"), on top of the no-mimalloc valgrind rebuild. Not worth
 it unless airtight MP determinism becomes a hard requirement.
 
+### Update (2026-07-22) — valgrind is UNBLOCKED; 208 uninit errors to triage
+
+The `--simulate` dummy-backend fix (`08e850c`) incidentally unblocked valgrind.
+The early mimalloc SIGSEGV the earlier attempt hit was on the **GL path**; the
+headless **dummy** backend avoids it. Verified: `memcheck --soname-synonyms=
+somalloc=nouserintercepts PoseidonGame ... --render dummy --check` ran clean to
+`Initialization check complete`, no crash, and reported **208 uninitialised-value
+errors from 66 contexts** (e.g. `AddonSystem::ParseAddonConfig:178`).
+
+- **So no no-mimalloc rebuild is needed to START** — memcheck runs today.
+- **Caveat — heap is NOT tracked.** `nouserintercepts` leaves mimalloc owning
+  `malloc`/`new`, so the HEAP SUMMARY reads `0 allocs, 0 frees`. memcheck catches
+  **stack/static** uninit reads (the 208) but is largely **blind to uninitialised
+  HEAP reads** — the single most-likely determinism-residual class. Full heap
+  coverage still wants the no-mimalloc rebuild (drop `libmimalloc` from
+  `LIB_DEPENDS`, re-enable `Core/GlobalOperators.cpp`).
+
+**NEXT-SESSION TASK: `--track-origins` triage of the 208.** Re-run against a real
+`--simulate <mission> --duration N` with `--track-origins=yes`, and split the 208
+into **"benign fixed-buffer"** (the `strcatLtd`/`Bstring.hpp` fixed-buffer over-read
+class already seen — harmless) vs **"real / sim-state-touching"** (anything whose
+origin feeds a checksummed entity / RNG / AI decision — determinism-relevant, fix
+these). Only if triage misses the residual AND airtight determinism is wanted: do
+the no-mimalloc rebuild (heap-aware memcheck) + helgrind for the race hypothesis.
+
+Exact command (verified 2026-07-22):
+```
+env -u DISPLAY XDG_RUNTIME_DIR=/tmp/xdg valgrind --tool=memcheck \
+  --soname-synonyms=somalloc=nouserintercepts --track-origins=yes \
+  --error-exitcode=42 --trace-children=no \
+  PoseidonGame -C ~/.local/share/CWR/base --no-sound --render dummy \
+  --simulate ~/.config/CWR/Users/Test/Missions/Benchmark.Abel/mission.sqm \
+  --duration 10 --timeout 180
+```
+(A `--check`-only run is faster for iterating on boot-path errors; use `--simulate`
+to reach the sim loop where the determinism-relevant reads live.)
+
 ## Measurement
 
 Uncapped (`vsync=0`) on the 197-unit `--benchmark` mission: `prof_bench.sh` for FPS
