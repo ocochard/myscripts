@@ -1,0 +1,82 @@
+From: Olivier Cochard <olivier@FreeBSD.org>
+Subject: [PATCH] graphics/mesa-dri: enable H.264/H.265 Vulkan Video codecs
+
+Mesa's -Dvideo-codecs meson option defaults to 'all_free', which strips
+patent-encumbered codecs (H.264, H.265) from both VA-API and Vulkan
+Video paths. graphics/mesa-libs already overrides this to 'all' for the
+gallium side (radeonsi VA-API), but graphics/mesa-dri — which builds the
+Vulkan drivers (RADV, ANV) — does not. RADV on FreeBSD therefore reports
+VK_KHR_video_encode_queue but no codec-specific VK_KHR_video_encode_h264
+or VK_KHR_video_encode_h265, making the Vulkan Video encode path unusable
+for streaming hosts (Moonshine, Sunshine with Vulkan backend), ffmpeg's
+vulkan_encode encoders, and any other consumer.
+
+Mirror the mesa-libs override in mesa-dri so RADV exposes the full set
+of Vulkan Video decode/encode extensions supported by the underlying
+hardware.
+
+Also declare libdisplay-info as a LIB_DEPENDS: with the extra codecs
+enabled, libvulkan_intel.so now links directly against libdisplay-info.so.3
+and stage-qa flagged it as an undeclared shlib dependency.
+
+Tested on FreeBSD 16.0-CURRENT with AMD Radeon 680M (VCN 3.0). Before:
+
+    $ vulkaninfo 2>/dev/null | \
+        grep -E "VK_KHR_video_(encode|decode)_(h26[45]|av1)" | sort -u
+    	VK_KHR_video_decode_av1                       : extension revision 1
+
+Only av1dec (patent-free) survives. No H.264/H.265 anywhere.
+
+After:
+
+    $ vulkaninfo 2>/dev/null | \
+        grep -E "VK_KHR_video_(encode|decode)_(h26[45]|av1)" | sort -u
+    	VK_KHR_video_decode_av1                       : extension revision 1
+    	VK_KHR_video_decode_h264                      : extension revision 9
+    	VK_KHR_video_decode_h265                      : extension revision 8
+    	VK_KHR_video_encode_h264                      : extension revision 14
+    	VK_KHR_video_encode_h265                      : extension revision 14
+
+VK_KHR_video_encode_av1 remains absent as expected — VCN 3.0 has no AV1
+encoder block (hardware limit, needs VCN 4+ on Phoenix/RDNA 3).
+
+---
+ graphics/mesa-dri/Makefile | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/graphics/mesa-dri/Makefile b/graphics/mesa-dri/Makefile
+index a0e1c4d33261..dfc7937277c2 100644
+--- a/graphics/mesa-dri/Makefile
++++ b/graphics/mesa-dri/Makefile
+@@ -1,5 +1,6 @@
+ PORTNAME=	mesa-dri
+ PORTVERSION=	${MESAVERSION}
++PORTREVISION=	1
+ CATEGORIES=	graphics
+
+ COMMENT=	OpenGL hardware acceleration drivers for DRI2+
+@@ -8,7 +9,8 @@ WWW=		https://www.mesa3d.org/
+ BUILD_DEPENDS+=	glslangValidator:graphics/glslang \
+ 		${PYTHON_PKGNAMEPREFIX}ply>0:devel/py-ply@${PY_FLAVOR} \
+ 		libva>=0:multimedia/libva
+-LIB_DEPENDS+=	libgallium-${MESAVERSION}.so:graphics/mesa-libs \
++LIB_DEPENDS+=	libdisplay-info.so:sysutils/libdisplay-info \
++		libgallium-${MESAVERSION}.so:graphics/mesa-libs \
+ 		libgbm.so:graphics/mesa-libs
+
+ USES+=		llvm:lib,noexport
+@@ -97,6 +99,12 @@ MESA_PLATFORMS+=	wayland
+
+ MESON_ARGS+=	-Dplatforms="${MESA_PLATFORMS:ts,:tl}"
+
++# Enable all video codecs so RADV/ANV expose the full set of Vulkan Video
++# decode/encode extensions (H.264, H.265, AV1). Upstream default is
++# 'all_free' which strips patent-encumbered codecs from both VA-API and
++# Vulkan paths. graphics/mesa-libs already sets this for the gallium side.
++MESON_ARGS+=	-Dvideo-codecs=all
++
+ # Disable some options
+ MESON_ARGS+=	-Dandroid-libbacktrace=disabled \
+ 		-Dgles1=enabled \
+--
+2.51
