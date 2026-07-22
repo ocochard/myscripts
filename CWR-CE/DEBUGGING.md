@@ -572,37 +572,188 @@ Ways to get a number, least → most rigorous:
   (`1000/GetLastFrameDuration`), `triFrameCount`, `triMemoryMB` — callable from
   mission scripts for custom in-mission instrumentation.
 
-## CLI flags reference (diagnostics)
+## Visual A/B via screenshots (headless, reproducible)
 
-From `engine/Poseidon/Foundation/Platform/AppConfig.cpp`. Not exhaustive
-— run `PoseidonGame --help-full` (and `--help --dev` in non-release
-builds) for the full list.
+Worked out doing the item-5e GPU-skinning visual check (a parachute canopy A/B).
+The goal: render a specific thing and capture it to a PNG with no human at the
+keyboard, on ser6. Artifacts from that session live in `~/cwr-5e-visual/`
+(A/B pairs + the ready-to-use `paradrop_mission.sqm`).
 
-| Flag | Effect | Line |
-|------|--------|------|
-| `--check` | Init subsystems then exit — headless smoke test | 475-476 |
-| `--timeout N` | Auto-exit after N seconds | 590-593 |
-| `--strict` / `--no-strict` | ERROR log = exit 1 | 520-524 |
-| `--dev` | Enable dev panel (non-release only) | 560-562 |
-| `--log-level ...` | Verbosity | 655-657 |
-| `--log-categories ...` | Category filter | 659-662 |
-| `--log-format text\|jsonl` | Log output format | 668-672 |
-| `--log-file <path>` | Write to file | 677 |
-| `--logfiles` | Log file-ops | 569-570 |
-| `--netlog` | Log network | 572-573 |
-| `--max-threads N` | TaskPool worker count (0 = auto, cap 8) | 548-551 |
-| `--no-sound` | Skip audio init | 425 |
-| `--audio auto\|OpenAL\|dummy` | Force backend | 428 |
-| `--no-splash` | Skip splash screens | 319 |
-| `--width, --height` | Window size | 312-316 |
-| `-C <data-root>` | Data directory (launcher sets this) | — |
-| `--mod <path>[;<path>...]` | Boot with mods active, skip in-game Remount | 428 |
-| `--help`, `--help-full` | Basic / advanced usage | 267 |
+### Use the engine's built-in screenshot, NOT scrot/xwd
 
-Help modes detected at `AppConfig.cpp:143-164`:
-- `--help` — basic flags
-- `--help-full` — advanced
-- `--help --dev` — developer + test options (release builds hide `--dev`).
+`AppConfig.cpp` exposes a real capture path that reads the **GL framebuffer**
+directly — reliable regardless of window stacking/focus:
+
+- `--auto-screenshot "FRAME:PATH"` (`AppConfig.cpp:614`) — capture at gameplay
+  frame FRAME, write PATH, then exit. **This is the one to use.** Log confirms
+  `Auto-screenshot saved: frame=N t=Xs -> PATH`.
+- `--screenshot-delay N` (`:622`, default 10) — gameplay frames to wait first.
+- `--screenshot,-s PATH` (`:723`) — capture then exit (viewer/kit path).
+- `--test-type screenshot` (`:640`) — with `--test-mission`, capture-and-exit.
+
+Do **not** reach for `scrot`/`xwd` first: this host has **no `wmctrl`/`xdotool`**,
+the game runs fullscreen-borderless by default (`--window` forces windowed,
+`--display-mode windowed|borderless|exclusive`, `AppConfig.cpp:305-310`), and a
+root-window `scrot` grabs whatever is on top — you get the desktop/terminal, not
+an occluded game window. `xwd -id <win>` returned empty here. The framebuffer
+capture sidesteps all of it. Capture resolution follows `graphics.cfg` (was
+**800x600** here), not the desktop.
+
+### Reproducibility notes
+
+- **`--test-mission` copies the mission to a staging dir** each launch:
+  `Test mission: <src> -> /tmp/cwr/mission-smoke/<hash>/Missions/<name>/mission.sqm`.
+  So edits to the source `mission.sqm` ARE picked up per launch, and the log line
+  tells you exactly which file ran.
+- **Separate launches are NOT frame-deterministic.** Parachute sway, animated
+  clouds, and small position drift mean base-vs-gpu at the same frame number are
+  *not* pixel-aligned. A pixel diff / **`ffmpeg ... -lavfi ssim`** scored ~0.39
+  here despite the render being visually identical — **SSIM is the wrong metric;
+  judge these A/Bs visually.** (This is the same determinism residual documented
+  in `PERF-multithread-scope.md`.)
+
+### Recipe: a scripted paradrop A/B (what actually worked)
+
+Make a *copy* of the benchmark mission (don't clobber `Benchmark.Abel` — the FPS
+harness needs its 197-unit form) and give the **player** an `init` that boards a
+parachute and sets up an external camera looking at the canopy. Ready-made
+missions (top-down + side camera) are committed in `paradrop-mission/`; local PNG
+evidence is in `~/cwr-5e-visual/`. The player `init` (one line in the
+`mission.sqm`, `""` = literal quote):
+
+```
+this moveindriver ("ParachuteWest" createVehicle getpos this);
+(vehicle this) setpos [getpos this select 0, getpos this select 1, 120];
+pcam = "camera" camcreate [getpos this select 0, (getpos this select 1) - 22, 103];
+pcam camsettarget (vehicle this); pcam cameraeffect ["internal","back"]; pcam camcommit 0
+```
+
+Capture the deployed canopy at **frame ~200** (t≈3.3 s):
+```
+env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/xdg PoseidonGame -C ~/.local/share/CWR/base \
+  --no-splash --no-sound --fullscreen --test-mission <paradrop-mission-dir> \
+  --auto-screenshot "200:/tmp/base.png" --timeout 35
+# repeat with --gpu-skinning appended -> /tmp/gpu.png, compare the two by eye
+```
+
+### Scripting gotchas that cost time here (all real, all in the log)
+
+- **Test mode aborts on any script ERROR** (`Script error ... — aborting`), so a
+  broken `init` kills the whole run — no screenshot. Check the log first.
+- **`_underscore` locals are rejected in global space in test mode**
+  (`Local variable in global space`). Use a *global* var (no underscore, e.g.
+  `pcam`) or nest the expression (`moveindriver ( ... createvehicle ... )`).
+- **`createVehicle` ignores the Z you pass** — the parachute spawns on the
+  ground, so a plain `moveInDriver` leaves the player standing. Lift it after
+  boarding: `(vehicle this) setpos [... , 120]`.
+- **The canopy takes ~3 s to deploy.** At t<1 s (`frame<~60`) it's still opening
+  (folded, barely visible); it's fully open by frame ~200. Sample late.
+- **Default parachute camera looks forward/down** — the canopy is above the
+  frame. You need the scripted external camera (`camCreate`/`camSetTarget`/
+  `cameraEffect`/`camCommit`, `GameStateExt.cpp:1339-1351`). `camSetTarget`
+  tracks the object each frame (the camera *rotates* to keep the target framed),
+  but the camera **position is static** — `camSetPos`/`camSetRelPos` are one-shot
+  (`CamSetRelPos` = `SetPos(target.PositionRelToAbs(pos))` computed once at init,
+  `GameStateExtUi.cpp:1496`), so the camera does **not** descend with the object.
+  For a **side** view, place the camera to the side at a *fixed* altitude and
+  capture at the frame the canopy falls level with it (here: `+30 m` offset,
+  `z=96`, frame ~240 — see `paradrop-mission/paradrop-sideview-cam.sqm`); a
+  **top-down** view falls out naturally at a higher fixed camera as the object
+  drops below it.
+
+## CLI arguments — full reference
+
+Source of truth: `engine/Poseidon/Foundation/Platform/AppConfig.cpp` (98
+`add_option`/`add_flag` calls). **Print it live:** `PoseidonGame --help-full`
+(advanced user flags) and **`PoseidonGame --help --dev`** (the dev + test group —
+this is where the automation/screenshot flags live; the plain `--help` hides
+them). Four flags are hidden even from `--help --dev`: `--advertise-address`,
+`--banner`/`--no-banner`, `--pid`, `--ranking`.
+
+Help mode dispatch is at `AppConfig.cpp:143-164`.
+
+### Highest-leverage flags (the ones worth memorizing)
+
+- **`--viewer -m <model.p3d> -a <anim.rtm>`** — standalone **model + animation
+  viewer**: skips splash + menu, loads one model with one RTM bound. Plus
+  `--anim-speed <0..10>`, `--anim-loop none|repeat|ping-pong`, `--loose-textures`
+  (accept `.png`/`.tga` beside expected `.paa`), `--no-help` (hide overlay). This
+  is the clean way to A/B a **skinning** change in isolation (e.g. a soldier or
+  the parachute canopy) — no mission, no scene, deterministic camera. Combine with
+  `--auto-screenshot` for a headless render A/B; would have replaced the whole
+  scripted-paradrop dance above.
+- **`--auto-screenshot "FRAME:PATH"`** — GL-framebuffer capture at gameplay frame
+  FRAME, then exit. The reliable headless screenshot (see "Visual A/B" above).
+  Companions: `--screenshot-delay N` (frames to wait, default 10),
+  `--screenshot`/`-s PATH` (capture+exit), `--test-type screenshot`.
+- **`--auto-keys "FRAME:SCANCODE,FRAME:SCANCODE,..."`** — inject key events at
+  specific frames. The scriptless way to drive the UI/camera headlessly (e.g.
+  toggle external view, move, fire) before an `--auto-screenshot`.
+- **`--test-mission,--test <dir|mission.sqm>`** — boot a mission straight into
+  gameplay and exit. Copies the mission to `/tmp/cwr/mission-smoke/<hash>/` first
+  (log prints the staged path), so source edits are picked up per launch.
+- **`--strict` / `--no-strict`** — treat any ERROR log (**including SQF/SQS script
+  errors**) as fatal → non-zero exit. **Default ON in Debug/RelWithDebInfo
+  builds** (the shipped RelWithDebInfo package is strict), which is exactly why a
+  broken mission `init` aborts a `--test-mission` run with no screenshot. Pass
+  `--no-strict` to let a run survive script/asset errors.
+
+### Automation / headless / self-tests
+
+| Flag | Effect |
+|------|--------|
+| `--benchmark` | 300-frame FPS benchmark (needs `--test-mission`; see "Measuring frame rate") |
+| `--timeout N` | Auto-exit after N seconds (0 = off) |
+| `--check` | Init subsystems then exit — headless smoke test |
+| `--simulate <mission>` `--duration N` `--stats N` `--time-scale 1..16` | Headless (no-render) mission simulation |
+| `--harness [port]` | TCP harness server (0 = auto-assign) for external test drivers |
+| `--ui-test <scenario>` | Run a UI test scenario and exit (e.g. `exit`) |
+| `--confirm-revert-timeout N` | Shorten the display-revert modal for integration tests |
+| `--{remount,mod-cycle,reload-clean,remount-sim,remount-fail,error-resilience}-selftest` | Mount/reload/error self-tests (boot, assert, exit) |
+| `--audit-cfgvehicles-models` | Log ERROR for every editor-visible CfgVehicles class with a missing model (pair with `--strict` for CI) |
+
+### Performance / rendering debug
+
+| Flag | Effect |
+|------|--------|
+| `--gpu-skinning` | Experimental GPU vertex-shader skinning (infantry + parachute view LODs) |
+| `--gpu-timing` | Per-pass GPU timestamp breakdown + present wait (real gameplay) |
+| `--render-frame-log` | Per-frame pass/draw stats every ~60 frames |
+| `--perf-trace <path>` | NDJSON of every `ScopedTimer` event → DuckDB `read_json_auto` / Perfetto |
+| `--determinism-log` | Per-tick dynamic-entity transform checksum (determinism gate) |
+| `--mt-lod` / `--mt-verify` | Parallel per-object draw-LOD selection / serial-reference verify |
+| `--vd <100..100000>` | Override view distance (bypass the 5000 clamp) |
+| `--maxmem MB` / `--max-threads N` | Memory hard cap / TaskPool worker cap (0 = auto ≤8) |
+| `--notex` / `--noland` / `--no-terrain-cache` | Disable textures / landscape / terrain-segment cache |
+| `--render dummy\|gl33\|auto` | Graphics backend (`dummy` = headless no-GL) |
+| `--sw-tl` / `--tl` | Software vs hardware T&L |
+| `--piii` | Pentium-III flush-to-zero float mode |
+
+### Display / window
+
+`--window`/`--fullscreen` (default fullscreen-borderless), `--display-mode
+windowed|borderless|exclusive`, `-w`/`--width`, `-h`/`--height`, `--no-splash`,
+`--no-menu-scene`, `--fps`/`--show-fps`, `--no-mouse-grab`, `--focus` (keep
+rendering at full rate when unfocused — defeats the 5-fps focus throttle),
+`--old-fonts`.
+
+### Data / config / mods
+
+`-C`/`--work-dir <data-root>` (launcher sets this), `--mod <p;p;...>` (boot with
+mods, skip in-game Remount), `--mods-dir`, `--workshop-dir`, `--lang`,
+`--oldpaths` (game-folder profile paths), `--encryption-required`.
+
+### Multiplayer
+
+`--host`, `--connect <ip>`, `--connect-port`, `--config <server.cfg>`, `--port`,
+`--name`, `--password`, `--private`/`--lan`, `--master-server`, `--mp-auto-start
+N`, `--mp-assign SIDE:SLOT`, `--force-jip`, `--write-mpreport`.
+
+### Logging
+
+`--log-level trace|debug|info|warn|error|critical|off`, `--log-categories <csv>`,
+`--log-format text|jsonl`, `--log-file <path>`, `--app-tag <=10 chars>`,
+`--legacy-logs`, `--logfiles` (file-ops), `--netlog`.
 
 ## Environment variables the engine reads
 

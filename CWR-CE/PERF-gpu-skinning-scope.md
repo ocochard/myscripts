@@ -72,8 +72,49 @@ the live renderer stays byte-identical until items 4+5 land.
   CPU-skinned — needs a pass to confirm nothing sync-uncritical reads it (muzzle /
   attach points). The doc's determinism analysis says only coarse LODs feed those.
 
-- **Still deferred (item 5e):** vehicle/prop palette retention — replicate the `Man`
-  `GetBonePalette` seam on other skinned proxies before enabling their GPU skinning.
+- **Item 5e — vehicle/prop palette retention + parachute enable: DONE (build
+  pending).** Generalized the `Man` `GetBonePalette` seam so any skinned proxy can
+  GPU-skin, and enabled it on the one proxy where it is provably safe:
+  - **Shared seam moved to `Object` (the base `IAnimator`).** `_bonePalette` +
+    the `GetBonePalette` override + a `RetainBonePalette(mats, count)` helper now
+    live on `Object` (`Object.hpp` / `Object.cpp`), not `Man`. `Man::Animate`
+    calls the inherited `RetainBonePalette`; behavior is byte-identical (infantry
+    A/B still applies). Cost: every `Object` now carries an empty
+    `AutoArray<Matrix4>` (~16 B) — negligible, and only non-empty when
+    `--gpu-skinning` is on.
+  - **`AnimationRT::Apply` gained an optional `Object* skinTarget` (default
+    `nullptr`).** When set and the LOD is GPU-skinned
+    (`enableGpuSkinning && shape->HasSkin()`) it skips the per-vertex CPU skin and
+    retains the palette on `skinTarget` — the exact `Man::Animate` pattern, now
+    reusable. Every existing caller passes nothing → pure CPU path, unchanged.
+  - **Parachute enabled.** Its view-LOD deformation is *entirely* skeletal
+    (open/drop), so `Skeleton::Prepare(..., gpuSkin=true)` and `Animate` passes
+    `this` to `Apply`. The generic item-5 draw path (`Shape::Draw` →
+    `GetBonePalette` → `UploadBonePalette`; static bind-pose VBO from item-5a)
+    then skins it with no engine-side changes.
+  - **Scud/Car deliberately NOT enabled (documented at the call site).** The Car
+    shape mixes this skeletal scud animation with CPU *direct-selection* vertex
+    animation (`AnimationWithCenter` wheels, driving wheel, turret, damage). GPU
+    skinning uploads a static bind-pose VBO and skins only from the bone palette,
+    which would **freeze the wheels**. Its skeleton stays `gpuSkin=false` (Skin()
+    empty → fully CPU). This is the real coverage limit of item 5e: naive
+    "vehicles come along automatically" (design item Coverage) is false for any
+    proxy with mixed skeletal + direct-selection animation.
+  - **Built + verified (2026-07-22).** Pushed to `ocochard/CWR-CE:gpu-skinning`
+    (commit `9f0c140`), poudriere `builder`/`default` = Success, all touched TUs
+    compiled clean, `Object::RetainBonePalette` present in the packaged binary.
+    - *Infantry no-regression gate:* `prof_bench.sh` 5-run A/B, base 79.2 vs
+      `--gpu-skinning` 77.2 aFPS, "no difference at 95%" — matches the
+      pre-refactor baseline, so moving the palette to `Object` is behaviour-neutral.
+    - *Parachute visual A/B:* a scripted paradrop mission (see DEBUGGING.md
+      "Visual A/B via screenshots"; artifacts in `~/cwr-5e-visual/`) captured the
+      deployed canopy at frame ~200 with and without `--gpu-skinning`. Canopy
+      dome, gore panels and shading render **identically** — GPU skinning of the
+      parachute is visually correct (no garble/collapse/missing mesh). Pixel-SSIM
+      is invalid here (separate launches aren't frame-aligned — sway/clouds/drift);
+      judged visually.
+    - FPS on ser6 is neutral as expected (present-bound; parachute is a rare
+      transient object) — this lands for *coverage + the reusable seam*.
 
 ## Benchmark A/B (2026-07-20) — FPS-neutral on ser6; CPU cut is profile-proven
 

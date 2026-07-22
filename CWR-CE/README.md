@@ -27,7 +27,11 @@ FPS-neutral); FPS wins are validated on **t420** (CPU-bound) when it's online.
   **determinism gate + rare-Heisenbug hunt** (categorization closed as
   document-and-move-on).
 - `PERF-gpu-skinning-scope.md` — GPU vertex-shader skinning (implemented, off by
-  default via `--gpu-skinning`; item 5e vehicle/prop skinning still open).
+  default via `--gpu-skinning`). Item 5e done: the palette seam moved to the
+  `Object` base so any skinned proxy can GPU-skin; enabled on the parachute
+  (pure-skeletal, safe). Scud/Car stays CPU — its wheels/turret use direct-
+  selection vertex anim that a static bind-pose VBO would freeze. Build/visual
+  A/B pending a push+poudriere.
 - `PERF-gpu-frametime-scope.md` — `--gpu-timing` GL_TIMESTAMP breakdown; ser6 =
   present-bound.
 - `PERF-hotspot-profile.md` — pmcstat hotspots; terrain draw-call batching
