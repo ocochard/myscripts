@@ -692,6 +692,129 @@ Independent of the packet-size wall, still-open items:
   IPv6. Fine for a smoke test, worth a pf rule for anything longer-
   lived.
 
+### 20. 2026-07-24 (evening): probe-driven diagnosis + partial fixes
+
+Instrumented `render_and_export` and the video pipeline's `recv_timeout`
+with info-level probes across three rebuild+deploy cycles on ser6.
+Findings, in order:
+
+**Round 1 finding (buffer-pool wedge — SYMPTOM, not root cause):**
+- Compositor's `render_and_export` fires at 60Hz during the dead
+  window. First 3 ticks send OK to `sync_channel(2)`. Tick 3 hits
+  `frame_tx.try_send Full` (channel already has 2 queued, pipeline
+  still blocked on `start_notify.notified()`).
+- On Full, code rolls back `consumed` on the current slot but leaves
+  `next_buffer_index` advanced. Next tick lands on buffer 0
+  (`consumed=false`, i.e. held by an in-queue frame) → early-returns.
+- Loop stays parked on buffer 0 forever; buffer 2 sits free but the
+  round-robin cursor never scans past a stuck slot. Log clearly
+  showed 2011 consecutive `buffer 0 still in use, pool
+  consumed=[false, false, true]` ticks.
+
+**Attempted fix A (buffer-pool off-by-one — REVERTED after test):**
+- Moved `next_buffer_index = (idx + 1) % N` from before try_send to
+  inside the Ok arm. On Full, next_buffer_index stays put, so next
+  tick retries the same slot.
+- Test result: **no change on client side.** The wedge unwinds
+  eventually via /resume like before, my fix just changed the
+  intermediate loop from "stuck on buffer 0" to "Full-retry spin on
+  a still-full channel". Reverted.
+
+**Real root cause identified in round 2:** the pipeline task is
+gated on `start_notify.notified()` (pipeline/mod.rs:232). StartB
+arrives from the client via ENet ~4ms after the peer-connect on the
+initial /launch — I proved this by instrumenting the ENet Receive
+path. The pipeline unblocks, calls `create_encoder()` (~500ms), then
+enters `run_encoding_loop` and starts calling `frame_rx.recv_timeout()`.
+But the compositor is no longer sending frames — because the game
+stopped committing new buffers after ~5 initial commits.
+
+**Why the game stops committing:** during the compositor's initial
+ticks, `render_and_export` was early-returning through several paths
+(throttle, buffer-in-use, direct-scanout-success). **None of the
+early-return paths dispatched `wl_surface.frame` callbacks** to the
+committed windows. The composited path DID (at the bottom), but only
+when it reached the try_send. So games commit their initial buffers,
+never receive `wl_callback.done`, and block their next commit.
+
+**Fix B (applied, KEPT on the branch, not yet committed):** extract
+the frame-callback dispatch from the composited path into a helper
+`dispatch_frame_callbacks()` and call it at the TOP of
+`render_and_export` before any early-return. `+53 lines` in
+`moonshine-core/src/session/compositor/state.rs`. Full diff:
+- New `dispatch_frame_callbacks(&mut self)` method containing the
+  existing `space.elements().for_each(send_frame)` block, the
+  override-surface `send_frames_surface_tree`, the
+  `wp_presentation_feedback` drain (for override surface), and
+  `display_handle.flush_clients()`.
+- Called from the top of `render_and_export` immediately after the
+  cursor-dirty check.
+- The composited path no longer duplicates the block; the helper is
+  the single source of callback dispatch.
+
+**Fix C (also applied, KEPT):** the helper additionally drains
+`take_presentation_feedback` on every window in `self.space` — not
+just the override surface. Rationale: Xwayland forwards X11 Present
+requests over Wayland via `wp_presentation_feedback` (which is what
+`window.take_presentation_feedback` covers). Without this, OpenGL
+games under Xwayland block their SwapBuffers.
+
+**Test result after B+C:** initial /launch still fails, /resume
+still works. **Fixes did not resolve the /launch race.** Confirmed
+with two different games: `vkcube` (Vulkan, XB4H format) shows the
+identical wedge pattern (4 initial dmabufs → 31.7s silence → /resume
+Reset → encoding starts). So the bug is **NOT** CWR-CE-specific.
+
+**Current state of the diagnosis:**
+- Compositor's frame callbacks fire at 60Hz to the game window.
+  Confirmed via a temp diag log (`windows=1, has_override=false`) —
+  now reverted.
+- `wp_presentation_feedback::presented` fires 60Hz on every space
+  window.
+- Game still stops committing dmabufs after 4-5 initial commits.
+- **Something else the game is waiting for.** Not wl_surface.frame,
+  not wp_presentation_feedback. Candidates:
+  1. **Xwayland-specific**: the game does X11 `PresentPixmap` and
+     expects `PresentCompleteNotify` with a matching serial. If
+     smithay's Xwayland integration doesn't fire that correctly,
+     the game blocks. Note: `xwayland::xwm=info` filter is active
+     in current tests, so any warn/error from xwm would be visible.
+  2. **wl_output geometry**: game might be waiting for wl_output
+     mode/scale/done events on a fresh compositor bringup.
+  3. **wp_linux_dmabuf_v1 feedback**: after import, the compositor
+     should send `feedback::main_device` and `feedback::tranche_*`.
+     If missing on second/later commits, game may block.
+  4. **Something about the buffer_release protocol**: maybe the
+     compositor never releases the client's dmabufs (via
+     `wl_buffer.release`) after processing, so the client thinks
+     all its buffers are still in-flight and stops committing.
+
+**Diagnostic experiment for next session:** run `WAYLAND_DEBUG=1`
+(or WAYLAND_DEBUG=client) inside the vkcube launch so vkcube dumps
+every Wayland protocol message it exchanges with moonshine. Compare
+during the 31-second stall window: what request is vkcube blocked
+on? What events is it expecting?
+
+**How to reproduce the wedge on ser6:**
+1. `ssh ser6 '/tmp/moonshine-start.sh'` (already restarts with the
+   current uncommitted-on-freebsd-branch binary at /tmp/moonshine).
+2. From Moonlight-qt, select "vkcube" (or CWR-CE — same result).
+3. Watch: game shows ~4-5 initial imports in the log, then goes
+   silent for 30-45s. Client times out with "no video traffic".
+4. Click /resume in Moonlight: after 10-14 more seconds, Reset
+   fires and encoding starts. Streaming becomes stable.
+
+**File impact:** the state.rs +53 diff is uncommitted on the
+`freebsd` branch. If we decide the fix stays (it's at least directionally
+correct — dispatching callbacks unconditionally is what the code
+should have done anyway), it's ready to commit. If the further
+investigation reveals a better structure, we may fold it into a
+larger fix.
+
+**Also uncommitted from earlier in the day (kept from previous
+handoff — unchanged today):** the moonshine STATE.md sections §1-19.
+Those weren't touched.
+
 ## File map — where things are
 
 - Study + plan: `~/myscripts/FreeBSD/moonshine/README.md`

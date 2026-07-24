@@ -268,3 +268,190 @@ MOONSHINE_LOG="debug,mdns_sd=info,mio::poll=info,calloop=info,rustls=info,hyper=
 ```
 Keeps `Encoding frame`, RTSP events, and pipeline transitions
 visible without the compositor-render trace flood.
+
+---
+
+## 2026-07-24 evening — probe-driven diagnosis + partial fixes
+
+Three rebuild+deploy cycles instrumenting the compositor/pipeline
+interaction. Findings ranked by importance below.
+
+### Not a compositor→pipeline channel bug
+
+The suspicion from the earlier handoff was that `sync_channel(2)`
+was silent between compositor's `frame_tx` and pipeline's `frame_rx`.
+Not the case. Concrete data:
+
+- `render_and_export` fires at 60Hz during the dead window.
+- First 2-3 ticks call `frame_tx.try_send(...)` and get Ok.
+- Once the channel fills to 2, tick 3 (or 4) gets `Full`.
+- The pipeline is blocked on `start_notify.notified()` at
+  `pipeline/mod.rs:232` until the client sends `StartB` on the
+  ENet control channel.
+
+### Not a StartB delivery bug either
+
+Instrumented the ENet Receive path to log every incoming packet.
+StartB arrives at the SERVER **~4ms after the peer-connect** on
+initial /launch — I saw it decrypt cleanly as `StartB` on the very
+first ENet exchange. Pipeline unblocks, `create_encoder()` runs
+~500ms, then enters `run_encoding_loop`.
+
+### The buffer-pool off-by-one (SYMPTOM, not root cause)
+
+`render_and_export` line 711 (pre-fix) advanced `next_buffer_index`
+BEFORE `try_send`. On Full at line 890, the code rolled back
+`consumed` on the just-claimed slot but left `next_buffer_index`
+advanced. Next tick's `idx` landed on a still-in-flight buffer
+(consumed=false), hit line 704's early-return, never advanced. Log
+showed 2011 consecutive `buffer 0 still in use, pool consumed=
+[false, false, true]` ticks — buffer 2 sat free but the cursor was
+parked at 0.
+
+**Attempted fix (state.rs, ~10 lines):** moved the advance into the
+Ok arm. On Full, cursor stays put; next tick retries the same slot.
+
+**Result: no client-side change.** The wedge just shifts from
+"stuck on buffer 0" to "Full-retry spin". Client still saw no
+video on /launch. **Fix reverted.**
+
+### The real reason /launch hangs (game stops committing)
+
+Both games tested (CWR-CE / GL33 / XR24 and vkcube / Vulkan / XB4H)
+show identical timing: **~5 initial DMA-BUF imports in the first
+~200ms, then game stops committing new buffers for 30-45s.** No
+subsequent `Client DMA-BUF import` events until /resume triggers
+Reset in the pipeline.
+
+Not the game — vkcube renders a spinning cube unconditionally at
+60fps. Something on moonshine's side blocks the game's next commit.
+
+### Fix B (applied, kept): dispatch frame callbacks unconditionally
+
+Games use `wl_surface.frame` to throttle their next commit. Pre-fix,
+`render_and_export`'s `send_frame` loop only ran AFTER the composited
+path's `try_send` — meaning early-returns via the throttle, buffer-
+in-use, or direct-scanout paths all skipped the callback dispatch.
+The game's initial commits produced callbacks, but none of those
+callbacks fired because the compositor was in an early-return loop.
+
+Extracted callback dispatch into `dispatch_frame_callbacks(&mut self)`
+helper. Called at TOP of `render_and_export`, before any early-
+return. Diff: `+53 lines` in
+`moonshine-core/src/session/compositor/state.rs`. Rebuilt and deployed.
+
+Test: **still fails.** Same behavior — 5 initial commits then stall.
+Temp diag confirmed the helper fires every tick with `windows=1,
+has_override=false` — callbacks ARE being sent to the game's window.
+They're just not the missing link.
+
+### Fix C (applied, kept): drain wp_presentation_feedback on space windows
+
+Xwayland forwards X11 Present requests over Wayland via
+`wp_presentation_feedback`. OpenGL games under Xwayland block their
+next `glXSwapBuffers` on the corresponding `presented` event.
+
+Previously drained only in the direct-scanout paths and
+`override_surface` — not on the composited path. Added a drain in
+`dispatch_frame_callbacks` for every window in `self.space`.
+
+Test: **still fails identically.**
+
+### Bug is game-independent (vkcube proves it)
+
+Ran the same recipe against vkcube (Vulkan-native, no Xwayland
+indirection for its Wayland side… actually vkcube DOES use
+xwayland when there's no `WAYLAND_DISPLAY` in the environment.
+Need to double-check by reading vkcube-vulkan-info or by trying
+`vkcube-wayland` which explicitly binds to wl_display).
+
+Anyway, same wedge: 4 initial dmabuf imports → 31.7s silence
+→ /resume Reset → encoding starts.
+
+### The mysterious /resume rescue path
+
+After /resume RTSP Play, `active.reset_video_stream()` fires which
+calls `video_handle.request_reset()` → broadcasts to the pipeline's
+`reset_request_rx`. Pipeline picks it up on next `try_recv` inside
+`run_encoding_loop`. That path only:
+1. Sets `frame_number = 0`, `sequence_number = 0`.
+2. Calls `encoder.request_idr()`.
+
+**Nothing else.** No side-effect on compositor, no message back to
+the game, no re-broadcast of any wl_output/wl_seat state.
+
+Yet 14 seconds after /resume Play, the pipeline logs
+"Resetting video frame counter" AND `Encoding frame 0` immediately
+after. So SOMEWHERE in that 14 seconds, the compositor produces a
+frame, `frame_rx.recv_timeout` returns Ok, encoder encodes it.
+
+What happens in that 14-second gap that unwedges things? Unknown.
+
+### Candidates for the actual blocker
+
+Ranked by plausibility:
+
+1. **`wl_buffer.release` never sent to the game's committed buffers.**
+   Client attaches buffer, commits, blocks waiting for either the
+   next commit-ack (implicit via next `.frame` callback) OR a
+   `wl_buffer.release` event before it can safely reuse a buffer.
+   If moonshine's compositor holds the imported DMA-BUF indefinitely
+   (via `held_scanout_buffers` or the buffer pool), the game runs
+   out of buffers and stops. Worth checking: does smithay's
+   Dmabuf import path release the client wl_buffer eagerly, or does
+   it hold it until the render is done?
+
+2. **`wl_output.done` never fired.** If the game is still in output-
+   binding phase and hasn't received the "done" event from the
+   compositor, it might not know the output is "ready" and defer
+   its main render loop.
+
+3. **Xwayland → smithay Present handshake.** The `smithay::xwayland`
+   integration handles the X11 Present protocol. If PresentPixmap
+   requests aren't getting `PresentCompleteNotify` back, GL games
+   block. This can be tested by dumping xwayland::xwm at trace
+   level.
+
+4. **Vulkan WSI's `vkQueuePresentKHR` path.** vkcube renders and
+   presents each frame. If the Wayland WSI code inside Mesa's
+   RADV (or vulkan-icd) is waiting for a `wl_surface.frame`
+   callback THAT WE'RE FIRING, but the callback contains a
+   timestamp field that vkcube's WSI rejects (e.g. non-monotonic
+   or wrong scale), the game's WSI might hang. Note: my helper
+   uses `Some(Duration::ZERO)` as the throttle_thresh arg, and
+   `self.clock.now()` for the time.
+
+### Diagnostic experiment for next session
+
+**Run vkcube (or CWR-CE) with `WAYLAND_DEBUG=1` set in its env.**
+This makes libwayland-client dump every Wayland protocol message
+the game sends and receives. The moonshine `make_envs` function
+would need to pass this through — or set it manually in the
+`command = [...]` list via a shell wrapper.
+
+Concretely:
+- Modify `/tmp/moonshine-test/moonshine.toml` on ser6:
+  ```
+  [[application]]
+  title = "vkcube-wldbg"
+  command = ["/bin/sh", "-c", "WAYLAND_DEBUG=1 exec /usr/local/bin/vkcube 2>/tmp/vkcube-wl.log"]
+  launch_timeout_secs = 5
+  ```
+- Deploy, launch from Moonlight, wait for the wedge, then read
+  `/tmp/vkcube-wl.log` to see what protocol message vkcube is
+  blocked on.
+
+The log will show `[client] wl_surface@N.frame(...)`,
+`[server] wl_callback@N.done(...)`, `[server] wl_buffer@N.release(...)`
+etc. Missing events reveal the blocker.
+
+### Files modified this evening (uncommitted on freebsd branch)
+
+- `moonshine-core/src/session/compositor/state.rs` — +53 lines,
+  extracts `dispatch_frame_callbacks()` and calls it at top of
+  `render_and_export`; drains wp_presentation_feedback on all space
+  windows. **Directionally correct — dispatching callbacks
+  unconditionally is more correct than the pre-fix behavior — but
+  not sufficient to fix the /launch race.**
+
+No other files changed today.
