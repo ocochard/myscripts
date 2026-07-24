@@ -421,30 +421,120 @@ moonlight-common-c (`bindUdpSocket` + PING thread + receive
 thread). So it's not a fundamental v6/ephemeral-port bug — it's
 something specific to the video path.
 
-## Current wall
+### 18. End-to-end streaming works — via `/resume`, not `/launch`
 
-Truly unresolved. Data-driven candidates:
+Setup: Windows-Moonlight-qt 6.1.0 client on same LAN (via
+Tailscale, `100.73.1.39` ↔ ser6 `100.123.76.26`). Retried on
+Mac-Moonlight-qt via WireGuard tunnel (`utun4`). Both platforms
+show the **same behaviour**:
 
-1. **macOS pf or built-in firewall silently discards inbound IPv6
-   UDP on ephemeral ports when the packet exceeds some threshold.**
-   Would explain 76-88-byte audio being delivered while
-   704-1040-byte video is not — but the tcpdump on `utun4`
-   proves the packets DID cross that interface. Unless the
-   Application Firewall filters between the socket buffer and
-   `recvfrom()`, which is architecturally possible on macOS but
-   would be very unusual.
+1. Fresh `GET /launch` → session comes up, moonshine encodes HEVC,
+   video packets leave ser6 (~16-18k over ~30s in the client
+   pcap on the Tailscale interface), but client reports **"No
+   video traffic was ever received"** in ~10s. Client
+   `Get-NetUDPEndpoint` shows Moonlight has an rtpSocket bound to
+   `100.73.1.39:<eph>`; server pcap confirms shards dst'd there.
+2. Retry via `GET /resume` (Moonlight UI button): 2nd or 3rd
+   attempt attaches to the still-running server session and
+   **video renders cleanly at 60 fps, input works, low latency.**
 
-2. **Moonlight-qt (or moonlight-common-c) has a bug specific to
-   IPv6 video-recv over ephemeral tunnel interfaces on macOS.**
-   Nothing surfaced this in a quick web search.
+So the wall isn't the network path, the payload framing, the
+tunnel MTU, or Moonlight's socket bind. It's specific to the
+initial-`/launch` code path in moonshine — probably a race between
+moonshine's video pipeline start (which begins emitting shards
+immediately on `Session streams started successfully`) and the
+client's video-recv thread readiness. `/resume` doesn't hit the
+race because the pipeline has been idling for seconds by the time
+the second connect happens.
 
-3. **Some framing detail moonshine gets subtly wrong that
-   trips a silent drop deep in Moonlight-common-c's RTP-layer,
-   AFTER the "Received first video packet" log should have fired
-   but before any user-visible signal.** Contradicted by the
-   source I read (the log fires before validation), but I read
-   only one file — worth verifying against the actual
-   moonlight-qt build version.
+Also invalidates my earlier "H1 ENet compression" and "H2 tunnel
+PMTU" hypotheses. The `tokio_enet: received compressed packet but
+no compressor configured` warning is a real conformance gap but
+does not stop streaming. The tunnel does not drop 1040-byte video
+shards (16k made it through in one run, iperf3 confirmed
+end-to-end UDP works at 5 Mbps).
+
+Fixes made along the way that were plausible but not the wall:
+- `SO_SNDBUF=1MiB` on the video socket (matches Sunshine). Kept —
+  reduced `ENOBUFS` from many-per-run to 0-1 per session.
+- Xwayland stale-lock cleanup between sessions. Kept — otherwise
+  the compositor tries to acquire display=0..N and fails on stale
+  `/tmp/.X<N>-lock` files.
+
+### 19. Audio architecture — moonshine IS the PulseAudio server
+
+Moonshine's audio capture works by **being a PulseAudio server**
+itself, not by capturing from a system audio backend. Concretely:
+
+- `moonshine-core/src/session/stream/audio/pulse_server/` implements
+  the PulseAudio protocol in pure Rust.
+- A Unix socket at `$XDG_RUNTIME_DIR/moonshine/pulse/native` is
+  created per session.
+- `application::make_envs()` sets `PULSE_SERVER=unix:...` in the
+  game's environment.
+- When the game (via libpulse or SDL's Pulse backend) connects,
+  moonshine speaks Pulse protocol, receives PCM frames, encodes
+  them with Opus, and streams them over UDP.
+
+**Why not sndio or OSS.** FreeBSD's native audio path is sndio (or
+OSS via `/dev/dsp`). Capturing from either requires either:
+- Emulating a `sndiod` protocol server in moonshine (equivalent
+  effort to the existing PulseAudio server — not done).
+- Kernel-level or fusefs `/dev/dsp` interception for OSS clients
+  (much harder, no existing infrastructure).
+
+Pulse-protocol emulation is pragmatic because every modern audio
+library (SDL, OpenAL, mpv, etc.) knows how to speak Pulse over
+`PULSE_SERVER=unix:...` without patching the app.
+
+**Concrete FreeBSD gotcha (found 2026-07-24).** The default
+`devel/sdl3` port on FreeBSD builds with:
+
+```
+ALSA:       off
+OSS:        on           ← default backend
+PIPEWIRE:   off
+PULSEAUDIO: off          ← the very thing moonshine needs
+SNDIO:      off
+```
+
+So a stock-FreeBSD SDL3 game (CWR-CE / PoseidonGame in our test)
+writes audio to `/dev/dsp` and moonshine never sees it — client
+gets video but silent audio. Setting `SDL_AUDIODRIVER=pulseaudio`
+in the game's env is a **no-op** because SDL3 doesn't have the
+Pulse backend compiled in and can't `dlopen(libpulse.so)` at
+runtime (SDL3 uses compile-time-selected backends).
+
+Moonshine now unconditionally sets `SDL_AUDIODRIVER=pulseaudio`
+and `AUDIODRIVER=pulse` in `make_envs`, which is correct for the
+day sdl3 gains Pulse support. For today's ser6 setup it's a
+no-op.
+
+**Fix options for audio (any one gives working audio):**
+
+1. **Rebuild `devel/sdl3` with `PULSEAUDIO=on`** and install on ser6.
+   ```
+   cd /usr/ports/devel/sdl3 && make config     # enable PULSEAUDIO
+   make deinstall reinstall
+   ```
+   Or via poudriere `make.conf`:
+   ```
+   sdl3_SET+=PULSEAUDIO
+   ```
+   This affects every SDL3-audio-using port on the box. Non-breaking
+   because moonshine's env keeps Pulse the selected backend; when
+   moonshine isn't in the picture, SDL3 falls back to OSS.
+2. **Alternative** (much bigger): add a sndio-protocol server to
+   moonshine parallel to the Pulse one, then rebuild sdl3 with
+   `SNDIO=on` instead. Cleaner match for FreeBSD-native audio but
+   real new-feature work.
+3. **Interim workaround** (nothing): live with silent audio.
+
+**Not amenable to upstream reversal.** The maintainer intentionally
+left Pulse off in `devel/sdl3` OPTIONS_DEFAULT — Pulse isn't the
+FreeBSD-native audio server, and forcing `audio/pulseaudio` as a
+dep of every SDL3 consumer would be wasteful. Local override or
+new sndio server are the only paths.
 
 4. **A macOS SO_RCVBUF overrun causing kernel drops** — but that
    would show as pf/socket stats, not silent invisibility.
