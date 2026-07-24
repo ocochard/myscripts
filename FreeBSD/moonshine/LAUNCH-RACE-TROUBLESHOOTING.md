@@ -155,6 +155,62 @@ exists at `session/stream/video/pipeline/mod.rs:398-404` and is
 exactly what makes /resume succeed. The initial /launch path has
 no equivalent.
 
+## 2026-07-24 01:57 update — `-nosplash` didn't fix it
+
+Applied `-nosplash` to CWR-CE's launch args in
+`/tmp/moonshine-test/moonshine.toml` and restarted moonshine.
+Retested: **initial /launch still fails, still needed /resume.**
+User confirmed CWR-CE is a 20-year-old game and starts "very very
+fast" — so the earlier "waiting for slow game rendering" theory
+was wrong.
+
+**Concrete evidence between /launch (T=0) and first /resume (T≈22s):**
+
+- Compositor: `Client DMA-BUF import successful` at T+0.03s, T+1.04s,
+  T+3.10s. So the **game IS rendering** and committing wl_buffers.
+- Client: **zero `Received video stream PING`** events on port 47998
+  server-side. Client's PING thread should have fired every 500ms.
+- Pipeline: **zero `Encoding frame`** events. `run_encoding_loop`
+  entered but `frame_rx.recv_timeout()` never returned an Ok(frame).
+
+**So the actual bug**: the video pipeline is running, the encoder
+is created, the game is producing dmabufs, and the compositor is
+importing them — but the compositor's 60Hz `render_and_export()`
+call isn't reaching the pipeline via `frame_tx → frame_rx`.
+`sync_channel(2)` is somewhere silent.
+
+Also strange: **client never sent a PING** during the 22-second
+failing window. Either the client's PING thread didn't start, or
+its PINGs got dropped before reaching ser6's UDP :47998. Given
+the tunnel is proven fine (iperf3), the client-side is more likely.
+But moonlight-common-c starts the PING thread synchronously right
+after `bindUdpSocket` — should always start.
+
+## 2026-07-24 01:57 update — a resumed session showed 6 IDRs in 4s
+
+On the eventual successful /resume, client asked for `RequestIdrFrame`
+**6 times in ~4 seconds**. Each request emitted a fresh IDR (frame 0,
+157, 178, 188, 205, 221). Two possible causes:
+
+1. **Client rejects each IDR and re-requests.** IDR-with-refs would
+   trigger this: some IDRs logged `l0_refs=[(0, 312)]` or `[(1, 40)]`
+   — non-empty ref lists on a true "instantaneous decoder refresh"
+   frame violates HEVC spec.
+2. **Client is testing** — sends redundant requests during initial
+   sync until it locks on.
+
+The `l0_refs` thing is a strong candidate for its own bug. Look at
+`pixelforge/src/encoder/h265/api.rs` line 85+ — `sequence_start()`
+is supposed to reset the DPB on IDR, but the log shows non-empty
+`l0_refs` after that reset was called.
+
+## Diagnostic experiment for next session
+
+**Add three `tracing::info!` lines** to localize where the frame
+channel goes silent. See CONTINUE.md for the exact code positions
+and log strings. Should take <1 hour to rebuild + deploy + retest
++ localize.
+
 ## Fix directions (untested)
 
 Ranked by tractability:
