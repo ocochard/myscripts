@@ -1,5 +1,21 @@
 # /launch → /resume retry race — troubleshooting log
 
+> **RESOLVED 2026-07-24 — root cause = `Packetizer::warm_up()`.**
+> The black-screen window is `warm_up` building 213 ReedSolomon FEC
+> matrices synchronously on the encoder thread before the encode loop's
+> first recv. **Debug build: ~37s (16:22:56.712→16:23:33.503).
+> Release build: 0.77s (16:27:10.517→16:27:11.284), race gone.** It is
+> a debug-build artifact. `/resume` never fixed anything — by the time
+> the user finished clicking, warm_up had finished on its own.
+>
+> **Everything below this banner is the investigation trail and is
+> WRONG or superseded.** All the "NOT the bug" entries are correct
+> negatives; every positive theory (channel wedge, buffer-pool
+> off-by-one, game-stops-committing, missing frame callbacks,
+> presentation feedback, WAYLAND_DEBUG next-step) is a dead-end. See
+> STATE.md §20 for the confirmed analysis and the pool_busy secondary
+> bug. Kept for the record only.
+
 Session-scoped bug in moonshine's initial-/launch code path. Ships as
 "user needs 1-3 /resume clicks after every /launch failure before video
 appears." Video via /resume works reliably; audio (via virtual_oss

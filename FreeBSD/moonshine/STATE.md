@@ -692,128 +692,102 @@ Independent of the packet-size wall, still-open items:
   IPv6. Fine for a smoke test, worth a pf rule for anything longer-
   lived.
 
-### 20. 2026-07-24 (evening): probe-driven diagnosis + partial fixes
+### 20. 2026-07-24: /launch race ROOT-CAUSED — `Packetizer::warm_up()`
 
-Instrumented `render_and_export` and the video pipeline's `recv_timeout`
-with info-level probes across three rebuild+deploy cycles on ser6.
-Findings, in order:
+**CONFIRMED ROOT CAUSE:** `Packetizer::warm_up()` runs synchronously
+on the encoder thread *before* the encode loop's first `recv`, and in
+a **debug build** it takes ~37 seconds. That is the entire black-screen
+window. It is a **debug-build artifact** — release build does the same
+work in ~0.77s and the race disappears.
 
-**Round 1 finding (buffer-pool wedge — SYMPTOM, not root cause):**
-- Compositor's `render_and_export` fires at 60Hz during the dead
-  window. First 3 ticks send OK to `sync_channel(2)`. Tick 3 hits
-  `frame_tx.try_send Full` (channel already has 2 queued, pipeline
-  still blocked on `start_notify.notified()`).
-- On Full, code rolls back `consumed` on the current slot but leaves
-  `next_buffer_index` advanced. Next tick lands on buffer 0
-  (`consumed=false`, i.e. held by an in-queue frame) → early-returns.
-- Loop stays parked on buffer 0 forever; buffer 2 sits free but the
-  round-robin cursor never scans past a stuck slot. Log clearly
-  showed 2011 consecutive `buffer 0 still in use, pool
-  consumed=[false, false, true]` ticks.
+> Everything in the previous versions of this section and in
+> LAUNCH-RACE-TROUBLESHOOTING.md's earlier theories (game stops
+> committing, encoder deadlock, missing frame callbacks, cursor gate,
+> first-frame-not-IDR, buffer-pool wedge, WAYLAND_DEBUG next-step) was
+> **WRONG** and is kept below only as a list of ruled-out hypotheses.
 
-**Attempted fix A (buffer-pool off-by-one — REVERTED after test):**
-- Moved `next_buffer_index = (idx + 1) % N` from before try_send to
-  inside the Ok arm. On Full, next_buffer_index stays put, so next
-  tick retries the same slot.
-- Test result: **no change on client side.** The wedge unwinds
-  eventually via /resume like before, my fix just changed the
-  intermediate loop from "stuck on buffer 0" to "Full-retry spin on
-  a still-full channel". Reverted.
+**What warm_up does** (`packetizer.rs:164`): pre-builds the ReedSolomon
+FEC encoder for every possible data-shard count so no GF(256) matrix
+has to be built per-frame. With `fec_percentage=20`:
+- `nr_parity_shards_per_block = 255*20/120 = 42`
+- `nr_data_shards_per_block   = 255-42 = 213`
+- loop calls `get_fec_encoder(n, ...)` for `n = 1..=213` →
+  **213 `ReedSolomon::new()` matrix constructions**, each an
+  O(shards²) GF(256) Vandermonde inversion.
 
-**Real root cause identified in round 2:** the pipeline task is
-gated on `start_notify.notified()` (pipeline/mod.rs:232). StartB
-arrives from the client via ENet ~4ms after the peer-connect on the
-initial /launch — I proved this by instrumenting the ENet Receive
-path. The pipeline unblocks, calls `create_encoder()` (~500ms), then
-enters `run_encoding_loop` and starts calling `frame_rx.recv_timeout()`.
-But the compositor is no longer sending frames — because the game
-stopped committing new buffers after ~5 initial commits.
+In debug (no optimization, overflow checks on) 213 of those serialize
+to ~37s on the 680M host's cores. `get_fec_encoder` (packetizer.rs:426)
+already creates-on-demand in its Vacant arm, so **warm_up is pure
+optimization** — the encode loop is fully correct without it.
 
-**Why the game stops committing:** during the compositor's initial
-ticks, `render_and_export` was early-returning through several paths
-(throttle, buffer-in-use, direct-scanout-success). **None of the
-early-return paths dispatched `wl_surface.frame` callbacks** to the
-committed windows. The composited path DID (at the bottom), but only
-when it reached the try_send. So games commit their initial buffers,
-never receive `wl_callback.done`, and block their next commit.
+**The measurement (bracketing probes on the encoder thread):**
+| build   | warm_up window                     | duration |
+|---------|------------------------------------|----------|
+| debug   | 16:22:56.712 → 16:23:33.503        | 36.79 s  |
+| release | 16:27:10.517 → 16:27:11.284        | 0.767 s  |
 
-**Fix B (applied, KEPT on the branch, not yet committed):** extract
-the frame-callback dispatch from the composited path into a helper
-`dispatch_frame_callbacks()` and call it at the TOP of
-`render_and_export` before any early-return. `+53 lines` in
-`moonshine-core/src/session/compositor/state.rs`. Full diff:
-- New `dispatch_frame_callbacks(&mut self)` method containing the
-  existing `space.elements().for_each(send_frame)` block, the
-  override-surface `send_frames_surface_tree`, the
-  `wp_presentation_feedback` drain (for override surface), and
-  `display_handle.flush_clients()`.
-- Called from the top of `render_and_export` immediately after the
-  cursor-dirty check.
-- The composited path no longer duplicates the block; the helper is
-  the single source of callback dispatch.
+Release: `Encoding frame 0` fires 780 ms after peer connect, 774
+frames stream continuously, **no wedge, no Resume click**, pool_busy
+counter flat at 40. Debug: encoder thread sits inside warm_up for the
+full ~37s while the client times out and the user clicks Resume.
 
-**Fix C (also applied, KEPT):** the helper additionally drains
-`take_presentation_feedback` on every window in `self.space` — not
-just the override surface. Rationale: Xwayland forwards X11 Present
-requests over Wayland via `wp_presentation_feedback` (which is what
-`window.take_presentation_feedback` covers). Without this, OpenGL
-games under Xwayland block their SwapBuffers.
+**Why /resume "fixed" it before:** it never did anything to the
+compositor or game. By the time the user had clicked Resume 1-3 times
+(~15-37s of human latency), warm_up had simply finished. The "14s
+after /resume, encoding starts" correlation was warm_up completing on
+its own schedule, not a response to the Reset.
 
-**Test result after B+C:** initial /launch still fails, /resume
-still works. **Fixes did not resolve the /launch race.** Confirmed
-with two different games: `vkcube` (Vulkan, XB4H format) shows the
-identical wedge pattern (4 initial dmabufs → 31.7s silence → /resume
-Reset → encoding starts). So the bug is **NOT** CWR-CE-specific.
+**How the earlier diagnoses went wrong:** all probes were on the
+compositor and the channel, not on the encoder thread's pre-loop
+setup. The compositor *was* healthy the whole time (2040 commits in
+34s, frame callbacks firing, presentation feedback firing) — we kept
+looking for a missing Wayland event because the one place we hadn't
+instrumented (warm_up, which runs before the loop we were watching)
+was the culprit.
 
-**Current state of the diagnosis:**
-- Compositor's frame callbacks fire at 60Hz to the game window.
-  Confirmed via a temp diag log (`windows=1, has_override=false`) —
-  now reverted.
-- `wp_presentation_feedback::presented` fires 60Hz on every space
-  window.
-- Game still stops committing dmabufs after 4-5 initial commits.
-- **Something else the game is waiting for.** Not wl_surface.frame,
-  not wp_presentation_feedback. Candidates:
-  1. **Xwayland-specific**: the game does X11 `PresentPixmap` and
-     expects `PresentCompleteNotify` with a matching serial. If
-     smithay's Xwayland integration doesn't fire that correctly,
-     the game blocks. Note: `xwayland::xwm=info` filter is active
-     in current tests, so any warn/error from xwm would be visible.
-  2. **wl_output geometry**: game might be waiting for wl_output
-     mode/scale/done events on a fresh compositor bringup.
-  3. **wp_linux_dmabuf_v1 feedback**: after import, the compositor
-     should send `feedback::main_device` and `feedback::tranche_*`.
-     If missing on second/later commits, game may block.
-  4. **Something about the buffer_release protocol**: maybe the
-     compositor never releases the client's dmabufs (via
-     `wl_buffer.release`) after processing, so the client thinks
-     all its buffers are still in-flight and stops committing.
+**Secondary LATENT bug — pool_busy slot-pinning** (`state.rs` ~765):
+on the `!consumed` early-return, `render_and_export` returns *without*
+advancing `next_buffer_index`. If one slot is stuck (encoder slow or
+absent — exactly the debug warm_up window), the round-robin cursor
+pins to that slot and rechecks it every tick instead of using the 2
+free slots. Invisible in release (encoder keeps up, slots free fast).
+Real but only surfaces behind a slow/absent consumer. **This is the
+next fix.**
 
-**Diagnostic experiment for next session:** run `WAYLAND_DEBUG=1`
-(or WAYLAND_DEBUG=client) inside the vkcube launch so vkcube dumps
-every Wayland protocol message it exchanges with moonshine. Compare
-during the 31-second stall window: what request is vkcube blocked
-on? What events is it expecting?
+**Fixes B+C from the earlier evening pass (dispatch_frame_callbacks
+helper + wp_presentation_feedback drain on every space window):**
+directionally reasonable (dispatching callbacks in early-return paths
+is what the code should do) but **do not affect the race** — the race
+was never a missing callback. Decision on whether to keep, revert, or
+fold pending; not the cause.
 
-**How to reproduce the wedge on ser6:**
-1. `ssh ser6 '/tmp/moonshine-start.sh'` (already restarts with the
-   current uncommitted-on-freebsd-branch binary at /tmp/moonshine).
-2. From Moonlight-qt, select "vkcube" (or CWR-CE — same result).
-3. Watch: game shows ~4-5 initial imports in the log, then goes
-   silent for 30-45s. Client times out with "no video traffic".
-4. Click /resume in Moonlight: after 10-14 more seconds, Reset
-   fires and encoding starts. Streaming becomes stable.
+**Ruled out (all disproven this session):**
+- game stops committing dmabufs — false; steady 60Hz commits throughout
+- encoder `consumed` deadlock — false; lifecycle correct on all exits
+- missing `wl_surface.frame` callbacks — false; firing at 60Hz
+- cursor gate diverting to a dead GLES pool — coincidental, not causal
+- first frame not IDR — false; frame_index 0 always IDR (GOP size 0)
+- `start_notify` gate never firing — false; StartB arrives ~4ms after
+  peer connect, pipeline unblocks immediately
+- linuxlator — runtime binaries are all native FreeBSD
 
-**File impact:** the state.rs +53 diff is uncommitted on the
-`freebsd` branch. If we decide the fix stays (it's at least directionally
-correct — dispatching callbacks unconditionally is what the code
-should have done anyway), it's ready to commit. If the further
-investigation reveals a better structure, we may fold it into a
-larger fix.
+**Fix options for warm_up itself (deferred, not yet chosen):**
+1. Do nothing in release; document that debug is expected to be slow.
+2. Move warm_up off the critical path — spawn it on a background
+   thread / tokio task so the encode loop starts immediately and the
+   lazy `get_fec_encoder` fills the cache for the first few frames.
+3. Skip warm_up entirely (rely on lazy creation); costs a one-time
+   matrix build on the first frame of each new shard count.
 
-**Also uncommitted from earlier in the day (kept from previous
-handoff — unchanged today):** the moonshine STATE.md sections §1-19.
-Those weren't touched.
+**Reproduce (debug only):** `ssh ser6 '/tmp/moonshine-start.sh'`,
+launch any app from Moonlight-qt, watch ~37s black then video. In a
+release binary the black window is sub-second.
+
+**Uncommitted:** ser6 currently runs a release binary still carrying
+PROBE instrumentation. `~/moonshine` `freebsd` branch has the +53
+state.rs diff (B+C) plus all PROBE lines across state.rs, mod.rs,
+handlers.rs, pipeline/mod.rs. **All PROBE lines must be stripped
+before any commit.** Nothing committed or pushed.
 
 ## File map — where things are
 
