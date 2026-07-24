@@ -10,11 +10,13 @@ Moonlight streaming host). End-to-end video AND audio streaming
 already work over Tailscale/WireGuard tunnels from ser6 (FreeBSD
 16.0-CURRENT, AMD Radeon 680M) to Moonlight-qt on Windows and Mac.
 
-The **/launch black-screen race is SOLVED.** Root cause was
+The **/launch black-screen race is SOLVED and FIXED.** Root cause was
 `Packetizer::warm_up()` building 213 ReedSolomon FEC matrices
 synchronously on the encoder thread before the encode loop's first
-recv. Debug build: ~37s. Release build: 0.77s and the race is gone.
-It is a debug-build artifact; `/resume` never actually fixed anything.
+recv (~37s debug, 0.77s release; `/resume` never actually fixed
+anything — warm_up just finished on its own). The fix moves that build
+off-thread so the encode loop starts at frame 0 immediately in any
+build. Verified on ser6. See "Current state" below for the commit trail.
 
 ## Read these first, in order
 
@@ -30,37 +32,30 @@ It is a debug-build artifact; `/resume` never actually fixed anything.
    documenting cross-cutting FreeBSD gotchas. Skim if new to the
    FreeBSD side.
 
-## Current state
+## Current state — /launch race RESOLVED
 
-- **Root cause confirmed.** Nothing left to diagnose on the race.
-- ser6 runs a **release** binary that still carries PROBE
-  instrumentation. All PROBE lines across `state.rs`, `mod.rs`,
-  `handlers.rs`, `pipeline/mod.rs` must be stripped before any commit.
-- `~/moonshine` `freebsd` branch, uncommitted:
-  - `+53` state.rs diff: `dispatch_frame_callbacks()` helper +
-    `wp_presentation_feedback` drain on every space window. These are
-    directionally fine but **do not affect the race**. Decide keep /
-    revert / fold.
-  - All PROBE instrumentation (info-level tracing) added during the
-    investigation.
+The race is fully fixed, verified on ser6, committed and pushed. All
+PROBE instrumentation was stripped before commit. Nothing outstanding on
+the race.
+
+Commit trail:
+- `a804841` (moonshine `freebsd`) — `dispatch_frame_callbacks()` helper
+  (dispatch before early-returns) + `wp_presentation_feedback` drain on
+  every space window + pool_busy slot-scan fix.
+- `f4fa804` (moonshine `freebsd`) — `warm_up` moved off-thread
+  (`warm_up_async` + `merge_warm_up` + free `build_fec_encoders`); encode
+  loop polls `handle.is_finished()` and merges once ready; lazy
+  `get_fec_encoder` covers the first frames.
+- `bf3610d` (myscripts `master`) — root-cause doc rewrite.
+
+Verified (release, ser6): Encoding frame 0 fires 11 ms after peer
+connect; FEC cache (213 entries) merges 747 ms later off-thread; no
+Reset/Resume/panic. Debug builds now also start at frame 0 immediately.
 
 ## Remaining work
 
-1. **Fix the pool_busy slot-pinning bug** in
-   `moonshine-core/src/session/compositor/state.rs` (~lines 765-778).
-   On the `!consumed` early-return, `render_and_export` returns
-   *without* advancing `next_buffer_index`, so one stuck slot pins the
-   round-robin cursor and every subsequent tick rechecks the same busy
-   slot instead of using the 2 free ones. Fix: scan all slots for a
-   free one (or advance past busy slots). Low risk, ~2 lines. Latent —
-   only surfaces behind a slow/absent consumer (i.e. the debug warm_up
-   window); invisible in release.
-2. **Strip all PROBE instrumentation** before any commit.
-3. **Decide fate of the B+C state.rs diff** (keep / revert / fold).
-4. **(Optional) Move warm_up off the critical path** so even debug
-   builds start fast: spawn it on a background thread/task and let the
-   lazy `get_fec_encoder` (packetizer.rs:426, already creates-on-demand)
-   fill the cache for the first few frames. Or skip warm_up entirely.
+None on the /launch race. Open follow-ups elsewhere in the port are the
+audio/packet-size items tracked in STATE.md — unrelated to this bug.
 
 ## Environment
 

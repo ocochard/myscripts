@@ -745,21 +745,21 @@ looking for a missing Wayland event because the one place we hadn't
 instrumented (warm_up, which runs before the loop we were watching)
 was the culprit.
 
-**Secondary LATENT bug — pool_busy slot-pinning** (`state.rs` ~765):
-on the `!consumed` early-return, `render_and_export` returns *without*
-advancing `next_buffer_index`. If one slot is stuck (encoder slow or
-absent — exactly the debug warm_up window), the round-robin cursor
-pins to that slot and rechecks it every tick instead of using the 2
-free slots. Invisible in release (encoder keeps up, slots free fast).
-Real but only surfaces behind a slow/absent consumer. **This is the
-next fix.**
+**Secondary LATENT bug — pool_busy slot-pinning (FIXED):** in
+`render_and_export`, the buffer-pool pick only checked the round-robin
+cursor's slot and returned on `!consumed` *without* advancing
+`next_buffer_index`. If one slot was stuck (encoder slow or absent —
+exactly the debug warm_up window), the cursor pinned to it and rechecked
+it every tick instead of using the free slots. Fixed by scanning all
+slots from the cursor and only skipping when *every* slot is still held.
+Invisible in release; real behind a slow/absent consumer. Committed as
+moonshine `a804841`.
 
-**Fixes B+C from the earlier evening pass (dispatch_frame_callbacks
-helper + wp_presentation_feedback drain on every space window):**
-directionally reasonable (dispatching callbacks in early-return paths
-is what the code should do) but **do not affect the race** — the race
-was never a missing callback. Decision on whether to keep, revert, or
-fold pending; not the cause.
+**Fixes B+C (dispatch_frame_callbacks helper + wp_presentation_feedback
+drain on every space window):** KEPT and committed with the pool_busy
+fix (`a804841`). Directionally correct — callbacks should be dispatched
+in early-return paths regardless — but they **do not affect the race**;
+the race was never a missing callback.
 
 **Ruled out (all disproven this session):**
 - game stops committing dmabufs — false; steady 60Hz commits throughout
@@ -771,23 +771,42 @@ fold pending; not the cause.
   peer connect, pipeline unblocks immediately
 - linuxlator — runtime binaries are all native FreeBSD
 
-**Fix options for warm_up itself (deferred, not yet chosen):**
-1. Do nothing in release; document that debug is expected to be slow.
-2. Move warm_up off the critical path — spawn it on a background
-   thread / tokio task so the encode loop starts immediately and the
-   lazy `get_fec_encoder` fills the cache for the first few frames.
-3. Skip warm_up entirely (rely on lazy creation); costs a one-time
-   matrix build on the first frame of each new shard count.
+**warm_up moved off the critical path (FIXED, committed `f4fa804`):**
+`Packetizer::warm_up()` (inline, blocking) was replaced with:
+- `warm_up_async(fec_percentage, minimum_fec_packets)` — spawns a named
+  `fec-warmup` `std::thread`, returns `JoinHandle<HashMap<(usize,usize),
+  ReedSolomon>>`.
+- `merge_warm_up(map)` — folds the built map into the live cache with
+  `entry().or_insert()` so any lazily-created entries win.
+- free fn `build_fec_encoders()` — the pure-CPU build body (no `self`),
+  runnable on the worker thread.
 
-**Reproduce (debug only):** `ssh ser6 '/tmp/moonshine-start.sh'`,
-launch any app from Moonlight-qt, watch ~37s black then video. In a
-release binary the black window is sub-second.
+The encode loop (`pipeline/mod.rs`) spawns the warm-up at setup, then
+each tick polls `handle.is_finished()` cheaply and `join()`+merges once
+ready. `get_fec_encoder`'s existing lazy Vacant arm covers the first few
+frames until the merge lands. Net effect: `Encoding frame 0` fires
+immediately even in a debug build; the ~37s FEC build runs in parallel.
 
-**Uncommitted:** ser6 currently runs a release binary still carrying
-PROBE instrumentation. `~/moonshine` `freebsd` branch has the +53
-state.rs diff (B+C) plus all PROBE lines across state.rs, mod.rs,
-handlers.rs, pipeline/mod.rs. **All PROBE lines must be stripped
-before any commit.** Nothing committed or pushed.
+**Verified on ser6 (release, `713ef98…`):**
+- `17:25:12.878` peer connected
+- `17:25:12.889` Encoding frame 0 (IDR) — **11 ms** after connect
+- `17:25:12.897` Encoding frame 1 (P)
+- `17:25:13.636` FEC cache warmed, 213 entries — merged **747 ms** later,
+  off-thread. No Reset, no Resume, no panic.
+
+**The /launch race is fully resolved** — not just masked by the release
+build. Debug builds now also start at frame 0 immediately.
+
+**Reproduce (historical, pre-fix, debug only):** was
+`ssh ser6 '/tmp/moonshine-start.sh'` → launch any app → ~37s black then
+video. Post-fix this window is gone in both debug and release.
+
+**Commit trail:**
+- `a804841` (moonshine) — dispatch_frame_callbacks + pool_busy slot scan
+- `f4fa804` (moonshine) — warm_up off-thread
+- `bf3610d` (myscripts) — root-cause doc rewrite
+All PROBE instrumentation stripped before commit. All pushed to
+`ocochard/*`.
 
 ## File map — where things are
 
