@@ -503,3 +503,28 @@ Phase-4/5 is a high-effort, high-risk restructure that cannot be validated on th
 only online machine and whose thesis (CPU-cuts → FPS) is cheaper to test first via
 the GPU-skinning build already sitting on the branch. **Don't start it until the
 t420 confirms there's FPS to be won that GPU skinning didn't already capture.**
+
+## Phase-4/5 — SHELVED (2026-07-25), settled by the t420 profile
+
+The t420 is back; profiled it (`PERF-hotspot-profile.md` → "t420 profile
+(2026-07-25)") and **decided not to build Phase-4/5.** The confirming
+condition the bottom line above set — "the t420 confirms there's FPS to be won
+that GPU skinning didn't capture" — **failed**:
+
+- The t420 busy main thread is only **~35% Poseidon compute**; **~45%+ is serial
+  GPU-driver/GL-submission** (Mesa gallium 16.6% + i915/dmabuf/drm ~10% + the
+  kernel ioctl path), which task-parallelism cannot touch (one GL context) and
+  which forms a hard floor.
+- The parallelizable Poseidon compute is coarse-LOD skinning (~3.8%,
+  `ApplyMatricesComplex` — the t420's #1, *not* ser6's `CheckVisibility`) +
+  collision (~4.9%) ≈ **~9% of frame → ~10% ceiling, ≈ +2 fps at 22 fps**.
+- The #1 target needs the `Man::Animate`-out-of-`Object::Draw` restructure; the
+  collision cluster is sim-side behind the not-airtight determinism gate.
+
+~10% for a multi-day high-risk draw-loop/sim restructure is not worth it, and the
+bigger ~45% slice is old-GPU + heavy-modern-Mesa-driver cost the engine can't
+batch away (terrain batching already KILLED). **The CPU-perf lever is tapped out on
+the available hardware.** The t420 hotspot profile is the deliverable; revisit only
+if a newer machine (fast CPU + GPU with headroom) changes the bound, or if the
+GPU-driver-submission cost itself becomes the target (a different investigation:
+Mesa/driver, not Poseidon task-parallelism).

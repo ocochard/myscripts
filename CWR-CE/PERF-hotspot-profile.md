@@ -247,6 +247,66 @@ readings should be logged as the acceptance metric from Phase 2 on.
 **Next target:** `Landscape::CheckVisibility()` is now the clear #1 — the prime
 candidate for Phase 3 (micro-opt) or Phase 5 (parallelize).
 
+## t420 profile (2026-07-25) — the CPU-bound box disagrees with ser6, and it is only ~35% Poseidon
+
+Profiled on the **t420** (i5-2520M Sandy Bridge + Intel HD 3000), the actual
+CPU-bound validation box, on the 197-unit patrol `Benchmark.Abel`. Native FreeBSD,
+`hwpmc` `cpu_clk_unhalted.thread_p`, process-scoped
+(`pmcstat -P … -t <pid>`), 15 s in steady-state gameplay. (Not the linuxlator —
+PoseidonGame is a native FreeBSD ELF; pmcstat ran natively.)
+
+**Frame-time split by image** (attributed leaf samples, ~76% of total; the rest
+unwound/unknown under `-O2`):
+
+| image | self% | what |
+|---|---|---|
+| PoseidonGame | **34.6%** | the game's own compute |
+| kernel | 24.9% | syscall/ioctl — largely the GPU-submission path |
+| libgallium (Mesa) | 16.6% | CPU-side GL command translation for the HD 3000 |
+| i915kms + dmabuf + drm | ~10.1% | Intel GPU kernel driver (GEM/fence ioctls) |
+| libc | 3.4% | |
+
+So **~35% Poseidon vs ~45%+ GPU-driver/GL-submission**. The single biggest
+category is not Poseidon compute — it is the Mesa gallium + i915 draw/submit
+stack. That work runs on the render thread through one GL context and **cannot be
+task-parallelized**; it is a hard floor under any Phase-4/5 win.
+
+**Top PoseidonGame self-time functions (this box):**
+
+| self% | function | class |
+|------:|----------|-------|
+| 3.50% | `AnimationRT::ApplyMatricesComplex` | **skinning (coarse LOD)** |
+| 1.36% | `Landscape::CheckIntersection` | collision (sim) |
+| 1.26% | `Landscape::IntersectWithGround` | collision (sim) |
+| 0.97% | `VertexBufferGL33::CopyVertices` | vertex upload (GL) |
+| 0.86% | `QSort<Ref<SortObject>>` | render sort |
+| 0.86% | `Landscape::GroundCollision` | collision (sim) |
+| 0.83% | `Landscape::RoadSurfaceY` | collision (sim) |
+| 0.60% | `Landscape::ObjectCollision` | collision (sim) |
+| 0.51% | `World::Simulate` | sim driver |
+| 0.34% | `AnimationRT::ApplyMatricesSimple` | skinning (coarse LOD) |
+
+**This disagrees sharply with the ser6 table above** (docs warned the two hosts
+disagree, `:416`). ser6's #1 `CheckVisibility` (6.79%) does **not** even rank on
+the t420; ser6's near-bottom `ApplyMatricesComplex` (0.96%) is the t420's **#1
+(3.5%)**. On the CPU-bound box the dominant Poseidon cost is **coarse-LOD CPU
+skinning** — precisely the LOD class GPU skinning does *not* cover (it does view
+LODs only), which is exactly why GPU skinning was a no-op on the patrol
+(`PERF-multithread-scope.md`, 2026-07-25). The second cluster is the
+sim-side collision/ground queries (~4.9% combined).
+
+**Recalibrated Phase-4/5 ceiling on the t420:** the parallelizable Poseidon
+compute is skinning (~3.8%) + collision (~4.9%) ≈ **~9% of frame time** — matching
+the docs' earlier Amdahl estimate, and far below what "main thread at 68-82%"
+naively suggests, because ~45% of that busy-thread time is serial GPU-driver
+submission. Perfectly parallelizing both across the t420's 4 threads caps out
+near ~10% frame-time (≈ +2 fps at 22 fps). The confirmed first targets are
+therefore **`ApplyMatricesComplex` (coarse-LOD skinning — the Man::Animate
+hoist-out-of-`Object::Draw` restructure)** and the **collision cluster**
+(sim-side, determinism-gated) — NOT ser6's `CheckVisibility`. Whether ~10% for a
+high-risk draw-loop/sim restructure is worth it is the open call before writing
+engine code.
+
 ## CheckVisibility parallelization audit (2026-07-18) — DEFERRED
 
 Investigated `CheckVisibility` (the #1 post-Phase-1 hotspot) as a Phase 5
