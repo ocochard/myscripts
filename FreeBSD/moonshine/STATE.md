@@ -131,6 +131,66 @@ Result: `cargo check` and `cargo build -p moonshine-core` both pass
 clean on `x86_64-unknown-freebsd`. Six `dead_code` warnings on the
 protocol structs (backend-stub doesn't read most fields) — cosmetic.
 
+### 6b. Native FreeBSD gamepad backend — DONE + VERIFIED end-to-end (2026-07-25, uncommitted)
+
+Replaced the no-op stub (§6) with a real backend that injects a virtual
+Xbox-style controller through `/dev/uinput`, speaking the uinput ioctl
+protocol directly in Rust (via `libc`, no `libevdev`/`inputtino`).
+
+- New file: `gamepad/backend_freebsd.rs` (cfg `target_os="freebsd"`).
+  Same public surface as the stub (`new`, `set_pressed`, `apply_update`,
+  `touch`, `set_motion`, `set_battery`) so `mod.rs` needs no dispatch
+  change.
+- `mod.rs` cfg split is now three-way: linux→inputtino,
+  freebsd→backend_freebsd, else→backend_stub (kept the
+  `linux/backend_X` + non-linux/stub pattern, no third ad-hoc variant).
+
+Why a hand-rolled backend and not a Linux uinput crate: FreeBSD's evdev
+event codes and struct layouts match Linux, but the ioctl **request
+numbers** do NOT (`sys/ioccom.h`: 13-bit param length vs Linux 14,
+different direction bits, and the bit-setters are `_IOWINT`/IOC_VOID
+int-by-value). The backend computes request numbers with a local
+`const fn` mirroring FreeBSD `_IOC`, and defines every ABI struct
+sized to the target headers, guarded by compile-time `size_of` asserts
+(input_event=24, input_id=8, input_absinfo=24, uinput_setup=92,
+uinput_abs_setup=28). Full rationale in `GAMEPAD-FREEBSD.md`.
+
+**Verified end-to-end on ser6** (Moonlight-qt client controller → trace
+log + raw `evdev` dump of the created node, one input class at a time):
+- All 4 face buttons A/B/X/Y → BTN_SOUTH/EAST/NORTH/WEST (e.g. A
+  `button_flags 4096` → `type=1 code=304 value=1/0`).
+- LB/RB → BTN_TL/TR; Start/Back → BTN_START/SELECT.
+- D-pad → ABS_HAT0X/Y (codes 16/17, values -1/0/1).
+- Both analog sticks, full range, **Y correctly inverted**.
+- Both analog triggers → ABS_Z / ABS_RZ, 0..255.
+- Multi-pad: index 0 and 1 create distinct nodes (event7/event8).
+- SDL sees it as a game controller (`isGC=1`, "Xbox One Controller").
+- Clean RAII teardown: on session end the evdev nodes disappear
+  (Drop → UI_DEV_DESTROY), no fd leak across connect/disconnect.
+
+The earlier `WARN: no gamepad is connected` was a **stale two-instance
+artifact** (an old moonshine kept the ports; the client talked to it),
+NOT a dispatch bug. With a clean single instance the shared dispatch
+routes correctly — no shared-code change was needed.
+
+Deferred (still no-op, warn-once): rumble/FF, gyro/accel motion, PS5
+touchpad, battery, LED, and honoring non-Xbox `GamepadKind`.
+
+**Runtime requirement (ser6):** `/dev/uinput` and `/dev/input/event*`
+are `root:wheel 0600` by default; moonshine runs as `olivier` and games
+must read the event nodes. Chosen least-privilege fix — a devfs rule
+granting group `video` rw:
+
+    # /etc/devfs.rules
+    [localrules=10]
+    add path uinput          mode 0660 group video
+    add path 'input/*'       mode 0660 group video
+    # /etc/rc.conf
+    devfs_system_ruleset="localrules"
+
+(`olivier` is in `video`. `input/*` is needed because the *game* — not
+moonshine — opens the event node SDL enumerates.)
+
 ### 7. Native libs + link-flags wired — DONE
 
 Installed via pkg on this build host:
@@ -703,20 +763,21 @@ cleanly.
   - Scroll (`Scroll vertical: ±120`)
   - Keyboard (`Key down/up: 17` etc. — moonshine keycode, +8 = evdev)
 
-  The input path is platform-agnostic: `compositor/input.rs` injects
-  directly into the Smithay `Seat` via a `calloop::channel`, bypassing
-  the stubbed inputtino/uinput layer entirely — which is why it works on
-  FreeBSD even though the gamepad backend is a no-op stub.
+  The keyboard/mouse input path is platform-agnostic: `compositor/input.rs`
+  injects directly into the Smithay `Seat` via a `calloop::channel`. The
+  gamepad path is different — it goes through the per-OS `Gamepad`
+  backend and, on FreeBSD, into a real `/dev/uinput` virtual controller
+  (§6b, VERIFIED end-to-end 2026-07-25).
 - **Tunnel (off-LAN) video: WORKS with the fixed binary** (confirmed
   2026-07-25, Mac + Windows over WireGuard/Tailscale). §17's earlier
   "client-side recvUdpSocket wall" was a MISDIAGNOSIS — the tunnel
   failure it was built on (§14) was really the warm_up race, fixed in
   §20. There is no separate off-LAN bug.
 
-Open, non-blocking: ENet range-coder compressor; gamepad is a no-op
-stub on FreeBSD (needs a native backend, a new feature, not a test);
-notify-rust WARN; boxart; `pf` rule. (Keyboard/mouse input is now
-VERIFIED — see above.)
+Open, non-blocking: ENet range-coder compressor; notify-rust WARN;
+boxart; `pf` rule. (Keyboard/mouse AND gamepad input are now VERIFIED —
+gamepad via native `/dev/uinput` backend, §6b. Deferred gamepad extras:
+rumble/motion/touchpad/battery/non-Xbox layouts.)
 
 ## Backlog / not blocking
 
@@ -864,7 +925,9 @@ All PROBE instrumentation stripped before commit. All pushed to
     `moonshine-core/src/session/stream/control/input/gamepad/mod.rs`
     (renamed from `gamepad.rs`),
     `moonshine-core/src/session/stream/control/input/gamepad/backend_inputtino.rs` (new, linux),
-    `moonshine-core/src/session/stream/control/input/gamepad/backend_stub.rs` (new, non-linux),
+    `moonshine-core/src/session/stream/control/input/gamepad/backend_freebsd.rs` (new, freebsd),
+    `moonshine-core/src/session/stream/control/input/gamepad/backend_stub.rs` (new, other non-linux),
+    gamepad study: `~/myscripts/FreeBSD/moonshine/GAMEPAD-FREEBSD.md`,
     `moonshine-core/src/session/application/mod.rs`
     (renamed from `application.rs`),
     `moonshine-core/src/session/application/backend_systemd.rs`
