@@ -38,17 +38,15 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 >   Heisenbug, documented.
 >
 > **Then pick a task** (there is no default queued one — ask the user if unstated):
-> 1. **Determinism close-out** (nice-to-have, now UNBLOCKED) — the valgrind
->    `--track-origins` triage. The earlier "`--simulate` hangs" was not a
->    regression: the headless sim loop is **`PoseidonServer`-only** (PoseidonGame
->    has no sim driver → idles) and the arg must be the mission **directory**
->    (world suffix comes from the dir name), not `mission.sqm`. Corrected command
->    is in `PERF-multithread-scope.md` ("Root cause of the --simulate headless
->    hang" + the valgrind block); it reaches the running sim and reports **505
->    errors from 128 contexts** (vs the old boot-only 208). `--duration` is real
->    seconds → use ≥30 under valgrind's 10-50x slowdown to hit real sim ticks.
->    Triage the 505 into benign fixed-buffer (`strcatLtd`/`Bstring.hpp`) vs
->    sim-state-touching, per the plan.
+> 1. **Determinism close-out** — the valgrind `--track-origins` triage is **DONE
+>    (2026-07-25, see `PERF-multithread-scope.md` → "Triage result")**: 128
+>    contexts, **0 sim-state-touching** (66 benign config-IO `BString` over-read +
+>    62 master-server network I/O); nothing to fix. The residual is therefore NOT
+>    a stack-uninit read → it must be an uninitialized **heap** read (mimalloc
+>    hides the heap). The ONLY remaining lever is the **no-mimalloc rebuild**
+>    (drop `libmimalloc` from `LIB_DEPENDS`, re-enable `Core/GlobalOperators.cpp`)
+>    → heap-aware memcheck + helgrind — still the "not worth it unless airtight MP
+>    determinism is a hard requirement" backlog item. Only pursue if that changes.
 > 2. **Upstream PR work** — PR #51 (freebsd portability) is gated at
 >    `action_required`; the engine-fix branches (`PR-*.md`) and GOG-pr are queued
 >    behind it. Chase the CI gate / prep the next submission.
@@ -80,10 +78,11 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 ### Open / blocked (not on any critical path)
 
 - `--simulate` "hang" — RESOLVED 2026-07-25 (wrong binary + wrong path form, not
-  a regression; use `PoseidonServer --simulate <mission-DIR>`). The valgrind
-  triage is now unblocked (Prompt task 1). The latent UX bug is FIXED (`d7b13f2`):
-  standalone `PoseidonGame --simulate` now errors ("use PoseidonServer …") and
-  exits 1 instead of idling; `--check --simulate` (smoke check) still works.
+  a regression; use `PoseidonServer --simulate <mission-DIR>`). UX bug FIXED
+  (`d7b13f2`): standalone `PoseidonGame --simulate` now errors + exits 1;
+  `--check --simulate` smoke check still works.
+- Valgrind determinism triage — DONE 2026-07-25 (0 sim-relevant; residual is
+  heap-class). Only the no-mimalloc heap-aware rebuild remains (backlog below).
 - Backlog: no-mimalloc rebuild for heap-aware memcheck + helgrind (only if
   airtight MP determinism becomes a hard requirement); revert the port to stock
   upstream after PR #51 + the branch stack land.

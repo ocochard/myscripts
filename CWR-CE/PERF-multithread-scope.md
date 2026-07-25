@@ -334,13 +334,50 @@ errors from 66 contexts** (e.g. `AddonSystem::ParseAddonConfig:178`).
   coverage still wants the no-mimalloc rebuild (drop `libmimalloc` from
   `LIB_DEPENDS`, re-enable `Core/GlobalOperators.cpp`).
 
-**NEXT-SESSION TASK: `--track-origins` triage of the 208.** Re-run against a real
-`--simulate <mission> --duration N` with `--track-origins=yes`, and split the 208
-into **"benign fixed-buffer"** (the `strcatLtd`/`Bstring.hpp` fixed-buffer over-read
-class already seen — harmless) vs **"real / sim-state-touching"** (anything whose
-origin feeds a checksummed entity / RNG / AI decision — determinism-relevant, fix
-these). Only if triage misses the residual AND airtight determinism is wanted: do
-the no-mimalloc rebuild (heap-aware memcheck) + helgrind for the race hypothesis.
+### Triage result (2026-07-25) — DONE: 0 sim-relevant; residual must be heap-class
+
+Ran the corrected command below (`PoseidonServer --simulate <dir> --duration 60
+--track-origins=yes --num-callers=30 --error-limit=no`). It reached the running
+sim — **134 sim frames** ticked (122 vehicles / 130 units) — and reported **503
+errors from 128 contexts**, all with **stack** origins (heap untracked; see
+caveat). Parsed and categorized every one of the 128 contexts by origin:
+
+| category | contexts | where the uninit value is born |
+|---|---:|---|
+| benign fixed-buffer / config-IO | 66 | `LoadFromFile` (`QBStream.cpp:282`) → `strcatLtd`/`BString` (`Bstring.hpp`), during PBO-bank + addon-config loading at boot (`Globals::Init → LoadBanksEx → ParseAddonConfig`). Plus `unixPath`, `FileOps_posix`, `PreprocC`. |
+| master-server network I/O | 62 | `BuildMasterServerServiceServerId` / `TryParse…Address` (`MasterServerServiceClient.cpp`), `NetServer::GetURL`, `createPeer`, socket `bind`/`sendto` — outbound registration/heartbeat strings (curl/cjson/nghttp2). |
+| **real / sim-state-touching** | **0** | — |
+
+**No tracked uninit read reaches the deterministic sim.** `World::Simulate` /
+`NetworkServer::OnSimulate` appear only as *outer callers* of the master-server
+publish path (the dedicated server pings the master server from inside the tick
+loop); the checksummed sim itself — AI think, `GRandGen`, entity `Transform`,
+collision, `AnimationRT` — produced **zero** uninit reads across all 134 frames.
+The 66-context class is exactly the `BString`-accumulator over-read the docs
+already called benign (its backing `char _data[Size]` inits only `_data[0]` + the
+sentinel, so `operator+=`'s NUL-scan reads uninit middle bytes); harmless and not
+determinism-relevant. Nothing to fix for determinism.
+
+**So the residual is NOT a stack-uninit read** — which, given the heap caveat
+below, points squarely at an **uninitialized *heap* read** (mimalloc-hidden) as
+the residual's class, matching the original hypothesis. Two honest coverage gaps:
+1. **Heap untracked (mimalloc)** — `nouserintercepts` leaves mimalloc owning
+   `malloc`/`new`, so every heap uninit read is invisible. This is the dominant
+   gap and the most-likely residual class.
+2. **134 ticks covered, not the residual's ~tick 873.** The recurring sim paths
+   ran 134× and are clean, but a determinism read that fires only on a rare late
+   event is not excluded (lower-probability than the heap gap).
+
+**To actually reach the residual (only if airtight MP determinism is wanted):** the
+no-mimalloc rebuild (drop `libmimalloc` from `LIB_DEPENDS`, re-enable
+`Core/GlobalOperators.cpp`) → heap-aware memcheck, plus helgrind for the race
+hypothesis. Still the documented "not worth it unless it becomes a hard
+requirement" backlog item — the triage did not surface a determinism bug, so the
+gate's usable-but-not-airtight verdict is unchanged.
+
+**Original next-session framing (now completed above):** split the errors into
+benign fixed-buffer vs real / sim-state-touching, fix the real ones. Result: all
+benign (config-IO + network); zero real.
 
 Exact command — **corrected 2026-07-25** (the 2026-07-22 form used the wrong
 binary AND the wrong path; see the `--simulate` root-cause note below):
