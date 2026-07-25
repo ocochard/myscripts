@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: f3e4c030-b385-40b6-994b-1c49dba1ffa4
-  modified: 2026-07-22T15:48:39.222Z
+  modified: 2026-07-25T11:10:06.000Z
 ---
 
 Working tree: `~/moonshine` on branch `freebsd`, remotes:
