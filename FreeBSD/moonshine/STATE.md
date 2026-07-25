@@ -684,6 +684,19 @@ end-to-end; both `/launch` and `/resume` start cleanly.
   (frame 0 at 11ms after connect) and on LAN.
 - **LAN: works and stays up.** Mac on the same LAN as ser6 streams
   video cleanly, no Resume needed. Confirms moonshine's send path.
+- **Keyboard + mouse input: VERIFIED end-to-end** (2026-07-25, Mac →
+  ser6 over LAN). Client input reaches the Smithay `Seat` and the game
+  visibly responds on-screen. Confirmed via `input=trace` on ser6, all
+  four classes with clean press/release edges:
+  - Mouse relative motion (`Mouse relative: (dx, dy)`)
+  - Mouse buttons (`Mouse button down/up: 0x110` = BTN_LEFT)
+  - Scroll (`Scroll vertical: ±120`)
+  - Keyboard (`Key down/up: 17` etc. — moonshine keycode, +8 = evdev)
+
+  The input path is platform-agnostic: `compositor/input.rs` injects
+  directly into the Smithay `Seat` via a `calloop::channel`, bypassing
+  the stubbed inputtino/uinput layer entirely — which is why it works on
+  FreeBSD even though the gamepad backend is a no-op stub.
 - **Tunnel (off-LAN) video: client-side issue, NOT moonshine.** §17:
   1040-byte shards reach the Mac kernel but never emerge from
   Moonlight-qt's `recvUdpSocket()`; audio (same code path) works. This
@@ -692,10 +705,10 @@ end-to-end; both `/launch` and `/resume` start cleanly.
   `packetSize`, or investigate the Mac's utun receive path) — moonshine
   is not the blocker.
 
-Open, non-blocking: ENet range-coder compressor; keyboard/mouse input
-end-to-end verification; gamepad is a no-op stub on FreeBSD (needs a
-native backend, a new feature, not a test); notify-rust WARN; boxart;
-`pf` rule.
+Open, non-blocking: ENet range-coder compressor; gamepad is a no-op
+stub on FreeBSD (needs a native backend, a new feature, not a test);
+notify-rust WARN; boxart; `pf` rule. (Keyboard/mouse input is now
+VERIFIED — see above.)
 
 ## Backlog / not blocking
 
