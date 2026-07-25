@@ -38,19 +38,20 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 >   Heisenbug, documented.
 >
 > **Then pick a task** (there is no default queued one — ask the user if unstated):
-> 1. **Determinism close-out** — the valgrind triage is **DONE, and the
->    heap-aware pass FOUND A REAL BUG** (2026-07-25, see
->    `PERF-multithread-scope.md` → "Triage result" + "Heap-aware pass"). Stack
->    triage: 0 sim-relevant. Heap-aware pass (mimalloc rebuilt `MI_TRACK_VALGRIND`)
->    found **`Head` soldier-face `_*RandomLip` fields read uninitialised every sim
->    tick**, spuriously firing `NextRandomLip()`→`GRandGen.RandomValue()` and
->    desyncing the shared RNG — a **prime suspect for the rare determinism-gate
->    divergence.** Fixed (+ a `Tank::_doGearSound` uninit) on branch
->    **`ocochard/CWR-CE:valgrind-uninit-fixes`**; verified the contexts disappear.
->    **Next:** re-run the determinism gate (`--determinism-log`, many runs) with
->    the Head fix to confirm the ~few-% divergence is gone; then merge the branch
->    into `gpu-skinning` and submit upstream. (Helgrind for a race is only needed
->    if divergence persists after this.)
+> 1. **Determinism close-out** — valgrind triage DONE; heap-aware pass found + fixed
+>    a real uninit→RNG bug (`Head` `_*RandomLip`, + `Tank::_doGearSound`) on branch
+>    **`ocochard/CWR-CE:valgrind-uninit-fixes`** (valgrind-verified gone). **BUT the
+>    determinism gate did NOT confirm closure** (2026-07-25, `PERF-multithread-scope.md`
+>    → "Gate result"): fixed clean 0/23, buggy clean 0/23, but **fixed still diverged
+>    1/24 under CPU contention** → a **separate wall-clock-timed residual remains**
+>    (fixed-dt sim shouldn't move under load, so something reads real time, not
+>    sim `deltaT` — the docs' `GlobalTickCount()`-keyed-event hypothesis). **Next:**
+>    (a) the discriminating CPU-contention batch (fixed vs buggy under all-core load)
+>    + grep sim/AI/effects for `GlobalTickCount()`/real-time reads that should be
+>    sim time; (b) merge `valgrind-uninit-fixes` → `gpu-skinning` + submit upstream
+>    (strict improvements regardless). NOTE: the installed binary is currently
+>    `gpu-skinning` (no fix — poudriere overwrote the fix pkg during the A/B);
+>    rebuild/merge the branch to run the fixes.
 > 2. **Upstream PR work** — PR #51 (freebsd portability) is gated at
 >    `action_required`; the engine-fix branches (`PR-*.md`) and GOG-pr are queued
 >    behind it. Chase the CI gate / prep the next submission.

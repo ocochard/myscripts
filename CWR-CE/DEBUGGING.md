@@ -661,6 +661,39 @@ env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/xdg PoseidonGame -C ~/.local/share/CWR/base 
   **top-down** view falls out naturally at a higher fixed camera as the object
   drops below it.
 
+## Heap-aware memcheck (uninitialised-memory hunt)
+
+For chasing uninitialised reads (the determinism-residual hunt — see
+`PERF-multithread-scope.md`), two things bite:
+
+1. **`--simulate` is `PoseidonServer`-only, and wants the mission DIRECTORY.**
+   `PoseidonGame --simulate` has no sim driver and idles (it now errors out,
+   `d7b13f2`). Use:
+   ```
+   env -u DISPLAY XDG_RUNTIME_DIR=/tmp/xdg PoseidonServer -C ~/.local/share/CWR/base \
+     --no-sound --render dummy --simulate ~/.config/CWR/Users/Test/Missions/Benchmark.Abel \
+     --duration N --stats 10
+   ```
+   The arg is the folder (`Benchmark.Abel`), NOT `mission.sqm` — the server derives
+   the world from the dir-name suffix. `--duration` is REAL seconds (so under
+   valgrind's 10-50x slowdown use a big value to reach many sim ticks).
+
+2. **mimalloc hides the heap from memcheck by default.** With
+   `--soname-synonyms=somalloc=nouserintercepts` the HEAP SUMMARY reads
+   `0 allocs` — memcheck sees stack/static uninit but is blind to heap uninit (the
+   most-likely determinism-residual class). To make the heap visible, rebuild the
+   `devel/mimalloc` port with **`MI_TRACK_VALGRIND=ON`** (mimalloc then reports
+   every block to valgrind via client requests): add `valgrind` to `BUILD_DEPENDS`
+   + `USES+=localbase`, `CMAKE_ON+=MI_TRACK_VALGRIND`, and a `post-patch` to drop
+   the `-valgrind` library-name suffix (it breaks the plist; the tracking is gated
+   on the `MI_TRACK_VALGRIND` *define*, not the lib name). Rebuild mimalloc, then
+   rebuild CWR-CE (it links `mimalloc-static`). HEAP SUMMARY then tracks ~800k
+   allocs and heap-origin uninit reads appear. **This build is diagnostic-only —
+   it SIGSEGVs when run outside valgrind (padding/`MI_FREE_IS_CHECKED`), so revert
+   mimalloc to stock + rebuild CWR-CE for normal runs.** Full write-up +
+   the two entity-ctor uninit bugs it found: `PERF-multithread-scope.md`
+   → "Heap-aware pass".
+
 ## CLI arguments — full reference
 
 Source of truth: `engine/Poseidon/Foundation/Platform/AppConfig.cpp` (98

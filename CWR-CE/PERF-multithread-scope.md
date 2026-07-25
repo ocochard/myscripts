@@ -421,17 +421,45 @@ the branch, re-ran the identical heap-aware memcheck → the `Head::Simulate`,
 still tracked. Remaining 152 are the benign config-IO / network / dummy-backend
 classes.
 
+### Gate result (2026-07-25) — the Head fix is real but does NOT close the gate
+
+Ran the determinism gate to test whether the Head RandomLip fix closes the
+residual. `PoseidonServer --simulate <dir> --determinism-log --duration 40`
+(~1700 ticks, past the historical ~873 divergence), 24 runs per config, comparing
+the per-tick `DETERMINISM: sum=` sequence against run 1 (joined on tick — the
+number of ticks per run varies because `--duration` is *real* seconds, so
+length differences are NOT divergence; only a **sum mismatch at a shared tick** is).
+
+| batch | divergence |
+|---|---|
+| **fixed** (branch), clean | **0/23** |
+| **buggy** (`gpu-skinning`), clean | **0/23** |
+| **fixed**, under CPU contention (parallel build) | **1/24** (sum mismatch at tick 312) |
+
+**Verdict: the gate is NOT confirmed closed by the fix.** Clean runs show no
+difference (both 0/23 — the residual is too rare to fire in 24 clean runs, matching
+the docs' "0/85" history), and — decisively — the **fixed binary still diverged
+under CPU contention**. Since the Head fix is valgrind-proven to remove the
+uninit→RNG path, that surviving divergence is a **separate** nondeterminism.
+Under `--determinism-log`'s fixed 0.02 s timestep the sim *should* be wall-clock
+independent, so a divergence that appears only under CPU load means **something in
+the sim reads real/wall-clock time**, not sim `deltaT` — exactly the docs' other
+residual candidate (a `GlobalTickCount()`-keyed event). The Head RandomLip bug was
+a real determinism bug worth fixing, but it was **not** (or not the only) residual.
+
 **Follow-ups (open):**
-- **Confirm the fix closes the gate:** re-run the determinism gate
-  (`--determinism-log`, many runs) with the Head fix in — if the ~few-% divergence
-  disappears, the RandomLip RNG-desync *was* the residual.
-- **Merge `valgrind-uninit-fixes` into `gpu-skinning`** (real bug fixes; the
-  running binary already has them but the port default is still `gpu-skinning`
-  without them) and submit upstream as an engine-fix branch (`PR-*.md` pattern).
-- **Diagnostic host state:** the installed mimalloc pkg is still the
-  `MI_TRACK_VALGRIND` build and the installed CWR-CE is the fix-branch build; both
-  ports trees are back to stock/`gpu-skinning`. To return to fully-stock installed
-  packages, rebuild `devel/mimalloc` then `games/CWR-CE`.
+- **Hunt the wall-clock-timed residual** — the discriminating test the docs
+  flagged: run fixed AND buggy under deliberate all-core CPU contention (widen the
+  window) and compare rates; then grep the sim/AI/effects paths for
+  `GlobalTickCount()` / real-time reads that should be sim-`deltaT` (weather,
+  periodic effects, AI timers) and route them through sim time.
+- **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
+  (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
+- **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
+  one during the A/B, so the **installed binary is currently `gpu-skinning`
+  (no fix)** — rebuild the branch (or merge it) to run the fixes. The installed
+  mimalloc is back to stock; the `MI_TRACK_VALGRIND` variant is only in the git
+  history of `~/freebsd-ports/devel/mimalloc` (reverted).
 
 Exact command — **corrected 2026-07-25** (the 2026-07-22 form used the wrong
 binary AND the wrong path; see the `--simulate` root-cause note below):
