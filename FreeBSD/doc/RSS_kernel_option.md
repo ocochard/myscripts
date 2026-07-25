@@ -13,6 +13,19 @@ particular, and which other drivers and kernel subsystems also have
 > here. Treat it as a starting point for your own reading, not a
 > finished tutorial.
 
+> **Prerequisite — read this before enabling the option.** `options RSS`
+> is *inert, and can be actively harmful, without `net.isr.maxthreads`.*
+> RSS hardwires IPv4/IPv6 netisr dispatch to **hybrid**, which *queues*
+> any packet whose RSS-owner CPU differs from the RX CPU. With the
+> default `net.isr.maxthreads=1` there is exactly one netisr workstream,
+> so every such packet funnels onto cpu0's queue and overflows — a
+> measured **~10× throughput loss with ~180M IP drops** on an APU2
+> forwarder. **Enabling RSS obliges you to set
+> `net.isr.maxthreads="-1"` (and `net.isr.bindthreads="1"`) in
+> `/boot/loader.conf`.** See the companion note
+> [`netisr_kernel_service.md`](netisr_kernel_service.md) §4 and §8 for
+> the mechanism and the measured before/after.
+
 ## 1. Two different things called "RSS"
 
 | | Without `options RSS` | With `options RSS` |
@@ -253,7 +266,11 @@ parts of the network stack.
 ### L2 / virtual interfaces
 - `sys/net/if_ethersubr.c:76,698` — ether netisr uses
   `NETISR_POLICY_CPU` and `rss_m2cpuid()` to dispatch each frame to
-  the bucket-owning CPU before L3 processing.
+  the bucket-owning CPU before L3 processing. IP/IPv6 additionally flip
+  to **hybrid dispatch** under RSS (`ip_input.c:143-149`), which is why
+  RSS depends on multiple netisr workstreams to spread — see the
+  prerequisite callout above and
+  [`netisr_kernel_service.md`](netisr_kernel_service.md) §4.
 - `sys/net/if_epair.c:74-77,206-234,936-970` — without RSS, epair
   allocates a single taskqueue and `epair_select_queue()` always
   returns bucket 0 (serialised on one CPU). With RSS, one taskqueue
@@ -341,6 +358,17 @@ get re-dispatched.
   big win for VNET jails wired with epair on SMP boxes.
 
 **Costs / sharp edges**
+- **Hard dependency on `net.isr.maxthreads`.** This is the one that
+  bites hardest. RSS forces IP/IPv6 netisr dispatch to hybrid, which
+  queues cross-CPU packets; with the post-2015 default of one
+  workstream they all pile onto cpu0 and drop. RSS + default netisr is
+  strictly *worse* than no RSS. You must set `net.isr.maxthreads="-1"`
+  and `net.isr.bindthreads="1"`. Details, mechanism, and measured
+  numbers: [`netisr_kernel_service.md`](netisr_kernel_service.md)
+  §4/§8. For a pure IPv4 forwarder that terminates little traffic, a
+  non-RSS kernel with `maxthreads="-1"` is a simpler config that avoids
+  this trap entirely (see that note's "Is `options RSS` worth it on a
+  router?" box).
 - `nrxq` / `ntxq` defaults change to `rss_getnumbuckets()`. Anything
   that hard-codes these (tunables, tuning docs, test scripts) needs
   re-checking, or you'll trip the "nrxq != kernel RSS buckets"
