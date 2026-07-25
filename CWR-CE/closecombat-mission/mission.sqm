@@ -1,0 +1,1215 @@
+version=11;
+class Mission
+{
+	randomSeed=3469315;
+	class Intel
+	{
+	};
+	class Groups
+	{
+		items=11;
+		class Item0
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9250};
+					azimut=180.000000;
+					id=1;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9250};
+					azimut=180.000000;
+					id=2;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9250};
+					azimut=180.000000;
+					id=3;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9250};
+					azimut=180.000000;
+					id=4;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9250};
+					azimut=180.000000;
+					id=5;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9250};
+					azimut=180.000000;
+					id=6;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9250};
+					azimut=180.000000;
+					id=7;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9250};
+					azimut=180.000000;
+					id=8;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9250};
+					azimut=180.000000;
+					id=9;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9250};
+					azimut=180.000000;
+					id=10;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item1
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9252};
+					azimut=180.000000;
+					id=11;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9252};
+					azimut=180.000000;
+					id=12;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9252};
+					azimut=180.000000;
+					id=13;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9252};
+					azimut=180.000000;
+					id=14;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9252};
+					azimut=180.000000;
+					id=15;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9252};
+					azimut=180.000000;
+					id=16;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9252};
+					azimut=180.000000;
+					id=17;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9252};
+					azimut=180.000000;
+					id=18;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9252};
+					azimut=180.000000;
+					id=19;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9252};
+					azimut=180.000000;
+					id=20;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item2
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9254};
+					azimut=180.000000;
+					id=21;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9254};
+					azimut=180.000000;
+					id=22;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9254};
+					azimut=180.000000;
+					id=23;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9254};
+					azimut=180.000000;
+					id=24;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9254};
+					azimut=180.000000;
+					id=25;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9254};
+					azimut=180.000000;
+					id=26;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9254};
+					azimut=180.000000;
+					id=27;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9254};
+					azimut=180.000000;
+					id=28;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9254};
+					azimut=180.000000;
+					id=29;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9254};
+					azimut=180.000000;
+					id=30;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item3
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9256};
+					azimut=180.000000;
+					id=31;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9256};
+					azimut=180.000000;
+					id=32;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9256};
+					azimut=180.000000;
+					id=33;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9256};
+					azimut=180.000000;
+					id=34;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9256};
+					azimut=180.000000;
+					id=35;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9256};
+					azimut=180.000000;
+					id=36;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9256};
+					azimut=180.000000;
+					id=37;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9256};
+					azimut=180.000000;
+					id=38;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9256};
+					azimut=180.000000;
+					id=39;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9256};
+					azimut=180.000000;
+					id=40;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item4
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9258};
+					azimut=180.000000;
+					id=41;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9258};
+					azimut=180.000000;
+					id=42;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9258};
+					azimut=180.000000;
+					id=43;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9258};
+					azimut=180.000000;
+					id=44;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9258};
+					azimut=180.000000;
+					id=45;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9258};
+					azimut=180.000000;
+					id=46;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9258};
+					azimut=180.000000;
+					id=47;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9258};
+					azimut=180.000000;
+					id=48;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9258};
+					azimut=180.000000;
+					id=49;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9258};
+					azimut=180.000000;
+					id=50;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item5
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9260};
+					azimut=180.000000;
+					id=51;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9260};
+					azimut=180.000000;
+					id=52;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9260};
+					azimut=180.000000;
+					id=53;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9260};
+					azimut=180.000000;
+					id=54;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9260};
+					azimut=180.000000;
+					id=55;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9260};
+					azimut=180.000000;
+					id=56;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9260};
+					azimut=180.000000;
+					id=57;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9260};
+					azimut=180.000000;
+					id=58;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9260};
+					azimut=180.000000;
+					id=59;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9260};
+					azimut=180.000000;
+					id=60;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item6
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9262};
+					azimut=180.000000;
+					id=61;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9262};
+					azimut=180.000000;
+					id=62;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9262};
+					azimut=180.000000;
+					id=63;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9262};
+					azimut=180.000000;
+					id=64;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9262};
+					azimut=180.000000;
+					id=65;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9262};
+					azimut=180.000000;
+					id=66;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9262};
+					azimut=180.000000;
+					id=67;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9262};
+					azimut=180.000000;
+					id=68;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9262};
+					azimut=180.000000;
+					id=69;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9262};
+					azimut=180.000000;
+					id=70;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item7
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9264};
+					azimut=180.000000;
+					id=71;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9264};
+					azimut=180.000000;
+					id=72;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9264};
+					azimut=180.000000;
+					id=73;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9264};
+					azimut=180.000000;
+					id=74;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9264};
+					azimut=180.000000;
+					id=75;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9264};
+					azimut=180.000000;
+					id=76;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9264};
+					azimut=180.000000;
+					id=77;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9264};
+					azimut=180.000000;
+					id=78;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9264};
+					azimut=180.000000;
+					id=79;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9264};
+					azimut=180.000000;
+					id=80;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item8
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9266};
+					azimut=180.000000;
+					id=81;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9266};
+					azimut=180.000000;
+					id=82;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9266};
+					azimut=180.000000;
+					id=83;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9266};
+					azimut=180.000000;
+					id=84;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9266};
+					azimut=180.000000;
+					id=85;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9266};
+					azimut=180.000000;
+					id=86;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9266};
+					azimut=180.000000;
+					id=87;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9266};
+					azimut=180.000000;
+					id=88;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9266};
+					azimut=180.000000;
+					id=89;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9266};
+					azimut=180.000000;
+					id=90;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item9
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9268};
+					azimut=180.000000;
+					id=91;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9268};
+					azimut=180.000000;
+					id=92;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9268};
+					azimut=180.000000;
+					id=93;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9268};
+					azimut=180.000000;
+					id=94;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9268};
+					azimut=180.000000;
+					id=95;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9268};
+					azimut=180.000000;
+					id=96;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9268};
+					azimut=180.000000;
+					id=97;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9268};
+					azimut=180.000000;
+					id=98;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9268};
+					azimut=180.000000;
+					id=99;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9268};
+					azimut=180.000000;
+					id=100;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+		class Item10
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=10;
+				class Item0
+				{
+					position[]={7990,32.174999,9270};
+					azimut=180.000000;
+					id=101;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					leader=1;
+					skill=0.500000;
+				};
+				class Item1
+				{
+					position[]={7992,32.174999,9270};
+					azimut=180.000000;
+					id=102;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={7994,32.174999,9270};
+					azimut=180.000000;
+					id=103;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={7996,32.174999,9270};
+					azimut=180.000000;
+					id=104;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item4
+				{
+					position[]={7998,32.174999,9270};
+					azimut=180.000000;
+					id=105;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item5
+				{
+					position[]={8000,32.174999,9270};
+					azimut=180.000000;
+					id=106;
+					side="WEST";
+					vehicle="SoldierWMG";
+					player="PLAYER COMMANDER";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""; pcam = ""camera"" camcreate [7999.0, 9247.0, 2.0]; pcam camsettarget this; pcam cameraeffect [""internal"",""back""]; pcam camcommit 0";
+					skill=0.500000;
+				};
+				class Item6
+				{
+					position[]={8002,32.174999,9270};
+					azimut=180.000000;
+					id=107;
+					side="WEST";
+					vehicle="SoldierWG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item7
+				{
+					position[]={8004,32.174999,9270};
+					azimut=180.000000;
+					id=108;
+					side="WEST";
+					vehicle="SoldierWLAW";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item8
+				{
+					position[]={8006,32.174999,9270};
+					azimut=180.000000;
+					id=109;
+					side="WEST";
+					vehicle="SoldierWB";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+				class Item9
+				{
+					position[]={8008,32.174999,9270};
+					azimut=180.000000;
+					id=110;
+					side="WEST";
+					vehicle="SoldierWMG";
+					init="this disableAI ""MOVE""; this disableAI ""AUTOTARGET""; this setbehaviour ""SAFE""";
+					skill=0.500000;
+				};
+			};
+		};
+	};
+};
+class Intro { randomSeed=16099331; class Intel {}; };
+class OutroWin { randomSeed=16696835; class Intel {}; };
+class OutroLoose { randomSeed=7588867; class Intel {}; };

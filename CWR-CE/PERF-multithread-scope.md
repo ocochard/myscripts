@@ -362,6 +362,88 @@ actually spread off the main thread. Determinism: sim-state checksum per tick,
   the render side is confirmed cheap and vsync is uncapped — but **zero on the
   vsync-capped default**, so scope the expectation honestly before building.
 
+## GPU-skinning t420 A/B (2026-07-25) — MEASURED: no win on the benchmark scene
+
+The t420 came back online; ran the "free, decisive" test the assessment below
+deferred. **Verdict: GPU skinning does NOT improve FPS on the benchmark scene —
+the documented t420 thesis is falsified for it.**
+
+Setup: t420 (i5-2520M 2c/4t, **Intel HD 3000 / Mesa 26.1.3**), FreeBSD
+16.0-CURRENT. Installed the `gpu-skinning` pkg (`08e850c`, built on ser6's
+`builder` jail — same `1600019` ABI) via `pkg add -f`; the t420 had a stale stock
+`3.01-unknown` build. Copied the Test-profile `Benchmark.Abel` mission over (was
+missing). Harness: 6 interleaved `--benchmark --test-mission` runs per config,
+1000 frames (~45 s each at ~22 fps), `BENCHMARK RESULT` + ministat.
+
+| config | mean FPS | σ | n |
+|---|---|---|---|
+| baseline | 22.22 | 0.42 | 6 |
+| `--gpu-skinning` | 22.75 | 0.63 | 6 |
+
+**ministat: "No difference proven at 95% confidence"** (+0.53 fps ≈ +2.4%, in noise).
+
+**Root cause — main-thread CPU is unchanged**, so the ~7-15% the assessment
+expected GPU skinning to *remove* is not being removed here:
+
+| thread | baseline | `--gpu-skinning` |
+|---|---|---|
+| main | 82.5% | 82.4% |
+| `gdrv0` (GPU driver) | 29.7% | 31.7% |
+
+GPU skinning only covers infantry **view** LODs; the benchmark's 197 units patrol
+at camera distance on **coarse LODs** (exactly what the `ApplyMatrices*` row below
+says "must stay CPU"), so the skinned path barely runs. On the weak HD 3000 the
+offload even nudges the GPU-driver thread *up*. Bound confirmed CPU (main ~85%),
+but the addressable cost isn't view-LOD skinning in this scene.
+
+**Scope of this result:** proves no win on the *distant-patrol benchmark*. The
+follow-up below tested the opposite regime (close view-LOD) and also came up
+empty — for a *different* reason. The engine logs **no skinning-activation line**
+(observability gap — engagement is inferred from the main-CPU delta, not logs).
+
+### Follow-up (2026-07-25) — close-combat view-LOD scene: skinning engages, still no FPS win (GPU-bound)
+
+Built `CloseCombat.Abel` (`closecombat-mission/`, `MISSION-SQM-FORMAT.md`): 110
+soldiers frozen (`disableAI "MOVE"`) in a 2 m-spaced grid packed at an eye-level
+camera, so many render at the **view LOD** — the regime GPU skinning is designed
+for. Same 6-run A/B harness:
+
+| config | mean FPS | σ | n |
+|---|---|---|---|
+| baseline | 15.72 | 0.29 | 6 |
+| `--gpu-skinning` | 15.93 | 0.44 | 6 |
+
+**ministat: no difference at 95%** (+0.21 fps). But per-thread CPU shows the
+mechanism is *different* from the patrol — here skinning **does** engage:
+
+| thread | baseline | `--gpu-skinning` |
+|---|---|---|
+| main | 61.9% | **58.2%** (−~4 pt) |
+| `gdrv0` (GPU driver) | 57.4% | 56.7% |
+
+Two facts vs the patrol: (1) `gdrv0` is now **~57%** (was ~30%) — the HD 3000 is a
+co-bottleneck rendering 110 detailed soldiers; (2) `--gpu-skinning` shaves ~4 pt
+off the main thread, so the offload is real this time. It still yields no FPS
+because the scene is **GPU-bound on the weak iGPU**: skinning moves work *off* the
+non-bottleneck (main CPU, already only ~60%) *onto* the bottleneck (the GPU). The
+freed CPU has nowhere to go.
+
+**Complete verdict for the t420 (i5-2520M + Intel HD 3000):** GPU skinning is a
+wash in **both** regimes, for two different reasons —
+- **distant** (patrol/benchmark): units at coarse LOD, skinned path barely runs,
+  main-CPU flat → nothing offloaded;
+- **close** (view LOD): skinned path runs and *does* cut ~4 pt main-CPU, but the
+  scene is GPU-bound on the HD 3000 → the cut doesn't convert to frames.
+
+The HD 3000 is simply too weak to ever be the beneficiary: infantry are either far
+(skinning idle) or near (GPU saturated). **GPU skinning needs a host that is
+CPU-bound *with GPU headroom to spare* — which this iGPU is not.** The documented
+"t420 will show the win ser6 couldn't" thesis is falsified on this hardware; a
+newer dGPU laptop (CPU-bound, GPU idle) is where it could still pay. **Consequence:
+the "free GPU-skinning win" that justified deferring Phase-4/5 is spent and empty
+on the only CPU-bound machine available — Phase-4/5's case now rests entirely on
+the heavier CPU-side loops (animation-prep, collision), not this lever.**
+
 ## Phase-4/5 worth-it assessment (2026-07-22) — DEFER, gated on the t420
 
 Asked whether to pick up the Phase-4/5 sim-side parallelization next. **Verdict:

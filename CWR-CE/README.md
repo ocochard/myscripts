@@ -43,6 +43,10 @@ FPS-neutral); FPS wins are validated on **t420** (CPU-bound) when it's online.
 
 - `DEBUGGING.md` — hangs, crashes, logging, CLI flags, `--mod`
   isolation trick.
+- `MISSION-SQM-FORMAT.md` — the `mission.sqm` class-tree format, coordinate
+  conventions (sqm `{x,alt,y}` vs script `[x,y,z]`, `camCreate` AGL), unit
+  `init` SQF gotchas, and the custom test scenes (`closecombat-mission/`,
+  `paradrop-mission/`).
 - `TROUBLESHOOTING-truncated-mod.md` — recognizing the truncated-mod
   crash pattern (`ShapeLOD.cpp:1525 _nLods >= 1`).
 - `BUG-*.md` — per-bug engineering logs (root cause, repro, upstream
