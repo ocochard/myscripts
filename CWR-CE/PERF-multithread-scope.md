@@ -477,11 +477,37 @@ this session neither confirmed nor refuted that the Head fix closes the residual
 it fixed a real bug (valgrind-verified) and ruled out CPU-contention + client-side
 sim wall-clock reads.
 
-**Follow-ups (open):**
-- **Use the right gate:** run `PoseidonGame --benchmark --determinism-log` (client,
-  needs `DISPLAY=:0`) in a large batch (**100+**, the ~1% rate needs it) — the only
-  vehicle that matches how the residual was characterized. The server `--simulate`
-  path is unsuitable (its own `GlobalTickCount` coupling).
+### Client gate — RESIDUAL RELIABLY REPRODUCED (2026-07-25)
+
+Ran the gate on the correct vehicle: **`PoseidonGame --benchmark --determinism-log`,
+100 runs**, buggy (`gpu-skinning`) binary. (Display note: NOT `:0` — discover the
+active local X session, on ser6 it was `DISPLAY=:5 XAUTHORITY=~/.Xauthority`; `:0`
+gives `No available video device` → SIGSEGV.)
+
+**Result — sharp and reproducible:**
+- **All 100 runs are bit-identical for ticks 0–871.**
+- At **tick 872** (≈17.4 s sim at fixed 0.02 s dt — the historical ~873 tick):
+  exactly **two** checksum outcomes — **90 runs** `0x652cf556…`, **10 runs**
+  `0xbcd6fd56…`.
+- So **10% diverge, all at tick 872, into a single alternate outcome.**
+
+This is the residual, finally reproducible (~10% on the client vs the server
+gate's ~1% noise). It is **one discrete event with a binary nondeterministic
+outcome** at a *fixed* tick — NOT diffuse drift and NOT variable-tick. That rules
+the `Head` RandomLip fix OUT as the cause (it would fire at variable per-soldier
+ticks, not consistently at 872), so that fix — real and valgrind-verified — does
+**not** close this residual.
+
+**Next (root-cause it, now that it's reproducible):** the gate sum is an XOR of
+per-entity hashes, so log **per-entity** hashes at ticks 871–872, diff a diverging
+run (e.g. seed the batch, runs 26/34/39/54/58/59/60/77/93/99 diverged) against a
+normal one → the **single entity** whose transform first differs. Then inspect what
+that entity does at sim-time ~17.4 s (a scheduled AI/effect/waypoint event whose
+outcome depends on a nondeterministic input — uninit field or a real-time read at
+that instant). Optionally re-run the 100-batch on the **fixed** binary to confirm
+the 10%@872 rate is unchanged (needs rebuilding the fix pkg — poudriere overwrote
+it). Harness: `cdet_gate.sh` (scratchpad) — discovers the display, 100 runs,
+clusters by per-tick sum.
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`

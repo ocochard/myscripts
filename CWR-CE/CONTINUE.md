@@ -50,12 +50,18 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 >    on `PoseidonServer --simulate`, but the residual was characterized on
 >    `PoseidonGame --benchmark` (CLIENT). The server driver has its own
 >    `GlobalTickCount` coupling, so the server gate is the WRONG vehicle** — the
->    1/95 may be a server artifact. **Next:** run `PoseidonGame --benchmark
->    --determinism-log` (client, needs DISPLAY) in a **100+**-run batch (the ~1%
->    rate needs it); that's the only valid gate. Separately: merge
->    `valgrind-uninit-fixes` → `gpu-skinning` + submit upstream (strict improvements
->    regardless). NOTE: installed binary is currently `gpu-skinning` (no fix —
->    poudriere overwrote the fix pkg during the A/B); rebuild/merge to run the fixes.
+>    1/95 may be a server artifact. **The client gate (`PoseidonGame --benchmark
+>    --determinism-log`, 100 runs) RELIABLY REPRODUCES the residual** (2026-07-25,
+>    `PERF-multithread-scope.md` → "Client gate — RESIDUAL RELIABLY REPRODUCED"):
+>    **10/100 runs diverge, ALL at tick 872, into ONE alternate outcome** (bit-
+>    identical for ticks 0–871). One discrete binary event at a fixed tick → the
+>    `Head` RandomLip fix (variable-tick) does NOT explain it. **Display: NOT `:0` —
+>    discover the live session (was `DISPLAY=:5 XAUTHORITY=~/.Xauthority`).** Harness:
+>    `CWR-CE/cdet_gate.sh`. **Next:** log per-entity hashes at ticks 871–872 on a
+>    diverging vs normal run → the single culprit entity → its ~17.4 s sim-time
+>    event. Separately: merge `valgrind-uninit-fixes` → `gpu-skinning` + submit
+>    upstream (strict improvements regardless). NOTE: installed binary is currently
+>    `gpu-skinning` (no fix — poudriere overwrote the fix pkg during the A/B).
 > 2. **Upstream PR work** — PR #51 (freebsd portability) is gated at
 >    `action_required`; the engine-fix branches (`PR-*.md`) and GOG-pr are queued
 >    behind it. Chase the CI gate / prep the next submission.
