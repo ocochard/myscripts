@@ -59,10 +59,22 @@ work end-to-end, on LAN AND over the WireGuard/Tailscale tunnel (Mac +
 Windows), with the fixed binary. The old "off-LAN tunnel video wall"
 (§17) was a misdiagnosed warm_up-era failure — NOT a real bug.
 
-Open follow-ups are all non-blocking hygiene/features tracked in
-STATE.md: ENet range-coder compressor; native FreeBSD gamepad backend
-(a new feature — inputtino is stubbed out); notify-rust WARN; CWR-CE
-boxart; a `pf` rule for the public IPv6 UDP ports.
+Since then, more has shipped (see STATE.md for detail):
+- **Native FreeBSD gamepad backend — DONE.** Core Xbox pad (buttons,
+  dpad, 2 sticks, 2 triggers) via raw `/dev/uinput` ioctls in Rust,
+  verified end-to-end with an Xbox controller. See `GAMEPAD-FREEBSD.md`.
+- **Rumble/FF — WON'T FIX (kernel-blocked).** FreeBSD's evdev/uinput
+  stubs out the force-feedback path, so rumble can't work without kernel
+  changes. Full analysis + a re-land recipe in `RUMBLE-FREEBSD.md`.
+- **notify-rust PIN-URL WARN — DONE** (moonshine `0213e38`): PIN URL is
+  logged as a loud banner; desktop notify gated on a D-Bus session bus.
+- **Mesa Vulkan-Video-codecs fix — merged to the ports tree**
+  (`graphics/mesa-dri` `84fd498712a6`, PR 296968); local patch obsolete.
+
+Remaining non-blocking follow-ups tracked in STATE.md: ENet range-coder
+compressor (WON'T FIX); CWR-CE boxart; a firewall rule
+(pf/ipfw/ipfilter, none default) for the public IPv6 UDP ports; deferred
+gamepad extras (motion/touchpad/battery/non-Xbox layouts).
 
 ## Environment
 

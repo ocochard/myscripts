@@ -12,11 +12,17 @@ Date: 2026-07-22 (updated in-session after reaching end-to-end streaming on ser6
 - Root cause: `graphics/mesa-dri` did not set `-Dvideo-codecs=`, falling
   back to upstream's `all_free` (patent-free codecs only). Also missing
   `libdisplay-info` LIB_DEPENDS.
-- Patch file: `~/myscripts/FreeBSD/mesa-dri-video-codecs/mesa-dri-video-codecs.patch`.
+- Patch file: `~/myscripts/FreeBSD/mesa-dri-video-codecs/mesa-dri-video-codecs.patch`
+  (now obsolete — fix is in the ports tree, see below).
 - Poudriere-built, installed on ser6 (FreeBSD 16.0-CURRENT, AMD Radeon
   680M, VCN 3.0), verified: `vulkaninfo` now exposes
   `VK_KHR_video_{encode,decode}_h264` and `_h265`.
-- **Bugzilla PR submitted upstream** — awaiting `x11@FreeBSD.org` review.
+- **Committed to the ports tree (2026-07-25):** `graphics/mesa-dri`
+  commit `84fd498712a6` "enable H.264/H.265 Vulkan Video codecs"
+  (PR 296968, approved by arrowd). Adds the codec build option in
+  `Makefile.common` and the `libdisplay-info` LIB_DEPENDS. The local
+  patch is superseded — a stock `graphics/mesa-dri` build now carries
+  the fix.
 
 ### 2. Moonshine fork infrastructure
 
@@ -954,7 +960,8 @@ All PROBE instrumentation stripped before commit. All pushed to
 
 - Study + plan: `~/myscripts/FreeBSD/moonshine/README.md`
 - This state doc: `~/myscripts/FreeBSD/moonshine/STATE.md`
-- Mesa PR: `~/myscripts/FreeBSD/mesa-dri-video-codecs/`
+- Mesa fix (merged, ports `84fd498712a6`, PR 296968):
+  `~/myscripts/FreeBSD/mesa-dri-video-codecs/`
 - Moonshine fork (`freebsd` branch): `~/moonshine/`
   - Uncommitted work: `Cargo.toml`, `Cargo.lock`,
     `moonshine-core/Cargo.toml`,

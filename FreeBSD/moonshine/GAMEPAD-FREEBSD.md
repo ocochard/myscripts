@@ -144,8 +144,13 @@ product `0x02dd`, version `0x0100`.
   - ABS_X, ABS_Y, ABS_RX, ABS_RY — sticks, {min −32768, max 32767,
     fuzz 16, flat 128}.
   - ABS_Z, ABS_RZ — triggers, {min 0, max 255}.
-- EV_FF is **not** enabled this pass (rumble deferred; advertising FF
-  without servicing it would be a lie to the client).
+- EV_FF is **not** enabled (rumble; advertising FF without servicing it
+  would be a lie to the client). Rumble was later investigated in full
+  and is **WON'T FIX — kernel-blocked**: FreeBSD's evdev/uinput stubs
+  out the force-feedback upload/play path, so there is nothing to
+  service. The FF ABI *is* present in the headers (`FF_RUMBLE`,
+  `ff_effect`, the `UI_*_FF_*` ioctls) — only the kernel behavior is
+  missing. See `RUMBLE-FREEBSD.md` for the source-level analysis.
 
 ### Event mapping (Moonlight flag → evdev)
 
@@ -227,10 +232,17 @@ the chosen approach in STATE.md at test time.
 5. Teardown: end session, confirm the evdev node disappears (Drop →
    UI_DEV_DESTROY) and no fd leak across reconnect cycles.
 
-## 10. Out of scope (deferred, kept no-op)
+## 10. Out of scope
 
-Rumble (needs EV_FF + a `UI_BEGIN_FF_UPLOAD` reader thread and FF_RUMBLE
-codes not in the FreeBSD header), gyro/accel motion, PS5 touchpad,
+**Rumble/FF — WON'T FIX (kernel-blocked), not merely deferred.** The FF
+ABI is present in the FreeBSD headers (`FF_RUMBLE`, `struct ff_effect`,
+`UI_BEGIN/END_FF_UPLOAD/ERASE`), but the kernel evdev/uinput code stubs
+out the whole path — `EVIOCSFF`/`UI_*_FF_*` return 0 doing nothing and
+`EV_UINPUT` upload requests are never emitted — so a correct userspace
+reader thread has nothing to service. Confirmed against kernel source
+and a runtime probe; see `RUMBLE-FREEBSD.md`.
+
+Deferred (still no-op, could be done): gyro/accel motion, PS5 touchpad,
 battery, LED, adaptive trigger effects, and honoring `GamepadKind`
 (PS/Nintendo layouts). Each is a follow-up once the core pad is proven.
 

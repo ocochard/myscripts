@@ -309,7 +309,9 @@ experimental in the upstream README.
 - Patch: `~/myscripts/FreeBSD/mesa-dri-video-codecs/mesa-dri-video-codecs.patch`.
 - poudriere-built, installed on ser6, verified: `vulkaninfo` now exposes
   `VK_KHR_video_{encode,decode}_h264` and `_h265` on the 680M.
-- Bugzilla PR submitted upstream against `x11@FreeBSD.org` maintainership.
+- **Merged to the ports tree** (2026-07-25): `graphics/mesa-dri`
+  `84fd498712a6`, PR 296968, approved by arrowd. The local patch is now
+  obsolete — a stock `graphics/mesa-dri` build carries the fix.
 - Duplicate check: no other port ships or overrides Vulkan Video codecs
   (only `x11/nvidia-driver*` provides an independent Vulkan ICD, and
   `linux-rl9-vulkan` is just the loader for Linux-compat binaries).

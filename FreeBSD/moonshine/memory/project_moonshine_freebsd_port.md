@@ -15,7 +15,8 @@ Working tree: `~/moonshine` on branch `freebsd`, remotes:
 Live state doc: `~/myscripts/FreeBSD/moonshine/STATE.md` — read that
 first (500+ lines). Companion: `~/myscripts/FreeBSD/moonshine/README.md`
 (feasibility study), `../mesa-dri-video-codecs/` (prerequisite mesa
-patch — Bugzilla submitted). Mac client handoff:
+patch — **merged to ports**, `graphics/mesa-dri` `84fd498712a6`, PR
+296968; local patch now obsolete). Mac client handoff:
 `~/myscripts/FreeBSD/moonshine/MAC-CLIENT-PROMPT.md`.
 
 Cfg-gated backends (all pattern-matched via mio-timerfd's original
@@ -24,10 +25,15 @@ Linux/non-Linux split):
   — linux uses `mio_timerfd::TimerFd`, other Unix uses pipe+thread.
   Committed as `7bf1be1`.
 - `moonshine-core/src/session/stream/control/input/gamepad/` — linux
-  backend_inputtino.rs (original), non-linux backend_stub.rs (no-op
-  with warn-once AtomicBool latch). Local MotionType enum replaces
-  inputtino::JoypadMotionType in the cross-platform GamepadMotion.
-  Committed as `1eb3369`.
+  backend_inputtino.rs (original); **freebsd backend_freebsd.rs**
+  (native core Xbox pad via raw `/dev/uinput` ioctls in Rust — buttons,
+  dpad, 2 sticks, 2 triggers — verified end-to-end with an Xbox
+  controller); other-unix backend_stub.rs (no-op, warn-once). Local
+  MotionType enum replaces inputtino::JoypadMotionType in the
+  cross-platform GamepadMotion. Stub committed `1eb3369`; FreeBSD
+  backend + docs `GAMEPAD-FREEBSD.md`. **Rumble/FF is WON'T FIX —
+  kernel-blocked** (FreeBSD evdev/uinput stubs the FF path); see
+  `RUMBLE-FREEBSD.md`.
 - `moonshine-core/src/session/application/` — linux backend_systemd.rs
   (verbatim lift of the original zbus + systemd-run --user unit
   path), non-linux backend_command.rs (tokio::process::Command
