@@ -376,8 +376,62 @@ requirement" backlog item — the triage did not surface a determinism bug, so t
 gate's usable-but-not-airtight verdict is unchanged.
 
 **Original next-session framing (now completed above):** split the errors into
-benign fixed-buffer vs real / sim-state-touching, fix the real ones. Result: all
-benign (config-IO + network); zero real.
+benign fixed-buffer vs real / sim-state-touching, fix the real ones. Result (stack
+only): all benign (config-IO + network); zero real. The real ones were in the
+**heap** — see the heap-aware pass below.
+
+### Heap-aware pass (2026-07-25) — DONE: found + fixed a real RNG-desync determinism bug
+
+Did the no-mimalloc-equivalent so memcheck can see the heap: rebuilt the FreeBSD
+`devel/mimalloc` port with **`MI_TRACK_VALGRIND=ON`** (mimalloc then reports every
+block to valgrind via client requests — no allocator surgery, no CWR-CE source
+change; the mimalloc-recommended way). Port wrinkle: `MI_TRACK_VALGRIND` needs the
+valgrind headers as a build dep AND renames the lib `libmimalloc-valgrind.*`
+(breaks the plist) — dropped the rename with a `post-patch` (the client-request
+code is gated on the `MI_TRACK_VALGRIND` *define*, not the lib name). Rebuilt
+CWR-CE against it (it links `mimalloc-static`), and memcheck's `HEAP SUMMARY` went
+from `0 allocs` to **~810k allocs tracked**. Same command as above.
+
+**Contexts: 128 → 156 (+28 heap-origin).** Triaged the 28 heap-origin ones; most
+were benign (dummy-backend artifacts, boot-time `Scene`/quality-config reads,
+static type-bank loads). **Two were real per-entity uninitialised heap fields read
+in the live sim tick** — entities are heap-allocated via non-zeroing
+`operator new`, and these ctors never set the fields:
+
+1. **`Head` (soldier face) `_actualRandomLip` / `_wantedRandomLip` /
+   `_speedRandomLip` / `_nextChangeRandomLip`** — read every tick in
+   `Head::Simulate` (`Head.cpp:559-564`), unconditionally (not gated on
+   `_randomLip`; only `SetRandomLip()` ever initialised them). The
+   `if (Glob.time >= _nextChangeRandomLip) NextRandomLip()` trigger fires on
+   garbage and calls `GRandGen.RandomValue()` — **advancing the shared RNG stream
+   by a run-dependent amount → MP/replay desync.** This is a **prime suspect for
+   the rare (~few-%) determinism-gate divergence** the whole hunt has chased: an
+   uninit heap value (varies run-to-run) that perturbs RNG consumption exactly
+   when it happens to trip the trigger. Fixed by initialising all four in the
+   ctor (far-future `_nextChangeRandomLip` → deterministic no-op until
+   `SetRandomLip` enables the feature).
+2. **`Tank::_doGearSound`** — bitfield read every tick in `Tank::Sound`
+   (`Tank.cpp:117`), never set by the ctor. Sound-only (not determinism-critical),
+   but a genuine uninit read. Defaulted false.
+
+**Fixes are on branch `ocochard/CWR-CE:valgrind-uninit-fixes`** (off `gpu-skinning`
+so it builds on FreeBSD; clean/cherry-pickable for upstream). **Verified:** rebuilt
+the branch, re-ran the identical heap-aware memcheck → the `Head::Simulate`,
+`Tank::Sound`, and all `NewVehicle`-origin contexts are **gone** (156 → 152), heap
+still tracked. Remaining 152 are the benign config-IO / network / dummy-backend
+classes.
+
+**Follow-ups (open):**
+- **Confirm the fix closes the gate:** re-run the determinism gate
+  (`--determinism-log`, many runs) with the Head fix in — if the ~few-% divergence
+  disappears, the RandomLip RNG-desync *was* the residual.
+- **Merge `valgrind-uninit-fixes` into `gpu-skinning`** (real bug fixes; the
+  running binary already has them but the port default is still `gpu-skinning`
+  without them) and submit upstream as an engine-fix branch (`PR-*.md` pattern).
+- **Diagnostic host state:** the installed mimalloc pkg is still the
+  `MI_TRACK_VALGRIND` build and the installed CWR-CE is the fix-branch build; both
+  ports trees are back to stock/`gpu-skinning`. To return to fully-stock installed
+  packages, rebuild `devel/mimalloc` then `games/CWR-CE`.
 
 Exact command — **corrected 2026-07-25** (the 2026-07-22 form used the wrong
 binary AND the wrong path; see the `--simulate` root-cause note below):

@@ -38,15 +38,19 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 >   Heisenbug, documented.
 >
 > **Then pick a task** (there is no default queued one — ask the user if unstated):
-> 1. **Determinism close-out** — the valgrind `--track-origins` triage is **DONE
->    (2026-07-25, see `PERF-multithread-scope.md` → "Triage result")**: 128
->    contexts, **0 sim-state-touching** (66 benign config-IO `BString` over-read +
->    62 master-server network I/O); nothing to fix. The residual is therefore NOT
->    a stack-uninit read → it must be an uninitialized **heap** read (mimalloc
->    hides the heap). The ONLY remaining lever is the **no-mimalloc rebuild**
->    (drop `libmimalloc` from `LIB_DEPENDS`, re-enable `Core/GlobalOperators.cpp`)
->    → heap-aware memcheck + helgrind — still the "not worth it unless airtight MP
->    determinism is a hard requirement" backlog item. Only pursue if that changes.
+> 1. **Determinism close-out** — the valgrind triage is **DONE, and the
+>    heap-aware pass FOUND A REAL BUG** (2026-07-25, see
+>    `PERF-multithread-scope.md` → "Triage result" + "Heap-aware pass"). Stack
+>    triage: 0 sim-relevant. Heap-aware pass (mimalloc rebuilt `MI_TRACK_VALGRIND`)
+>    found **`Head` soldier-face `_*RandomLip` fields read uninitialised every sim
+>    tick**, spuriously firing `NextRandomLip()`→`GRandGen.RandomValue()` and
+>    desyncing the shared RNG — a **prime suspect for the rare determinism-gate
+>    divergence.** Fixed (+ a `Tank::_doGearSound` uninit) on branch
+>    **`ocochard/CWR-CE:valgrind-uninit-fixes`**; verified the contexts disappear.
+>    **Next:** re-run the determinism gate (`--determinism-log`, many runs) with
+>    the Head fix to confirm the ~few-% divergence is gone; then merge the branch
+>    into `gpu-skinning` and submit upstream. (Helgrind for a race is only needed
+>    if divergence persists after this.)
 > 2. **Upstream PR work** — PR #51 (freebsd portability) is gated at
 >    `action_required`; the engine-fix branches (`PR-*.md`) and GOG-pr are queued
 >    behind it. Chase the CI gate / prep the next submission.
