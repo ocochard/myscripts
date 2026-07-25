@@ -1,6 +1,6 @@
 ---
 name: moonshine-freebsd-port
-description: "FreeBSD port of hgaiser/moonshine (Sunshine-alternative Moonlight streaming host). End-to-end streaming session verified on ser6 (AMD Radeon 680M) — HEVC via Vulkan Video, dmabuf zero-copy, Opus audio. Blocked at client-side tunnel MTU (utun4/1280) dropping 1040-byte video shards."
+description: "FreeBSD port of hgaiser/moonshine (Sunshine-alternative Moonlight streaming host). End-to-end streaming verified on ser6 (AMD Radeon 680M) — HEVC via Vulkan Video, dmabuf zero-copy, Opus audio. /launch black-screen race root-caused to warm_up() FEC-matrix build and FIXED off-thread; LAN video works. Remaining off-LAN tunnel issue is client-side in Moonlight-qt's recv path, not MTU."
 metadata: 
   node_type: memory
   type: project
@@ -57,10 +57,17 @@ Runtime deps on host: `x11-servers/xwayland`, `graphics/mesa-libs`,
 `x11/libxkbcommon`. Also needs `net.inet6.ip6.v6only=0` if
 `address = "::"` — see [[freebsd-sysctl-v6only-for-rust-dualstack]].
 
-Current wall (not moonshine's fault): client-side tunnel MTU drops
-1040-byte video shards. Fix has to be client-side (reduce Moonlight-qt
-`packetSize`). Data-collection recipe in MAC-CLIENT-PROMPT.md. See
-[[moonshine-udp-pmtu-diagnosis-pattern]].
+Current state: the `/launch` black-screen race is FIXED. Root cause was
+`Packetizer::warm_up()` building 213 ReedSolomon FEC matrices
+synchronously on the encoder thread (~37s debug / 0.77s release) before
+the first encode; moved off-thread (`warm_up_async` + `merge_warm_up`,
+commit `f4fa804`) plus a `pool_busy` slot-scan fix (commit `a804841`).
+Verified on ser6: frame 0 fires ~11ms after peer connect; LAN video
+works and stays up. The earlier "tunnel MTU drops 1040-byte shards"
+diagnosis was WRONG (disproven by a six-run capture matrix) — the
+remaining off-LAN failure is client-side in Moonlight-qt's
+`recvUdpSocket()` receive path, not MTU/packetSize. See STATE.md
+§16/§17/§20 and [[moonshine-udp-pmtu-diagnosis-pattern]].
 
 Related: [[rustflags-dash-L-bundles-wrong-static-a]],
 [[freebsd-sysctl-v6only-for-rust-dualstack]],

@@ -280,6 +280,17 @@ logs `Launched application (pid=<n>)` and CWR-CE actually runs.
 
 ### 13. End-to-end streaming session working — VERIFIED on ser6
 
+> **Note (codec):** this session negotiated **H.264**; a later session
+> (§14) negotiated **HEVC**. Both are real — the codec depends on client
+> capability negotiation, not a contradiction.
+>
+> **Note (overclaim):** the closing line "Every runtime wall predicted
+> by the study is cleared" was premature. Server-side encode/packetize
+> worked here, but the client still reported `-100 No video` on
+> `/launch` (§14). The true `/launch` blocker was later root-caused to
+> `warm_up()` and FIXED (§20); the off-LAN tunnel video issue is a
+> separate client-side Moonlight-qt receive-path problem (§17).
+
 Full pipeline observed in the trace log (single Moonlight client on
 Mac over public IPv6):
 - `/launch` (HTTPS) → session init → audio/video/control UDP sockets
@@ -385,7 +396,13 @@ port. `dualpcap` reran with 1040-byte shards and got 10K packets.
 1040-byte packets fine. Also §14's ENet-compressor H1 was
 unrelated — control channel had perfect 138/137 parity in every run.
 
-### 17. Where the wall actually is — Moonlight-qt receive path
+### 17. Off-LAN tunnel video — Moonlight-qt receive path (client-side)
+
+> **Scope:** this section is about the **off-LAN (WireGuard tunnel)**
+> case only. On the **same LAN**, video works and stays up (§20
+> verification), so moonshine's send-side is correct. This is NOT the
+> `/launch` race (that was `warm_up()`, FIXED in §20) — it is a separate
+> client-side issue in Moonlight-qt on the Mac when reached via tunnel.
 
 Moonlight-common-c's `VideoReceiveThreadProc` logs `"Received first
 video packet after N ms"` the instant `recvUdpSocket(rtpSocket, ...)`
@@ -422,6 +439,14 @@ thread). So it's not a fundamental v6/ephemeral-port bug — it's
 something specific to the video path.
 
 ### 18. End-to-end streaming works — via `/resume`, not `/launch`
+
+> **SUPERSEDED by §20.** The `/launch`-vs-`/resume` asymmetry below was
+> a symptom, not a cause: the encoder thread was blocked in
+> `Packetizer::warm_up()` building 213 ReedSolomon FEC matrices (~37s
+> debug). `/resume` "worked" only because warm_up had finished on its
+> own by the time the second connect happened. Fixed by moving warm_up
+> off-thread (commit f4fa804); `/launch` now starts at frame 0 in any
+> build. The race-cause paragraphs below are DISPROVEN — read §20.
 
 Setup: Windows-Moonlight-qt 6.1.0 client on same LAN (via
 Tailscale, `100.73.1.39` ↔ ser6 `100.123.76.26`). Retried on
@@ -539,7 +564,15 @@ new sndio server are the only paths.
 4. **A macOS SO_RCVBUF overrun causing kernel drops** — but that
    would show as pf/socket stats, not silent invisibility.
 
-## Next step
+> **SUPERSEDED — the "## Next step" and "## Current wall" blocks
+> immediately below (through the second "## Next step") are the
+> obsolete packet-size / Path-MTU investigation. They were DISPROVEN
+> by §16 and replaced by §17-§18 and finally §20. Do NOT act on them.
+> See "## Actual status (current)" just before §20 for the correct
+> up-to-date state. The blocks are kept only to show the reasoning
+> that got ruled out.**
+
+## Next step (SUPERSEDED — see §16)
 
 Not obvious. Options:
 
@@ -602,78 +635,67 @@ IP6 (hlim 64, payload length 1048)
 Audio outbound sizes: **76 and 88 bytes** (Opus 20ms frames).
 Small enough to always cross the tunnel path.
 
-## Current wall (well-defined)
+## Current wall (SUPERSEDED — packet-size theory was WRONG, see §16-§17)
 
-**Path-MTU / MSS clamp on the client's tunnel drops all 1040-byte
-video shards while passing sub-100-byte audio/control packets.**
-Not a moonshine bug. The utun4 tunnel advertises MTU 1280 but
-either its actual usable inner-MTU is smaller (WireGuard adds
-~32-60 bytes outer wrapper; if the underlying path can only carry
-1280 bytes on the outer, inner packets over ~1220 die), or a
-gateway/CGN in between silently drops 1000+ byte UDPv6 fragments,
-or the tunnel encapsulator itself can't burst-buffer 20 shards in
-<10ms (audio's 58% loss on the same path supports burst overrun
-too).
+> The block below asserted a Path-MTU/packet-size wall. §16's six-run
+> experiment DISPROVED it: 1040-byte video shards arrive on the Mac's
+> utun4 in tens of thousands. The tunnel passes them. The real
+> tunnel-video failure is in Moonlight-qt's receive path on the Mac
+> (§17), and LAN streaming works outright (§18, §20). Kept struck-out
+> for the reasoning trail only.
 
-The fix has to be at the Moonlight client — request a smaller
-`packetSize` in the RTSP ANNOUNCE. Moonshine has no say in this;
-it accepts whatever the client requests.
+~~**Path-MTU / MSS clamp on the client's tunnel drops all 1040-byte
+video shards while passing sub-100-byte audio/control packets.**~~
+DISPROVEN — see §16.
 
-## Next step
+## Next step (SUPERSEDED — the packet-size matrix already ran, §16)
 
-Two sessions running in parallel:
+> This block scheduled the very packet-size experiment that §16 then
+> ran and that disproved the wall. Nothing here is actionable. The
+> ENet-compressor and hygiene items below are still valid and are
+> carried forward under "## Actual status (current)".
 
-**Mac session** (data-collection worker): follows the recipe in
-`MAC-CLIENT-PROMPT.md`. Runs a small matrix of Moonlight-qt
-config changes (packet size 900, 700; H.264 codec; 2Mbps
-bitrate), captures utun4 pcap + Moonlight-qt log + prefs for
-each. Bundles results in `/tmp/mac-run-bundle/`. Does NOT
-analyze — just collects raw artefacts and reports what's in the
-bundle.
+Still-valid items originally listed here (carried forward):
 
-**This session** (FreeBSD build host, analysis + patches):
-1. Receive bundle from Mac session (either transferred via scp
-   or reported inline).
-2. Diff the pcaps: which config produced inbound video on utun4?
-   How does the length histogram change per run?
-3. If a config change fixes it, decide whether to:
-   a. Just document "recommended settings for high-MTU tunnels"
-      in the moonshine port docs (client-side fix).
-   b. Add a server-side clamp so moonshine refuses shard sizes
-      that exceed some sane default when the ANNOUNCE requests
-      >MTU-typical (server-side defense-in-depth).
-4. If NO config change fixes it, we're in `dual-pcap` territory:
-   the tunnel encapsulator itself is dropping large inner
-   packets before they emerge on utun4. That's not something
-   moonshine can address — it's a network-configuration issue
-   on the Mac side. Document and move on.
-
-Independent of the packet-size wall, still-open items:
-
-- **ENet compressor mismatch (previous H1).** Not the primary wall
-  (control channel showed perfect parity in the pcap), but real:
-  Sunshine enables `enet_host_compress_with_range_coder` on the
-  control host unconditionally, and Moonlight sends compressed
-  packets that moonshine's `tokio_enet::Host` drops with `received
-  compressed packet but no compressor configured`. Fix: pull in
-  `rusty_enet::RangeCoder` (already `impl Compressor`-compatible
-  after a small trait adapter) and call
-  `host.set_compressor(Some(Box::new(RangeCoder::new())))` right
-  after `Host::new`. Low priority — deferred until packet-size
-  wall is closed.
-
+- **ENet compressor mismatch.** Real but LOW priority, never the wall
+  (control channel showed perfect 138/137 parity in every pcap):
+  Sunshine enables `enet_host_compress_with_range_coder` on the control
+  host, and Moonlight sends compressed packets that moonshine's
+  `tokio_enet::Host` drops with `received compressed packet but no
+  compressor configured`. Fix: pull in `rusty_enet::RangeCoder` and
+  call `host.set_compressor(...)` right after `Host::new`.
 - **notify-rust desktop notification path** fails on ser6 (no D-Bus
-  session bus). Cosmetic — the log line has the PIN URL. Could be
-  gated behind a "when running with a session bus" check to silence
-  the WARN.
-
-- **No boxart configured for CWR-CE** — trivial to fix by adding
-  `boxart = "/path/to/img.png"` in `moonshine.toml`.
-
+  session bus). Cosmetic — the log line has the PIN URL.
+- **No boxart configured for CWR-CE** — trivial `boxart = "..."` in
+  `moonshine.toml`.
 - **Public UDP exposure**: with `net.inet6.ip6.v6only=0` and
-  `address = "::"`, the streaming ports are on the internet on
-  IPv6. Fine for a smoke test, worth a `pf` rule for anything
-  longer-lived.
+  `address = "::"`, streaming ports are on the internet on IPv6. Worth
+  a `pf` rule for anything longer-lived.
+
+## Actual status (current)
+
+**Server-side streaming is correct and confirmed.** Video + audio work
+end-to-end; both `/launch` and `/resume` start cleanly.
+
+- **/launch race: FIXED** (§20). Root cause was `Packetizer::warm_up()`
+  building 213 ReedSolomon FEC matrices synchronously on the encoder
+  thread (~37s debug). Moved off-thread (`warm_up_async` +
+  `merge_warm_up`), plus a pool_busy slot-scan fix. Verified on ser6
+  (frame 0 at 11ms after connect) and on LAN.
+- **LAN: works and stays up.** Mac on the same LAN as ser6 streams
+  video cleanly, no Resume needed. Confirms moonshine's send path.
+- **Tunnel (off-LAN) video: client-side issue, NOT moonshine.** §17:
+  1040-byte shards reach the Mac kernel but never emerge from
+  Moonlight-qt's `recvUdpSocket()`; audio (same code path) works. This
+  is a Moonlight-qt-on-Mac / tunnel receive-path problem. If you want
+  off-LAN video, it's a client/network fix (e.g. lower Moonlight
+  `packetSize`, or investigate the Mac's utun receive path) — moonshine
+  is not the blocker.
+
+Open, non-blocking: ENet range-coder compressor; keyboard/mouse input
+end-to-end verification; gamepad is a no-op stub on FreeBSD (needs a
+native backend, a new feature, not a test); notify-rust WARN; boxart;
+`pf` rule.
 
 ## Backlog / not blocking
 
@@ -844,8 +866,10 @@ Should be up to date; nothing new to record beyond what's in this doc.
 
 ## Build workflow reminder
 
-- Build here (this host is FreeBSD 16.0-CURRENT despite `uname` saying
-  Linux 5.15 — linuxulator compat layer).
+- Build here (this host is FreeBSD 16.0-CURRENT). `cargo`/`rustc` and
+  every runtime binary are native FreeBSD. Only claude-code itself runs
+  under linuxlator, so a shell it spawns may report `uname` = Linux
+  5.15 — that is the claude-code sandbox, not the build or the host.
 - Runtime testing goes to ser6 (VCN3 AMD GPU).
 - Rust toolchain: `rustc 1.96.1`, `cargo 1.96.1` — both at
   `/usr/local/bin/`.

@@ -1,6 +1,6 @@
 ---
 name: enet-range-coder-required-for-sunshine-protocol
-description: "Sunshine's control-stream ENet host enables the built-in adaptive order-2 PPM range coder via `enet_host_compress_with_range_coder()`. Moonlight clients assume this and send range-coded packets. A Sunshine-compatible server MUST register a compatible compressor or drop those packets."
+description: "Sunshine's control-stream ENet host enables the built-in adaptive order-2 PPM range coder via `enet_host_compress_with_range_coder()`. Moonlight clients send range-coded packets; a server without a matching compressor drops them. LOW-PRIORITY conformance gap in the moonshine port — never blocked streaming (audio still decoded)."
 metadata: 
   node_type: memory
   type: feedback
@@ -18,9 +18,11 @@ enet_host_compress_with_range_coder(host);
 
 Moonlight clients (Moonlight-qt, Moonlight iOS, etc.) assume this
 and send **range-coded** compressed packets on the control channel.
-Any Sunshine-compatible server that doesn't register a matching
-compressor will drop those packets and log something like
-`received compressed packet but no compressor configured`.
+A Sunshine-compatible server that doesn't register a matching
+compressor drops those packets and logs
+`received compressed packet but no compressor configured`. This is a
+conformance gap, not a hard requirement — in the moonshine port it
+never blocked streaming (see severity note below).
 
 **Why:** moonshine (Rust port of Sunshine) uses `tokio-enet 0.1.0`,
 which has a `Compressor` trait but ships **no implementation**. Its
@@ -39,11 +41,13 @@ protocol needs to register this compressor. Also applies to any
 ENet-based server whose clients enable range-coder compression
 (the C API side does it in one line).
 
-Not fatal by itself if audio/video packet paths are otherwise
-working — moonshine still delivered audio through the 42%-loss
-tunnel with this warning firing every ~500ms. But it IS a real
-protocol conformance gap and eventually causes ControlStreamStopped
-under load.
+**Severity: LOW-PRIORITY backlog — this was never "the wall."** Not
+fatal by itself: moonshine still delivered audio through the tunnel
+with this warning firing every ~500ms. It IS a real protocol
+conformance gap and should be fixed for correctness, but it did not
+block streaming. (Any claim that it "eventually causes
+ControlStreamStopped under load" is unverified speculation, not
+observed behavior.)
 
 Related: [[moonshine-freebsd-port]],
 [[moonshine-udp-pmtu-diagnosis-pattern]].

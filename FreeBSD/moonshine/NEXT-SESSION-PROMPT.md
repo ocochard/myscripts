@@ -1,5 +1,12 @@
 # Prompt for the next session
 
+> **SUPERSEDED — historical milestone.** This prompt is from the
+> build-bring-up phase; its "current wall" (feature-gating `inputtino-sys`
+> out) was resolved many sessions ago. The port now builds, streams, and
+> encodes; the `/launch` race is FIXED (STATE.md §20) and LAN video
+> works. Use **CONTINUE.md** as the current handoff and **STATE.md** as
+> the live source of truth. Kept for provenance only.
+
 Copy the block below verbatim into the fresh session as the first user
 message.
 

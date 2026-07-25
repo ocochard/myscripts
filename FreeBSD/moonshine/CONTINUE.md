@@ -59,10 +59,11 @@ audio/packet-size items tracked in STATE.md — unrelated to this bug.
 
 ## Environment
 
-- **FreeBSD 16.0-CURRENT** via linuxulator on this dev host (`uname`
-  says Linux 5.15 — ignore). Runtime binaries (moonshine, vkcube,
-  CWR-CE, Xwayland) are all NATIVE FreeBSD; only claude-code runs under
-  linuxlator.
+- **FreeBSD 16.0-CURRENT** dev host. The build (`cargo`/`rustc`) and all
+  runtime binaries (moonshine, vkcube, CWR-CE, Xwayland) are NATIVE
+  FreeBSD. Only claude-code itself runs under linuxlator, so a shell it
+  spawns may report `uname` = Linux 5.15 — ignore that; it is the
+  claude-code sandbox, not the host or the build.
 - Rust: `rustc/cargo 1.96.1` at `/usr/local/bin/`.
 - Build recipe: `RUSTFLAGS="-C link-arg=-L/usr/local/lib -C
   link-arg=-Wl,-rpath,/usr/local/lib" cargo build` from `~/moonshine`.

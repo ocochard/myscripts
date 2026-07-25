@@ -1,5 +1,14 @@
 # Prompt for a Claude session on the Mac client
 
+> **DEAD EXPERIMENT — DO NOT RUN.** This recipe was built to test the
+> packet-size / Path-MTU theory. That experiment was already run and its
+> own six-run results DISPROVED the theory: 1040-byte video packets
+> arrive on the Mac's `utun4` in the tens of thousands; the tunnel
+> passes them fine (STATE.md §16). The real off-LAN failure is
+> client-side in Moonlight-qt's `recvUdpSocket()` receive path (STATE.md
+> §17) — not diagnosable by this recipe. LAN video works (STATE.md §20).
+> Kept for provenance only; do not re-run.
+
 Copy the block below verbatim into a fresh Claude Code session on your
 Mac. Its ONLY job is to run Moonlight-qt streaming attempts, capture
 tcpdump pcaps and Moonlight-qt logs, and hand the raw artefacts back.
