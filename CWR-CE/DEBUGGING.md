@@ -551,9 +551,20 @@ Ways to get a number, least → most rigorous:
   The `Benchmark.Abel` mission must have units on valid Abel/Malden land
   (`draw > 0`) or the scene is empty and the number is meaningless.
 
-  **Exact command (ser6, verified 2026-07-20) — copy this, do not improvise:**
+  **DISPLAY/AUTH first — do NOT hardcode `DISPLAY=:0` (stale/wrong).** Any GL run
+  needs the *active local X session's* display + auth cookie or SDL dies with
+  `No available video device` / `Authorization required` → SIGSEGV. The session is
+  NOT `:0` and changes when X restarts. Discover it live (ser6, 2026-07-25 it was
+  `:5`):
   ```
-  env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/xdg \
+  DISP=$(ps auxww | grep -m1 '[X]org' | grep -oE ' :[0-9]+' | tr -d ' ')
+  export DISPLAY="$DISP" XAUTHORITY="$HOME/.Xauthority"   # ~/.Xauthority has the
+  # cookie for the ACTIVE display; ~/.serverauth.NNNNN may only cover :0/:1 (wrong).
+  # Most robust: procstat -e <pid-in-session> | grep -oE 'DISPLAY=…|XAUTHORITY=…'
+  ```
+  **Exact command (ser6) — copy this, do not improvise:**
+  ```
+  env DISPLAY="$DISP" XAUTHORITY="$HOME/.Xauthority" XDG_RUNTIME_DIR=/tmp/xdg \
     PoseidonGame -C ~/.local/share/CWR/base --no-splash --benchmark \
     --test-mission ~/.config/CWR/Users/Test/Missions/Benchmark.Abel [--gpu-skinning]
   ```
