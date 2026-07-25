@@ -763,13 +763,15 @@ Still-valid items originally listed here (carried forward):
     (clipboard, rumble, HDR, termination), which stock Moonlight-qt
     cannot decompress. Near-zero benefit (the hot path is client→host
     input, uncompressed regardless). Matching Sunshine = no compressor.
-- **notify-rust desktop notification path** fails on ser6 (no D-Bus
-  session bus). Cosmetic — the log line has the PIN URL.
+- ~~**notify-rust desktop notification path**~~ **DONE (moonshine
+  `0213e38`)** — PIN URL logged as a loud banner, desktop notify gated
+  on `DBUS_SESSION_BUS_ADDRESS`; no more WARN on headless ser6.
 - **No boxart configured for CWR-CE** — trivial `boxart = "..."` in
   `moonshine.toml`.
 - **Public UDP exposure**: with `net.inet6.ip6.v6only=0` and
   `address = "::"`, streaming ports are on the internet on IPv6. Worth
-  a `pf` rule for anything longer-lived.
+  a firewall rule (pf/ipfw/ipfilter — none enabled by default) for
+  anything longer-lived.
 
 ## Actual status (current)
 
@@ -805,7 +807,7 @@ cleanly.
   failure it was built on (§14) was really the warm_up race, fixed in
   §20. There is no separate off-LAN bug.
 
-Open, non-blocking: notify-rust WARN; boxart; `pf` rule. (ENet
+Open, non-blocking: boxart; firewall rule. (ENet
 range-coder compressor was investigated and dropped as WON'T FIX —
 enabling it would regress host→client messages against stock
 Moonlight-qt; see the ENet item above.) (Keyboard/mouse AND gamepad input are now VERIFIED —
@@ -815,10 +817,12 @@ gamepad extras: motion/touchpad/battery/non-Xbox layouts.)
 
 ## Backlog / not blocking
 
-- **notify-rust desktop notification path** fails on ser6 (no D-Bus
-  session bus, no notification daemon). Cosmetic — the log line has
-  the PIN URL. Could be gated behind a "when running with a session
-  bus" check to silence the WARN.
+- ~~**notify-rust desktop notification path** fails on ser6~~ **DONE
+  (2026-07-25, moonshine `0213e38`).** The PIN URL is now always logged
+  as a loud, greppable multi-line banner (`grep -A4 "PAIRING REQUESTED"`,
+  URL on its own line), and the desktop notification is only attempted
+  when `DBUS_SESSION_BUS_ADDRESS` is set — so headless ser6 no longer
+  logs the `Failed to show PIN notification` WARN. Verified on ser6.
 - **No boxart configured for CWR-CE** — trivial to fix by adding
   `boxart = "/path/to/img.png"` in `moonshine.toml`.
 - **Client-cert-based host binding**: mDNS advertises
@@ -827,8 +831,8 @@ gamepad extras: motion/touchpad/battery/non-Xbox layouts.)
   Not a bug, just noting the discovery path.
 - **Public UDP exposure**: with `net.inet6.ip6.v6only=0` and
   `address = "::"`, the streaming ports are on the internet on
-  IPv6. Fine for a smoke test, worth a pf rule for anything longer-
-  lived.
+  IPv6. Fine for a smoke test, worth a firewall rule (pf/ipfw/
+  ipfilter — none enabled by default) for anything longer-lived.
 
 ### 20. 2026-07-24: /launch race ROOT-CAUSED — `Packetizer::warm_up()`
 
