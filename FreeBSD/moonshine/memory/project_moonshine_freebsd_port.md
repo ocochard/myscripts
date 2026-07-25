@@ -1,6 +1,6 @@
 ---
 name: moonshine-freebsd-port
-description: "FreeBSD port of hgaiser/moonshine (Sunshine-alternative Moonlight streaming host). End-to-end streaming verified on ser6 (AMD Radeon 680M) — HEVC via Vulkan Video, dmabuf zero-copy, Opus audio. /launch black-screen race root-caused to warm_up() FEC-matrix build and FIXED off-thread; LAN video works. Remaining off-LAN tunnel issue is client-side in Moonlight-qt's recv path, not MTU."
+description: "FreeBSD port of hgaiser/moonshine (Sunshine-alternative Moonlight streaming host). End-to-end streaming verified on ser6 (AMD Radeon 680M) — HEVC via Vulkan Video, dmabuf zero-copy, Opus audio, keyboard/mouse input. /launch black-screen race root-caused to warm_up() FEC-matrix build and FIXED off-thread. Video+audio+input work on LAN AND over WireGuard/Tailscale tunnel. No known streaming blocker remains."
 metadata: 
   node_type: memory
   type: project
@@ -62,12 +62,16 @@ Current state: the `/launch` black-screen race is FIXED. Root cause was
 synchronously on the encoder thread (~37s debug / 0.77s release) before
 the first encode; moved off-thread (`warm_up_async` + `merge_warm_up`,
 commit `f4fa804`) plus a `pool_busy` slot-scan fix (commit `a804841`).
-Verified on ser6: frame 0 fires ~11ms after peer connect; LAN video
-works and stays up. The earlier "tunnel MTU drops 1040-byte shards"
-diagnosis was WRONG (disproven by a six-run capture matrix) — the
-remaining off-LAN failure is client-side in Moonlight-qt's
-`recvUdpSocket()` receive path, not MTU/packetSize. See STATE.md
-§16/§17/§20 and [[moonshine-udp-pmtu-diagnosis-pattern]].
+Verified on ser6: frame 0 fires ~11ms after peer connect. Video +
+audio work end-to-end BOTH on LAN and over the WireGuard/Tailscale
+tunnel (Mac + Windows) with the fixed binary. Keyboard/mouse input
+verified end-to-end too. Two earlier "walls" were both WRONG: the
+"tunnel MTU drops 1040-byte shards" theory (disproven by a six-run
+capture matrix) and the "client-side Moonlight-qt recvUdpSocket" theory
+(§17) — the latter was just the warm_up race misdiagnosed, since the
+debug build blocked the encoder ~37s past the client's timeout. No
+known streaming blocker remains. See STATE.md §16/§17/§20 and
+[[moonshine-udp-pmtu-diagnosis-pattern]].
 
 Related: [[rustflags-dash-L-bundles-wrong-static-a]],
 [[freebsd-sysctl-v6only-for-rust-dualstack]],

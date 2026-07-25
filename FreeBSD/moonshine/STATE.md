@@ -396,13 +396,21 @@ port. `dualpcap` reran with 1040-byte shards and got 10K packets.
 1040-byte packets fine. Also §14's ENet-compressor H1 was
 unrelated — control channel had perfect 138/137 parity in every run.
 
-### 17. Off-LAN tunnel video — Moonlight-qt receive path (client-side)
+### 17. "Off-LAN tunnel video wall" — DISPROVEN, was the warm_up race
 
-> **Scope:** this section is about the **off-LAN (WireGuard tunnel)**
-> case only. On the **same LAN**, video works and stays up (§20
-> verification), so moonshine's send-side is correct. This is NOT the
-> `/launch` race (that was `warm_up()`, FIXED in §20) — it is a separate
-> client-side issue in Moonlight-qt on the Mac when reached via tunnel.
+> **This section's conclusion was WRONG.** It claimed a separate
+> client-side bug where video packets reach the Mac's `utun4` but never
+> emerge from Moonlight-qt's `recvUdpSocket()`. That theory rests on
+> §14's tunnel failure (`-100 No video` after 9s) — which was actually
+> the **warm_up race** (§20): in the debug build, `Packetizer::warm_up()`
+> blocked the encoder thread ~37s, so no video shards left ser6 within
+> the client's ~10s timeout. The "10000+ packets on utun4" cited below
+> came from later runs (release/`/resume`), not the failing window.
+>
+> **Confirmed (2026-07-25): video over the WireGuard/Tailscale tunnel
+> WORKS with the fixed binary** (post `f4fa804`), to Moonlight-qt on both
+> Mac and Windows. There is no separate off-LAN receive-path bug. The
+> analysis below is retained only as a record of the wrong turn.
 
 Moonlight-common-c's `VideoReceiveThreadProc` logs `"Received first
 video packet after N ms"` the instant `recvUdpSocket(rtpSocket, ...)`
@@ -674,8 +682,10 @@ Still-valid items originally listed here (carried forward):
 
 ## Actual status (current)
 
-**Server-side streaming is correct and confirmed.** Video + audio work
-end-to-end; both `/launch` and `/resume` start cleanly.
+**Streaming works end-to-end with no known blocker.** Video + audio +
+keyboard/mouse input all confirmed, on LAN AND over the WireGuard/
+Tailscale tunnel (Mac + Windows); both `/launch` and `/resume` start
+cleanly.
 
 - **/launch race: FIXED** (§20). Root cause was `Packetizer::warm_up()`
   building 213 ReedSolomon FEC matrices synchronously on the encoder
@@ -697,13 +707,11 @@ end-to-end; both `/launch` and `/resume` start cleanly.
   directly into the Smithay `Seat` via a `calloop::channel`, bypassing
   the stubbed inputtino/uinput layer entirely — which is why it works on
   FreeBSD even though the gamepad backend is a no-op stub.
-- **Tunnel (off-LAN) video: client-side issue, NOT moonshine.** §17:
-  1040-byte shards reach the Mac kernel but never emerge from
-  Moonlight-qt's `recvUdpSocket()`; audio (same code path) works. This
-  is a Moonlight-qt-on-Mac / tunnel receive-path problem. If you want
-  off-LAN video, it's a client/network fix (e.g. lower Moonlight
-  `packetSize`, or investigate the Mac's utun receive path) — moonshine
-  is not the blocker.
+- **Tunnel (off-LAN) video: WORKS with the fixed binary** (confirmed
+  2026-07-25, Mac + Windows over WireGuard/Tailscale). §17's earlier
+  "client-side recvUdpSocket wall" was a MISDIAGNOSIS — the tunnel
+  failure it was built on (§14) was really the warm_up race, fixed in
+  §20. There is no separate off-LAN bug.
 
 Open, non-blocking: ENet range-coder compressor; gamepad is a no-op
 stub on FreeBSD (needs a native backend, a new feature, not a test);
