@@ -42,16 +42,20 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 >    a real uninit→RNG bug (`Head` `_*RandomLip`, + `Tank::_doGearSound`) on branch
 >    **`ocochard/CWR-CE:valgrind-uninit-fixes`** (valgrind-verified gone). **BUT the
 >    determinism gate did NOT confirm closure** (2026-07-25, `PERF-multithread-scope.md`
->    → "Gate result"): fixed clean 0/23, buggy clean 0/23, but **fixed still diverged
->    1/24 under CPU contention** → a **separate wall-clock-timed residual remains**
->    (fixed-dt sim shouldn't move under load, so something reads real time, not
->    sim `deltaT` — the docs' `GlobalTickCount()`-keyed-event hypothesis). **Next:**
->    (a) the discriminating CPU-contention batch (fixed vs buggy under all-core load)
->    + grep sim/AI/effects for `GlobalTickCount()`/real-time reads that should be
->    sim time; (b) merge `valgrind-uninit-fixes` → `gpu-skinning` + submit upstream
->    (strict improvements regardless). NOTE: the installed binary is currently
->    `gpu-skinning` (no fix — poudriere overwrote the fix pkg during the A/B);
->    rebuild/merge the branch to run the fixes.
+>    → "Gate result" + "Contention batch"): fixed clean 0/23, buggy clean 0/23,
+>    buggy under CPU-burner contention 0/23, only **1 divergence in ~95 runs**
+>    (fixed, tick 312, during a poudriere build) — matches the historical ~1% rate.
+>    CPU contention did NOT reproduce it; the client sim-tick wall-clock hunt found
+>    nothing (all `GlobalTickCount` uses benign/gated). **Key caveat: the gate ran
+>    on `PoseidonServer --simulate`, but the residual was characterized on
+>    `PoseidonGame --benchmark` (CLIENT). The server driver has its own
+>    `GlobalTickCount` coupling, so the server gate is the WRONG vehicle** — the
+>    1/95 may be a server artifact. **Next:** run `PoseidonGame --benchmark
+>    --determinism-log` (client, needs DISPLAY) in a **100+**-run batch (the ~1%
+>    rate needs it); that's the only valid gate. Separately: merge
+>    `valgrind-uninit-fixes` → `gpu-skinning` + submit upstream (strict improvements
+>    regardless). NOTE: installed binary is currently `gpu-skinning` (no fix —
+>    poudriere overwrote the fix pkg during the A/B); rebuild/merge to run the fixes.
 > 2. **Upstream PR work** — PR #51 (freebsd portability) is gated at
 >    `action_required`; the engine-fix branches (`PR-*.md`) and GOG-pr are queued
 >    behind it. Chase the CI gate / prep the next submission.

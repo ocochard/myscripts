@@ -447,12 +447,41 @@ the sim reads real/wall-clock time**, not sim `deltaT` — exactly the docs' oth
 residual candidate (a `GlobalTickCount()`-keyed event). The Head RandomLip bug was
 a real determinism bug worth fixing, but it was **not** (or not the only) residual.
 
+### Contention batch + wall-clock hunt (2026-07-25) — inconclusive; the gate vehicle is wrong
+
+Chased the surviving divergence two ways:
+
+- **CPU-contention batch:** buggy binary, 24 runs with all-but-one core pinned by
+  busy-loops → **0/23 diverge** (bit-identical). So pure CPU contention does NOT
+  reproduce it — it is not a simple race that core-loading widens. The one hit
+  earlier (fixed, tick 312) happened during a poudriere *build* (disk/mem/process
+  churn, not just CPU) — or is just the ~1% base rate: **1 divergence in ~95 gate
+  runs this session**, matching the docs' historical "0/85 … rare (~few-%)".
+- **Wall-clock read hunt (client sim tick):** grepped `World/`, `AI/`, `Scene/`,
+  `Simulation/` for `GlobalTickCount()`/`GetTickCount()`/`time()`. All hits are
+  benign: boot-time `LOAD: …{}ms` profiling, a 60 s `MemoryFootprint()` log
+  (`World.cpp:1775`), and the RNG seed — which is **correctly fixed** under the
+  gate (`WorldInit.cpp:135`, `SetSeed(0x5eed1234u)`). **No real-time read feeds the
+  checksummed entity sim on the client path.** No active parallel sim compute
+  either under `--simulate` (`--mt-lod` off; render/`SceneDraw` doesn't run; the
+  terrain `ParallelFor` was already tested serial).
+
+**Methodological caveat — the batches ran on the WRONG vehicle.** For headless
+batchability the gate ran on **`PoseidonServer --simulate`**, but the historical
+residual was characterized on **`PoseidonGame --benchmark` (client)**. The server
+driver `NetworkServerSimulate.cpp` is itself full of `GlobalTickCount()` reads
+(debug-message timing `:1020`, player integrity-question timeouts `:1238`,
+mp-auto-start), so the *server* sim has real-time coupling the client lacks — the
+1/95 divergence could be a **server-path artifact, not the client residual**. So
+this session neither confirmed nor refuted that the Head fix closes the residual;
+it fixed a real bug (valgrind-verified) and ruled out CPU-contention + client-side
+sim wall-clock reads.
+
 **Follow-ups (open):**
-- **Hunt the wall-clock-timed residual** — the discriminating test the docs
-  flagged: run fixed AND buggy under deliberate all-core CPU contention (widen the
-  window) and compare rates; then grep the sim/AI/effects paths for
-  `GlobalTickCount()` / real-time reads that should be sim-`deltaT` (weather,
-  periodic effects, AI timers) and route them through sim time.
+- **Use the right gate:** run `PoseidonGame --benchmark --determinism-log` (client,
+  needs `DISPLAY=:0`) in a large batch (**100+**, the ~1% rate needs it) — the only
+  vehicle that matches how the residual was characterized. The server `--simulate`
+  path is unsuitable (its own `GlobalTickCount` coupling).
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
