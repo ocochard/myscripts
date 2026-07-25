@@ -38,12 +38,17 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 >   Heisenbug, documented.
 >
 > **Then pick a task** (there is no default queued one — ask the user if unstated):
-> 1. **Determinism close-out** (nice-to-have, BLOCKED) — the valgrind
->    `--track-origins` triage of the 208 uninit errors. **Blocker:** `--simulate`
->    hangs headless in this environment (observed 2026-07-25 — both a custom
->    mission AND stock `Benchmark.Abel` stage then hang at load under
->    `--render dummy --simulate`, contradicting the `08e850c` "fixed" claim).
->    Recheck/refix `--simulate` first (or triage boot-path only via `--check`).
+> 1. **Determinism close-out** (nice-to-have, now UNBLOCKED) — the valgrind
+>    `--track-origins` triage. The earlier "`--simulate` hangs" was not a
+>    regression: the headless sim loop is **`PoseidonServer`-only** (PoseidonGame
+>    has no sim driver → idles) and the arg must be the mission **directory**
+>    (world suffix comes from the dir name), not `mission.sqm`. Corrected command
+>    is in `PERF-multithread-scope.md` ("Root cause of the --simulate headless
+>    hang" + the valgrind block); it reaches the running sim and reports **505
+>    errors from 128 contexts** (vs the old boot-only 208). `--duration` is real
+>    seconds → use ≥30 under valgrind's 10-50x slowdown to hit real sim ticks.
+>    Triage the 505 into benign fixed-buffer (`strcatLtd`/`Bstring.hpp`) vs
+>    sim-state-touching, per the plan.
 > 2. **Upstream PR work** — PR #51 (freebsd portability) is gated at
 >    `action_required`; the engine-fix branches (`PR-*.md`) and GOG-pr are queued
 >    behind it. Chase the CI gate / prep the next submission.
@@ -74,8 +79,10 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 
 ### Open / blocked (not on any critical path)
 
-- `--simulate` headless-hang (blocks the valgrind determinism triage) — see
-  Prompt task 1.
+- `--simulate` "hang" — RESOLVED 2026-07-25 (wrong binary + wrong path form, not
+  a regression; use `PoseidonServer --simulate <mission-DIR>`). The valgrind
+  triage is now unblocked (Prompt task 1). Latent UX bug left unfixed:
+  `PoseidonGame --simulate` idles silently instead of erroring.
 - Backlog: no-mimalloc rebuild for heap-aware memcheck + helgrind (only if
   airtight MP determinism becomes a hard requirement); revert the port to stock
   upstream after PR #51 + the branch stack land.

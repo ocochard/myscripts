@@ -311,6 +311,14 @@ it unless airtight MP determinism becomes a hard requirement.
 
 ### Update (2026-07-22) — valgrind is UNBLOCKED; 208 uninit errors to triage
 
+> **Superseded 2026-07-25:** the `PoseidonGame … --simulate` here reaches only the
+> boot path (`--check`), not the sim loop — `PoseidonGame` has no headless sim
+> driver (see "Root cause of the `--simulate` headless hang" above). The 208/66
+> count was boot-only. The corrected `PoseidonServer … --simulate <dir>` command
+> reaches the running sim and reports **505 errors from 128 contexts** — that is
+> the real triage input. `--duration` is *real* seconds, so under valgrind's
+> 10-50x slowdown use a large value (≥30) to grind through actual sim ticks.
+
 The `--simulate` dummy-backend fix (`08e850c`) incidentally unblocked valgrind.
 The early mimalloc SIGSEGV the earlier attempt hit was on the **GL path**; the
 headless **dummy** backend avoids it. Verified: `memcheck --soname-synonyms=
@@ -334,17 +342,47 @@ origin feeds a checksummed entity / RNG / AI decision — determinism-relevant, 
 these). Only if triage misses the residual AND airtight determinism is wanted: do
 the no-mimalloc rebuild (heap-aware memcheck) + helgrind for the race hypothesis.
 
-Exact command (verified 2026-07-22):
+Exact command — **corrected 2026-07-25** (the 2026-07-22 form used the wrong
+binary AND the wrong path; see the `--simulate` root-cause note below):
 ```
 env -u DISPLAY XDG_RUNTIME_DIR=/tmp/xdg valgrind --tool=memcheck \
   --soname-synonyms=somalloc=nouserintercepts --track-origins=yes \
   --error-exitcode=42 --trace-children=no \
-  PoseidonGame -C ~/.local/share/CWR/base --no-sound --render dummy \
-  --simulate ~/.config/CWR/Users/Test/Missions/Benchmark.Abel/mission.sqm \
-  --duration 10 --timeout 180
+  PoseidonServer -C ~/.local/share/CWR/base --no-sound --render dummy \
+  --simulate ~/.config/CWR/Users/Test/Missions/Benchmark.Abel \
+  --duration 10 --stats 2
 ```
-(A `--check`-only run is faster for iterating on boot-path errors; use `--simulate`
-to reach the sim loop where the determinism-relevant reads live.)
+Two fixes vs the old command: **`PoseidonServer`, not `PoseidonGame`** (the
+duration-driven headless sim loop is server-only), and **the mission
+*directory*, not `mission.sqm`** (the server derives the world from the dir name's
+`.Abel` suffix; a bare `mission.sqm` stem has no suffix and is rejected). Verified
+2026-07-25: this actually ticks the sim (`vehicles=122 units=130`, frame 1→90→177)
+and exits code 2 on duration. A `--check`-only run is faster for boot-path errors;
+use `--simulate` to reach the sim loop where the determinism-relevant reads live.
+
+### Root cause of the "`--simulate` headless hang" (2026-07-25)
+
+The 2026-07-22 note below called `--simulate` a regression that hangs headless. It
+is **not a regression** — it was the wrong invocation, on two counts:
+1. **Wrong binary.** `--simulate`'s duration-terminated headless sim loop is
+   `ServerApplication::DedicatedServerLoop` (`apps/cwr/Server/`), which reads
+   `IsSimulateMode()`/`GetSimulateDuration()` and `_exit(2)`s when the duration
+   elapses. **`PoseidonGame` consumes neither** — `--simulate` there only sets
+   dummy-backend + a test-mission path, boots the mission into the *client* main
+   loop, and (no window/focus → `enableDraw` false) sits in the `AppIdle` →
+   `Sleep(50)` throttle (`GameLoop.cpp:201`) forever. Not a deadlock; an
+   unterminated idle loop. The `08e850c` "fix" only stopped the GL null-deref
+   crash — it never made `PoseidonGame` *drive* a headless sim, because that code
+   lives in the server binary.
+2. **Wrong path form.** `--simulate` must point at the mission **directory**
+   (`…/Benchmark.Abel`), not `…/Benchmark.Abel/mission.sqm`. The staging in
+   `NetworkServerSimulate.cpp:437-456` names the template from the *directory*
+   name (keeps the `.Abel` world suffix) but from a *file*'s **stem** (`mission`,
+   suffix lost); `:560` then rejects a suffix-less template ("has no world
+   suffix") and the run idles to timeout without simulating.
+
+(Latent UX bug, not chased: `PoseidonGame --simulate` should error "use
+PoseidonServer" or honor `--duration`, instead of silently idling.)
 
 ## Measurement
 
@@ -492,11 +530,12 @@ snapshot, a one-frame lag, and must not change sim results: **high risk**.
    ground queries instead (docs' hint), which may beat parallelizing outright.
 4. Phase-4 pipeline last, only if data parallelism plateaus.
 
-**One t420-independent prerequisite — DONE (2026-07-22, `08e850c`):** the
-`--simulate` headless null-deref is fixed (defaults to the dummy no-GL backend;
-`:277`). `--simulate <mission>` now runs headless with no display, which unblocks
-headless determinism/perf runs *without* GL/Mesa noise and is the no-GL target the
-valgrind determinism close-out needs.
+**One t420-independent prerequisite — DONE (2026-07-22, `08e850c`; usage
+corrected 2026-07-25):** the `--simulate` GL null-deref is fixed (defaults to the
+dummy no-GL backend; `:277`). Headless sim runs with no display via
+**`PoseidonServer --simulate <mission-DIR> --duration N`** (NOT `PoseidonGame`, and
+NOT a `mission.sqm` file — see the root-cause note above), which is the no-GL
+target the valgrind determinism close-out needs.
 
 **Bottom line:** the parallel-for machinery is proven and the plan is sound, but
 Phase-4/5 is a high-effort, high-risk restructure that cannot be validated on the

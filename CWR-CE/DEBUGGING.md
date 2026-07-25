@@ -715,7 +715,7 @@ Help mode dispatch is at `AppConfig.cpp:143-164`.
 | `--benchmark` | 300-frame FPS benchmark (needs `--test-mission`; see "Measuring frame rate") |
 | `--timeout N` | Auto-exit after N seconds (0 = off) |
 | `--check` | Init subsystems then exit — headless smoke test |
-| `--simulate <mission>` `--duration N` `--stats N` `--time-scale 1..16` | Headless (no-render) mission simulation |
+| `--simulate <mission-DIR>` `--duration N` `--stats N` `--time-scale 1..16` | Headless (no-render) mission simulation. **`PoseidonServer` only** (the sim loop is server-side; `PoseidonGame --simulate` idles forever), and the arg must be the mission **directory** (e.g. `…/Benchmark.Abel`), NOT `mission.sqm` (the world suffix comes from the dir name). See `PERF-multithread-scope.md` → "Root cause of the --simulate headless hang". |
 | `--harness [port]` | TCP harness server (0 = auto-assign) for external test drivers |
 | `--ui-test <scenario>` | Run a UI test scenario and exit (e.g. `exit`) |
 | `--confirm-revert-timeout N` | Shorten the display-revert modal for integration tests |
