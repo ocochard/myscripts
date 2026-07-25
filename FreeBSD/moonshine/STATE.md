@@ -173,8 +173,21 @@ artifact** (an old moonshine kept the ports; the client talked to it),
 NOT a dispatch bug. With a clean single instance the shared dispatch
 routes correctly — no shared-code change was needed.
 
-Deferred (still no-op, warn-once): rumble/FF, gyro/accel motion, PS5
-touchpad, battery, LED, and honoring non-Xbox `GamepadKind`.
+Deferred (still no-op, warn-once): gyro/accel motion, PS5 touchpad,
+battery, LED, and honoring non-Xbox `GamepadKind`.
+
+**Rumble/FF — WON'T FIX (kernel-blocked), 2026-07-25.** Investigated and
+implemented in full (correct FreeBSD ioctls + `ff_effect`/`uinput_ff_*`
+layouts + reader thread), then reverted: FreeBSD's evdev/uinput has **no
+force-feedback path**. `EVIOCSFF`/`EVIOCRMFF`/`EVIOCGEFFECTS`
+(`sys/dev/evdev/cdev.c:536`) and `UI_*_FF_UPLOAD/ERASE`
+(`sys/dev/evdev/uinput.c:624`) are kernel stubs that `return (0)` doing
+nothing; `EV_UINPUT` (0x0101) upload-request events are defined in the
+header but never emitted, so userspace never gets a request to service.
+Runtime-confirmed on 16.0-CURRENT: synthetic `EVIOCSFF(FF_RUMBLE)`
+returned success but assigned no effect id, and moonshine logged zero FF
+requests. Fixing it is a FreeBSD kernel task, not a moonshine one — full
+analysis + re-land recipe in `RUMBLE-FREEBSD.md`.
 
 **Runtime requirement (ser6):** `/dev/uinput` and `/dev/input/event*`
 are `root:wheel 0600` by default; moonshine runs as `olivier` and games
@@ -796,8 +809,9 @@ Open, non-blocking: notify-rust WARN; boxart; `pf` rule. (ENet
 range-coder compressor was investigated and dropped as WON'T FIX —
 enabling it would regress host→client messages against stock
 Moonlight-qt; see the ENet item above.) (Keyboard/mouse AND gamepad input are now VERIFIED —
-gamepad via native `/dev/uinput` backend, §6b. Deferred gamepad extras:
-rumble/motion/touchpad/battery/non-Xbox layouts.)
+gamepad via native `/dev/uinput` backend, §6b. Rumble/FF is WON'T FIX —
+kernel-blocked on FreeBSD, see §6b and `RUMBLE-FREEBSD.md`. Deferred
+gamepad extras: motion/touchpad/battery/non-Xbox layouts.)
 
 ## Backlog / not blocking
 
