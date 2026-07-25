@@ -381,8 +381,12 @@ is **not a regression** — it was the wrong invocation, on two counts:
    suffix lost); `:560` then rejects a suffix-less template ("has no world
    suffix") and the run idles to timeout without simulating.
 
-(Latent UX bug, not chased: `PoseidonGame --simulate` should error "use
-PoseidonServer" or honor `--duration`, instead of silently idling.)
+(UX bug FIXED 2026-07-25, `d7b13f2`: `RunAfterArgumentParsing` now rejects
+standalone `PoseidonGame --simulate` — `LOG_ERROR` pointing at PoseidonServer +
+the mission-directory arg form, then `return 1` — instead of idling. Gated on
+`!CheckInitAndExit()` so the `--check --simulate` mission smoke check is
+unaffected. Verified: standalone errors+exits 1; `--check --simulate` still boots
+the smoke check to completion.)
 
 ## Measurement
 

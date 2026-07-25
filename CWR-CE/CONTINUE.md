@@ -21,7 +21,7 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 > do not re-open it without new hardware.
 >
 > Context to load from the docs, not re-derive:
-> - Engine tip `08e850c` on `ocochard/CWR-CE:gpu-skinning` (pushed); docs
+> - Engine tip `d7b13f2` on `ocochard/CWR-CE:gpu-skinning` (pushed); docs
 >   `master` (`git log -1`). Port in DEV state (`GH_TAGNAME=gpu-skinning`).
 > - **t420 is ONLINE** (`ssh t420`, i5-2520M + Intel HD 3000) and now runs the
 >   `gpu-skinning` pkg; `Benchmark.Abel` + `CloseCombat.Abel` Test missions are
@@ -81,8 +81,9 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 
 - `--simulate` "hang" — RESOLVED 2026-07-25 (wrong binary + wrong path form, not
   a regression; use `PoseidonServer --simulate <mission-DIR>`). The valgrind
-  triage is now unblocked (Prompt task 1). Latent UX bug left unfixed:
-  `PoseidonGame --simulate` idles silently instead of erroring.
+  triage is now unblocked (Prompt task 1). The latent UX bug is FIXED (`d7b13f2`):
+  standalone `PoseidonGame --simulate` now errors ("use PoseidonServer …") and
+  exits 1 instead of idling; `--check --simulate` (smoke check) still works.
 - Backlog: no-mimalloc rebuild for heap-aware memcheck + helgrind (only if
   airtight MP determinism becomes a hard requirement); revert the port to stock
   upstream after PR #51 + the branch stack land.
