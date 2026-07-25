@@ -419,12 +419,13 @@ Server side of the SAME session:
   to populate `client_address`.
 - `socket.send_to(shard, client_address)` runs without errors.
 
-The earlier "H1" hypothesis (ENet compression) is real but NOT the
-primary wall. The `tokio-enet: received compressed packet but no
-compressor configured` warning is legitimate — Moonlight sends
-range-coder-compressed control packets that moonshine drops — but
-audio decoding also worked, so the control stream isn't fully
-dead. Filed under backlog for now.
+The earlier "H1" hypothesis (ENet compression) is NOT the primary wall.
+[CORRECTION 2026-07-25: H1 was wrong entirely — the client does NOT send
+compressed control packets. The `received compressed packet but no
+compressor configured` warning never actually appeared in ser6's log
+(zero occurrences), and neither Sunshine nor moonlight-common-c installs
+an ENet compressor. See the WON'T-FIX ENet item under "Still-valid
+items". This paragraph is kept only for the reasoning trail.]
 
 ### 16. Six-run packet-size experiment matrix — CORRECTED DIAGNOSIS
 
@@ -541,9 +542,9 @@ race because the pipeline has been idling for seconds by the time
 the second connect happens.
 
 Also invalidates my earlier "H1 ENet compression" and "H2 tunnel
-PMTU" hypotheses. The `tokio_enet: received compressed packet but
-no compressor configured` warning is a real conformance gap but
-does not stop streaming. The tunnel does not drop 1040-byte video
+PMTU" hypotheses. [The `received compressed packet but no compressor
+configured` warning was later found to be a non-issue — it never fired
+in the log; see the WON'T-FIX ENet item. 2026-07-25.] The tunnel does not drop 1040-byte video
 shards (16k made it through in one run, iperf3 confirmed
 end-to-end UDP works at 5 Mbps).
 
@@ -725,13 +726,30 @@ DISPROVEN — see §16.
 
 Still-valid items originally listed here (carried forward):
 
-- **ENet compressor mismatch.** Real but LOW priority, never the wall
-  (control channel showed perfect 138/137 parity in every pcap):
-  Sunshine enables `enet_host_compress_with_range_coder` on the control
-  host, and Moonlight sends compressed packets that moonshine's
-  `tokio_enet::Host` drops with `received compressed packet but no
-  compressor configured`. Fix: pull in `rusty_enet::RangeCoder` and
-  call `host.set_compressor(...)` right after `Host::new`.
+- ~~**ENet compressor mismatch.**~~ **WON'T FIX — the premise was wrong**
+  (investigated 2026-07-25). The earlier claim (that Sunshine enables
+  `enet_host_compress_with_range_coder` and Moonlight sends compressed
+  control packets moonshine drops) does NOT hold up against upstream
+  source or the runtime log:
+  - Sunshine creates a plain ENet control host with **no** compressor
+    (`src/network.cpp:190-207`: `enet_host_create(...)` + QoS sockopt +
+    `return host;`, no `enet_host_compress*` anywhere).
+  - moonlight-common-c's client installs **no** compressor either
+    (`src/ControlStream.c:1771`); there is no negotiation flag for it.
+  - ENet compression is per-host: outbound packets carry
+    `HEADER_FLAG_COMPRESSED` only if that host enabled a compressor, and
+    the receiver must have one to decode. The client never enables one,
+    so it never sends compressed packets.
+  - Proof: `tokio_enet` logs `received compressed packet but no
+    compressor configured` for every flagged packet (host.rs:449).
+    ser6's `out.log` has **zero** such lines across all working
+    sessions. If the client sent compressed packets the control channel
+    would have failed on the first input event; it never has.
+  - Enabling `set_compressor` host-side would be a **regression**: it
+    would start compressing moonshine's host→client messages
+    (clipboard, rumble, HDR, termination), which stock Moonlight-qt
+    cannot decompress. Near-zero benefit (the hot path is client→host
+    input, uncompressed regardless). Matching Sunshine = no compressor.
 - **notify-rust desktop notification path** fails on ser6 (no D-Bus
   session bus). Cosmetic — the log line has the PIN URL.
 - **No boxart configured for CWR-CE** — trivial `boxart = "..."` in
@@ -774,8 +792,10 @@ cleanly.
   failure it was built on (§14) was really the warm_up race, fixed in
   §20. There is no separate off-LAN bug.
 
-Open, non-blocking: ENet range-coder compressor; notify-rust WARN;
-boxart; `pf` rule. (Keyboard/mouse AND gamepad input are now VERIFIED —
+Open, non-blocking: notify-rust WARN; boxart; `pf` rule. (ENet
+range-coder compressor was investigated and dropped as WON'T FIX —
+enabling it would regress host→client messages against stock
+Moonlight-qt; see the ENet item above.) (Keyboard/mouse AND gamepad input are now VERIFIED —
 gamepad via native `/dev/uinput` backend, §6b. Deferred gamepad extras:
 rumble/motion/touchpad/battery/non-Xbox layouts.)
 
