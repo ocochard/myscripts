@@ -615,6 +615,19 @@ entity #90 AI soldier embedded in an object → `ObjectCollision` uninit
 `under`/`dirOut` → push-out `offset` → X split at tick 872. **Head RandomLip /
 Tank fixes are unrelated to this** (separate real uninit bugs on
 `valgrind-uninit-fixes`).
+
+**Down to the function.** The uninit read is inside
+`CalculateIntersectionsExact()` (`engine/Poseidon/World/Scene/ObjectIntersect.cpp:254`)
+— the convex-convex intersection of the soldier's collision geometry vs the object.
+It clips face-by-face into `poly`/`resClip`/`thisVertexResult` and derives
+`direction` (→ `CollisionInfo::dirOut`) and `under = maxDThis − pos·direction`.
+`maxDThis`/`minDWith` are initialised (`±1e10`); the uninit is deeper in the clip
+buffers / the plane `direction`/`thisNormal`. **Complete verification (the exact
+`file:line` uninit read):** heap-aware valgrind (`MI_TRACK_VALGRIND` mimalloc) run
+long enough to reach tick 872 (~17.4 s sim) with entity #90 colliding — it names
+the read in `CalculateIntersectionsExact` directly. All DIAG instrumentation
+(`DETENT`/`TRACE90`/`GC90`/`OC90`/`OCB90`) is on branch `det-bisect` (for revert:
+the shippable state is `gpu-skinning`; the fixes are `valgrind-uninit-fixes`).
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
