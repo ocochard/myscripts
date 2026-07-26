@@ -157,6 +157,36 @@ if ! grep -q llvm /usr/local/etc/poudriere.conf; then
   ) | $SUDO tee -a /usr/local/etc/poudriere.conf >/dev/null
 fi
 
+# Force a clean rebuild of kernel modules against the freshly-upgraded jail.
+#
+# WHY THIS IS MANDATORY, not an optimization:
+# On -CURRENT the kernel KBI changes between commits WITHOUT __FreeBSD_version
+# being bumped. poudriere/pkg only rebuild a port when its version, options or
+# dependencies change, so a routine "git pull" of src that keeps the same
+# __FreeBSD_version leaves drm-kmod/gpu-firmware "up to date" in poudriere's
+# eyes -- while the installed .ko was built against the OLD kernel struct
+# layout. Loading it then page-faults at init (seen: amdgpu dc_create ->
+# dcn351_update_bw_bounding_box_fpu, page fault, 2026-07-26).
+#
+# PORTS_MODULES only rebuilds these on an actual jail-version change, which is
+# exactly the case that does NOT trigger here. So we force it with `bulk -C`
+# (clean = force rebuild of the listed origins) every run.
+KMOD_PORTS="graphics/drm-kmod graphics/drm-latest-kmod graphics/drm-66-kmod graphics/gpu-firmware-kmod net/realtek-re-kmod"
+# Only force-rebuild the kmod ports that are actually in the build list, so this
+# stays in sync with packages.list instead of drifting.
+force_kmods=""
+for _p in $KMOD_PORTS; do
+	if grep -qx "$_p" ${script_dir}/packages.list; then
+		force_kmods="$force_kmods $_p"
+	fi
+done
+if [ -n "$force_kmods" ]; then
+	echo "Force-rebuilding kernel modules against new kernel:$force_kmods"
+	if ! $SUDO poudriere bulk -j builder -C $force_kmods; then
+		echo "[WARNING] Some kernel modules failed to force-rebuild"
+	fi
+fi
+
 echo "Building ports..."
 # -b latest: downlad latest package from repo to avoid building them
 if ! $SUDO poudriere bulk -j builder -f ${script_dir}/packages.list; then
@@ -181,3 +211,11 @@ cd /usr/src
 $SUDO env NO_PKG_UPGRADE=YES /usr/src/tools/build/beinstall.sh -j ${JOBS}
 echo "Base and kernel upgraded, time to reboot:"
 echo "shutdown -r now"
+echo
+echo "IMPORTANT: after reboot, the kernel modules MUST be upgraded to match the"
+echo "new kernel or amdgpu/drm will page-fault at load. On -CURRENT the version"
+echo "string alone is not enough -- the freshly force-rebuilt kmods live in the"
+echo "poudriere repo, so run:"
+echo "    sudo pkg upgrade -f    # or at least: pkg upgrade drm-latest-kmod gpu-firmware-amd-kmod-\\*"
+echo "On remote clients (e.g. framework) that pull from this builder over http,"
+echo "run the same pkg upgrade there AFTER rsyncing the repo to the served path."
