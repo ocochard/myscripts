@@ -565,13 +565,38 @@ movement step** every run — the residual is **NOT the movement decision**.
 ground adjustment resolving two ways ~8–11% of runs = **an uninitialised read in
 entity #90's collision/ground path at tick 871**.
 
-**Next (nail the line):** either (a) log entity #90's transform position at each
-sub-stage of its tick-871 sim (after move-apply, after collision, after
-PlaceOnSurface) to bracket the stage that first splits, then read that code for the
-uninit field; or (b) heap-aware valgrind (`MI_TRACK_VALGRIND` mimalloc) run long
-enough to reach tick 872 (~17.4 s sim) — it will name the uninit read's file:line
-directly. (b) is definitive but slow under valgrind; (a) is a faster
-build+`cdet_gate.sh` cycle. Instrumentation lives on branch `det-bisect`.
+### Stage-bracket (a) — localized to the AI collision push-out (2026-07-26)
+
+Ran option (a) as a chain of instrumented `cdet_gate.sh` batches on `det-bisect`,
+each diffing diverging vs normal runs' values for entity #90's tick-871 sim. Each
+stage came back **identical**, pushing the split further downstream, until it
+landed on the collision push-out:
+
+1. `TRACE90` (movement decision, `SimulateAnimations`) — moveX/moveZ/turn/anim-blend
+   /speed all **identical**. Not the movement.
+2. `GC90` (ground collision, `GroundCollision`) — input `mtPos` AND output `retVal`
+   (`under`/`dX`/`dZ`), `maxUnder`, `landDX/DZ` all **identical**. Not the ground.
+3. The `QIsManual()` object-collision block is **player-only** — entity #90 is an AI
+   soldier, so it's skipped.
+4. `OCB90` (the non-manual AI collision response, `SoldierOldSim.cpp` ~738): the
+   soldier is embedded near an object (**8 collision hits**) and gets a push-out
+   **`offset=(0.013521, −0.009921, 0.038827)`** applied to `moveTrans`
+   (`if offset.SquareSize() > 0.01²`) — moving X by +0.0135, exactly the measured
+   split. `offset` accumulates `dirOut × (info.under − …)` over the collisions.
+
+So the residual is **entity #90's AI collision push-out `offset`**, built from
+`GLandscape->ObjectCollision(...)`'s `CollisionInfo` entries (`under`, `dirOut`).
+`CollisionInfo` (`Object.hpp:886`) has **no default initialisation** — so a
+partially-populated hit reads uninitialised `under`/`dirOut`, and the accumulated
+`offset` (hence the soldier's X) diverges ~11% of runs. Root-cause class: an
+uninitialised `CollisionInfo` field in the `ObjectCollision`/`ObjectIntersect`
+geometry path.
+
+**Pending:** an `OCB90` 60-run batch is comparing `offset` + each hit's
+`under`/`dirOut` (diverging vs normal) to name the exact uninitialised field/entry.
+Result to be filled in here; then fix by zero-initialising `CollisionInfo` (or the
+specific unset field in the intersect path). Heap-valgrind reaching tick 872 would
+also name the file:line directly. Instrumentation on branch `det-bisect`.
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
