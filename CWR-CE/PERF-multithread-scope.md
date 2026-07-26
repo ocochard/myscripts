@@ -639,17 +639,43 @@ buffers / the plane `direction`/`thisNormal`.
   trajectory** (its tick-872 checksum `0xc67560de…` ≠ the client's `0x652cf556…`;
   OCB90 never fires) — entity #90's collision is client-only.
 
-So valgrind can't reach the reproducing sim. **To get the exact variable without
-valgrind:** instrument *inside* `CalculateIntersectionsExact` (log
-`direction`/`thisNormal`/the per-face `under` and the clip-buffer contents) gated to
-entity #90's collision, and diff diverging vs normal — the same `cdet_gate.sh`
-method that pinned every stage so far (harder here: it's a static helper, needs a
-`thisObj == entity#90` gate). The root cause is otherwise fully characterized: an
-uninitialised value in the convex-clip of `CalculateIntersectionsExact`
-(`ObjectIntersect.cpp:254`) → nondeterministic `CollisionInfo::under`/`dirOut`.
-Fix candidate regardless: zero-init `CollisionInfo` (`Object.hpp:886` has no ctor)
-and audit the clip buffers. All DIAG instrumentation is on branch `det-bisect`;
-shippable state is `gpu-skinning`, fixes on `valgrind-uninit-fixes`.
+So valgrind can't reach the reproducing sim — so I pinned it by instrumenting
+*inside* `CalculateIntersectionsExact` (global flag `g_traceColl90` set around
+entity #90's `ObjectCollision`; the same `cdet_gate.sh` diverging-vs-normal method).
+
+### The uninitialised value: `thisNormal` (2026-07-26, `CIE` batch)
+
+60-run `CIE` batch, 7 diverged. Per-call comparison: **`thisNormal` differs** (all
+3 components) on the first two `CalculateIntersectionsExact` calls, and it
+propagates to `dir` (= `thisNormal.Normalized()` = `CollisionInfo::dirOut`) and
+`maxDThis` (→ `under`). **`nVert`, `nPlThis`, `nPlWith`, `someThisLeft` are all
+identical** — the clip keeps the same vertex COUNT and decisions, but the summed
+normal differs.
+
+Key detail: **`thisNormal` is tiny (~0.007)** — the collision polygon is a
+near-degenerate sliver, so its Newell cross-product sum (`SumCrossProducts`) is
+**bit-sensitive**: a low-mantissa difference in one vertex flips the normal
+visibly. `OcclusionPoly::SumCrossProducts`/`Clip`/`Add` (`Occlusion.cpp`) read only
+valid `_v[0.._n-1]` (no off-by-one), so the uninitialised value enters via the
+**input geometry**: `poly.Add(thisToWith.FastTransform(sThis->Pos(face.vertex)))`
+over the `ConvexComponent` collision hull built lazily by
+`thisShape->RecalculateGeomComponentsAsNeeded()` (`ObjectIntersect.cpp:587`).
+
+**Root cause (final):** entity #90's collision-geometry convex hull (or its
+transformed vertices) carries an uninitialised low-order value; fed through the
+near-degenerate sliver polygon in `CalculateIntersectionsExact`, it yields a
+bit-sensitive `thisNormal`/`dirOut`/`under` that diverges ~10%, skewing the
+push-out `offset` → entity #90's X at tick 872 → the sim checksum.
+
+**Last inch (not done):** the exact uninitialised field is in the convex-hull
+construction (`RecalculateGeomComponentsAsNeeded`/`ConvexComponent`) or the
+transformed-vertex path — findable by instrumenting the hull build, or (more
+practically) **fix-and-verify**: zero-init the `ConvexComponent`/`OcclusionPoly`
+vertex storage (and/or `CollisionInfo`, `Object.hpp:886` — no ctor) and re-run the
+client `cdet_gate.sh` 100-run gate (expect 0/100). All DIAG instrumentation
+(`DETENT`/`TRACE90`/`GC90`/`OC90`/`OCB90`/`CIE` + `g_traceColl90`) is on branch
+`det-bisect`; shippable state is `gpu-skinning`, unrelated Head/Tank fixes on
+`valgrind-uninit-fixes`.
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
