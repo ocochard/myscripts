@@ -616,7 +616,40 @@ entity #90 AI soldier embedded in an object → `ObjectCollision` uninit
 Tank fixes are unrelated to this** (separate real uninit bugs on
 `valgrind-uninit-fixes`).
 
-**Down to the function.** The uninit read is inside
+### Root traced to the soldier's SKINNED collision geometry (2026-07-26)
+
+The residual is a **tank catching up to a group of men going the same way** (user
+insight) and colliding: the soldier (`this`=`cThis`) has its **collision-geometry
+vertices garbage-skinned** that tick. Proven via `CIEV` instrumentation
+(`ObjectIntersect.cpp`, log raw `sThis->Pos` vs transformed): **48 collision-hull
+vertices' `rawPos` differ run-to-run, transform identical** — so the SHAPE geometry
+(the man's skinned collision hull), not the transform, is nondeterministic.
+
+**Client-only** (why valgrind/server never reproduced it): the geometry is skinned
+at **draw** time (`ApplyMatricesComplex` → `SetPos` → `InvalidateConvexComponents`);
+the headless server never draws, so its collision uses the bind pose — deterministic.
+
+**Ruled out** (each verified, NOT assumed):
+- Out-of-range bone index into the palette — added a bounds guard (`SafeBoneMat`,
+  branch `det-fix2`); it **never fired** → not OOB, and `det-fix2` is a **no-op**.
+- `_head/_gun/_legTrans` — all `MIdentity`-initialised in the ctor.
+- `OrigPos` — `VertexTable::SaveOriginalPos` saves once from bind pose (guarded).
+- Animation phase — `TRACE90` proved `pT`/`pF`/`sT` identical.
+- `PrepareMatrices` — fills the entire palette `[0..NBones)` (keyframes + identity).
+
+**NOT yet pinned:** a value inside `ApplyMatricesComplex`'s per-vertex skinning that
+is uninitialised despite all inputs above appearing deterministic. **Two failed fix
+attempts** (both recorded so they're not retried): (1) `det-fix` — a degenerate
+near-zero-`thisNormal` guard in `CalculateIntersectionsExact` — **moved the
+divergence to tick 930** (symptom, not root); (2) `det-fix2` — the OOB bone guard —
+**no-op**. **Next step:** instrument `ApplyMatricesComplex` to log, for entity #90's
+differing vertices (vidx 76/78/83), the exact `OrigPos(i)` / `pw.GetSel()` /
+`pw.GetWeight()` / `matrices[pw.GetSel()]` / `res`, diffing diverging vs normal —
+names the uninitialised value directly. Branches `det-bisect` (DETENT/…/`CIEV`
+instrumentation), `det-fix`, `det-fix2` are all pushed. Shippable state is
+`gpu-skinning` (no fix landed yet for this residual).
+
+**(Earlier localization, superseded by the skinning finding above.)** The
 `CalculateIntersectionsExact()` (`engine/Poseidon/World/Scene/ObjectIntersect.cpp:254`)
 — the convex-convex intersection of the soldier's collision geometry vs the object.
 It clips face-by-face into `poly`/`resClip`/`thisVertexResult` and derives
