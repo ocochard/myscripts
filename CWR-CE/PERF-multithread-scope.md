@@ -622,12 +622,34 @@ Tank fixes are unrelated to this** (separate real uninit bugs on
 It clips face-by-face into `poly`/`resClip`/`thisVertexResult` and derives
 `direction` (→ `CollisionInfo::dirOut`) and `under = maxDThis − pos·direction`.
 `maxDThis`/`minDWith` are initialised (`±1e10`); the uninit is deeper in the clip
-buffers / the plane `direction`/`thisNormal`. **Complete verification (the exact
-`file:line` uninit read):** heap-aware valgrind (`MI_TRACK_VALGRIND` mimalloc) run
-long enough to reach tick 872 (~17.4 s sim) with entity #90 colliding — it names
-the read in `CalculateIntersectionsExact` directly. All DIAG instrumentation
-(`DETENT`/`TRACE90`/`GC90`/`OC90`/`OCB90`) is on branch `det-bisect` (for revert:
-the shippable state is `gpu-skinning`; the fixes are `valgrind-uninit-fixes`).
+buffers / the plane `direction`/`thisNormal`.
+
+**Heap-valgrind attempt (2026-07-26) — BLOCKED by a GL/valgrind wall.** The exact
+`file:line` needs valgrind on the *reproducing* config, but none is valgrind-able:
+- **GL client** (`PoseidonGame --benchmark`, the ONLY config that reproduces entity
+  #90's tick-872 collision): **SIGSEGVs at SDL/GL context creation under valgrind**,
+  with both the AMD driver AND `LIBGL_ALWAYS_SOFTWARE=1`/llvmpipe. Heap tracking
+  itself works (`MI_TRACK_VALGRIND` mimalloc → 178k allocs tracked, 211 errors in
+  early init) — it just never reaches the sim. GL init + valgrind are incompatible
+  here.
+- **dummy client** (`--render dummy`): the sim loop ticks but **entities freeze at
+  their tick-0 positions** (tick-872 checksum == tick-0; OCB90 never fires) — the
+  client entity movement needs the GL backend active.
+- **server `--simulate`** (headless, valgrind-friendly): simulates a **different
+  trajectory** (its tick-872 checksum `0xc67560de…` ≠ the client's `0x652cf556…`;
+  OCB90 never fires) — entity #90's collision is client-only.
+
+So valgrind can't reach the reproducing sim. **To get the exact variable without
+valgrind:** instrument *inside* `CalculateIntersectionsExact` (log
+`direction`/`thisNormal`/the per-face `under` and the clip-buffer contents) gated to
+entity #90's collision, and diff diverging vs normal — the same `cdet_gate.sh`
+method that pinned every stage so far (harder here: it's a static helper, needs a
+`thisObj == entity#90` gate). The root cause is otherwise fully characterized: an
+uninitialised value in the convex-clip of `CalculateIntersectionsExact`
+(`ObjectIntersect.cpp:254`) → nondeterministic `CollisionInfo::under`/`dirOut`.
+Fix candidate regardless: zero-init `CollisionInfo` (`Object.hpp:886` has no ctor)
+and audit the clip buffers. All DIAG instrumentation is on branch `det-bisect`;
+shippable state is `gpu-skinning`, fixes on `valgrind-uninit-fixes`.
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
