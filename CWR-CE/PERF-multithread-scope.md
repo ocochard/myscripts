@@ -592,11 +592,29 @@ partially-populated hit reads uninitialised `under`/`dirOut`, and the accumulate
 uninitialised `CollisionInfo` field in the `ObjectCollision`/`ObjectIntersect`
 geometry path.
 
-**Pending:** an `OCB90` 60-run batch is comparing `offset` + each hit's
-`under`/`dirOut` (diverging vs normal) to name the exact uninitialised field/entry.
-Result to be filled in here; then fix by zero-initialising `CollisionInfo` (or the
-specific unset field in the intersect path). Heap-valgrind reaching tick 872 would
-also name the file:line directly. Instrumentation on branch `det-bisect`.
+**Result (2026-07-26) — the field that differs: `CollisionInfo::under` + `dirOut`
+from `ObjectCollision`.** `OCB90` 60-run batch, 5 diverged. Both differ:
+- `offset`: normal `(0.013521,−0.009921,0.038827)` vs diverge
+  `(0.012690,−0.011079,0.038821)`.
+- `CollisionInfo` hits: entry[0] `under` 0.04437667 → 0.05365577; entry[1]
+  `under` 0.02592911 → 0.04061256; `dirOut` also differs.
+
+**Root cause pinned:** `ObjectCollision`'s **inputs are identical** (movement +
+`moveTrans` verified identical upstream) yet its **output `under`/`dirOut` differ**
+~8-11% of runs → `ObjectCollision` **reads uninitialised memory internally**, in the
+geometry-intersection path (`engine/Poseidon/World/Scene/ObjectIntersect.cpp`, the
+`under = maxDThis − minDWith` / `direction` computation) and/or the un-initialised
+`CollisionInfo` (`Object.hpp:886`, no default ctor). The nondeterministic penetration
+depth/direction skews entity #90's collision push-out `offset` → its X (+altitude)
+→ the tick-872 checksum.
+
+**Fix direction:** zero-init `CollisionInfo` and/or fix the unset accumulator in the
+`ObjectIntersect` under/dirOut computation. Confirm with the client `cdet_gate.sh`
+100-run gate (expect 0/100). The complete residual chain is now nailed:
+entity #90 AI soldier embedded in an object → `ObjectCollision` uninit
+`under`/`dirOut` → push-out `offset` → X split at tick 872. **Head RandomLip /
+Tank fixes are unrelated to this** (separate real uninit bugs on
+`valgrind-uninit-fixes`).
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
