@@ -549,9 +549,29 @@ sec=101 sT=0.1413 qN=0`. So entity #90 is walking (local forward `moveZ`, zero
 comes from `moveZ` rotated by heading, so the two-way split is in one of `turn`
 (heading), the anim-blend (`pT`/`pF`/`sT` → moveZ), or `adjCoef`/`speedZ`.
 
-**Pending:** a 60-run batch (`cdet_gate.sh`, captures `DETERMINISM` + `TRACE90` per
-run) is comparing the `TRACE90` fields of diverging vs normal runs field-by-field —
-the field that differs is the branch input. Result to be filled in here.
+**Result (2026-07-26): NO movement input differs.** 60-run batch, 5 diverged; every
+`TRACE90` field is **bit-identical** between diverging and normal runs — `moveX`,
+`moveZ`, `turn`, `turnWanted`, anim-blend (`prim`/`pT`/`pF`/`sec`/`sT`), `speedZ`,
+`adjCoef`, `tired`, `wSpd`, all the same. So entity #90 computes the **exact same
+movement step** every run — the residual is **NOT the movement decision**.
+
+**What this proves:** the sim is single-threaded (client `--benchmark`, no
+`--mt-lod`), so with *every* input identical the output can only differ if the
+**position-application / collision / ground-settle path reads uninitialised memory**
+(or another nondeterministic source). The split is DOWNSTREAM of `SimulateAnimations`
+— in applying the (identical) step and finalising the transform: the move-apply +
+`Landscape` collision/ground query + `Man::PlaceOnSurface` →
+`RoadSurfaceYAboveWater` (`:222`). The ~1 mm X + altitude split is a collision/
+ground adjustment resolving two ways ~8–11% of runs = **an uninitialised read in
+entity #90's collision/ground path at tick 871**.
+
+**Next (nail the line):** either (a) log entity #90's transform position at each
+sub-stage of its tick-871 sim (after move-apply, after collision, after
+PlaceOnSurface) to bracket the stage that first splits, then read that code for the
+uninit field; or (b) heap-aware valgrind (`MI_TRACK_VALGRIND` mimalloc) run long
+enough to reach tick 872 (~17.4 s sim) — it will name the uninit read's file:line
+directly. (b) is definitive but slow under valgrind; (a) is a faster
+build+`cdet_gate.sh` cycle. Instrumentation lives on branch `det-bisect`.
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
