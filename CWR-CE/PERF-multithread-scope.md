@@ -531,6 +531,27 @@ enough to reach tick 872 (~17.4 s sim — many minutes under valgrind; raise
 look for an uninit read in that soldier's movement/ground path. Harness:
 `CWR-CE/cdet_gate.sh` (client, discovers the display) + the `det-bisect` DETENT dump.
 The `Head` RandomLip fix is confirmed unrelated (it's not entity #90's movement).
+
+### TRACE90 instrumentation (2026-07-26, IN PROGRESS)
+
+Added `TRACE90` to `Man::SimulateAnimations` (`SoldierOldSim.cpp`, branch
+`det-bisect` @ `7dec023`): when a soldier's position matches entity #90's tick-871
+entry (8072.28467, …, 9226.58594 — identical across runs until it splits), it logs
+that step's movement inputs. Movement mechanics confirmed: the horizontal step is
+`AdvanceMoveQueue → moveX/moveZ` (LOCAL frame), rotated by heading (`turn`), and
+altitude is then set from the ground query (`Man::PlaceOnSurface` →
+`RoadSurfaceYAboveWater`, `:222`) — so the altitude Δ is downstream of the X Δ.
+
+Sample TRACE90 (one run): `moveX=0.000000  moveZ=0.068935  turn=-0.0002023
+speedZ=4.92  adjCoef=0.70  tired=0.01667  wSpd=1.0  prim=92 pT=0.4444 pF=1.0
+sec=101 sT=0.1413 qN=0`. So entity #90 is walking (local forward `moveZ`, zero
+`moveX`) while blending anim moves 92→101 with a tiny `turn`. World-X therefore
+comes from `moveZ` rotated by heading, so the two-way split is in one of `turn`
+(heading), the anim-blend (`pT`/`pF`/`sT` → moveZ), or `adjCoef`/`speedZ`.
+
+**Pending:** a 60-run batch (`cdet_gate.sh`, captures `DETERMINISM` + `TRACE90` per
+run) is comparing the `TRACE90` fields of diverging vs normal runs field-by-field —
+the field that differs is the branch input. Result to be filled in here.
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
