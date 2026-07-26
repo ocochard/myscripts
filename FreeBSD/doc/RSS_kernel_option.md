@@ -25,6 +25,18 @@ particular, and which other drivers and kernel subsystems also have
 > `/boot/loader.conf`.** See the companion note
 > [`netisr_kernel_service.md`](netisr_kernel_service.md) §4 and §8 for
 > the mechanism and the measured before/after.
+>
+> **Do not verify with `sysctl net.isr.dispatch` — it lies about RSS.**
+> That sysctl is the *global* default and keeps reading `direct` on a
+> perfectly-configured RSS box. RSS pins IPv4/IPv6 to hybrid via a
+> *per-protocol* override that the global sysctl never reflects (the
+> per-protocol setting wins — `sys/net/netisr.c:786-790`). The only
+> place the truth shows is **`netstat -Q`**: the `ip`/`ip6` rows read
+> `Dispatch = hybrid` while the top "Dispatch policy" line still says
+> `direct`. That split is correct and expected; it is not a symptom.
+> To confirm RSS is actually *helping* (not funneling to cpu0), check
+> that `netstat -Q` shows N workstreams with `HDisp'd` counts spread
+> evenly and `QDrops = 0` — see §5.
 
 ## 1. Two different things called "RSS"
 
@@ -396,3 +408,33 @@ what you'd want. The main thing to check after enabling it is that
 `hw.cxgbe.nrxq` / `ntxq` aren't being overridden somewhere to a value
 that fights `rss_getnumbuckets()`, and that `net.inet.rss.udp_4tuple`
 is set if UDP is a meaningful share of the traffic mix.
+
+### Verifying a live box — read `netstat -Q`, not `net.isr.dispatch`
+
+`sysctl net.isr.dispatch` is the wrong tool: it reports the global
+default (`direct`) and is *unaffected* by RSS, which overrides dispatch
+per-protocol. Use `netstat -Q` and read three things:
+
+1. **Thread count == core count, bound.** The top block should show
+   `Thread count` = your core count and `Threads bound to CPUs:
+   enabled`. If it says `Thread count: 1`, you are in the trap —
+   `net.isr.maxthreads`/`bindthreads` were not set (see preamble).
+
+2. **`ip`/`ip6` say `hybrid`.** In the Protocols table the `ip` and
+   `ip6` rows read `Dispatch = hybrid` even though the top line says
+   `direct`. This is RSS working, not a misconfiguration.
+
+3. **Work is spread and nothing drops.** In the Workstreams table
+   there is one WSID per CPU, each `ip6`/`ether` `HDisp'd` count is
+   roughly equal across CPUs, and every `QDrops` is `0`.
+
+Measured contrast between two BSDRP-lineage boxes:
+
+| | `Thread count` | WSIDs | `ip` HDisp'd spread | `ip` QDrops |
+|---|---|---|---|---|
+| Misconfigured (`maxthreads=1`) | 1 | only WSID 0 | 100% on cpu0 (1.4M) | 815 |
+| Correct (`maxthreads=-1`, bound) | 4 (=`hw.ncpu`) | 0–3, one per CPU | ~even, ~2.5M each | 0 |
+
+Both show `net.isr.dispatch: direct` and both show `ip = hybrid` in the
+table — proof that the global sysctl tells you nothing about whether
+RSS is helping. Only the workstream spread does.
