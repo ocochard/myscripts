@@ -62,6 +62,12 @@ close-out (blocked) and the upstream PR work — pick one, or bring a new goal.
 >    event. Separately: merge `valgrind-uninit-fixes` → `gpu-skinning` + submit
 >    upstream (strict improvements regardless). NOTE: installed binary is currently
 >    `gpu-skinning` (no fix — poudriere overwrote the fix pkg during the A/B).
+>    **CULPRIT NAMED (2026-07-26, `PERF-multithread-scope.md` → "Per-entity bisect"):
+>    the residual is ENTITY #90 — a single patrolling soldier near (8072,9226) on
+>    Abel whose tick-871 movement step resolves two ways (~1mm in X+altitude,
+>    binary, 11%). Instrumented on branch `det-bisect` (per-entity `DETENT` dump).
+>    Next: instrument entity #90's tick-871 Simulate (speed/dir/anim/ground inputs)
+>    or run heap-valgrind long enough to reach tick 872 to find the uninit read.**
 > 2. **Upstream PR work** — PR #51 (freebsd portability) is gated at
 >    `action_required`; the engine-fix branches (`PR-*.md`) and GOG-pr are queued
 >    behind it. Chase the CI gate / prep the next submission.

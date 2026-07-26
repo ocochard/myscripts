@@ -498,16 +498,39 @@ the `Head` RandomLip fix OUT as the cause (it would fire at variable per-soldier
 ticks, not consistently at 872), so that fix — real and valgrind-verified — does
 **not** close this residual.
 
-**Next (root-cause it, now that it's reproducible):** the gate sum is an XOR of
-per-entity hashes, so log **per-entity** hashes at ticks 871–872, diff a diverging
-run (e.g. seed the batch, runs 26/34/39/54/58/59/60/77/93/99 diverged) against a
-normal one → the **single entity** whose transform first differs. Then inspect what
-that entity does at sim-time ~17.4 s (a scheduled AI/effect/waypoint event whose
-outcome depends on a nondeterministic input — uninit field or a real-time read at
-that instant). Optionally re-run the 100-batch on the **fixed** binary to confirm
-the 10%@872 rate is unchanged (needs rebuilding the fix pkg — poudriere overwrote
-it). Harness: `cdet_gate.sh` (scratchpad) — discovers the display, 100 runs,
-clusters by per-tick sum.
+### Per-entity bisect — CULPRIT NAMED (2026-07-26): entity #90, tick 871→872
+
+Added a per-entity dump at ticks 870–873 (branch `det-bisect`, `World.cpp`
+determinism block: `DETENT tick= id= pos= h=` per entity) — the logging did NOT
+suppress the Heisenbug (still 11/100). Diffed the diverging runs' tick-872 dump
+against a normal run's:
+
+- **11/100 diverge, ALL at entity #90** (the 91st in the `_vehicles` sim list),
+  ALL at tick 872. No other entity ever differs.
+- **Perfectly binary:** all 11 land at the *same* alternate transform; the 89 at
+  the *same* normal transform. Two outcomes only.
+- Entity #90 is **identical through tick 871**, splits at 872:
+  - normal `pos=8072.23340, 32.16370, 9226.64844`
+  - diverge `pos=8072.23242, 32.16255, 9226.64844`
+  (Δ ≈ 1 mm in X and altitude; Z identical.) It's a **patrolling soldier** near
+  (8072, 9226) on Abel, moving −X/+Z, at ~17.4 s sim.
+
+**Reading:** the residual is one soldier's **tick-871 movement step** resolving two
+ways. Binary (not FP jitter, which would be deterministic) ⇒ a single branch on a
+nondeterministic input, ~11% of runs — the signature of an **uninitialised read**
+(heap garbage usually holding one value). The altitude Δ follows the X Δ via the
+ground-height query at the shifted X (`Landscape::IntersectWithGround` /
+`GroundCollision` — top t420 hotspots). Note: the earlier `--duration 60` heap
+valgrind only reached ~tick 134, nowhere near 872, so it never exercised this read.
+
+**Next (get the exact line):** instrument entity #90's tick-871 `Simulate` (log its
+speed/direction/anim-phase/ground-query inputs) on a diverging vs normal run to find
+the two-way branch; OR run heap-aware valgrind (`MI_TRACK_VALGRIND` mimalloc) long
+enough to reach tick 872 (~17.4 s sim — many minutes under valgrind; raise
+`--duration` well past that and let the client `--benchmark`/server run grind) and
+look for an uninit read in that soldier's movement/ground path. Harness:
+`CWR-CE/cdet_gate.sh` (client, discovers the display) + the `det-bisect` DETENT dump.
+The `Head` RandomLip fix is confirmed unrelated (it's not entity #90's movement).
 - **Merge `valgrind-uninit-fixes` into `gpu-skinning`** and submit upstream
   (`PR-*.md` pattern) — the fixes are strict improvements regardless of the gate.
 - **Host state:** poudriere overwrote the fix pkg with the buggy `gpu-skinning`
