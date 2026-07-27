@@ -24,8 +24,12 @@ FPS-neutral); FPS wins are validated on **t420** (CPU-bound) when it's online.
 
 - `PERF-multithread-scope.md` — **most recent thread.** MT main-loop (task-pool
   parallel-for), the `--mt-lod` pattern, CPU-load distribution, and the
-  **determinism gate + rare-Heisenbug hunt** (categorization closed as
-  document-and-move-on).
+  **determinism gate + rare-Heisenbug hunt — RESOLVED 2026-07-27** (shared sim/render
+  RNG; fixed via a separate `GFxRandGen`).
+- `MP-DETERMINISM-ARCHITECTURE.md` — how MP sync (server-authoritative relay,
+  local/remote objects, dead-reckoning, JIP) and the `--determinism-log` gate fit
+  together, why cross-machine RNG determinism isn't needed for MP, and the
+  `GRandGen`/`GFxRandGen` split. Mermaid diagrams.
 - `PERF-gpu-skinning-scope.md` — GPU vertex-shader skinning (implemented, off by
   default via `--gpu-skinning`). Item 5e done: the palette seam moved to the
   `Object` base so any skinned proxy can GPU-skin; enabled on the parachute

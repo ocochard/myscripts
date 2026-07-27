@@ -1,5 +1,20 @@
 # Multithreading the main loop — scope (CWR-CE / Poseidon)
 
+> **Determinism residual: RESOLVED 2026-07-27.** The rare ~10% divergence in the
+> `--determinism-log` **gate** (the tool that validates 1-thread == N-thread sim output for
+> this MT work) was a shared-RNG bug: cosmetic particle effects (`Smokes.cpp`) consumed the
+> global `GRandGen` a nondeterministic number of times per rendered frame, desyncing the sim
+> RNG stream and rarely flipping an AI soldier's head-look → skinned head collision hull →
+> collision response. Fixed with a separate `GFxRandGen` for render effects; gate now 0/N —
+> a **trustworthy baseline for parallelizing the sim loops**. See **"RESOLVED (2026-07-27)"**
+> below. It was NOT uninitialised memory (every such hypothesis in the earlier sections was
+> wrong; kept for the record).
+>
+> **Scope note:** this did NOT affect the shipped game. OFP/CWR MP is server-authoritative
+> (server dictates positions, clients extrapolate/resync), so client-local RNG desync was
+> always invisible to MP. The value here is a clean determinism gate for the MT effort, not
+> an MP bugfix. Architecture: `MP-DETERMINISM-ARCHITECTURE.md`.
+
 The single-threaded main loop is the last real FPS ceiling once vsync is uncapped.
 This scopes how to spread it across ser6's idle cores. It supersedes the Phase 4/5
 sketches in `PERF-hotspot-profile.md:180-203` with today's measured framing.
@@ -734,6 +749,73 @@ duration-driven headless sim loop is server-only), and **the mission
 2026-07-25: this actually ticks the sim (`vehicles=122 units=130`, frame 1→90→177)
 and exits code 2 on duration. A `--check`-only run is faster for boot-path errors;
 use `--simulate` to reach the sim loop where the determinism-relevant reads live.
+
+### RESOLVED (2026-07-27) — root cause was a SHARED RNG, not uninitialised memory
+
+**Every "uninitialised value" hypothesis above was wrong.** The skinned collision
+hull (`CIEV`) really did differ run-to-run, but not because of uninitialised memory —
+because it was skinned from a **different soldier pose**, which came from a **different
+AI head-look angle**, which came from a **desynced RNG stream**. Fixed in two files;
+the client determinism gate is now **0/N** on the whole common tick range (20+ runs
+bit-identical through every shared tick; tick 872 == `0xcef18d78d828bfb3` every run).
+
+**The chain, proven end-to-end by diffing a diverging vs a normal run:**
+1. `DETERMINISM rng={GRandGen.CurSeed()}` per tick → the RNG stream position **diverges
+   at tick ~6**, long before entity #90. So the desync is global and early, not a
+   #90-specific late event.
+2. `MAN90` (per-tick dump of #90's animation + AI state) → **animation phase
+   (`pTime`/`pFactor`/`pMove`) is byte-identical**; the **head-look angles diverge** at
+   tick 872 (`hYR` −0.2494 vs −0.1697; `hXR` 0.0106 vs 0.0 — a branch flip).
+3. The head angle is smoothed toward `_headXRotWanted/_headYRotWanted` deterministically;
+   those come from the AI **look timers** `_lookTargetTimeLeft`/`_lookForwardTimeLeft`,
+   which were **already different at tick 870** (`lookF` 17.54 vs 19.60). In the bad run
+   `_lookTargetTimeLeft` crosses zero at 872 → head snaps forward.
+4. Those timers are set with `GRandGen.RandomValue()` (`SoldierOldAI.cpp:1441-1462`).
+   `RandomValue()` returns `_valueTable[_seed++]` — the value depends ONLY on the global
+   call-count `_seed`. Same branch, different value ⇒ `GRandGen` had been **consumed a
+   different number of times** upstream.
+5. The extra consumers: **`Smokes.cpp`** (smoke/dust/cloudlet particle effects) makes
+   ~34 argless `GRandGen.RandomValue()`/`PlusMinus` calls per particle per frame. Particle
+   spawn/lifecycle depends on camera, visibility and frame timing → a **nondeterministic
+   number of RNG draws each frame**. Sim and render **shared the one global `GRandGen`**,
+   so render desynced the sim stream. **Client-only** because `--simulate` spawns no
+   particles (which is exactly why the headless server never reproduced it, and why the
+   fixed-seed baseline still diverged: the seed was fixed, the *consumption count* wasn't).
+
+Why the head-look reaches the collision: soldier collision geometry (`component03/04/09`,
+`npos=216`) includes head/neck vertices (`vidx` up to y≈1.78). A different head orientation
+skins those vertices differently → different convex hull → different `thisNormal`/`dirOut`
+in `CalculateIntersectionsExact` → different push-out → #90's X at tick 872 → the checksum.
+The near-degenerate-sliver `thisNormal` observation was real but was an *amplifier*, not
+the source.
+
+**The fix (`randomGen.hpp` + `Smokes.cpp`, ~2 files):** a second RNG singleton
+`GFxRandGen` for cosmetic render effects; `Smokes.cpp` draws from it instead of `GRandGen`.
+The simulation now owns `GRandGen` exclusively. Positional `RandomValue(x,z[,y])` is
+stateless (no `_seed++`) and was never a desync source — only argless `RandomValue()` /
+`PlusMinus` were moved. All `DETENT`/`TRACE90`/`CIE*`/`MAN*`/`SKIN216`/`SIT90`/`g_traceColl90`
+/`g_detTick` instrumentation has been **stripped**; net diff vs baseline is the two fix
+files. Verified on a clean poudriere build: **0/15 common-range divergences.**
+
+**Lesson for the MT work:** the gate is now airtight for the *sim* stream. The invariant to
+hold while parallelizing: **nothing outside `World::Simulate` may touch `GRandGen`** — a
+render/audio/UI consumer pulling from it re-introduces gate noise (and, in a real MP client,
+a local desync the server would otherwise paper over). The remaining "tick 1240" gate
+difference is **not** a divergence: `--benchmark` stops on a wall-clock budget, so runs
+compute 1239 vs 1240 ticks; every *shared* tick is identical.
+
+**Audit follow-up (2026-07-27) — full `GRandGen` sweep.** 228 stateful call sites (argless
+`RandomValue()`/`Gauss`/`PlusMinus`; positional `RandomValue(x,z[,y])` is stateless and
+never a desync source). ~213 are sim-path (fixed-dt loop, deterministic count) and correctly
+stay on `GRandGen`. Cosmetic consumers moved to `GFxRandGen` (commit `b3c294e`, kept by
+user decision — preventive, none fire in the benchmark so they don't affect today's gate):
+`Man::DrawNVOptics` (draw path, NV goggles); `DynSound`/`Speaker` (audio — `DynSound`'s call
+count is `prec`/camera-gated, a genuine latent leak masked only by the benchmark's scripted
+camera); UI (`InGameUI`, `DisplayUIMenus`, `OptionsUI`, `UIMapDisplay`). Sim-path head/eye/lip
+animation (`Head::Simulate`, driven from `SoldierOldSim.cpp:129`) and animation-variant
+selection (`MoveInfo::RandomVariant*`) correctly stay on `GRandGen`. Moving `DynSound` shifted
+the benchmark's checksum baseline (its sound-source vehicles tick even under `--no-sound`) but
+it stays 0/N — now genuinely isolated. Full model + diagrams: `MP-DETERMINISM-ARCHITECTURE.md`.
 
 ### Root cause of the "`--simulate` headless hang" (2026-07-25)
 

@@ -674,8 +674,15 @@ env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/xdg PoseidonGame -C ~/.local/share/CWR/base 
 
 ## Heap-aware memcheck (uninitialised-memory hunt)
 
-For chasing uninitialised reads (the determinism-residual hunt — see
-`PERF-multithread-scope.md`), two things bite:
+> **Note (2026-07-27):** the determinism residual that motivated this section was NOT
+> uninitialised memory — it was a shared-RNG desync (render particles consuming the sim
+> `GRandGen`; fixed via a separate `GFxRandGen`). See `PERF-multithread-scope.md`
+> "RESOLVED (2026-07-27)". The heap-memcheck workflow below is still valid for genuine
+> uninit hunts, but valgrind was ultimately a dead end here (GL client won't run under it);
+> the bug was found by diffing per-tick state (RNG stream position, AI look timers) between
+> a diverging and a normal run.
+
+For chasing uninitialised reads, two things bite:
 
 1. **`--simulate` is `PoseidonServer`-only, and wants the mission DIRECTORY.**
    `PoseidonGame --simulate` has no sim driver and idles (it now errors out,
