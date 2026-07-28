@@ -53,6 +53,10 @@ FPS-neutral); FPS wins are validated on **t420** (CPU-bound) when it's online.
   `paradrop-mission/`).
 - `TROUBLESHOOTING-truncated-mod.md` — recognizing the truncated-mod
   crash pattern (`ShapeLOD.cpp:1525 _nLods >= 1`).
+- `TRIDENT-TEST-HARNESS.md` — the built-in `tri` integration/stress harness:
+  the game's `--harness <port>` control channel, the `test`/`stress`/`console`
+  subcommands, test/`.stress` formats, and the protocol (eval SQF, load mission,
+  inject input, query state). The proper way to run missions for testing.
 - `BUG-*.md` — per-bug engineering logs (root cause, repro, upstream
   status). Currently: `ai-radio-msgcmd-getfrom`,
   `content-reflecting-singletons`, `filecache-case-normalization`.

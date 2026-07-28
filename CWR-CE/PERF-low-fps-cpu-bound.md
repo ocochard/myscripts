@@ -391,10 +391,16 @@ present-bound benchmark scene. `ser6` = AMD Ryzen 7 7735HS, vsync off.
 - GPU skinning is off by default; enabling it (`--gpu-skinning`) adds +9% here — its
   view-LOD CPU-skin removal finally shows because the scene is CPU-bound.
 
-**New top hotspot surfaced (future work):** `strcasecmp_l` at ~10%, from
-`Head::SetMimicMode` doing a case-insensitive `ParamClass::Find` (config string lookup)
-**per soldier per tick**. Untouched by these opts and now the #1 self-time function —
-the next lever for a CPU-bound scene (cache the mimic-mode lookup / intern the string).
+**`strcasecmp_l` ~10% — investigated, NOT a productive lever (2026-07-28).** The top-line
+10% is misleading: it's an **aggregate of many `ParamClass::Find` callers** across the
+code, not one site. Reading the callchain, `Head::SetMimicMode` → `Find` → `strcasecmp`
+is only ~2.5% of total (58k of `strcasecmp`'s 221k samples). Caching the `CfgMimics`
+class lookup in `SetMimicMode` (branch `mimic-cache-measure`, since deleted) moved
+`strcasecmp` 9.57% → 9.75% (noise), headless throughput 770 → 764 frames/20s (noise), and
+rendered FPS 102.0 → 100.3 (not significant at 95%). Even a full per-mode cache tops out
+at that ~2.5% and wouldn't touch the other ~7.5% elsewhere. A real win would need a
+structural change to `ParamClass::Find` (hashed/interned class lookup) affecting all
+callers — not a point fix. Not pursued.
 
 **Branches (all rebased onto current `upstream/main`):**
 `fltopts-nearbyint-cvtss2si`, `invsqrt-rsqrtss`, `phase2-sse-transform`,
