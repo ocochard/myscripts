@@ -126,6 +126,7 @@ if $SUDO poudriere ports -ln | grep -q 'default'; then
 else
 	# Creating the port tree
 	$SUDO poudriere ports -c
+  # $SUDO poudriere -c -m null -M /home/user/freebsd-ports
 fi
 
 $SUDO cp /etc/src.conf /usr/local/etc/poudriere.d/builder-src.conf

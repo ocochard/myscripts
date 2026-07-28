@@ -343,3 +343,59 @@ grep -E "^[0-9]+\.[0-9]+%.*PoseidonGame" /tmp/pmc.graph | head
 objdump -d -C /usr/local/bin/PoseidonGame | \
   awk '/<Poseidon::Foundation::Vector3P::X\(\) const>:/{f=1} f{print} f&&/ret/{exit}'
 ```
+
+## PROVEN on a CPU-bound scene (2026-07-28) — full A/B + PMC attribution
+
+The earlier per-change measurements were profile snapshots; the campaign's premise
+("FPS-neutral on ser6 because present-bound; the CPU cut only shows on a CPU-bound
+config") stayed unproven end-to-end. A genuinely heavy scene closes that gap.
+
+**Scene:** `load.Demo` (Malden-demo island) — **259 vehicles, 333 units** (168 W vs
+165 E) in a live firefight; headless `--simulate` runs it at ~22 fps. Far past the
+present-bound benchmark scene. `ser6` = AMD Ryzen 7 7735HS, vsync off.
+
+**3-way `--benchmark` A/B (aFPS, 5 runs each, ministat 95%):**
+
+| Config | Binary | `--gpu-skinning` | aFPS (mean ± sd) |
+|---|---|---|---|
+| **A** baseline | perf-opts reverted | off | **58.8 ± 1.2** |
+| **B** shipped | gpu-skinning | off | **98.1 ± 4.3** |
+| **C** | gpu-skinning | on | **106.5 ± 1.5** |
+
+- **B − A (math/AI opts): +39.3 FPS, +67%** — significant (ministat 39.26 ± 4.57).
+- **C − B (GPU skinning): +8.4 FPS, +9%.**
+- **C − A (full perf work): +47.7 FPS, +81%** — nearly doubles FPS.
+
+**PMC attribution** (`pmcstat -P ex_ret_instr`, 60 s headless `--simulate`, top self-time):
+
+| Function | Baseline | Optimized | |
+|---|---|---|---|
+| `strcasecmp_l` (via `Head::SetMimicMode` → `ParamClass::Find`) | 10.50% | 9.57% | *not an opt target — see below* |
+| `nearbyintf` | **9.02%** | **absent** | cvtss2si |
+| `fegetenv`  | **7.44%** | **absent** | cvtss2si (nearbyint read FP env every call) |
+| `rintf`     | 1.14% | 0.02% | cvtss2si |
+| `Foundation::InvSqrt` | **3.96%** | **0.84%** | rsqrtss |
+| `MotionType::FindPath` | 3.94% | 4.31% | *unchanged (rises in % as total shrinks)* |
+
+- The `nearbyint` chain (`nearbyintf` + `fegetenv` + `rintf` ≈ **17.6% of retired
+  instructions**) is **eliminated**; `InvSqrt` drops 3.96% → 0.84%. Because `nearbyintf`
+  is a libm *call* doing a `fegetenv` per rounding, the wall-time saved is
+  disproportionately larger than the instruction share — which is why ~20% of
+  instructions removed yields +67% FPS.
+- **`AI_HEAVY_CHECK` (phase1) is a no-op in a release build** — `AssertValid` /
+  `CheckVehicleStructure` are absent from *both* profiles (the `PoseidonAssert` they
+  replaced already compiles out in Release). So the +67% is essentially all
+  `cvtss2si` + `rsqrtss` (+ the SSE transform, whose retired-instruction count is a poor
+  proxy for its cycle win). Keep phase1 for checked/debug builds; it costs nothing in
+  Release.
+- GPU skinning is off by default; enabling it (`--gpu-skinning`) adds +9% here — its
+  view-LOD CPU-skin removal finally shows because the scene is CPU-bound.
+
+**New top hotspot surfaced (future work):** `strcasecmp_l` at ~10%, from
+`Head::SetMimicMode` doing a case-insensitive `ParamClass::Find` (config string lookup)
+**per soldier per tick**. Untouched by these opts and now the #1 self-time function —
+the next lever for a CPU-bound scene (cache the mimic-mode lookup / intern the string).
+
+**Branches (all rebased onto current `upstream/main`):**
+`fltopts-nearbyint-cvtss2si`, `invsqrt-rsqrtss`, `phase2-sse-transform`,
+`phase1-ai-heavy-check` — all folded into `gpu-skinning`.
