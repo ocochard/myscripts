@@ -20,7 +20,7 @@
 #   similar) and exits non-zero. The script reports the kernel as fixed.
 #
 # Refs:
-#   - FreeBSD/doc/vnet_jail_ifclone_deadlock.md in this repo
+#   - FreeBSD/docs/tun_destroy_deadlock_case_study.md in this repo
 #   - sys/net/if_tuntap.c:646-670 (tun_destroy CV-wait loop)
 #   - sys/net/if_clone.c:480 (sx_xlock(&ifnet_detach_sxlock))
 

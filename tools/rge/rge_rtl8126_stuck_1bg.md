@@ -479,7 +479,7 @@ uses a self-healing script that `kldload`s `if_re`, `devctl set driver -f rge0
 re`, polls `re0` link across a 60s window, then reverts to `rge` via an EXIT
 trap — surviving SSH loss. (Do **not** `devctl detach rge0` bare over SSH; that
 frees the sole NIC with no re-attach and takes the host offline.) The script is
-checked in at `FreeBSD/docs/rge/` alongside the decode tooling.
+checked in at `tools/rge/` alongside the decode tooling.
 
 **Vendor-test result:** `if_re` (Realtek `rtl_bsd_drv` v1.102.01) was loaded on
 framework and `rge0` rebound to `re0` via the self-healing script. Across the
@@ -576,7 +576,7 @@ root cause; if not, the cause is in the surrounding init and the firmware delta
 is incidental.
 
 Decode/diff tooling for reproducing this analysis is checked in at
-`FreeBSD/docs/rge/` (`decode_fw.py`, `fbsd_extract.py`,
+`tools/rge/` (`decode_fw.py`, `fbsd_extract.py`,
 `quantify.py`, `threeway.py`, and the interleave-aware `diff_canon.py`).
 
 ### Transplant test (executed)

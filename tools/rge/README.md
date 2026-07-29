@@ -2,7 +2,7 @@
 
 Tooling used to investigate why FreeBSD `rge(4)` links an onboard RTL8126A only
 at 1000baseT while Linux `r8169` trains 2.5G on the same silicon. Full writeup:
-`../../doc/rge_rtl8126_2.5g_init_order.md`.
+`rge_rtl8126_stuck_1bg.md`.
 
 These scripts decode the Realtek PHY MCU "RAM code" from three sources and diff
 them:
