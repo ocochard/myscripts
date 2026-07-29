@@ -25,6 +25,89 @@ Prevent password request without modifying default configuration file:
 echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/$USER
 ```
 
+## Create a user and add its SSH pubkey
+
+Create the user with a home dir and bash shell (`adduser` is the Debian/Ubuntu
+interactive wrapper; `useradd` is the low-level tool, use `-m` to force a home):
+
+```
+sudo adduser bob                       # prompts for password + gecos
+# or non-interactive:
+sudo useradd -m -s /bin/bash bob
+sudo passwd bob                        # set a password (or skip for key-only)
+```
+
+Grant sudo (Ubuntu uses the `sudo` group, Debian too on recent releases):
+
+```
+sudo usermod -aG sudo bob
+```
+
+Install the public key. The key file must be `~bob/.ssh/authorized_keys`, owned
+by bob, mode 600 (dir 700) or sshd rejects it:
+
+```
+sudo install -d -m 700 -o bob -g bob ~bob/.ssh
+echo 'ssh-ed25519 AAAA...key... comment' | sudo tee -a ~bob/.ssh/authorized_keys
+sudo chown bob:bob ~bob/.ssh/authorized_keys
+sudo chmod 600 ~bob/.ssh/authorized_keys
+```
+
+From another machine that already holds the private key, `ssh-copy-id` does the
+install/permissions for you (needs password auth still enabled):
+
+```
+ssh-copy-id -i ~/.ssh/id_ed25519.pub bob@host
+```
+
+Test the key logs in, then optionally disable password auth in
+`/etc/ssh/sshd_config` (`PasswordAuthentication no`) and `sudo systemctl reload ssh`.
+
+## Edit an existing user
+
+`usermod` changes account fields; `chsh`/`passwd`/`gpasswd` are the per-attribute
+tools. Inspect first:
+
+```
+id bob                                 # uid, gid, groups
+getent passwd bob                      # /etc/passwd line: home, shell, gecos
+groups bob
+```
+
+Change the login shell:
+```
+sudo usermod -s /bin/zsh bob           # or: sudo chsh -s /bin/zsh bob
+```
+
+Groups (the classic trap: `-a` is mandatory with `-G`, else you *replace* the
+whole supplementary group list and silently drop the user from every other group):
+```
+sudo usermod -aG docker bob            # add to a group, keep existing ones
+sudo gpasswd -d bob docker             # remove from one group
+sudo usermod -g staff bob              # change the PRIMARY group
+```
+
+Rename the account, move/rename the home dir, change the uid:
+```
+sudo usermod -l bobby bob              # login name (do this while bob is logged OUT)
+sudo usermod -d /home/bobby -m bobby   # -m moves the old home contents
+sudo usermod -u 1050 bobby             # new uid (chown -R the home if needed)
+```
+
+Password and account locking:
+```
+sudo passwd bob                        # (re)set password
+sudo passwd -l bob                     # lock (disables password login, key still works)
+sudo passwd -u bob                     # unlock
+sudo usermod -L bob / -U bob           # same lock/unlock via usermod
+sudo chage -l bob                      # view expiry/aging
+sudo chage -E 2026-12-31 bob           # set account expiry date
+```
+
+Editing an SSH key: keys live one-per-line in `~bob/.ssh/authorized_keys` — edit
+that file to add, remove, or comment out a key (no service reload needed, sshd
+reads it per-connection).
+
 ## grub
 
 Reduce timeout:
@@ -188,7 +271,109 @@ What is the DNS server ?
 resolvectl status
 ```
 
-Static IP configuration in `/etc/netplan/02-netconfig.yaml`
+### Static IPv4 and IPv6
+
+Two ways, depending on the netplan renderer (`renderer:` in `/etc/netplan/*.yaml`).
+Check which is active first:
+
+```
+systemctl is-active NetworkManager systemd-networkd
+ip -brief addr        # find the interface name, e.g. enp191s0
+```
+
+#### Option A: netplan (works for both networkd and NetworkManager renderers)
+
+netplan applies files in `/etc/netplan/` in lexical order; a later file overrides an
+earlier one. Watch for a leftover `50-cloud-init.yaml` forcing `dhcp4: true` — either
+delete it, or disable cloud-init's network takeover:
+
+```
+echo 'network: {config: disabled}' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+```
+
+Create `/etc/netplan/02-static.yaml` (mode 600 to silence the world-readable warning).
+This is the exact config in use on framework2:
+
+```yaml
+network:
+  version: 2
+  renderer: NetworkManager      # match the rest of the system; drop for networkd (server)
+  ethernets:
+    enp191s0:                    # <-- your interface (ip -brief addr)
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false           # stop SLAAC/RA autoconfig when going fully static v6
+      addresses:
+        - 192.168.100.8/24
+        - "2a01:e0a:2022:3d20:dead:beef:0:8/64"
+      routes:
+        - to: default
+          via: 192.168.100.254
+        - to: "::/0"
+          via: "2a01:e0a:2022:1092:3d20::1"      # the router's GLOBAL v6 address
+      nameservers:
+        addresses: [192.168.100.254]
+```
+
+```
+sudo chmod 600 /etc/netplan/02-static.yaml
+sudo netplan generate            # syntax check
+sudo netplan try                 # applies, AUTO-REVERTS after 120s unless you press Enter
+sudo netplan apply               # only after `try` confirmed it works
+```
+
+Always use `netplan try` on a remote box: a wrong address/gateway auto-rolls-back in 120s
+instead of locking you out. (`try` needs an interactive TTY; for a scripted/ssh apply,
+arm your own timed rollback — schedule a `systemd-run` job that restores DHCP after 120s
+and cancel it once you reconnect on the new address.)
+
+Notes:
+- IPv6 addresses and `::/0` must be quoted in YAML (the `:` confuses the parser otherwise).
+- Use the router's **global** v6 address as the gateway (`2a01:...::1`) — a plain global
+  gateway needs NO `on-link`. Only if you must route via the router's *link-local* address
+  (`fe80::...`) do you add `on-link: true`; getting this wrong silently kills v6 routing.
+- To keep SLAAC/DHCPv6 for v6 but static v4, leave `dhcp6`/`accept-ra` at defaults and only
+  set the v4 `addresses` + v4 default route.
+
+Beware cloud-init: on cloud-init'd installs a `/etc/netplan/50-cloud-init.yaml` forcing
+`dhcp4: true` overrides your static file on every boot. Disable cloud-init's network config
+once, then remove its file:
+
+```
+echo 'network: {config: disabled}' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+sudo rm /etc/netplan/50-cloud-init.yaml
+```
+
+#### Option B: NetworkManager directly (nmcli) — Ubuntu Desktop
+
+If the renderer is NetworkManager you can also set it per-connection without editing YAML.
+Find the connection name (`nmcli connection show`, often "Wired connection 1"):
+
+```
+CON="Wired connection 1"
+sudo nmcli connection modify "$CON" \
+  ipv4.method manual \
+  ipv4.addresses 192.168.100.10/24 \
+  ipv4.gateway 192.168.100.254 \
+  ipv4.dns "192.168.100.254 9.9.9.9" \
+  ipv6.method manual \
+  ipv6.addresses "2a01:e0a:1092:3d20::10/64" \
+  ipv6.gateway "fe80::3a07:16ff:fe79:8c77" \
+  ipv6.dns "2620:fe::fe"
+sudo nmcli connection up "$CON"     # re-applies; drops the current lease
+```
+
+`ipv6.method` values: `auto` (SLAAC/DHCPv6), `manual` (static), `dhcp` (DHCPv6 only),
+`link-local`, `disabled`. Revert to DHCP with
+`nmcli con mod "$CON" ipv4.method auto ipv6.method auto && nmcli con up "$CON"`.
+
+#### Verify
+
+```
+ip -brief addr show enp191s0
+ip route show default ; ip -6 route show default
+resolvectl status | grep -E "Current DNS|DNS Servers"
+```
 
 ### Routes
 
