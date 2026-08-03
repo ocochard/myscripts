@@ -1,0 +1,36 @@
+diff --git a/sys/fs/nfs/nfs_commonkrpc.c b/sys/fs/nfs/nfs_commonkrpc.c
+index dd189a4aa909..1585e51d0a6c 100644
+--- a/sys/fs/nfs/nfs_commonkrpc.c
++++ b/sys/fs/nfs/nfs_commonkrpc.c
+@@ -1279,9 +1279,28 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 				}
+ 				sep = NFSMNT_MDSSESSION(nmp);
+ 				if (bcmp(sep->nfsess_sessionid,
+-				    nd->nd_sessionid, NFSX_V4SESSIONID) == 0 &&
+-				    sep->nfsess_defunct == 0) {
+-					/* Initiate recovery. */
++				    nd->nd_sessionid, NFSX_V4SESSIONID) == 0) {
++					/*
++					 * Initiate recovery.
++					 * Do not gate this on nfsess_defunct == 0.
++					 * A recovery that only did a CreateSession
++					 * (retok true, once per nfsc_renew) can
++					 * fail against a stale ClientID and return
++					 * without installing a new session, leaving
++					 * this defunct session as the live MDS
++					 * session with no replacement.  If the
++					 * re-trigger were skipped for an already
++					 * defunct session, no further recovery
++					 * would ever be attempted: the badsession
++					 * handler would swallow every subsequent
++					 * SEQUENCE->NFSERR_BADSESSION and
++					 * nfsv4_sequencelookup() would refuse a
++					 * slot on the defunct session, stranding the
++					 * mount until reboot.  The RECVRINPROG/
++					 * RECOVER check below is what prevents a
++					 * recovery storm; marking defunct is
++					 * idempotent.
++					 */
+ 					sep->nfsess_defunct = 1;
+ 					NFSCL_DEBUG(1, "Marked defunct\n");
+ 					if (nmp->nm_clp != NULL &&

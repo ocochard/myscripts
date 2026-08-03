@@ -1,0 +1,75 @@
+Summary: NFSv4.1 client permanently wedges after NFS4ERR_BADSESSION when the
+live MDS session is left defunct with no replacement
+
+Product: Base System
+Component: kern
+Version: 16.0-CURRENT (also affects 14.x/15.x; __FreeBSD_version 1600019)
+Severity: Affects Some People
+Hardware/OS: Any / FreeBSD
+
+Description:
+
+An NFSv4.1 mount can wedge permanently: every process touching it blocks in
+uninterruptible D state (WCHAN "nfsbadse") and only a reboot recovers. It is
+triggered when the server returns NFS4ERR_BADSESSION on SEQUENCE while the
+ClientID is also stale (NFS4ERR_STALE_CLIENTID) -- observed against Amazon EFS,
+and reproduced without EFS against a plain local nfsd (see below).
+
+Root cause -- two guards that each prevent a recovery storm together form a
+trap with no exit:
+
+1. sys/fs/nfs/nfs_commonkrpc.c, BADSESSION handler in newnfs_request(): recovery
+   is only (re)initiated when the live MDS session has nfsess_defunct == 0. Once
+   the live session is already defunct, every further SEQUENCE->NFS4ERR_BADSESSION
+   is silently swallowed and recovery is never triggered again.
+
+2. sys/fs/nfs/nfs_commonsubs.c, nfsv4_sequencelookup(): returns NFS4ERR_BADSESSION
+   for any op on a defunct session, so foreground ops spin the 1s "Badsession
+   looping" retry forever.
+
+How the live session is left defunct with no replacement: the recover_done_time
+gate in nfscl_renewthread() (sys/fs/nfsclient/nfs_clstate.c) allows only one full
+recovery per nfsc_renew (lease/2). A second BADSESSION within that window forces
+nfscl_recover() to call nfsrpc_setclient() with retok=true, i.e. CreateSession
+with the extant ClientID only. Against a stale ClientID that CreateSession fails,
+nfsrpc_setclient() returns NFSERR_IO (sys/fs/nfsclient/nfs_clrpcops.c), which
+nfscl_recover() does not retry. But the BADSESSION handler had already marked the
+live session defunct, so it stays at the head of nm_sess with no non-defunct
+replacement -- and guard 1 then ensures recovery is never attempted again.
+
+Evidence (live EFS capture, vfs.nfs.debuglevel=1): recovery fires and succeeds 4x
+via the ExchangeID+CreateSession fallback, then after two recoveries 45s apart the
+live MDS session is defunct with no replacement; from there the renew thread hits
+SEQUENCE->NFS4ERR_BADSESSION every ~45s for 2h17m with zero "Initiate recovery",
+then foreground access spins "Badsession looping" at 1/s until reboot. nfsstat -c
+freezes (ExchangeId/CreateSess pinned).
+
+Reproduce without EFS (plain local nfsd + a fault-injecting TCP proxy that returns
+NFS4ERR_BADSESSION on SEQUENCE and NFS4ERR_STALE_CLIENTID on CREATE_SESSION):
+  sysctl vfs.nfsd.server_max_minorversion4=2 vfs.nfsd.nfs_privport=0
+  sysctl vfs.nfs.debuglevel=1
+  # export /export over "V4: /export"; run proxy on :2050 -> :2049, arm 4s/15s
+  mount_nfs -o nfsv4,minorversion=1,hard,retrans=2,port=2050 127.0.0.1:/ /mnt/t
+  # drive concurrent ls/stat on /mnt/t in a loop
+The unpatched client wedges in ~3 min (frozen nfsstat, "Badsession looping" at
+1/s with no "Initiate recovery", D-state "nfsbadse").
+
+Fix: in the BADSESSION handler in newnfs_request(), drop the
+nfsess_defunct == 0 term from the re-trigger condition. The
+NFSCLFLAGS_RECVRINPROG | NFSCLFLAGS_RECOVER check already present is what prevents
+a recovery storm; the nfsess_defunct == 0 test is redundant for that purpose and
+is what makes the wedge permanent. With it removed, a BADSESSION on an
+already-defunct live session re-arms NFSCLFLAGS_RECOVER. Setting nfsess_defunct = 1
+is idempotent. This self-heals: CreateSession-only retries repeat one BADSESSION
+apart until the nfsc_renew window rolls over, after which a full
+ExchangeID+CreateSession recovery succeeds.
+
+Patch validated: a patched GENERIC-NODEBUG kernel ran the reproducer for ~6 hours
+under a continuous BADSESSION/STALE_CLIENTID storm. Recovery kept re-firing
+(nfsstat CreateSess 100 -> 22175, ExchangeId 11 -> 1507, hundreds of "Initiate
+recovery"), /mnt/t stayed readable across arm windows (~13/15 one-second attempts;
+misses only during the 4s armed windows), and zero processes were left in the
+"nfsbadse" D state. A normal (non-fault) NFSv4.1 mount continues to work and
+unmount cleanly; no new LORs/panics observed.
+
+Patch attached (against main at e004ff15f87e).
