@@ -39,6 +39,12 @@ JAIL=builder
 TREE=official
 PKGDIR=/usr/local/poudriere/data/packages/${JAIL}-${TREE}/.latest/All
 
+# LLM backend for the real round-trip check (step 5).  Points hermes at a
+# local llama.cpp OpenAI-compatible server via its "custom" provider.
+# Override with LLAMA_URL / LLAMA_MODEL; the step SKIPs if unreachable.
+LLAMA_URL=${LLAMA_URL:-http://192.168.100.8:8080}
+LLAMA_MODEL=${LLAMA_MODEL:-Agents-A1-MTP-Q8_0}
+
 # --- OS gate ---------------------------------------------------------------
 if [ "$(uname -s)" != "FreeBSD" ]; then
 	printf 'SKIP  hermes-agent test is FreeBSD-only (this is %s)\n' "$(uname -s)"
@@ -191,7 +197,50 @@ if service hermes_gateway status >/dev/null 2>&1; then
 fi
 pass "service hermes_gateway status returns non-zero after stop"
 
-# --- 5. Uninstall (cleanup handled by trap, but assert the pkg is clean) --
+# --- 5. Real LLM round-trip via the "custom" OpenAI-compatible provider ----
+# Drives an actual single-turn completion through hermes' agent runtime
+# against a local llama.cpp server.  hermes selects the OpenAI-compatible
+# path from the `custom` provider + CUSTOM_BASE_URL / CUSTOM_API_KEY env
+# (the api key is a placeholder — llama.cpp ignores it, the OpenAI SDK just
+# needs it non-empty).  --cli forces non-interactive stdout (without it the
+# output is TTY-gated); --yolo skips tool-approval prompts.  HOME is
+# redirected so the real ~/.hermes config is never touched.
+if ! curl -sf -m 5 "${LLAMA_URL}/v1/models" >/dev/null 2>&1; then
+	printf 'SKIP  LLM round-trip: %s unreachable\n' "${LLAMA_URL}"
+else
+	LLM_HOME=$(mktemp -d /tmp/hermes-llm.XXXXXX)
+	LLM_OUT="${LLM_HOME}/out.txt"
+	set +e
+	env \
+		HOME="${LLM_HOME}" \
+		CUSTOM_BASE_URL="${LLAMA_URL}/v1" \
+		CUSTOM_API_KEY="sk-local-llama" \
+		timeout 120 hermes --provider custom -m "${LLAMA_MODEL}" \
+			--yolo --cli --safe-mode \
+			-z "Reply with the single word PONG." \
+		>"${LLM_OUT}" 2>&1
+	rc=$?
+	set -e
+	if [ "${rc}" -ne 0 ]; then
+		printf '%s\n' "$(sed -n '1,40p' "${LLM_OUT}")"
+		rm -rf "${LLM_HOME}"
+		fail "hermes -z round-trip exited ${rc}"
+	fi
+	# A reasoning model may return its answer in reasoning_content; don't
+	# require the literal PONG.  Require non-empty output and no provider
+	# error surfaced from the agent runtime.
+	if grep -qiE 'error|econnrefused|unauthorized|api key|not found|traceback' \
+		"${LLM_OUT}"; then
+		printf '%s\n' "$(sed -n '1,40p' "${LLM_OUT}")"
+		rm -rf "${LLM_HOME}"
+		fail "hermes round-trip surfaced a provider error"
+	fi
+	[ -s "${LLM_OUT}" ] || { rm -rf "${LLM_HOME}"; fail "hermes round-trip produced no output"; }
+	pass "hermes LLM round-trip via custom provider ($(wc -c <"${LLM_OUT}" | tr -d ' ') bytes from ${LLAMA_MODEL})"
+	rm -rf "${LLM_HOME}"
+fi
+
+# --- 6. Uninstall (cleanup handled by trap, but assert the pkg is clean) --
 # Nothing to do — the EXIT trap runs pkg delete.  The trap running clean
 # also proves `pkg delete hermes-agent` succeeds after the rc.d cycle
 # (no pkg-lock leftovers).
