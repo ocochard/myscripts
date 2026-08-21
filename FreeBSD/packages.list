@@ -47,7 +47,7 @@ ftp/wget
 graphics/gpu-firmware-kmod
 graphics/drm-kmod
 graphics/drm-latest-kmod
-graphics/drm-66-kmod
+graphics/drm-612-kmod
 graphics/gimp
 graphics/mesa-demos
 graphics/mesa-devel

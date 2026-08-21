@@ -18,6 +18,7 @@
 #   MODEL=moe-q8 ./llmsrv.sh     # Qwen3.6-35B-A3B Q8 (plain, no MTP)
 #   MODEL=dense ./llmsrv.sh      # dense 27B (higher quality but ~4x slower)
 #   MODEL=mtp ./llmsrv.sh        # Qwen3.6-27B-MTP Q8 (havenoammo, dense MTP 2.4x)
+#   MODEL=qwen38-mtp ./llmsrv.sh # Qwen3.8-27B Q4_K_M + sidecar MTP Q4_0 draft (ggml-org)
 #   MODEL=agents-a1 ./llmsrv.sh      # Agents-A1 Q4_K_M plain (no MTP)
 #   MODEL=big ./llmsrv.sh        # Qwen3.5-397B-A17B IQ2_XXS
 #   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL
@@ -47,6 +48,11 @@ Environment variables:
   MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (older Q8 baseline, no MTP)
   MODEL=dense   Qwen3.6-27B dense (higher quality but ~4x slower)
   MODEL=mtp     Qwen3.6-27B-MTP Q8_K_XL (havenoammo, dense multi-token-pred)
+  MODEL=qwen38-mtp
+                Qwen3.8-27B Q4_K_M dense + sidecar MTP Q4_0 draft head
+                (ggml-org). Unlike mtp/agents-a1-mtp the MTP head is a SEPARATE
+                GGUF passed via --model-draft, not embedded. Successor to the
+                mtp slot, one Qwen generation newer.
   MODEL=med     Qwen3.5-122B-A10B MoE
   MODEL=big     Qwen3.5-397B-A17B MoE
   HOST=addr     Listen address (default: 127.0.0.1)
@@ -244,6 +250,41 @@ case "${MODEL}" in
     #   --chat-template-file : friend's local file; this GGUF has it embedded
     model_extra='--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type draft-mtp --spec-draft-n-max 5'
     ;;
+  qwen38-mtp)
+    # Qwen3.8-27B (ggml-org): dense 27B, arch qwen35. MTP speculative decoding
+    # via a SIDECAR draft GGUF (mtp-Qwen3.8-27B-Q4_0.gguf, ~1.7 GB) passed with
+    # --model-draft — NOT embedded like the havenoammo/Agents-A1 MTP models.
+    #
+    # WARNING (benched 2026-08-15, b10440, frwk-bsd): this draft head is WEAK
+    # and UNSTABLE on the FreeBSD/RADV stack — do not rely on it for real work.
+    # Draft acceptance is only ~30 % when it works (vs ~80 % on the embedded
+    # havenoammo dense MTP), and it BIMODALLY dead-loads at 0 % acceptance on a
+    # coin-flip of cold starts, where MTP-on becomes SLOWER than spec-off
+    # (7.3 t/s at N=5 vs 11.2 baseline). Some cold starts also RADV-GPUVM-fault
+    # at load. Best-case is ~26 t/s — still a dense recipe, 3x slower than the
+    # agents-a1-mtp MoE default. Kept for plumbing/experimentation only.
+    # See benches.FrameWork-Desktop.md "Qwen3.8-27B" section. Watch the server
+    # log's "draft acceptance = 0.xx" line; if it reads 0.00000, restart.
+    hf_repo="ggml-org/Qwen3.8-27B-GGUF"
+    hf_file="Qwen3.8-27B-Q4_K_M.gguf"
+    hf_dir="${HF_HUB}/models--ggml-org--Qwen3.8-27B-GGUF"
+    model=$(hf_resolve "${hf_dir}" "${hf_file}")
+    alias="Qwen3.8-27B-Q4_K_M"
+    warmup_flag=""
+    # Resolve the sidecar draft head. If cached, pass a local --model-draft;
+    # else fall back to -hfd so llama-server fetches it (paired with the -hf
+    # fallback for the main model below).
+    draft_file="mtp-Qwen3.8-27B-Q4_0.gguf"
+    draft=$(hf_resolve "${hf_dir}" "${draft_file}")
+    # Same FreeBSD dense constraint as the mtp / dense slots: --no-host crashes.
+    [ "${OS}" = "FreeBSD" ] && nohost_flag=""
+    if [ -n "${draft}" ] && [ -e "${draft}" ]; then
+      draft_src="--model-draft ${draft}"
+    else
+      draft_src="-hfd ${hf_repo}:${draft_file}"
+    fi
+    model_extra="--jinja ${draft_src} --spec-type draft-mtp --spec-draft-n-max 5"
+    ;;
   agents-a1)
     # InternScience Agents-A1 Q4_K_M: agentic fine-tune of Qwen3.6-35B-A3B
     # (same qwen3_5_moe arch, 35B total / ~3B active). Same runtime shape as
@@ -293,7 +334,7 @@ case "${MODEL}" in
     export GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
     ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|mtp|agents-a1|agents-a1-mtp|med|big)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|mtp|qwen38-mtp|agents-a1|agents-a1-mtp|med|big)" >&2; exit 1 ;;
 esac
 
 # If the file isn't in the HF cache, hand off to llama-server's -hf/-hff so it
@@ -323,7 +364,7 @@ extra_sampler=""
 # to avoid duplicate flag.
 jinja_flag=""
 case "${MODEL}" in
-  mtp|agents-a1-mtp) ;;  # already set in model_extra
+  mtp|agents-a1-mtp|qwen38-mtp) ;;  # already set in model_extra
   *) [ "${JINJA}" = "1" ] && jinja_flag="--jinja" ;;
 esac
 

@@ -10,10 +10,19 @@ both hosts, `--ctx-size 131072` (matches daily-use), no `--no-host` flag (A/B
 proved it's a no-op on this stack — see "The `--no-host` non-finding" below).**
 Harness: `LLM/bench-all.sh`.
 
+**Update 2026-08-04 — b10267 (`7bd8282c3`) re-bench of the `agents-a1-mtp`
+slot only** (the default coding recipe). Rebuilt on both hosts; only the
+Agents-A1-MTP Q8_0 rows were re-measured, so numbers tagged **(b10267)** below
+supersede the b9925 values for that one model — every other model's rows are
+still b9925. FreeBSD gained ~5-7 % MoE-MTP decode (topk_moe sqrt(softplus)
+fusion + MTP accepted-token-replay fix, PRs #26124 / #26320); Ubuntu was flat
+within noise. `--spec-draft-n-max 5` and the N≥8 cliff are unchanged, so
+`llmsrv.sh` defaults still hold. See the "b10267 re-bench" tables at the end.
+
 ## TL;DR
 
-- **Default coding recipe: `MODEL=agents-a1-mtp`** — 75 t/s TG (Token
-  Generation, i.e. decode speed) at 4k on FreeBSD, 73 t/s on Ubuntu.
+- **Default coding recipe: `MODEL=agents-a1-mtp`** — b10267: **79 t/s** Total
+  TPS at ~4 k on FreeBSD, **71 t/s** on Ubuntu (was 75 / 73 on b9925).
   Q8 MoE (Mixture-of-Experts) + MTP (Multi-Token Prediction) + agentic
   fine-tune. Beats plain Q4 on speed **and** quality.
 - **TG is OS-neutral** (memory-bandwidth bound at ~250 GB/s). **PP
@@ -39,7 +48,7 @@ formatted `frwk-bsd / frwk-linux`.
 
 | Recipe (`MODEL=`)    | Model                           | Total TPS @ ~4 k prompt | Total TPS @ ~32 k prompt | Notes                                        |
 |----------------------|---------------------------------|------------------------:|-------------------------:|----------------------------------------------|
-| **`agents-a1-mtp`** ★| Agents-A1 Q8 + MTP N=5          |         **75 / 73**     |         **56 / 61**      | Default. Q8 + agentic fine-tune.             |
+| **`agents-a1-mtp`** ★| Agents-A1 Q8 + MTP N=5          |     **79 / 71** (b10267) |     **60 / 59** (b10267) | Default. Q8 + agentic fine-tune. b9925 was 75/73, 56/61. |
 | `agents-a1`          | Agents-A1 Q4_K_M                |            66 / 67      |            55 / 56       | Q4 + agentic tuning; half the disk.          |
 | `moe`                | Qwen3.6-35B-A3B Q4_K_XL         |            56 / 56      |            48 / 48       | Older Q4 baseline.                           |
 | `moe-q8`             | Qwen3.6-35B-A3B Q8_K_XL         |            44 / 45      |            39 / 40       | Plain Q8. `USAGE=doc` alias.                 |
@@ -483,3 +492,296 @@ sh bench-all.sh   # ~2.5 h; produces /tmp/bench-all.md + .jsonl
 
 Full script: `~/myscripts/LLM/bench-all.sh`. Model registry lives at the top
 of the file; add slots there to bench new GGUFs.
+
+## b10267 re-bench — `agents-a1-mtp` only (2026-08-04)
+
+Scope: **Agents-A1-MTP Q8_0 slot only**, both hosts, llama.cpp **b10267
+(`7bd8282c3`)**. Same recipe as the b9925 run above (Vulkan, fa on, b=2048,
+ub=512, `--ctx-size 131072 --parallel 1`, `-t 256 -r 2`, no `--no-host`). Motive:
+b10267 landed a topk_moe `sqrt(softplus)` fusion (#26124) on the Vulkan MoE hot
+path and a server MTP accepted-token-replay correctness fix (#26320); this
+measures whether either moved the default coding recipe. Every other model in
+the doc is still b9925 — only the rows here are b10267.
+
+Ran via `ONLY=agents-a1-mtp sh bench-all.sh`. (These runs originally needed a
+trailing colon — `ONLY="agents-a1-mtp:"` — because `filter_only`'s whitespace
+split left the colon on `$1` for colon-adjacent slot names. Fixed 2026-08-04 by
+adding `:` to that `gsub` class; the bare slot name now matches.)
+
+### llama-bench — depth sweep
+
+| Host       | depth | pp4096            | tg128         |
+|------------|------:|------------------:|--------------:|
+| frwk-bsd   |     0 |  1072.62 ± 24.06  | 54.74 ± 0.06  |
+| frwk-bsd   |  8192 |   935.07 ± 18.23  | 52.20 ± 0.08  |
+| frwk-bsd   | 32768 |   670.06 ± 3.81   | 46.01 ± 0.01  |
+| frwk-linux |     0 |   944.08 ± 11.92  | 52.51 ± 0.07  |
+| frwk-linux |  8192 |   806.99 ± 7.29   | 49.35 ± 0.12  |
+| frwk-linux | 32768 |   586.11 ± 0.46   | 44.20 ± 0.07  |
+
+Raw tg128 is ~2 % higher than b9925 on frwk-bsd (54.7 vs 53.5 at d=0), flat on
+frwk-linux — consistent with the fusion helping the FreeBSD Mesa 26 path slightly.
+
+### llama-server + bench_model.py — MTP on/off (N=5)
+
+| Host       | MTP    | Depth | TTFT (ms) | PP t/s | Total TPS | b9925 was |
+|------------|--------|-------|----------:|-------:|----------:|----------:|
+| frwk-bsd   | off    |  ~4 k |   4410.1  |  919.1 |   52.7    |   51.4    |
+| frwk-bsd   | on N=5 |  ~4 k |   3810.4  | 1062.1 | **78.7**  |   75.2    |
+| frwk-bsd   | off    | ~32 k |  38498.8  |  855.6 |   45.4    |   44.5    |
+| frwk-bsd   | on N=5 | ~32 k |  39644.0  |  831.9 | **59.8**  |   55.7    |
+| frwk-linux | off    |  ~4 k |   4711.2  |  853.2 |   50.7    |   51.2    |
+| frwk-linux | on N=5 |  ~4 k |   4464.7  |  935.7 | **71.0**  |   72.5    |
+| frwk-linux | off    | ~32 k |  43589.7  |  755.9 |   44.1    |   44.7    |
+| frwk-linux | on N=5 | ~32 k |  45507.3  |  725.0 | **59.1**  |   61.0    |
+
+MTP multiplier (on/off): frwk-bsd **1.49×** @4k, **1.32×** @32k (was 1.46× /
+1.25×); frwk-linux **1.40×** / **1.34×** (was 1.42× / 1.36×).
+
+### `--spec-draft-n-max` sweep at ~4 k (Total TPS)
+
+| n_max | frwk-bsd | frwk-linux |
+|------:|---------:|-----------:|
+|     2 |   72.5   |    70.1    |
+|     3 |   73.3   |    70.4    |
+|     4 | **79.9** |  **77.3**  |
+|     5 |   79.9   |    73.3    |
+|     8 |   45.0   |    38.8    |
+|    16 |   34.5   |    29.5    |
+
+N=4/5 remain the plateau; N≥8 is still a hard cliff on both. Keep
+`--spec-draft-n-max 5` in `llmsrv.sh`.
+
+### Verdict
+
+FreeBSD gained a real **+4.7 % @4k / +7.4 % @32k** on the default coding recipe;
+Ubuntu moved **−2 % / −3 %**, inside run-to-run noise (`-r 2`), i.e. unchanged.
+No config change warranted — b10267 is a free modest win on FreeBSD and neutral
+on Ubuntu.
+
+## Qwen3.8-27B (`qwen38-mtp` slot) — sidecar MTP is unstable, don't adopt (2026-08-15)
+
+Scope: **`ggml-org/Qwen3.8-27B-GGUF` Q4_K_M + sidecar MTP-Q4_0 draft head**,
+`frwk-bsd` only, llama.cpp **b10440 (`6b4344ecc`)**. Prompted by the llama.cpp
+author's DGX-Spark recipe (`-hf …:Q4_K_M -hfd …:Q4_0 --spec-type draft-mtp`).
+Unlike every other MTP slot here, this model's MTP head is a **separate GGUF**
+passed via `--model-draft`/`-hfd`, not embedded. `bench-all.sh` gained a 7th
+registry field (`draft`) to support this; `llmsrv.sh` gained `MODEL=qwen38-mtp`.
+
+### Result: verified working end-to-end, but the draft head is too weak and too flaky to use
+
+| Metric                    | Qwen3.8-27B Q4_K_M | vs existing `mtp` (Qwen3.6-27B-MTP Q8, embedded) |
+|---------------------------|-------------------:|--------------------------------------------------|
+| Baseline TG (spec-off) @4k |          11.2 t/s |  6.4 t/s (Q8 — Qwen3.8 Q4 is a lighter quant)    |
+| llama-bench tg128 d=0      |          11.36    |  6.47                                            |
+| MTP-on best observed @4k   |     ~26 t/s (2.3×)|  16.1 t/s (2.52×)                                |
+| **Draft acceptance**       | **0–31 %, bimodal**| **~80 %** (stable)                              |
+
+### Two separate problems — one is Mesa-26/FreeBSD-only, one is the model
+
+A cross-OS A/B (2026-08-15, both hosts on the SAME llama.cpp `27df9199d`, SAME
+GGUF, fixed N=4, 5 cold starts each) split the two cleanly:
+
+| run | frwk-bsd (Mesa 26) | frwk-linux (Mesa 25.2.8) |
+|----:|-------------------:|-------------------------:|
+|   1 |  0.00 % (dead)     |  33.2 %                  |
+|   2 |  31 %              |  34.1 %                  |
+|   3 |  0.65 % (dead)     |  34.0 %                  |
+|   4 |  40 %              |  37.4 %                  |
+|   5 |  LOAD FAULT        |  33.8 %                  |
+| **dmesg GPU faults** | **+1** | **0** |
+
+1. **Instability + GPU fault = a Mesa-26/FreeBSD RADV bug, NOT the model and
+   NOT intrinsic.** On Ubuntu/Mesa 25 the same binary + same GGUF is rock-steady:
+   5/5 clean loads, acceptance tight at 33-37 %, **zero kernel faults**. The
+   bimodal 0 %-acceptance dead-loads and the load-time GPUVM fault appear ONLY
+   on frwk-bsd. dmesg fingerprint (frwk-bsd): `[gfxhub] page fault`, always the
+   same address `0x800100135000`, `client ID: CPC (0x5)`, `PERMISSION_FAULTS
+   0x5`, `RW 0x1` (a compute-queue write-permission fault), followed by
+   `ring comp_1.x.0 timeout` and `vk::Queue::submit: ErrorDeviceLost`. No GPU
+   reset line; each faulting process dies and the next starts fresh and refaults
+   the same address — so it is a deterministic bad compute-write in the
+   draft-mtp dispatch that Mesa 26 rejects and Mesa 25 handles. This is
+   DISTINCT from the ROCm CPF/MES-0x83 firmware bug (that one is `CPF (0x4) /
+   WALKER_ERROR 0x1`); do not conflate them. When a dead-load happens every
+   drafted token is wasted verify compute, so Total TPS collapses BELOW the
+   no-MTP baseline: **7.3 t/s at N=5, 3.4 t/s at N=16** vs 11.2 baseline.
+2. **Acceptance is only ~34 % even on the healthy Ubuntu stack.** This is the
+   model, not the driver — a q4_0 draft head against a Q4_K_M target is a weak
+   match (the embedded `havenoammo` dense head does ~80 %). The ~26 t/s "good"
+   frwk-bsd runs ride entirely on that ~34 %, and ~34 % on a dense recipe can't
+   beat the MoE default regardless of OS.
+
+### N-max sweep at ~4 k (working runs only; failed/dead runs excluded)
+
+| n_max | Total TPS | note                                  |
+|------:|----------:|---------------------------------------|
+|     2 |     21.9  |                                       |
+|     3 |     24.4  |                                       |
+|     4 |     26.4  | peak of the working spins             |
+|     5 |     26.5 / 7.3 | bimodal: on/off-summary got 26.5, sweep re-run got 7.3 (0 % accept) |
+|     8 |      4.4  | dead-load                             |
+|    16 |      3.4  | dead-load                             |
+
+### Verdict
+
+**Do not use `qwen38-mtp` for real work yet, on either host — but for two
+different reasons.** On frwk-bsd it is unusable: the Mesa-26 RADV compute-write
+fault makes cold starts a coin-flip between ~26 t/s and dead-load/crash. On
+frwk-linux it is *stable* but *pointless*: ~34 % acceptance gives a dense recipe
+that is still ~3× slower than the `agents-a1-mtp` MoE default (~79 t/s). The
+slot + harness wiring are kept (the plumbing is correct and reusable for future
+sidecar-MTP models). Two independent things would have to change to make this
+worth adopting: (a) a Mesa fix — file/track a RADV bug with the CPC-write
+fingerprint above (identical binary+GGUF is clean on Mesa 25, so it is a Mesa 26
+regression, not llama.cpp); and (b) a better-trained / higher-precision draft
+head to lift acceptance toward the ~80 % the embedded dense MTP achieves. The
+DGX-Spark CUDA recipe sidesteps (a) entirely and may pair with a better head in
+the NVFP4 path, so it can look fine there while failing here — that is a
+driver+head finding, not proof the base model is good.
+
+## Huihui abliterated 27B: Qwen3.8 vs Qwen3.6-MTP (Q8_0, 2026-08-20)
+
+Scope: **`huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF` Q8_0** vs
+**`huihui-ai/Huihui-Qwen3.6-27B-abliterated-MTP-GGUF` Q8_0**, `frwk-bsd`,
+llama.cpp **b10546 (`0e1d9185c`)**. Both are dense 27B (qwen35 arch), Q8_0
+(~27 GiB each). Motive: evaluate the abliterated (uncensored) Huihui fine-tunes
+for use where the stock Qwen refusal behaviour is in the way. Ran via
+`ONLY=huihui-38-q8,huihui-36-q8 sh bench-all.sh`.
+
+**Naming trap:** the repo the request named — `Huihui-Qwen3.6-27B-abliterated-GGUF`
+(no `-MTP`) — returns HTTP 401 and does not exist as a public GGUF repo. The real
+3.6 abliterated 27B GGUF is `Huihui-Qwen3.6-27B-abliterated-MTP-GGUF`, which ships
+an **embedded** MTP head (like havenoammo/Agents-A1, not a sidecar like
+`qwen38-mtp`). The 3.8 repo has **no** MTP head at all. So the comparison is
+inherently asymmetric: 3.6 can attempt MTP, 3.8 cannot.
+
+### llama-bench — depth sweep (identical, as expected)
+
+| Model                      | Quant | depth | pp4096         | tg128        |
+|----------------------------|-------|------:|---------------:|-------------:|
+| Huihui-Qwen3.8-27B-abl     | Q8_0  |     0 | 318.47 ± 0.44  | 7.79 ± 0.00  |
+| Huihui-Qwen3.8-27B-abl     | Q8_0  |  8192 | 272.92 ± 0.98  | 7.64 ± 0.01  |
+| Huihui-Qwen3.8-27B-abl     | Q8_0  | 32768 | 124.61 ± 0.22  | 7.23 ± 0.00  |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  |     0 | 318.09 ± 0.41  | 7.80 ± 0.00  |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  |  8192 | 272.46 ± 0.94  | 7.64 ± 0.00  |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  | 32768 | 125.30 ± 0.38  | 7.23 ± 0.00  |
+
+Same arch + same quant + same size ⇒ **byte-for-byte-equal decode speed**
+(~7.8 t/s TG at d=0, ~7.2 at 32 k). Abliteration has zero runtime effect; the
+3.8-vs-3.6 base choice is a wash on speed — decide on output quality alone.
+Note these Q8 dense TG numbers (~7.8) are slightly higher than the stock
+Qwen3.6-27B Q8_K_XL rows earlier in this doc (~6.5) because Huihui ships plain
+Q8_0, a lighter quant than unsloth's dynamic Q8_K_XL — fewer bytes/token.
+
+### llama-server + bench_model.py — the 3.6 MTP head is a net loss on frwk-bsd
+
+| Model                      | Quant | Depth | TTFT (ms) | PP t/s | Total TPS |
+|----------------------------|-------|-------|----------:|-------:|----------:|
+| Huihui-Qwen3.8-27B-abl     | Q8_0  | ~4 k  |  15737.1  | 258.3  |   7.7     |
+| Huihui-Qwen3.8-27B-abl     | Q8_0  | ~32 k | 152824.6  | 216.2  |   7.2     |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  | ~4 k off  | 14619.1 | 275.1 | 7.7   |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  | ~32 k off | 151600.9 | 217.4 | 7.2  |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  | ~4 k on N=5  | 13190.5 | 303.6 | **5.1** |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  | ~32 k on N=5 | 155229.6 | 212.1 | **4.5** |
+
+MTP-on is **slower than MTP-off** (5.1 vs 7.7 @4k). The plain server-stage row
+for 3.6 also hit a cold-start failure (`(server failed)` in the raw table).
+
+### `--spec-draft-n-max` sweep — bimodal garbage, not a plateau
+
+| n_max | Total TPS | note                                   |
+|------:|----------:|----------------------------------------|
+|     2 |     6.4   |                                        |
+|     3 |     5.9   |                                        |
+|     4 |    19.9   | outlier — one rep dead-loaded, avg is nonsense |
+|     5 |     5.1   |                                        |
+|     8 |     3.9   |                                        |
+|    16 |    15.1   | outlier — same coin-flip artefact      |
+
+The N=4 / N=16 "wins" are **not real** — they are the averaging artefact of a
+bimodal on/dead-load coin-flip (`-r 2` mixes one good rep with one dead-load).
+Every genuine MTP-on rep is below the 7.7 spec-off baseline.
+
+### Root cause: same two problems as `qwen38-mtp`
+
+1. **Weak head.** Server log acceptance = **0.29–0.32** (208–213 accepted /
+   ~660–723 generated, mean len ~5.4–6.1) — far below the ~0.80 the embedded
+   *dense* havenoammo MTP achieves. A ~30 % accept rate can't pay for the
+   verify overhead on a dense recipe.
+2. **Mesa-26/FreeBSD RADV fault.** dmesg during the run:
+   `drmn0: [gfxhub] page fault (src_id:0 ring:40 vmid:2 ...)` +
+   `ring comp_1.1.0 timeout` — the same compute-queue fault class documented in
+   the `qwen38-mtp` section. It wedges MTP-on cold starts into a dead-load
+   coin-flip (hence the bimodal sweep).
+
+### Verdict (frwk-bsd)
+
+- **Both models decode at ~7.7 t/s dense Q8 — a wash on speed.** Pick 3.8 vs 3.6
+  on quality; the extra Qwen generation (3.8) is the reasonable default.
+- **Do not enable MTP on the 3.6 abliterated model on frwk-bsd.** ~30 %
+  acceptance + the Mesa-26 RADV fault make it strictly slower and unstable —
+  identical failure mode to `qwen38-mtp`. Run it dense, spec-off.
+- **Both are ~10× slower than the `agents-a1-mtp` MoE default (~79 t/s).** Only
+  worth running when the abliteration/uncensored behaviour is specifically
+  required and ~8 t/s is tolerable.
+- **frwk-linux (Mesa 25) cross-check flips the MTP verdict — see below. On
+  Ubuntu the 3.6 MTP head works (2.6×), so the frwk-bsd MTP failure is a
+  Mesa-26 driver bug, not the model.**
+
+### frwk-linux (Ubuntu / Mesa 25.2.8) — 3.6-abl-MTP works, 2.6× decode
+
+Same GGUF, llama.cpp b10553 (`cd26896c1`), `ONLY=huihui-36-q8 sh bench-all.sh`.
+Only the 3.6 slot was re-run on frwk-linux (3.8 has no MTP head, and its dense
+speed is already established as OS-neutral).
+
+#### llama-bench
+
+| Model                      | Quant | depth | pp4096         | tg128        |
+|----------------------------|-------|------:|---------------:|-------------:|
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  |     0 | 237.61 ± 1.11  | 7.79 ± 0.00  |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  |  8192 | 209.94 ± 0.12  | 7.62 ± 0.00  |
+| Huihui-Qwen3.6-27B-abl-MTP | Q8_0  | 32768 |  89.24 ± 0.02  | 7.20 ± 0.00  |
+
+TG matches frwk-bsd exactly (~7.8 → 7.2, memory-bound). PP is lower than
+frwk-bsd (237 vs 318 @d=0, 89 vs 125 @32k) — the usual FreeBSD-wins-dense-PP
+pattern documented elsewhere in this doc.
+
+#### MTP on/off + N-max sweep — stable, real 2.6× win
+
+| MTP    | Depth | TTFT (ms) | PP t/s | Total TPS | frwk-bsd was |
+|--------|-------|----------:|-------:|----------:|-------------:|
+| off    | ~4 k  |  18584.6  | 215.7  |   7.6     |   7.7        |
+| off    | ~32 k | 195911.2  | 169.3  |   7.2     |   7.2        |
+| on N=5 | ~4 k  |  14856.4  | 269.5  | **20.1**  | 5.1 (loss)   |
+| on N=5 | ~32 k | 179899.9  | 183.1  | **20.7**  | 4.5 (loss)   |
+
+N-max sweep @4k: N=2→17.2, N=3→**21.1**, N=4→19.7, N=5→20.1, N=8→7.5,
+N=16→7.6. N=3–5 plateau; **N≥8 cliff** back to the spec-off baseline (same
+shape as every other dense-MTP model here → keep `--spec-draft-n-max 5`).
+
+- **MTP-on = 2.6× decode** (7.6 → 20.1 @4k, 7.2 → 20.7 @32k). Deterministic —
+  no bimodal artefacts, all reps consistent.
+- **Zero GPU faults** in dmesg across the whole run (frwk-bsd faulted).
+- Acceptance **0.25–0.34** (215 acc / 624 gen, mean len ~6.4; etc.) — the *same*
+  ~30 % as frwk-bsd. Acceptance is a model/head property, OS-independent. The
+  difference is that Mesa 25 turns that 30 % into a real 2.6× win while Mesa 26
+  dead-loads on it.
+
+### Verdict (cross-OS)
+
+- **Speed of the base models is a wash** (~7.8 t/s dense Q8, both OSes). Pick 3.8
+  vs 3.6 on output quality; 3.8 (newer generation) is the reasonable default —
+  *unless* you want MTP, which only 3.6 has.
+- **The 3.6 MTP head is genuinely useful — but only on Mesa 25 (frwk-linux).**
+  There it gives a stable **2.6× decode (~20 t/s)** at ~30 % acceptance. On
+  frwk-bsd / Mesa 26 the identical binary+GGUF dead-loads with a `[gfxhub]`
+  compute-queue fault → strictly slower than spec-off. **This is a Mesa-26 RADV
+  regression, not a model defect** — the exact same driver split already
+  documented for `qwen38-mtp`. The corrected frwk-bsd guidance: run 3.6 dense
+  spec-off (MTP unusable there until Mesa is fixed); run it with MTP on
+  frwk-linux.
+- **Even at 20 t/s, the 3.6-abl-MTP is ~4× slower than the `agents-a1-mtp` MoE
+  default (~79 t/s).** These abliterated dense 27B models are for when the
+  uncensored behaviour is specifically required; otherwise the MoE default wins
+  on speed by a wide margin.

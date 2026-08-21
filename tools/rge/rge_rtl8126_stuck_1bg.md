@@ -126,9 +126,37 @@ prove framework's chip can.
 | MAC address | `9c:bf:0d:00:e4:ed` | `9c:bf:0d:00:e1:3b` |
 | current 2.5G link | no (best 1000baseT) | **yes, 2500Mb/s full, flow control rx/tx** |
 
-The XID is `(TxConfig >> 16) & 0xfcf`, decoded from the MAC's `TxConfig` hwrev
-field, **not** from PCI revision (both are PCI rev `01`). The a-2/a-3 difference
-only shows up in that field.
+### How to tell the two steppings apart (XID from `TxConfig`, NOT PCI)
+
+**PCI config space cannot distinguish them.** Both chips report identical
+`device=0x8126`, `subvendor=0xf111`, `subdevice=0x000a`, and PCI `rev=0x01`, so
+`pciconf -lv` / `lspci -nn` are useless for this — comparing "the same PCI ID
+board" across two machines is exactly the confound that derailed this whole
+investigation (see "Confound resolved"). The a-2/a-3 difference lives **only** in
+the MAC's `TxConfig` register hwrev field, read at runtime over the register map.
+
+The XID is a masked slice of `TxConfig`, but **the two OSes read it with different
+shifts** because each masks a differently-positioned copy of the hwrev nibbles:
+
+| OS / driver | formula | source |
+|---|---|---|
+| FreeBSD `rge` | `XID = (RTL_R32(TxConfig) >> 16) & 0xfcf` | `if_rge.c` (`RGE_TXCFG_HWREV`) |
+| Linux `r8169` | `XID = (RTL_R32(TxConfig) >> 20) & 0xfcf` | `r8169_main.c` |
+
+> **The two shifts are NOT generally equivalent** — they only yield the same XID
+> here by coincidence of this value. FreeBSD's boot log prints the full raw hwrev
+> word `0x64A00000`; both derivations happen to agree on it:
+> - FreeBSD: `(0x64A00000 >> 16) & 0xfcf = 0x64a`
+> - Linux:   `(0x64A00000 >> 20) & 0xfcf = 0x64a`
+>
+> Don't cross-apply one OS's shift to the other's raw register read.
+
+Decoded XID → stepping → firmware:
+
+| XID | stepping | Realtek name | firmware | 2.5G |
+|---|---|---|---|---|
+| `0x64a` | a-3 | "rev.b" (VER_66) | `rtl8126a-3.fw` | framework — **fails** |
+| `0x649` | a-2 | orig 8126A (VER_65) | `rtl8126a-2.fw` | framework2 — **works** |
 
 > **Authoritative naming (Realtek upstream commit 69cb89981c7a, "r8169: add
 > support for RTL8126A rev.b", ChunHao Lin, Aug 2024).** Realtek calls **XID
@@ -175,7 +203,8 @@ pciconf -lv rge0
 # hwrev / stepping — from the kernel boot log (rge prints the decoded chip rev):
 grep -i rge0 /var/run/dmesg.boot | grep -v linkdiag
 #   rge0: <RTL8126> port 0x2000-0x20ff mem 0xb0d00000-... at device 0.0 on pci1
-#   rge0: chip rev: RTL8126_2 (0x64a00000)   <-- hwrev; XID = (0x64a00000>>16)&0xfcf = 0x64a
+#   rge0: chip rev: RTL8126_2 (0x64a00000)   <-- raw hwrev word
+#   XID (FreeBSD shift) = (0x64a00000 >> 16) & 0xfcf = 0x64a  (a-3, rtl8126a-3.fw)
 #   rge0: Ethernet address: 9c:bf:0d:00:e4:ed
 ```
 `0x64A00000` is `RGE_READ_4(RGE_TXCFG) & RGE_TXCFG_HWREV`; FreeBSD's chip-rev
@@ -188,9 +217,11 @@ decodes the same value to `MACFG_92` ("8126a_3").
 lspci -nn -d 10ec:                 # -> [10ec:8126] (rev 01)
 lspci -vmmnn -s bf:00.0            # -> SVendor f111, SDevice 000a, Rev 01
 
-# XID / stepping — r8169 prints it at probe:
+# XID / stepping — r8169 prints it (already masked) at probe.
+# Internally r8169 computes XID = (RTL_R32(TxConfig) >> 20) & 0xfcf:
 sudo dmesg | grep -i r8169
 #   r8169 0000:bf:00.0 eth0: RTL8126A, 9c:bf:0d:00:e1:3b, XID 649, IRQ 69
+#                                                          ^^^^ 0x649 = a-2, rtl8126a-2.fw
 
 # live link speed + firmware family:
 sudo ethtool enp191s0     | grep -iE "speed|duplex|link detected"   # Speed: 2500Mb/s

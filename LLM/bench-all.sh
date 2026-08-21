@@ -55,23 +55,29 @@ hf_resolve() {
 #   gguf_name   — filename inside snapshots/*/
 #   family      — dense | moe   (informational; not used to switch flags)
 #   mtp         — 0 | 1         (1 = has draft-mtp head, do N-max sweep)
+#   draft       — sidecar draft GGUF filename (same repo dir), or "-" if the
+#                 MTP head is embedded in the main GGUF (havenoammo, Agents-A1)
+#                 or the model is non-MTP. Passed via --model-draft when set.
 #   display     — nice name for the tables
 # ---------------------------------------------------------------------------
 MODELS='
-qwen-27b-q4  : models--unsloth--Qwen3.6-27B-GGUF                : Qwen3.6-27B-UD-Q4_K_XL.gguf         : dense : 0 : Qwen3.6-27B Q4_K_XL
-qwen-27b-q8  : models--unsloth--Qwen3.6-27B-GGUF                : Qwen3.6-27B-UD-Q8_K_XL.gguf         : dense : 0 : Qwen3.6-27B Q8_K_XL
-qwen-moe-q4  : models--unsloth--Qwen3.6-35B-A3B-GGUF            : Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf     : moe   : 0 : Qwen3.6-35B-A3B Q4_K_XL
-qwen-moe-q8  : models--unsloth--Qwen3.6-35B-A3B-GGUF            : Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf     : moe   : 0 : Qwen3.6-35B-A3B Q8_K_XL
-qwen-mtp-q8  : models--havenoammo--Qwen3.6-27B-MTP-UD-GGUF      : Qwen3.6-27B-MTP-UD-Q8_K_XL.gguf     : dense : 1 : Qwen3.6-27B-MTP Q8_K_XL
-agents-a1-q4 : models--InternScience--Agents-A1-Q4_K_M-GGUF     : Agents-A1-Q4_K_M.gguf               : moe   : 0 : Agents-A1 Q4_K_M
-agents-a1-mtp: models--protoLabsAI--Agents-A1-MTP-GGUF          : Agents-A1-MTP-Q8_0.gguf             : moe   : 1 : Agents-A1-MTP Q8_0
+qwen-27b-q4  : models--unsloth--Qwen3.6-27B-GGUF                : Qwen3.6-27B-UD-Q4_K_XL.gguf         : dense : 0 : - : Qwen3.6-27B Q4_K_XL
+qwen-27b-q8  : models--unsloth--Qwen3.6-27B-GGUF                : Qwen3.6-27B-UD-Q8_K_XL.gguf         : dense : 0 : - : Qwen3.6-27B Q8_K_XL
+qwen-moe-q4  : models--unsloth--Qwen3.6-35B-A3B-GGUF            : Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf     : moe   : 0 : - : Qwen3.6-35B-A3B Q4_K_XL
+qwen-moe-q8  : models--unsloth--Qwen3.6-35B-A3B-GGUF            : Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf     : moe   : 0 : - : Qwen3.6-35B-A3B Q8_K_XL
+qwen-mtp-q8  : models--havenoammo--Qwen3.6-27B-MTP-UD-GGUF      : Qwen3.6-27B-MTP-UD-Q8_K_XL.gguf     : dense : 1 : - : Qwen3.6-27B-MTP Q8_K_XL
+agents-a1-q4 : models--InternScience--Agents-A1-Q4_K_M-GGUF     : Agents-A1-Q4_K_M.gguf               : moe   : 0 : - : Agents-A1 Q4_K_M
+agents-a1-mtp: models--protoLabsAI--Agents-A1-MTP-GGUF          : Agents-A1-MTP-Q8_0.gguf             : moe   : 1 : - : Agents-A1-MTP Q8_0
+qwen38-mtp   : models--ggml-org--Qwen3.8-27B-GGUF               : Qwen3.8-27B-Q4_K_M.gguf             : dense : 1 : mtp-Qwen3.8-27B-Q4_0.gguf : Qwen3.8-27B Q4_K_M
+huihui-38-q8 : models--huihui-ai--Huihui-Qwen3.8-27B-abliterated-GGUF     : Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf            : dense : 0 : - : Huihui-Qwen3.8-27B-abl Q8_0
+huihui-36-q8 : models--huihui-ai--Huihui-Qwen3.6-27B-abliterated-MTP-GGUF : Huihui-Qwen3.6-27B-abliterated-ggml-model-Q8_0.gguf : dense : 1 : - : Huihui-Qwen3.6-27B-abl-MTP Q8_0
 '
 
 # Filter by ONLY= if set.
 filter_only() {
   if [ -z "${ONLY:-}" ]; then cat; return; fi
   awk -v only="${ONLY}" 'BEGIN{n=split(only,a,","); for(i in a)keep[a[i]]=1}
-    { slot=$1; gsub(/[ \t]+/,"",slot); if (slot in keep) print }'
+    { slot=$1; gsub(/[ \t:]+/,"",slot); if (slot in keep) print }'
 }
 
 # Safety: refuse to run alongside stray llama procs.
@@ -134,11 +140,17 @@ kill_server() {
   sleep 3
 }
 
-# start_server MODEL_PATH ALIAS FAMILY [extra args...]
+# start_server MODEL_PATH ALIAS FAMILY DRAFT_PATH [extra args...]
+# DRAFT_PATH: sidecar draft GGUF path, or "" / "-" for none. When set it is
+# passed as --model-draft; the caller still passes --spec-type/--spec-draft-n-max
+# in the extra args. Embedded-MTP models (havenoammo, Agents-A1) pass "" here —
+# their draft head loads from the main GGUF, no --model-draft needed.
 start_server() {
-  model_path=$1; alias=$2; family=$3; shift 3
+  model_path=$1; alias=$2; family=$3; draft_path=$4; shift 4
+  draft_arg=""
+  [ -n "${draft_path}" ] && [ "${draft_path}" != "-" ] && draft_arg="--model-draft ${draft_path}"
   kill_server
-  log "  starting server: ${alias} extras: $*"
+  log "  starting server: ${alias} draft:[${draft_path:--}] extras: $*"
   "${LLAMA_DIR}/build/bin/llama-server" \
     --model "${model_path}" \
     --alias "${alias}" \
@@ -149,6 +161,7 @@ start_server() {
     --batch-size 2048 --ubatch-size 512 \
     --ctx-size 131072 --parallel 1 \
     --jinja \
+    ${draft_arg} \
     --host 127.0.0.1 --port "${PORT}" \
     "$@" \
     >/tmp/llama-srv-bench.log 2>&1 &
@@ -186,7 +199,7 @@ stage_llama_bench() {
   emit
   emit "| Model                    | Quant   | depth | pp4096          | tg128         |"
   emit "|--------------------------|---------|------:|----------------:|--------------:|"
-  echo "${MODELS}" | filter_only | while IFS=: read -r slot repo file family mtp display; do
+  echo "${MODELS}" | filter_only | while IFS=: read -r slot repo file family mtp draft display; do
     slot=$(echo "${slot}"|tr -d ' \t'); repo=$(echo "${repo}"|tr -d ' \t')
     file=$(echo "${file}"|tr -d ' \t'); family=$(echo "${family}"|tr -d ' \t')
     display=$(echo "${display}" | sed 's/^ *//;s/ *$//')
@@ -218,7 +231,7 @@ stage_llama_bench() {
       pp=$(echo "${raw}" | awk -F'|' '/pp4096/{gsub(/^ *| *$/,"",$(NF-1)); print $(NF-1); exit}')
       tg=$(echo "${raw}" | awk -F'|' '/tg128/{gsub(/^ *| *$/,"",$(NF-1)); print $(NF-1); exit}')
       # Split into "Model | Quant" if display has a space near end
-      model_col=$(echo "${display}" | sed 's/ [A-Z][0-9_]*_[A-Z]*_[A-Z0-9]*$//')
+      model_col=$(echo "${display}" | sed -E 's/ Q[0-9][A-Za-z0-9_]*$//')
       quant_col=$(echo "${display}" | sed "s|^${model_col} ||")
       emit "| ${model_col} | ${quant_col} | ${depth} | ${pp:-crash} | ${tg:-crash} |"
       jlog "{\"stage\":\"llama-bench\",\"host\":\"${HOSTNAME_SHORT}\",\"build\":\"b${BUILD_TAG}\",\"slot\":\"${slot}\",\"depth\":${depth},\"pp4096\":\"${pp}\",\"tg128\":\"${tg}\"}"
@@ -235,17 +248,17 @@ stage_server() {
   emit
   emit "| Model                    | Quant   | Depth | TTFT (ms) | PP t/s | Total TPS |"
   emit "|--------------------------|---------|-------|----------:|-------:|----------:|"
-  echo "${MODELS}" | filter_only | while IFS=: read -r slot repo file family mtp display; do
+  echo "${MODELS}" | filter_only | while IFS=: read -r slot repo file family mtp draft display; do
     slot=$(echo "${slot}"|tr -d ' \t'); repo=$(echo "${repo}"|tr -d ' \t')
     file=$(echo "${file}"|tr -d ' \t'); family=$(echo "${family}"|tr -d ' \t')
-    mtp=$(echo "${mtp}"|tr -d ' \t')
+    mtp=$(echo "${mtp}"|tr -d ' \t'); draft=$(echo "${draft}"|tr -d ' \t')
     display=$(echo "${display}" | sed 's/^ *//;s/ *$//')
     [ -z "${slot}" ] && continue
     qfile=$(hf_resolve "${HF_HUB}/${repo}" "${file}") || continue
-    model_col=$(echo "${display}" | sed 's/ [A-Z][0-9_]*_[A-Z]*_[A-Z0-9]*$//')
+    model_col=$(echo "${display}" | sed -E 's/ Q[0-9][A-Za-z0-9_]*$//')
     quant_col=$(echo "${display}" | sed "s|^${model_col} ||")
-    # For MTP models, run once WITHOUT --spec-type (baseline) — spec-on is in stage_mtp_sweep.
-    if ! start_server "${qfile}" "${slot}" "${family}"; then
+    # Baseline stage never uses the draft head (spec-off), so pass "" regardless.
+    if ! start_server "${qfile}" "${slot}" "${family}" ""; then
       emit "| ${model_col} | ${quant_col} | (server failed) | | | |"
       continue
     fi
@@ -268,14 +281,21 @@ stage_server() {
 # Stage C: MTP-on + N-max sweep (only for mtp=1 slots)
 # ---------------------------------------------------------------------------
 stage_mtp_sweep() {
-  echo "${MODELS}" | filter_only | while IFS=: read -r slot repo file family mtp display; do
+  echo "${MODELS}" | filter_only | while IFS=: read -r slot repo file family mtp draft display; do
     slot=$(echo "${slot}"|tr -d ' \t'); repo=$(echo "${repo}"|tr -d ' \t')
     file=$(echo "${file}"|tr -d ' \t'); family=$(echo "${family}"|tr -d ' \t')
-    mtp=$(echo "${mtp}"|tr -d ' \t')
+    mtp=$(echo "${mtp}"|tr -d ' \t'); draft=$(echo "${draft}"|tr -d ' \t')
     display=$(echo "${display}" | sed 's/^ *//;s/ *$//')
     [ -z "${slot}" ] && continue
     [ "${mtp}" = "1" ] || continue
     qfile=$(hf_resolve "${HF_HUB}/${repo}" "${file}") || continue
+    # Resolve sidecar draft head if the registry names one; embedded-MTP
+    # slots use "-" and load the draft from the main GGUF (empty draftpath).
+    draftpath=""
+    if [ -n "${draft}" ] && [ "${draft}" != "-" ]; then
+      draftpath=$(hf_resolve "${HF_HUB}/${repo}" "${draft}") || {
+        log "SKIP ${slot}: sidecar draft ${draft} not cached"; continue; }
+    fi
 
     emit "## MTP: ${display} — MTP-on vs off + N-max sweep at ~4 k"
     emit
@@ -283,8 +303,8 @@ stage_mtp_sweep() {
     emit
     emit "| MTP | Depth | TTFT (ms) | PP t/s | Total TPS |"
     emit "|-----|-------|----------:|-------:|----------:|"
-    # off-baseline
-    if start_server "${qfile}" "${slot}" "${family}"; then
+    # off-baseline (no draft head)
+    if start_server "${qfile}" "${slot}" "${family}" ""; then
       for pair in "~4 k:${SCRIPTS_DIR}/coding_prompt.txt" "~32 k:${SCRIPTS_DIR}/coding_prompt_32k.txt"; do
         depth=$(echo "${pair}" | cut -d: -f1)
         pfile=$(echo "${pair}" | cut -d: -f2)
@@ -294,7 +314,7 @@ stage_mtp_sweep() {
       done
     fi
     # on N=5 (peak from Stage 5/7 sweeps)
-    if start_server "${qfile}" "${slot}" "${family}" --spec-type draft-mtp --spec-draft-n-max 5; then
+    if start_server "${qfile}" "${slot}" "${family}" "${draftpath}" --spec-type draft-mtp --spec-draft-n-max 5; then
       for pair in "~4 k:${SCRIPTS_DIR}/coding_prompt.txt" "~32 k:${SCRIPTS_DIR}/coding_prompt_32k.txt"; do
         depth=$(echo "${pair}" | cut -d: -f1)
         pfile=$(echo "${pair}" | cut -d: -f2)
@@ -310,7 +330,7 @@ stage_mtp_sweep() {
     emit "| n_max | TTFT (ms) | PP t/s | Total TPS |"
     emit "|------:|----------:|-------:|----------:|"
     for n in ${MTP_NS}; do
-      if start_server "${qfile}" "${slot}" "${family}" --spec-type draft-mtp --spec-draft-n-max "${n}"; then
+      if start_server "${qfile}" "${slot}" "${family}" "${draftpath}" --spec-type draft-mtp --spec-draft-n-max "${n}"; then
         res=$(run_bench "${SCRIPTS_DIR}/coding_prompt.txt" "${slot}:sweep-N${n}")
         emit "| ${n} | $(echo "${res}"|cut -d'|' -f1) | $(echo "${res}"|cut -d'|' -f2) | $(echo "${res}"|cut -d'|' -f3) |"
         jlog "{\"stage\":\"mtp-sweep\",\"host\":\"${HOSTNAME_SHORT}\",\"slot\":\"${slot}\",\"n_max\":${n},\"raw\":\"${res}\"}"

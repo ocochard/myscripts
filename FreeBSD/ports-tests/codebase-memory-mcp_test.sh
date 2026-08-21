@@ -29,6 +29,7 @@ TREE=official
 PKGDIR=/usr/local/poudriere/data/packages/${JAIL}-${TREE}/.latest/All
 BIN=/usr/local/bin/codebase-memory-mcp
 REPO=${HOME}/freebsd-official/src
+PROJECT=cbm-regress   # explicit index name (the derived default is path-encoded)
 
 WORKDIR=$(mktemp -d /tmp/${PORT_NAME}-test.XXXXXX)
 FAKE_HOME="${WORKDIR}/home"
@@ -56,7 +57,8 @@ sudo pkg add -f "${PKG}"
 echo "indexing ${REPO} ... (this exercises 75K+ files, expect a few minutes)"
 set +e
 env HOME="${FAKE_HOME}" "${BIN}" cli index_repository \
-	--repo_path "${REPO}" > "${WORKDIR}/index.json" 2> "${WORKDIR}/index.err"
+	--repo_path "${REPO}" --name "${PROJECT}" \
+	> "${WORKDIR}/index.json" 2> "${WORKDIR}/index.err"
 rc=$?
 set -e
 
@@ -90,4 +92,30 @@ skipped=$(sed -n 's/.*"skipped_count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/
 : "${skipped:=0}"
 
 echo "indexed ${nodes} nodes, ${skipped} files skipped (no crash)"
+
+# 7. FreeBSD sysctl OID-tree extractor regression.
+#    The kernel assembles dotted sysctl paths (e.g. kern.ipc.maxsockbuf) at boot
+#    from SYSCTL_* OID macros; the path is never a literal token in source, so a
+#    plain identifier/string index cannot find it. The FreeBSD-only extractor
+#    reconstructs it into a `Sysctl` graph node with the dotted path as its name.
+#    This asserts the feature is wired in and actually resolved a known leaf
+#    (kern.ipc.maxsockbuf, declared in sys/kern/uipc_sockbuf.c) whose parent
+#    chain (_kern_ipc -> _kern) spans multiple translation units.
+#
+echo "querying resolved sysctl OID paths ..."
+set +e
+env HOME="${FAKE_HOME}" "${BIN}" cli --json query_graph --project "${PROJECT}" \
+	--query 'MATCH (n:Sysctl) WHERE n.name = "kern.ipc.maxsockbuf" RETURN n.name, n.file_path' \
+	> "${WORKDIR}/sysctl.json" 2> "${WORKDIR}/sysctl.err"
+set -e
+
+# The resolved Sysctl node's name is the full dotted path, returned on one line.
+if ! grep -q 'kern\.ipc\.maxsockbuf' "${WORKDIR}/sysctl.json"; then
+	echo "FAIL  ${PORT_NAME}: sysctl extractor did not resolve kern.ipc.maxsockbuf"
+	echo "  (SYSCTL_* OID-tree extraction is broken or unwired)"
+	head -40 "${WORKDIR}/sysctl.json" || true
+	exit 1
+fi
+echo "sysctl extractor resolved kern.ipc.maxsockbuf -> Sysctl node"
+
 echo "PASS  ${PORT_NAME}"
