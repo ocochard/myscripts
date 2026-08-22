@@ -266,6 +266,7 @@ exec env ${radv_env} build/bin/llama-server \
   ${warmup_flag} \
   --alias "${alias}" \
   --device "${device}" \
+  --metrics \
   --flash-attn on \
   ${nohost_flag} \
   ${extra} \
