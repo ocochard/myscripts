@@ -29,7 +29,7 @@ set -eu
 
 usage() {
   cat <<EOF
-Usage: [ENV=val ...] $(basename "$0") [-h]
+Usage: [ENV=val ...] $(basename "$0") [-h|--help]
 
 Environment variables:
   USAGE=coding  Alias for MODEL=agents-a1-mtp (default coding recipe)
@@ -69,7 +69,7 @@ EOF
   exit 0
 }
 
-[ "${1:-}" = "-h" ] && usage
+case "${1:-}" in -h|--help|help) usage ;; esac
 
 # USAGE= is the naming used in LLM.benches.FrameWork-Desktop.md; translate to
 # the MODEL= slots the rest of the script switches on. Explicit MODEL= wins.
