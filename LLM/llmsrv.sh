@@ -14,14 +14,10 @@
 #   ./llmsrv.sh                  # default: Agents-A1-MTP Q8 (fast + high quality)
 #   USAGE=coding ./llmsrv.sh     # alias for MODEL=agents-a1-mtp
 #   USAGE=doc    ./llmsrv.sh     # alias for MODEL=moe-q8 (plain Q8, no MTP cliff risk)
-#   MODEL=moe ./llmsrv.sh        # Qwen3.6-35B-A3B Q4 (older baseline; use only if 38 GB Q8 model too big)
-#   MODEL=moe-q8 ./llmsrv.sh     # Qwen3.6-35B-A3B Q8 (plain, no MTP)
-#   MODEL=dense ./llmsrv.sh      # dense 27B (higher quality but ~4x slower)
-#   MODEL=mtp ./llmsrv.sh        # Qwen3.6-27B-MTP Q8 (havenoammo, dense MTP 2.4x)
-#   MODEL=qwen38-mtp ./llmsrv.sh # Qwen3.8-27B Q4_K_M + sidecar MTP Q4_0 draft (ggml-org)
-#   MODEL=agents-a1 ./llmsrv.sh      # Agents-A1 Q4_K_M plain (no MTP)
-#   MODEL=big ./llmsrv.sh        # Qwen3.5-397B-A17B IQ2_XXS
-#   MODEL=med ./llmsrv.sh        # Qwen3.5-122B-A10B Q4_K_XL
+#   MODEL=moe-q8 ./llmsrv.sh     # Qwen3.6-35B-A3B Q8 MoE (USAGE=doc; fast, no MTP)
+#   MODEL=dense-q8 ./llmsrv.sh   # Qwen3.6-27B dense Q8 (max-fidelity dense; doc work)
+#   MODEL=qwen38-q8 ./llmsrv.sh  # Qwen3.8-27B dense Q8 (best doc-accuracy; see
+#                                #   benches.DaemonDocs-model-quality.md)
 #   HOST=0.0.0.0 ./llmsrv.sh     # listen on all interfaces (default: 127.0.0.1)
 #   CTX=131072 ./llmsrv.sh       # extend ctx past 65536 (TTFT collapses past ~30k
 #                                # on Strix Halo — see LLM.benches.FrameWork-Desktop.md)
@@ -40,21 +36,15 @@ Environment variables:
   USAGE=doc     Alias for MODEL=moe-q8 (plain Q8, safer for long-form prose)
   MODEL=agents-a1-mtp
                 protoLabsAI Agents-A1-MTP Q8_0 (default — 77 t/s TG at 4k,
-                Q8 MoE + speculative decoding, agentic fine-tune)
-  MODEL=agents-a1
-                InternScience Agents-A1 Q4_K_M (same fine-tune, plain Q4;
-                slightly slower + noisier than MTP but half the disk)
-  MODEL=moe     Qwen3.6-35B-A3B MoE Q4_K_XL (older Q4 baseline)
-  MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (older Q8 baseline, no MTP)
-  MODEL=dense   Qwen3.6-27B dense (higher quality but ~4x slower)
-  MODEL=mtp     Qwen3.6-27B-MTP Q8_K_XL (havenoammo, dense multi-token-pred)
-  MODEL=qwen38-mtp
-                Qwen3.8-27B Q4_K_M dense + sidecar MTP Q4_0 draft head
-                (ggml-org). Unlike mtp/agents-a1-mtp the MTP head is a SEPARATE
-                GGUF passed via --model-draft, not embedded. Successor to the
-                mtp slot, one Qwen generation newer.
-  MODEL=med     Qwen3.5-122B-A10B MoE
-  MODEL=big     Qwen3.5-397B-A17B MoE
+                Q8 MoE + speculative decoding, agentic fine-tune; fast coding)
+  MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (USAGE=doc; fast, no MTP)
+  MODEL=dense-q8
+                Qwen3.6-27B dense Q8_K_XL (max-fidelity dense; ~2x fewer
+                hallucinations than the MoE for doc generation —
+                see benches.DaemonDocs-model-quality.md)
+  MODEL=qwen38-q8
+                Qwen3.8-27B dense Q8_K_XL (newest gen; best FreeBSD-source
+                doc accuracy in the DaemonDocs quality bench)
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
   CTX=N         --ctx-size (default: 131072 — practical sweet spot on Strix
@@ -175,26 +165,6 @@ nohost_flag="--no-host"
 model_extra=""
 
 case "${MODEL}" in
-  moe)
-    # Qwen3.6-35B-A3B Q4_K_XL: 35B total, 3B active per token. Available on
-    # all hosts. Fast (~54 t/s TG at 4k), fine for code.
-    # Prefer Q4_K_XL; fall back to Q4_K_M (only quant on macOS).
-    hf_repo="unsloth/Qwen3.6-35B-A3B-GGUF"
-    hf_dir="${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF"
-    model=$(hf_resolve "${hf_dir}" "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf")
-    if [ -n "${model}" ]; then
-      hf_file="Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
-      alias="Qwen3.6-35B-A3B-UD-Q4_K_XL"
-    else
-      model=$(hf_resolve "${hf_dir}" "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf")
-      hf_file="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
-      alias="Qwen3.6-35B-A3B-UD-Q4_K_M"
-    fi
-    # --no-warmup: the default warmup decode (empty batch) hits
-    # vk::DeviceLostError in ggml_vk_buffer_write_2d on this MoE (Vulkan).
-    # Harmless on Metal. Real prompts work fine either way.
-    warmup_flag="--no-warmup"
-    ;;
   moe-q8)
     # Qwen3.6-35B-A3B Q8_K_XL: ~22% slower TG than Q4, better prose quality
     # (small 3B active path is more sensitive to quant noise; doc work has
@@ -205,98 +175,27 @@ case "${MODEL}" in
     alias="Qwen3.6-35B-A3B-UD-Q8_K_XL"
     warmup_flag="--no-warmup"
     ;;
-  dense)
-    # Original 27B dense. Higher quality on hard reasoning, but ~4x slower.
+  dense-q8)
+    # Qwen3.6-27B dense Q8_K_XL. Highest-fidelity dense 27B (least quant noise).
+    # For fact-grounded doc work where quality matters more than speed. ~6-8 t/s.
     hf_repo="unsloth/Qwen3.6-27B-GGUF"
-    hf_file="Qwen3.6-27B-UD-Q4_K_XL.gguf"
+    hf_file="Qwen3.6-27B-UD-Q8_K_XL.gguf"
     model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-27B-GGUF" "${hf_file}")
-    alias="Qwen3.6-27B-UD-Q4_K_XL"
+    alias="Qwen3.6-27B-UD-Q8_K_XL"
     warmup_flag=""
-    # Drop --no-host on FreeBSD: crashes 27B dense (Q4 always, Q8 on Mesa 25).
+    # Same FreeBSD dense constraint: --no-host crashes 27B dense.
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     ;;
-  mtp)
-    # Qwen3.6-27B-MTP (havenoammo): dense 27B fine-tuned with Multi-Token
-    # Prediction heads + thinking traces. PR #22673 ("llama + spec: MTP Support")
-    # is in upstream master since 2026-06; requires llama.cpp >= b9878. The
-    # am17an fork's own MTP implementation has an incompatible tensor layout
-    # and fails to load this GGUF with "missing tensor 'blk.64.ssm_conv1d.weight'".
-    LLAMA_DIR=${LLAMA_DIR:-${HOME}/llama.cpp}
-    hf_repo="havenoammo/Qwen3.6-27B-MTP-UD-GGUF"
-    hf_file="Qwen3.6-27B-MTP-UD-Q8_K_XL.gguf"
-    model=$(hf_resolve "${HF_HUB}/models--havenoammo--Qwen3.6-27B-MTP-UD-GGUF" "${hf_file}")
-    alias="Qwen3.6-27B-MTP-UD-Q8_K_XL"
+  qwen38-q8)
+    # Qwen3.8-27B dense Q8_K_XL (unsloth). Newer generation than the 3.6 dense.
+    # Plain Q8, no MTP (unlike the qwen38-mtp slot). For max-quality doc work.
+    hf_repo="unsloth/Qwen3.8-27B-GGUF"
+    hf_file="Qwen3.8-27B-UD-Q8_K_XL.gguf"
+    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.8-27B-GGUF" "${hf_file}")
+    alias="Qwen3.8-27B-UD-Q8_K_XL"
     warmup_flag=""
-    # Same constraint as plain dense 27B on FreeBSD: --no-host crashes.
+    # Dense 27B on FreeBSD: --no-host crashes (same class as 3.6 dense).
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
-    # --jinja + preserve_thinking: keep the model's <think> traces in the
-    # OpenAI-compatible chat completions (per the model card / friend's
-    # working config). The embedded chat_template is used; no template
-    # file needed.
-    # --spec-type draft-mtp: enable MTP-based speculative decoding using the
-    #   draft head embedded in the GGUF (no separate draft model needed).
-    #   Added by PR #22673 ("spec: support MTP"). Renamed from `mtp` to
-    #   `draft-mtp` in b9878 as part of the spec-type namespace cleanup.
-    #   Whole point of this model.
-    # --spec-draft-n-max 5: cap draft chain length. Default (16) regressed
-    #   between b9124 and b9878 (~60 % slower decode on Strix Halo). N=5 is
-    #   the measured peak on b9878 (16.2 t/s vs 10.0 at default). See
-    #   LLM.benches.FrameWork-Desktop.md Stage 5 sweep.
-    # NOT carrying over from friend's config on this hardware:
-    #   -ctk q4_0 -ctv q4_0  : quantized KV crashes Vulkan on FreeBSD,
-    #                          ~no benefit on Ubuntu (see Framework-desktop.md)
-    #   --no-mmap            : wedges the FreeBSD GPU
-    #   -t 6                 : threads irrelevant when fully GPU-offloaded
-    #   --chat-template-file : friend's local file; this GGUF has it embedded
-    model_extra='--jinja --chat-template-kwargs {"preserve_thinking":true} --spec-type draft-mtp --spec-draft-n-max 5'
-    ;;
-  qwen38-mtp)
-    # Qwen3.8-27B (ggml-org): dense 27B, arch qwen35. MTP speculative decoding
-    # via a SIDECAR draft GGUF (mtp-Qwen3.8-27B-Q4_0.gguf, ~1.7 GB) passed with
-    # --model-draft — NOT embedded like the havenoammo/Agents-A1 MTP models.
-    #
-    # WARNING (benched 2026-08-15, b10440, frwk-bsd): this draft head is WEAK
-    # and UNSTABLE on the FreeBSD/RADV stack — do not rely on it for real work.
-    # Draft acceptance is only ~30 % when it works (vs ~80 % on the embedded
-    # havenoammo dense MTP), and it BIMODALLY dead-loads at 0 % acceptance on a
-    # coin-flip of cold starts, where MTP-on becomes SLOWER than spec-off
-    # (7.3 t/s at N=5 vs 11.2 baseline). Some cold starts also RADV-GPUVM-fault
-    # at load. Best-case is ~26 t/s — still a dense recipe, 3x slower than the
-    # agents-a1-mtp MoE default. Kept for plumbing/experimentation only.
-    # See benches.FrameWork-Desktop.md "Qwen3.8-27B" section. Watch the server
-    # log's "draft acceptance = 0.xx" line; if it reads 0.00000, restart.
-    hf_repo="ggml-org/Qwen3.8-27B-GGUF"
-    hf_file="Qwen3.8-27B-Q4_K_M.gguf"
-    hf_dir="${HF_HUB}/models--ggml-org--Qwen3.8-27B-GGUF"
-    model=$(hf_resolve "${hf_dir}" "${hf_file}")
-    alias="Qwen3.8-27B-Q4_K_M"
-    warmup_flag=""
-    # Resolve the sidecar draft head. If cached, pass a local --model-draft;
-    # else fall back to -hfd so llama-server fetches it (paired with the -hf
-    # fallback for the main model below).
-    draft_file="mtp-Qwen3.8-27B-Q4_0.gguf"
-    draft=$(hf_resolve "${hf_dir}" "${draft_file}")
-    # Same FreeBSD dense constraint as the mtp / dense slots: --no-host crashes.
-    [ "${OS}" = "FreeBSD" ] && nohost_flag=""
-    if [ -n "${draft}" ] && [ -e "${draft}" ]; then
-      draft_src="--model-draft ${draft}"
-    else
-      draft_src="-hfd ${hf_repo}:${draft_file}"
-    fi
-    model_extra="--jinja ${draft_src} --spec-type draft-mtp --spec-draft-n-max 5"
-    ;;
-  agents-a1)
-    # InternScience Agents-A1 Q4_K_M: agentic fine-tune of Qwen3.6-35B-A3B
-    # (same qwen3_5_moe arch, 35B total / ~3B active). Same runtime shape as
-    # MODEL=moe — expect ~50 t/s TG, ~900 PP at d~4k. 262k native RoPE ctx;
-    # TTFT scales super-linearly with depth (4s @ 4k, 40s @ 32k, 5min @ 128k,
-    # 22min @ 256k on Strix Halo). Default CTX=131072 is the sweet spot;
-    # drop to 65536 if you never fill past ~30 k.
-    hf_repo="InternScience/Agents-A1-Q4_K_M-GGUF"
-    hf_file="Agents-A1-Q4_K_M.gguf"
-    model=$(hf_resolve "${HF_HUB}/models--InternScience--Agents-A1-Q4_K_M-GGUF" "${hf_file}")
-    alias="Agents-A1-Q4_K_M"
-    warmup_flag="--no-warmup"
     ;;
   agents-a1-mtp)
     # protoLabsAI Agents-A1-MTP Q8_0: same weights as agents-a1 but with an
@@ -312,29 +211,8 @@ case "${MODEL}" in
     # MoE + --no-host is safe on both OSes (unlike dense 27B on FreeBSD).
     model_extra='--jinja --spec-type draft-mtp --spec-draft-n-max 5'
     ;;
-  med)
-    # Qwen3.5-122B-A10B (MoE, 122B total / 10B active).
-    [ "${OS}" = "Linux" ] || { echo "MODEL=med only available on Ubuntu host" >&2; exit 1; }
-    hf_repo="unsloth/Qwen3.5-122B-A10B-GGUF"
-    hf_file="UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf"
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.5-122B-A10B-GGUF" "${hf_file}")
-    alias="Qwen3.5-122B-A10B-UD-Q4_K_XL"
-    warmup_flag="--no-warmup"
-    ;;
-  big)
-    # Qwen3.5-397B-A17B IQ2_XXS (MoE, 397B total / 17B active).
-    # Needs unified memory to fit the 128 GB UMA pool.
-    [ "${OS}" = "Linux" ] || { echo "MODEL=big only available on Ubuntu host" >&2; exit 1; }
-    hf_repo="unsloth/Qwen3.5-397B-A17B-GGUF"
-    hf_file="UD-IQ2_XXS/Qwen3.5-397B-A17B-UD-IQ2_XXS-00001-of-00004.gguf"
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.5-397B-A17B-GGUF" "${hf_file}")
-    alias="Qwen3.5-397B-A17B-UD-IQ2_XXS"
-    warmup_flag="--no-warmup"
-    # Required to spill across the unified memory pool on Ubuntu.
-    export GGML_CUDA_ENABLE_UNIFIED_MEMORY=ON
-    ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use moe|moe-q8|dense|mtp|qwen38-mtp|agents-a1|agents-a1-mtp|med|big)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use moe-q8|dense-q8|qwen38-q8|agents-a1-mtp)" >&2; exit 1 ;;
 esac
 
 # If the file isn't in the HF cache, hand off to llama-server's -hf/-hff so it
@@ -364,7 +242,7 @@ extra_sampler=""
 # to avoid duplicate flag.
 jinja_flag=""
 case "${MODEL}" in
-  mtp|agents-a1-mtp|qwen38-mtp) ;;  # already set in model_extra
+  agents-a1-mtp) ;;  # already set in model_extra
   *) [ "${JINJA}" = "1" ] && jinja_flag="--jinja" ;;
 esac
 
