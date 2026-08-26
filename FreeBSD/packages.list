@@ -79,7 +79,7 @@ net/py-wsdd
 net/read_bbrlog
 net/realtek-re-kmod
 net/rsync
-net/samba423
+net/samba424
 net/scapy
 net/sslh
 net/speedtest-go
