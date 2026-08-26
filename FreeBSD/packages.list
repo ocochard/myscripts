@@ -62,6 +62,7 @@ math/gnuplot
 misc/claude-code
 multimedia/jellyfin
 multimedia/libva-utils
+multimedia/moonshine
 multimedia/mpv
 multimedia/mplayer
 multimedia/obs-studio
