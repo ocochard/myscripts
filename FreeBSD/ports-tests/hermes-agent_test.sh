@@ -42,8 +42,11 @@ PKGDIR=/usr/local/poudriere/data/packages/${JAIL}-${TREE}/.latest/All
 # LLM backend for the real round-trip check (step 5).  Points hermes at a
 # local llama.cpp OpenAI-compatible server via its "custom" provider.
 # Override with LLAMA_URL / LLAMA_MODEL; the step SKIPs if unreachable.
+# LLAMA_MODEL is auto-discovered from the server's /v1/models when not set,
+# so the test tracks whatever model is currently loaded instead of pinning
+# a name that goes stale when the server swaps models.
 LLAMA_URL=${LLAMA_URL:-http://192.168.100.8:8080}
-LLAMA_MODEL=${LLAMA_MODEL:-Agents-A1-MTP-Q8_0}
+LLAMA_MODEL=${LLAMA_MODEL:-}
 
 # --- OS gate ---------------------------------------------------------------
 if [ "$(uname -s)" != "FreeBSD" ]; then
@@ -205,9 +208,23 @@ pass "service hermes_gateway status returns non-zero after stop"
 # needs it non-empty).  --cli forces non-interactive stdout (without it the
 # output is TTY-gated); --yolo skips tool-approval prompts.  HOME is
 # redirected so the real ~/.hermes config is never touched.
-if ! curl -sf -m 5 "${LLAMA_URL}/v1/models" >/dev/null 2>&1; then
+LLAMA_MODELS_JSON=$(curl -sf -m 5 "${LLAMA_URL}/v1/models" 2>/dev/null)
+if [ -z "${LLAMA_MODELS_JSON}" ]; then
 	printf 'SKIP  LLM round-trip: %s unreachable\n' "${LLAMA_URL}"
 else
+	# Auto-discover the loaded model (OpenAI-style data[].id) unless the
+	# caller pinned one via LLAMA_MODEL.
+	if [ -z "${LLAMA_MODEL}" ]; then
+		LLAMA_MODEL=$(printf '%s' "${LLAMA_MODELS_JSON}" | \
+			python3 -c 'import sys,json
+d=json.load(sys.stdin)
+m=d.get("data") or d.get("models") or []
+print(m[0].get("id") or m[0].get("name") or "") if m else print("")' 2>/dev/null)
+	fi
+	if [ -z "${LLAMA_MODEL}" ]; then
+		printf 'SKIP  LLM round-trip: no model reported by %s/v1/models\n' \
+			"${LLAMA_URL}"
+	else
 	LLM_HOME=$(mktemp -d /tmp/hermes-llm.XXXXXX)
 	LLM_OUT="${LLM_HOME}/out.txt"
 	set +e
@@ -238,6 +255,7 @@ else
 	[ -s "${LLM_OUT}" ] || { rm -rf "${LLM_HOME}"; fail "hermes round-trip produced no output"; }
 	pass "hermes LLM round-trip via custom provider ($(wc -c <"${LLM_OUT}" | tr -d ' ') bytes from ${LLAMA_MODEL})"
 	rm -rf "${LLM_HOME}"
+	fi
 fi
 
 # --- 6. Uninstall (cleanup handled by trap, but assert the pkg is clean) --

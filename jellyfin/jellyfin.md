@@ -165,6 +165,67 @@ Check the most recent FFmpeg transcode logs:
 ls -t /var/db/jellyfin/log/FFmpeg.Transcode-*.log | head -5 | xargs tail -30
 ```
 
+## Symptom: LibraryMonitor "Error watching path" — inotify watch leak
+
+All libraries stop auto-detecting new media. In the main log, every library path fails at once, repeatedly (seen at 05:19, 17:20, 05:21 on consecutive days):
+
+```
+[ERR] Emby.Server.Implementations.IO.LibraryMonitor: Error watching path: "/NAS/films"
+System.IO.IOException: The configured user limit on the number of inotify instances
+has been reached, or the per-process limit on the number of open file descriptors
+has been reached.
+   at System.IO.FileSystemWatcher.StartRaisingEvents()
+```
+
+**The message is accurate, not Linux boilerplate.** FreeBSD 15+ has native inotify (`vfs.inotify.*`), and .NET's `FileSystemWatcher` uses it.
+
+### Diagnose
+
+```bash
+sysctl vfs.inotify.watches vfs.inotify.max_user_watches
+```
+
+If `watches` equals `max_user_watches`, the table is saturated. Compare against how many directories actually exist:
+
+```bash
+find /NAS -type d | wc -l
+```
+
+Observed on nas 2026-08-24: **362,766 watches consumed, cap 362,766, but only 47,474 directories exist** — and Jellyfin's healthy steady state is only ~20,335 (it skips non-media trees like a large Calibre library). It had accumulated ~18× its own working set.
+
+Rule out the other candidates the exception mentions:
+
+```bash
+# fd limit — not the cause if these are far apart
+sudo procstat -l $(pgrep -x jellyfin) | grep openfiles   # 922554
+sudo procstat -f $(pgrep -x jellyfin) | wc -l            # 820
+```
+
+kqueue/`EVFILT_VNODE` on the media paths is unaffected and will test fine; the failure is purely watch-table exhaustion.
+
+### Fix
+
+Restarting releases the leaked watches:
+
+```bash
+sudo service jellyfin restart
+sysctl vfs.inotify.watches      # 362766 -> 20335
+```
+
+This is a recovery, not a cure — the leak recurs, so expect to repeat it. For headroom, raise the cap in `/etc/sysctl.conf` (a runtime tunable, no boot risk):
+
+```
+vfs.inotify.max_user_watches=1000000
+```
+
+Monitor for recurrence:
+
+```bash
+sysctl -n vfs.inotify.watches   # compare against ~20k baseline
+```
+
+---
+
 ## Symptom: Dynamic Image Provider error
 
 In the Jellyfin main log (`log_YYYYMMDD.log`):

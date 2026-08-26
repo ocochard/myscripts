@@ -37,15 +37,30 @@ TREE=official
 PKGDIR=/usr/local/poudriere/data/packages/${JAIL}-${TREE}/.latest/All
 WORKDIR=$(mktemp -d /tmp/${PORT_NAME}-test.XXXXXX)
 
+# cbmc pulls in the cvc5 and z3 solvers as RUN_DEPENDS.  Record whether they
+# were already on the host so cleanup only removes what this test added.
+SOLVERS_PREEXISTED=0
+if pkg info -e cvc5 2>/dev/null || pkg info -e z3 2>/dev/null; then
+	SOLVERS_PREEXISTED=1
+fi
+
 cleanup() {
 	rm -rf "${WORKDIR}"
 	sudo pkg delete -y "${PORT_NAME}" 2>/dev/null || true
+	# Drop the solver deps this test dragged in, naming them explicitly.
+	# NOT `pkg autoremove` -- that acts on the whole system and would take
+	# out every unrelated orphan already present on the host.
+	if [ "${SOLVERS_PREEXISTED}" = 0 ]; then
+		sudo pkg delete -y cvc5 z3 2>/dev/null || true
+	fi
 }
 trap cleanup EXIT INT TERM
 
-# 1. Install fresh package
+# 1. Install fresh package.  IGNORE_OSVERSION: the poudriere jail can be a
+#    newer __FreeBSD_version than the host userland, which otherwise makes
+#    pkg add stop and prompt interactively (seen with the cvc5 dependency).
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
-sudo pkg add -f "${PKG}"
+sudo env IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes pkg add -f "${PKG}"
 
 # 2. Version smoke check
 /usr/local/bin/cbmc --version

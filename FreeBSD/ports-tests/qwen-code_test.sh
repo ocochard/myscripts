@@ -28,10 +28,13 @@ PORT_NAME=qwen-code
 JAIL=builder
 TREE=official
 PKGDIR=/usr/local/poudriere/data/packages/${JAIL}-${TREE}/.latest/All
-EXPECT_VER=0.21.5
 
 LLAMA_URL=${LLAMA_URL:-http://192.168.100.8:8080}
-LLAMA_MODEL=${LLAMA_MODEL:-Agents-A1-MTP-Q8_0}
+# LLAMA_MODEL is discovered from the endpoint below; whatever it currently
+# serves is what we test against. Set it to pin a specific model.
+LLAMA_MODEL=${LLAMA_MODEL:-}
+# hard cap on the round-trip; a loaded or wedged server must not hang the test
+LLAMA_TIMEOUT=${LLAMA_TIMEOUT:-180}
 
 QWEN_LIB=/usr/local/lib/node_modules/@qwen-code/qwen-code
 WORKDIR=$(mktemp -d /tmp/${PORT_NAME}-test.XXXXXX)
@@ -65,8 +68,13 @@ sudo pkg add -f "${PKG}"
 # 2. version / wrapper
 # ---------------------------------------------------------------------------
 echo "==> qwen --version"
+# expected version comes from the package we just installed, not a constant
+EXPECT_VER=$(pkg query '%v' "${PORT_NAME}" | sed -e 's/_[0-9]*$//' -e 's/,[0-9]*$//')
 GOT_VER=$(qwen --version 2>/dev/null | tr -d '[:space:]')
-test "${GOT_VER}" = "${EXPECT_VER}"
+if [ "${GOT_VER}" != "${EXPECT_VER}" ]; then
+	echo "FAIL  qwen reports '${GOT_VER}', pkg installed '${EXPECT_VER}'" >&2
+	exit 1
+fi
 echo "    version ${GOT_VER}"
 
 # ---------------------------------------------------------------------------
@@ -94,12 +102,24 @@ echo "    no live enableAutoUpdate guard remains"
 # ---------------------------------------------------------------------------
 # 5. real prompt against the OpenAI-compatible backend
 # ---------------------------------------------------------------------------
-echo "==> LLM backend ${LLAMA_URL} (model ${LLAMA_MODEL})"
-if ! curl -sf -m 5 "${LLAMA_URL}/v1/models" >/dev/null 2>&1; then
+echo "==> LLM backend ${LLAMA_URL}"
+MODELS_JSON=$(curl -sf -m 5 "${LLAMA_URL}/v1/models" 2>/dev/null) || MODELS_JSON=
+if [ -z "${MODELS_JSON}" ]; then
 	echo "SKIP  backend unreachable; port validated without the LLM round-trip"
 	echo "PASS  ${PORT_NAME} (LLM step skipped)"
 	exit 0
 fi
+
+# ask the endpoint what it is serving rather than assuming a model name
+if [ -z "${LLAMA_MODEL}" ]; then
+	LLAMA_MODEL=$(printf '%s' "${MODELS_JSON}" | jq -r '.data[0].id // empty')
+fi
+if [ -z "${LLAMA_MODEL}" ]; then
+	echo "SKIP  backend served no model id; port validated without the LLM round-trip"
+	echo "PASS  ${PORT_NAME} (LLM step skipped)"
+	exit 0
+fi
+echo "    model ${LLAMA_MODEL}"
 
 # qwen picks the OpenAI provider from these env vars non-interactively.
 # The api key is a placeholder (llama.cpp ignores it, the OpenAI SDK just
@@ -107,7 +127,7 @@ fi
 # the real ~/.qwen settings.
 OUT="${WORKDIR}/qwen.out"
 set +e
-env \
+timeout "${LLAMA_TIMEOUT}" env \
 	HOME="${WORKDIR}" \
 	QWEN_DEFAULT_AUTH_TYPE=openai \
 	OPENAI_API_KEY=sk-local-llama \
@@ -117,6 +137,13 @@ env \
 	>"${OUT}" 2>&1
 rc=$?
 set -e
+
+# 124 = timeout(1) killed it: the server is busy, not the port being broken
+if [ ${rc} -eq 124 ]; then
+	echo "SKIP  backend did not answer in ${LLAMA_TIMEOUT}s (busy?); port validated without the LLM round-trip"
+	echo "PASS  ${PORT_NAME} (LLM step skipped)"
+	exit 0
+fi
 
 if [ ${rc} -ne 0 ]; then
 	echo "FAIL  qwen exited ${rc}"

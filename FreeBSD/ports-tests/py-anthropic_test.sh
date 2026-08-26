@@ -70,20 +70,49 @@ echo "Package version: ${PKG_VER}   anthropic.__version__: ${PY_VER}"
 # 3. Probe the SDK's public surface: main client + a representative
 #    message type.  Catches missing submodules, broken imports, vendored
 #    deps that didn't get installed, etc.
+#
+# Surface notes for the 1.x line (SDK 1.0.0, Aug 2026):
+#   * The legacy Text Completions API was REMOVED — there is no
+#     client.completions any more.  Asserting its absence keeps this test
+#     honest about which major we are on.
+#   * The HTTP layer moved from httpx to httpx2 (RUN_DEPENDS www/py-httpx2).
+#   * The `distro` dependency was dropped entirely.
 python3 - <<'PY'
-import sys
+import importlib, sys
 import anthropic
 from anthropic import Anthropic, AsyncAnthropic
 from anthropic.types import Message, MessageParam, TextBlock
 
+major = int(anthropic.__version__.split(".")[0])
+
 # Instantiate without a key + without making any network call.
-# Anthropic() reads ANTHROPIC_API_KEY from env; passing api_key="" is
+# Anthropic() reads ANTHROPIC_API_KEY from env; passing a dummy key is
 # enough to construct the object — the request would fail later.
 c = Anthropic(api_key="sk-test-not-real")
 assert c.messages is not None, "client.messages missing"
-assert c.completions is not None, "client.completions missing"
 print(f"PASS  Anthropic client constructed (base_url={c.base_url})")
-print(f"PASS  types: Message, MessageParam, TextBlock importable")
+print("PASS  types: Message, MessageParam, TextBlock importable")
+
+if major >= 1:
+    # Text Completions removed in 1.0.0.
+    assert not hasattr(c, "completions"), \
+        "client.completions present — expected it gone in anthropic>=1"
+    print("PASS  legacy completions API absent (1.x)")
+
+    # 1.x talks httpx2, not httpx.  Prove the dep the port declares is the
+    # one actually imported, so a stale RUN_DEPENDS gets caught here.
+    import httpx2
+    import anthropic._base_client as bc
+    assert bc.httpx2 is httpx2, "_base_client is not using httpx2"
+    print(f"PASS  HTTP layer is httpx2 {httpx2.__version__}")
+
+    # `distro` was dropped as a dependency in 1.0.0 — the SDK must not
+    # import it any more.
+    assert "distro" not in sys.modules, "distro imported despite being dropped"
+    print("PASS  distro not imported")
+else:
+    assert c.completions is not None, "client.completions missing"
+    print("PASS  legacy completions API present (0.x)")
 PY
 
 echo "PASS  ${PKG_NAME} ${PKG_VER}"
