@@ -22,7 +22,7 @@ Test & benchmark orchestration:
 - [flamegraph.sh](flamegraph.sh) — generate flamegraphs from DTrace
 - [freebsd-memory.sh](freebsd-memory.sh) — memory introspection
 - [bhyve-GPU.sh](bhyve-GPU.sh) — bhyve GPU passthrough helper
-- [qemu-uefi-ipxe.sh](qemu-uefi-ipxe.sh) — QEMU UEFI / iPXE boot helper ([iPXE.md](iPXE.md) explains it)
+- [qemu-uefi-boot.sh](qemu-uefi-boot.sh) — QEMU UEFI boot testbed: iPXE/TFTP netboot, or `--mdroot` for a kernel with an embedded root filesystem (no network in the boot path) ([iPXE.md](iPXE.md) explains it)
 - [pf-big-table.sh](pf-big-table.sh) — pf large-table benchmark
 
 Ports / packaging helpers:

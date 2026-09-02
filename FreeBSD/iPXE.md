@@ -1076,6 +1076,170 @@ Three ways to drive it from here, all with zero compilation:
 - drop `esp/autoexec.ipxe` in and it runs with no network at all (§5e);
 - omit both and you land at `iPXE>` for manual commands (§5c).
 
+### Removing TFTP entirely: embed the root in the kernel
+
+The local ESP removes iPXE's own network step, but §7c showed the *loader*
+still needs TFTP or NFS for whatever it fetches next. There is a way to leave
+it nothing to fetch: compile the root filesystem **into the kernel** with
+`MD_ROOT`, so kernel and root are one file.
+
+Everything below is automated in `qemu-uefi-boot.sh --mdroot`, which builds
+the root, sizes and writes the kernel config, runs `buildkernel`, verifies the
+embedding and boots the result with no network device:
+
+```console
+$ ./qemu-uefi-boot.sh --mdroot                 # build + verify + boot
+$ ./qemu-uefi-boot.sh --mdroot --build-only    # stop before booting
+$ ./qemu-uefi-boot.sh --mdroot --boot-only     # reboot what is already built
+$ MDSIZE_KB=32768 KERNCONF=MYROOT ./qemu-uefi-boot.sh --mdroot
+```
+
+The rest of this section explains what it does.
+
+The mechanism is in base, no patches. `sys/conf/options` defines the knobs:
+
+```
+MD_ROOT		opt_md.h
+MD_ROOT_FSTYPE	opt_md.h
+MD_ROOT_READONLY	opt_md.h
+MD_ROOT_SIZE	opt_md.h
+MD_ROOT_MEM	opt_md.h
+```
+
+`MD_ROOT_SIZE` reserves a fixed array inside the kernel image
+(`sys/dev/md/md.c`):
+
+```c
+u_char mfs_root[MD_ROOT_SIZE*1024] __attribute__ ((section ("oldmfs")));
+```
+
+and `sys/conf/kern.post.mk` overwrites that array post-link when you pass
+`MFS_IMAGE`:
+
+```make
+.if !empty(MD_ROOT_SIZE_CONFIGURED) && defined(MFS_IMAGE)
+	@sh ${S}/tools/embed_mfs.sh ${.TARGET} ${MFS_IMAGE}
+.endif
+```
+
+So `MD_ROOT_SIZE` must be **greater than or equal to** the image — the script
+writes into reserved space and refuses to grow the kernel.
+
+`sys/amd64/conf/MDROOT`:
+
+```
+include GENERIC
+ident		MDROOT
+
+# Embedded memory-disk root: the kernel IS the whole system.
+options 	MD_ROOT			# md device can be root
+options 	MD_ROOT_SIZE=24576	# KB reserved for the embedded image
+options 	MD_ROOT_FSTYPE=ufs
+options 	ROOTDEVNAME=\"ufs:/dev/md0\"
+```
+
+#### Building the root
+
+The root must be self-contained: at `mountroot` time there is no network and
+no other filesystem, so every binary's shared libraries have to be present.
+The cheapest way to guarantee that is `/rescue`, a single statically linked
+crunched binary reached through ~150 hardlinks — one 20 MB payload, zero
+libraries, and it already contains `init`, `sh`, `fetch`, `mdconfig`,
+`newfs`, `kenv` and `reboot`, which is exactly the stage-2 tool set:
+
+```sh
+mkdir -p mdr/{dev,etc,tmp,var/run,rescue,bin,sbin}
+cp -p /rescue/rescue mdr/rescue/rescue
+for f in $(ls /rescue/); do [ "$f" = rescue ] || ln mdr/rescue/rescue mdr/rescue/$f; done
+ln mdr/rescue/rescue mdr/sbin/init      # the kernel execs /sbin/init by name
+ln mdr/rescue/rescue mdr/bin/sh
+makefs -t ffs -o version=2 -s 24m mdroot.img mdr
+```
+
+Use `ln`, not `cp` — `makefs` preserves hardlinks, so the 20 MB is stored
+once. Copying instead would multiply it by 150.
+
+Then build, pointing `MFS_IMAGE` at the image:
+
+```console
+$ cd /usr/src && sudo make -j64 buildkernel KERNCONF=MDROOT \
+    MFS_IMAGE=/path/to/mdroot.img WITHOUT_CCACHE_BUILD=1
+...
+MFS image embedded into kernel.full
+```
+
+Verify the image really landed in the reserved section:
+
+```console
+$ objdump -h kernel | grep -i oldmfs
+ 56 oldmfs   01800000  ffffffff81b90330  0000000001b90330  DATA
+$ nm kernel | grep -w mfs_root
+ffffffff81b90330 D mfs_root
+$ objcopy -O binary --only-section=oldmfs kernel out.img
+$ dd if=out.img of=trim.img bs=1024 count=24576 2>/dev/null
+$ cmp trim.img mdroot.img && echo identical
+identical
+```
+
+`01800000` = 24 MB, matching `MD_ROOT_SIZE=24576` KB exactly.
+
+`objcopy` dumps the whole reserved section, so trim to the source length
+before comparing — otherwise `cmp` reports a harmless `EOF` on the shorter
+file.
+
+#### Result
+
+Boot it from the ESP with **no `-netdev` at all**:
+
+```console
+$ mkdir -p esp/EFI/BOOT esp/boot/kernel esp/boot/defaults
+$ cp /boot/loader.efi esp/EFI/BOOT/BOOTX64.EFI
+$ cp /usr/obj/usr/src/amd64.amd64/sys/MDROOT/kernel esp/boot/kernel/kernel
+$ cp /boot/defaults/loader.conf esp/boot/defaults/ && cp -R /boot/lua esp/boot/
+$ printf 'autoboot_delay="0"\nconsole="comconsole"\n' > esp/boot/loader.conf
+$ qemu-system-x86_64 -m 4G -smp 2 \
+    -drive if=pflash,readonly=on,format=raw,file=/usr/local/share/qemu/edk2-x86_64-code.fd \
+    -drive file=fat:rw:esp,format=raw,if=virtio \
+    -display none -serial file:boot.log -no-reboot
+```
+
+The decisive lines in `boot.log`:
+
+```
+Trying to mount root from ufs:/dev/md0 []...
+start_init: trying /sbin/init
+```
+
+No DHCP, no TFTP, no NFS, no network device in the command line at all. This
+is the only arrangement in this document that boots FreeBSD with **zero**
+network protocol involvement after the firmware hands over.
+
+Two failure modes worth naming, both hit while testing this:
+
+- A root trimmed to 3 MB by a `poudriere image -t tar` overlay had an empty
+  `/lib`, so `init` started and immediately died:
+  `ld-elf.so.1: Shared object "libedit.so.8" not found, required by "sh"`.
+  That is why `/rescue` above, not a hand-picked binary set.
+- `login_getclass: unknown class 'daemon'` means `/etc/login.conf.db` is
+  missing. Cosmetic, but `cap_mkdb /etc/login.conf` in the root removes it.
+
+#### What this does and does not buy
+
+It removes TFTP from the *root* fetch, permanently. It does not make netboot
+HTTP-capable: the kernel now travels with its root, so the question becomes
+purely "how does the loader reach this one file". From a local ESP or an
+OpenBMC virtual flash disk, the answer is "it is already there" and no network
+protocol is used. Over a network the loader still fetches that kernel by
+TFTP or NFS (§7c) — and the kernel is now *larger*, since it carries the root.
+
+So this is the right shape for ESP / vflash / iSCSI-attached firmware, and the
+wrong shape for pure netboot, where the two-stage small-miniroot design in
+§7c remains better: a few MB over TFTP, then the bulk over HTTP with
+`fetch(1)` once userland exists.
+
+Build both root and modules if stage 2 will `reboot -r`: `WITHOUT_MODULES=yes`
+produces no `tmpfs.ko`, and `reboot -r` needs it.
+
 ---
 
 ## 9. Troubleshooting
@@ -1253,6 +1417,11 @@ flowchart TD
     PAY -->|"sanhook an HTTP<br/>disk image"| X3[/Could not open SAN device<br/>Result too large/]
     PAY -->|"chain loader.efi<br/>HTTP or TFTP - OK"| LOADER[FreeBSD loader.efi<br/>running]
 
+    ESP ==>|"loader.efi + kernel<br/>already on the ESP<br/>no iPXE needed"| LOCAL[loader.efi reads<br/>the local ESP<br/>efipart.c]
+    LOCAL --> Q3{Kernel carries<br/>its own root?}
+    Q3 -->|"no"| LOADER
+    Q3 ==>|"yes: MD_ROOT +<br/>MFS_IMAGE, root is<br/>inside the kernel"| OK4([md0 root - boots<br/>ZERO network])
+
     LOADER --> Q2{"Which protocol?<br/>set by DHCP option 17<br/>BEFORE any config is read"}
 
     Q2 -->|"no option 17<br/>= default"| NFSDEF[Tries NFS]
@@ -1273,6 +1442,7 @@ flowchart TD
     style OK1 fill:#d4edda,stroke:#28a745,color:#000
     style OK2 fill:#d4edda,stroke:#28a745,color:#000
     style OK3 fill:#d4edda,stroke:#28a745,color:#000
+    style OK4 fill:#c3e6cb,stroke:#1e7e34,stroke-width:3px,color:#000
     style X0 fill:#f8d7da,stroke:#dc3545,color:#000
     style X1 fill:#f8d7da,stroke:#dc3545,color:#000
     style X2 fill:#f8d7da,stroke:#dc3545,color:#000
@@ -1287,6 +1457,11 @@ on the right.** iPXE will happily fetch over HTTPS, but the instant control
 passes to `loader.efi` the protocol set narrows to TFTP and NFS, and stays
 narrow until userland `fetch(1)` runs in stage 2.
 
+The thick path is the way out of that: put `loader.efi` and an `MD_ROOT`
+kernel on the ESP (or an OpenBMC virtual flash disk) and no network protocol
+is used at all — the root travels inside the kernel (§8). It trades the
+network for local storage rather than making netboot HTTP-capable.
+
 ### Points
 
 - Netbooting is **two** problems: getting code to run (PXE/iPXE's job, solved)
@@ -1297,6 +1472,12 @@ narrow until userland `fetch(1)` runs in stage 2.
 - Firmware network boot = DHCP + TFTP + `LoadImage()`. No HTTP, no scripting.
 - **iPXE is a PE image** you boot into to get HTTP/HTTPS, scripting, and menus.
 - An iPXE **script** is data for iPXE, never a boot target for the firmware.
+- The only **zero-network** arrangement is `MD_ROOT` + `MFS_IMAGE`: the root
+  filesystem is embedded in the kernel, so the loader has nothing to fetch.
+  Verified booting from a local ESP with no `-netdev` at all (§8). Build it
+  with `qemu-uefi-boot.sh --mdroot`.
+- Build that root from `/rescue` — one static crunched binary, ~150 hardlinks,
+  no shared libraries to go missing at `mountroot` time.
 - Under qemu SLIRP, *netbooted* iPXE cannot chainload a script (no conditional
   DHCP). Boot iPXE from a local ESP instead: it then runs its own DHCP, picks
   up `bootfile=`, and needs no `EMBED=` rebuild (§5d, §8).
