@@ -1,0 +1,23 @@
+#!ipxe
+# LEGACY BIOS ONLY - this script cannot work under UEFI.
+# memdisk is a 16-bit bzImage that hooks INT 13h, an interface UEFI does not
+# have; there is no UEFI build. Chaining it gives "Exec format error".
+# For the UEFI equivalent see ../iPXE.md section 7c.
+#
+# initrd = download into RAM, run nothing (supplies the data)
+# chain  = download and transfer control     (supplies the code)
+# A disk image is data that expects to be read, not code that can be run:
+# memdisk is what answers its INT 13h sector reads. Both lines are required,
+# in this order - memdisk serves the LAST-loaded image.
+# Full explanation: ../iPXE.md section 7b.
+
+# Static config: qemu SLIRP defaults, no DHCP needed
+set net0/ip 10.0.2.15
+set net0/netmask 255.255.255.0
+set net0/gateway 10.0.2.2
+set net0/dns 10.0.2.3
+ifopen net0
+echo === iPXE embedded script running ===
+echo Fetching FreeBSD 15.1 mini-memstick into RAM...
+initrd https://download.freebsd.org/ftp/releases/ISO-IMAGES/15.1/FreeBSD-15.1-RELEASE-amd64-mini-memstick.img
+chain https://bapt.nours.eu/memdisk harddisk raw

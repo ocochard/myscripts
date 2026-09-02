@@ -20,8 +20,8 @@ cat > /tmp/topo.txt <<EOF
  |       |    2001:db8:12::/64     |       |      192.168.23.0/24     |       |
  |       | .1                   .2 |       |     2001:db8:23::/64     |       |
  |  BGP  |--epair112a<->epair112b--| BGP   | .2                    .3 |       |
- ---------                         |   RIP |--epair123a<-->epair123b--| RIP   |
-                                   ---------                          |       |
+ |  BMP--|---- BMP station :1790 ->|   RIP |--epair123a<-->epair123b--| RIP   |
+ ---------                         ---------                          |       |
                                                                       |       |
  ---------                         ---------                          |       |
  | bird5 |                         | bird4 |                          |       |
@@ -144,6 +144,16 @@ protocol bgp bgp6 {
 }
 
 protocol bfd {}
+
+# Export BGP route monitoring to a BMP station on bird2
+protocol bmp bmp1 {
+	local address 192.168.12.1;
+	station address ip 192.168.12.2 port 1790;
+	system description "FreeBSD bird regression lab";
+	system name "bird1";
+	monitoring rib in pre_policy on;
+	monitoring rib in post_policy on;
+}
 EOF
 
 bird2_ifa=epair112
@@ -528,6 +538,10 @@ start () {
 	echo "${SUDO} jexec bird1 ping -c 4 -S 192.168.10.1 192.168.60.6"
 	echo "${SUDO} jexec bird3 birdc -s /var/run/bird/bird3.ctl"
 	echo "${SUDO} jexec bird4"
+	echo "# BMP: bird1 exports BGP monitoring to 192.168.12.2:1790"
+	echo "${SUDO} jexec bird1 birdc -s /var/run/bird/bird1.ctl show protocols all bmp1"
+	echo "# No collector listens in the lab, so 'Connect' with a refused TCP"
+	echo "# connection is the expected state; it proves BMP is compiled in."
 	exit 0
 }
 

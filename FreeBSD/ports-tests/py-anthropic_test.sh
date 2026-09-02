@@ -6,8 +6,11 @@
 # message stream types), instantiates a client without making a network call,
 # then uninstalls the package.
 #
-# Does NOT call the live Anthropic API (no key required); the goal is to
-# catch packaging breakage, not test the upstream SDK.
+# The offline stages need no key and no network.  If ~/.claude/settings.json
+# points ANTHROPIC_BASE_URL at a reachable Anthropic-compatible endpoint, a
+# final stage also does one real round-trip through the SDK; otherwise that
+# stage SKIPs.  The goal is still to catch packaging breakage, not to test the
+# upstream SDK.
 #
 # The FreeBSD package name carries the active python flavor prefix
 # (py311-, py312-, ...).  This script derives the prefix from the pkg
@@ -114,5 +117,116 @@ else:
     assert c.completions is not None, "client.completions missing"
     print("PASS  legacy completions API present (0.x)")
 PY
+
+# 4. Live round-trip through the SDK (optional).
+#
+# Reuses the endpoint Claude Code is already configured against, rather than
+# hardcoding one:  env ANTHROPIC_BASE_URL wins, else the `env` block of
+# ~/.claude/settings.json.  The model is DERIVED from GET /v1/models -- never
+# hardcoded, since a stale model constant fails in a way that looks like a
+# hang rather than a bad test.
+#
+# SKIPs (does not fail) when there is no endpoint, no key, or nothing
+# listening: the packaging checks above are the part that must always run.
+SETTINGS=${CLAUDE_SETTINGS:-${HOME}/.claude/settings.json}
+
+BASE_URL=${ANTHROPIC_BASE_URL:-}
+if [ -z "${BASE_URL}" ] && [ -r "${SETTINGS}" ]; then
+	BASE_URL=$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+print((d.get("env") or {}).get("ANTHROPIC_BASE_URL", ""))
+' "${SETTINGS}" 2>/dev/null || true)
+	[ -n "${BASE_URL}" ] && echo "Using ANTHROPIC_BASE_URL from ${SETTINGS}"
+fi
+
+# A key must be present but need not be valid: local proxies commonly ignore
+# it.  apiKeyHelper in settings.json is the same hook Claude Code itself uses.
+API_KEY=${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN:-}}
+if [ -z "${API_KEY}" ] && [ -r "${SETTINGS}" ]; then
+	HELPER=$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+print(d.get("apiKeyHelper", ""))
+' "${SETTINGS}" 2>/dev/null || true)
+	[ -n "${HELPER}" ] && API_KEY=$(eval "${HELPER}" 2>/dev/null || true)
+fi
+
+if [ -z "${BASE_URL}" ]; then
+	echo "SKIP  live API test (no ANTHROPIC_BASE_URL in env or ${SETTINGS})"
+elif [ -z "${API_KEY}" ]; then
+	echo "SKIP  live API test (no API key available)"
+elif ! curl -fsS --max-time 10 -o /dev/null \
+	-H "x-api-key: ${API_KEY}" -H "anthropic-version: 2023-06-01" \
+	"${BASE_URL%/}/v1/models" 2>/dev/null; then
+	echo "SKIP  live API test (${BASE_URL} not reachable)"
+else
+	echo "Live endpoint: ${BASE_URL}"
+	# rc 124 = timeout expired -> SKIP, not FAIL: a wedged endpoint is an
+	# environment problem, not a packaging regression.
+	set +e
+	timeout 90 env ANTHROPIC_BASE_URL="${BASE_URL}" ANTHROPIC_API_KEY="${API_KEY}" \
+		python3 - <<'PY'
+import os, sys
+from anthropic import Anthropic
+
+client = Anthropic()
+
+# Derive the model from the endpoint itself.
+models = [m.id for m in client.models.list()]
+assert models, "GET /v1/models returned no models"
+print(f"PASS  models.list() -> {len(models)} model(s), e.g. {models[0]}")
+
+model = os.environ.get("ANTHROPIC_MODEL") or models[0]
+
+# max_tokens is generous because thinking models spend budget before any
+# text; a small cap yields stop_reason=max_tokens and no text at all.
+msg = client.messages.create(
+    model=model,
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Reply with exactly: PONG"}],
+)
+text = "".join(b.text for b in msg.content if b.type == "text").strip()
+print(f"PASS  messages.create({model}) -> {text!r} "
+      f"(in={msg.usage.input_tokens} out={msg.usage.output_tokens})")
+assert msg.stop_reason, "no stop_reason on response"
+assert msg.content, "empty content on response"
+assert "PONG" in text.upper(), f"unexpected reply: {text!r}"
+
+# Streaming exercises a different code path (SSE decoding) than create().
+#
+# Assert on EVENTS, not on text:  models with adaptive thinking enabled
+# (claude-opus-5 &c) may spend the whole budget on a thinking block and
+# emit no text at all, so a text-only assertion fails for a healthy SDK.
+# max_tokens is generous here for the same reason.
+with client.messages.stream(
+    model=model,
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Count: 1 2 3"}],
+) as stream:
+    events = [ev.type for ev in stream]
+    final = stream.get_final_message()
+assert "message_start" in events, f"no message_start in stream: {events}"
+assert "message_stop" in events, f"no message_stop in stream: {events}"
+assert final.content, "stream produced an empty message"
+kinds = sorted({b.type for b in final.content})
+print(f"PASS  messages.stream() -> {len(events)} event(s), "
+      f"block types={kinds}, stop_reason={final.stop_reason}")
+PY
+	rc=$?
+	set -e
+	if [ "${rc}" = 124 ]; then
+		echo "SKIP  live API test (timed out after 90s)"
+	elif [ "${rc}" != 0 ]; then
+		echo "FAIL  live API test (exit ${rc})"
+		exit 1
+	fi
+fi
 
 echo "PASS  ${PKG_NAME} ${PKG_VER}"
