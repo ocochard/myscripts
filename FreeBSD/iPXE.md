@@ -27,7 +27,7 @@ is the loaded program's business, not the firmware's.
 
 ```mermaid
 flowchart TD
-    A[Firmware downloads<br/>the boot file] --> B{First two bytes<br/>are 'MZ'?}
+    A[Firmware downloads<br/>the boot file] --> B{First two bytes<br/>are MZ?}
     B -- no --> C[LoadImage fails<br/>EFI_UNSUPPORTED / EFI_LOAD_ERROR<br/>boot attempt dies here]
     B -- yes --> D{Machine type matches<br/>this firmware?}
     D -- no --> C
@@ -154,11 +154,11 @@ sequenceDiagram
     Note over FW: LoadImage()<br/>must be a PE image
     FW->>IPXE: StartImage()
 
-    Note over IPXE: firmware's job is done;<br/>iPXE now drives everything
+    Note over IPXE: the firmware's job is done<br/>iPXE now drives everything
     IPXE->>IPXE: run script (embedded, autoexec.ipxe,<br/>or fetched - see section 5)
     IPXE->>WEB: HTTPS GET loader.efi
     WEB-->>IPXE: PE image
-    Note over IPXE: chain - must also be a PE image;<br/>memdisk is BIOS-only, see section 7b
+    Note over IPXE: chain - must also be a PE image<br/>memdisk is BIOS-only, see section 7b
     IPXE->>IPXE: StartImage: FreeBSD loader runs
 ```
 
@@ -1060,21 +1060,50 @@ $ od -A d -c -N 2 esp/EFI/BOOT/BOOTX64.EFI
 0000000    M   Z
 ```
 
-qemu synthesises the FAT filesystem from the directory — nothing to format:
+`fat:rw:esp` is qemu's virtual-FAT driver: it synthesises a FAT filesystem
+from the `esp/` directory built above, so there is nothing to format and no
+image file to keep in sync. The word `esp` in that argument *is* the directory
+path — change the directory name and you change it there too.
+
+Base command, dropping you at the `iPXE>` prompt (§5c):
 
 ```console
 $ qemu-system-x86_64 -m 8G \
     -drive if=pflash,readonly=on,format=raw,file=/usr/local/share/qemu/edk2-x86_64-code.fd \
     -drive file=fat:rw:esp,format=raw,if=virtio \
-    -netdev user,id=net0,tftp=$(pwd),bootfile=boot.ipxe \
-    -device virtio-net-pci,netdev=net0 -nographic
+    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -nographic
 ```
 
-Three ways to drive it from here, all with zero compilation:
+Three ways to drive it, all with zero compilation. Each *replaces* the
+relevant part of the command above — they are alternatives, not additions:
 
-- add `bootfile=boot.ipxe` and iPXE's own DHCP fetches the script (§5d);
-- drop `esp/autoexec.ipxe` in and it runs with no network at all (§5e);
-- omit both and you land at `iPXE>` for manual commands (§5c).
+**(1) Script on the ESP — no network at all** (§5e). iPXE runs
+`autoexec.ipxe` from the filesystem it booted from:
+
+```console
+$ cp chain.ipxe esp/autoexec.ipxe
+```
+
+Command unchanged. You can even drop `-netdev`/`-device` entirely if the
+script needs no network.
+
+**(2) Script over TFTP** (§5d). iPXE runs its own DHCP and fetches the
+script, so the file must exist in the served directory:
+
+```console
+$ cp chain.ipxe boot.ipxe        # must exist; tftp= serves the cwd
+```
+
+then swap the netdev argument for:
+
+```
+    -netdev user,id=net0,tftp=$(pwd),bootfile=boot.ipxe \
+```
+
+Unlike §5b this does not loop: the firmware boots iPXE from the ESP, not from
+DHCP, so handing iPXE the script filename is unambiguous.
+
+**(3) Manual** — use the base command as-is and type commands at `iPXE>`.
 
 ### Removing TFTP entirely: embed the root in the kernel
 
