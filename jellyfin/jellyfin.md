@@ -185,6 +185,42 @@ With the `.pfx` file successfully created at `/var/lib/jellyfin/jellyfin.pfx`, y
 4. **Certificate password:** `your_secure_password` *(the one inside your script)*.
 5. Save and restart Jellyfin.
 
+### Where those two settings actually live
+
+The Dashboard writes them to `/var/db/jellyfin/config/network.xml`. Read that file when diagnosing, rather than clicking through the UI:
+
+```bash
+sudo grep -E 'Certificate(Path|Password)' /var/db/jellyfin/config/network.xml
+```
+
+```xml
+<CertificatePath>/var/lib/jellyfin/jellyfin.pfx</CertificatePath>
+<CertificatePassword>your_secure_password</CertificatePassword>
+```
+
+Editing the file directly works, but Jellyfin rewrites `network.xml` when settings are saved in the UI and only reads it at startup, so change it with the server stopped and restart afterwards.
+
+### The password is duplicated, and nothing keeps the copies in sync
+
+The same secret exists in two independent places:
+
+| Location | Role |
+|----------|------|
+| `PASSWORD=` in `/usr/local/bin/jellyfin-cert-renew.sh` | encrypts the `.pfx` at renewal (`openssl pkcs12 -export -passout`) |
+| `<CertificatePassword>` in `network.xml` | decrypts the `.pfx` at Jellyfin startup |
+
+Nothing validates that they match. If you change one, **HTTPS keeps working until the next renewal**, then fails when the hook writes a `.pfx` Jellyfin can no longer open. The delay can be weeks, so the breakage looks unrelated to the edit that caused it. Change both together, then force a renewal to prove the pair still works rather than waiting to find out.
+
+Confirm the current `.pfx` opens with the password Jellyfin holds:
+
+```bash
+sudo openssl pkcs12 -in /var/lib/jellyfin/jellyfin.pfx -nokeys -noout \
+  -passin pass:"$(sudo sed -n 's/.*<CertificatePassword>\(.*\)<\/CertificatePassword>.*/\1/p' \
+  /var/db/jellyfin/config/network.xml)" && echo "password matches"
+```
+
+Note that `network.xml` is mode `644`, so this password is readable by any local user. That is Jellyfin's own default layout. It guards a `.pfx` that never leaves the host, but do not reuse the value anywhere else.
+
 ---
 
 ## Step 5: Verification
