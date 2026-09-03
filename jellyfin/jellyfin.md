@@ -588,3 +588,135 @@ curl -sk -X POST "https://localhost:8920/Library/Refresh" \
 ```
 
 Scan Media Library task ID (stable across restarts): `7738148ffcd07979c7ceb148e06b3aed`
+
+# Cross-checking metadata against the Kodi library
+
+The same NAS runs a MariaDB Kodi library (`MyVideos131`) over the same media
+files, so two independent scrapers have already described every movie twice.
+Where they disagree, one of them matched the wrong entry. `jellyfin-kodi-diff.py`
+pairs the two databases file by file and prints the disagreements:
+
+```sh
+python3 jellyfin-kodi-diff.py --ssh nas              # everything
+python3 jellyfin-kodi-diff.py --ssh nas --only IMDB  # provider id clashes only
+python3 jellyfin-kodi-diff.py --ssh nas --unmatched  # add the one-sided files
+python3 jellyfin-kodi-diff.py --ssh nas --csv > /tmp/diff.tsv
+```
+
+Both queries are read-only and run through `sudo -n` on the NAS: MariaDB refuses
+an unprivileged local user, and Jellyfin keeps its SQLite database in WAL mode,
+where even a pure reader has to create the `-shm`/`-wal` side files.
+
+Files are paired on the trailing `directory/file` pair, because Kodi stores
+`smb://192.168.100.1/films/...` (URL-encoded) where Jellyfin stores
+`/NAS/films/...`. Anything that fails to pair on that falls back to the file
+name alone, and whatever is still unpaired is reported by `--unmatched`.
+
+Flags, most decisive first:
+
+| Flag | Meaning |
+| --- | --- |
+| `IMDB` / `TMDB` | the two libraries hold different provider ids — one is wrong |
+| `YEAR` | production years differ |
+| `TITLE` | titles differ beyond fuzzy tolerance, in every localised/original combination |
+| `FILE-JF` / `FILE-KO` | that library's title does not resemble the file name |
+
+`FILE-*` is the heuristic that catches a wrong match both libraries share, but
+it also fires on any file named in a different language than its stored title.
+It is therefore suppressed whenever the two agree on an IMDb or TMDb id, since a
+shared id means both scrapers landed on the same movie. `--strict-filenames`
+brings the suppressed rows back.
+
+Baseline as of 2026-09-03: 2440 Jellyfin movies, 2431 Kodi, 2427 paired, 76
+disagreements — 39 IMDb clashes, essentially all of them a real mis-scrape on
+one side or the other.
+
+## Pushing the winning id back into Jellyfin
+
+`--fix` walks the rows where the two libraries hold different provider ids and,
+on confirmation, re-identifies the Jellyfin item from the Kodi id:
+
+```sh
+python3 jellyfin-kodi-diff.py --ssh nas --fix --dry-run   # decide nothing, write nothing
+python3 jellyfin-kodi-diff.py --ssh nas --fix
+python3 jellyfin-kodi-diff.py --ssh nas --fix --no-images # keep the current artwork
+```
+
+It uses the same two calls the web UI's Identify dialog makes, so Jellyfin
+re-scrapes the item itself rather than having a title pasted over it:
+
+```
+POST /Items/RemoteSearch/Movie          {"ItemId": …, "SearchInfo": {"ProviderIds": {"Imdb": …}}}
+POST /Items/RemoteSearch/Apply/{itemId}?replaceAllImages=true    <the chosen result>
+```
+
+The API token is an existing admin session read from the `Devices` table —
+`Permissions.Kind = 0` is the admin flag, and a non-admin token gets HTTP 403 on
+the apply. Requests go out through `curl` on the database host, which keeps
+`--ssh` working and keeps the call on `https://localhost:8920`, away from the
+certificate chain the TVs need.
+
+Each row prints a suggested winner scored from the file name — the only evidence
+neither scraper produced. The score is the best fuzzy match between the file
+name and either stored title, plus 1.0 when the year in the file name agrees and
+-0.35 when it does not. Below `--min-gap` (default 0.5) the row is called
+unclear. It is advisory, and a file misnamed at download time will point at the
+wrong side, so the prompt always asks; `--yes` takes the suggestion unattended
+and skips the unclear rows.
+
+Only Jellyfin is written to. When the suggestion is Jellyfin, Kodi is the one
+holding the wrong id and the row is left alone — fix it in Kodi.
+
+Two things to know about the write path:
+
+- Fields pinned by an earlier `jellyfin-title-audit.py --fix` run stay pinned:
+  the apply will not overwrite a locked `Name`. The tool reports which fields
+  were locked so you can clear them in the UI if the old title is still showing.
+- Renaming a media file breaks the pairing until Kodi rescans, since the two
+  libraries then disagree about the file name itself. Such rows drop out of the
+  comparison and reappear under `--unmatched` on both sides.
+
+## Fixing the Kodi side too
+
+Correcting only Jellyfin leaves the rows where Kodi is the one that got it wrong
+reappearing on every run, so `--fix` writes in both directions. At each prompt,
+`k` re-identifies the Jellyfin item from the Kodi id, and `j` copies the Jellyfin
+id and titles onto the Kodi row. `--no-kodi` restores the old one-way behaviour.
+
+Kodi has no API here: it runs on the TV clients, not on the NAS, so there is no
+JSON-RPC endpoint to talk to and the MariaDB library is written directly.
+
+The write is small but has one trap. Kodi keeps provider ids in `uniqueid`, one
+row per provider, and `movie.c09` is a foreign key naming which of those rows is
+the default — in this library it is the tmdb row for all 4307 movies:
+
+```sql
+SELECT u.type, count(*) FROM movie m JOIN uniqueid u ON u.uniqueid_id = m.c09 GROUP BY u.type;
+-- tmdb  4307
+```
+
+So replacing an id means replacing the row *and* repointing `c09` at whatever
+replaced it, or the movie is left pointing at a `uniqueid` that no longer
+exists. The generated statements, in one transaction:
+
+```sql
+START TRANSACTION;
+UPDATE movie SET c00='Kick-Ass', c16='Kick-Ass', premiered='2010-01-01' WHERE idMovie=5303;
+DELETE FROM uniqueid WHERE media_id=5303 AND media_type='movie' AND type='imdb';
+INSERT INTO uniqueid (media_id, media_type, value, type) VALUES (5303, 'movie', 'tt1250777', 'imdb');
+DELETE FROM uniqueid WHERE media_id=5303 AND media_type='movie' AND type='tmdb';
+INSERT INTO uniqueid (media_id, media_type, value, type) VALUES (5303, 'movie', '23483', 'tmdb');
+UPDATE movie SET c09=LAST_INSERT_ID() WHERE idMovie=5303;
+COMMIT;
+```
+
+Before each Kodi write the previous values are appended to `kodi-fix-rollback.sql`
+(`--backup`) as statements that put the row back.
+
+Two limits worth knowing:
+
+- Close the Kodi clients first. A running client holds the library in memory and
+  can write its stale copy back over these edits.
+- This corrects the ids, title, original title and year. Plot, cast and artwork
+  still come from the wrong film until you refresh that movie in Kodi — which
+  now scrapes the right one, because the id underneath it is correct.
