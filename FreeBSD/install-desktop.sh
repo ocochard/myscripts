@@ -64,10 +64,11 @@ check_and_add "GDM_LANG=fr_FR.UTF-8; export GDM_LANG" /etc/profile
 check_and_add "defaultclass = french" /etc/adduser.conf
 
 # system service enable/disable
+# sendmail stays a sysrc: "service sendmail enable" can only write YES, not NONE
 sysrc sendmail_enable=NONE
-sysrc firewall_enable=YES
+service ipfw enable
 sysrc firewall_type=workstation
-sysrc kld_list="ichsmb fuse sem coretemp ichwd acpi_video"
+sysrc kld_list="ichsmb fusefs sem coretemp ichwd acpi_video"
 
 service sendmail onestop
 service ipfw start
@@ -134,6 +135,7 @@ ubuntu-font
 urwfonts
 urwfonts-ttf
 terminus-font
+avahi-app
 cups
 firefox-i18n
 vlc
@@ -150,13 +152,17 @@ fi
 sysctl -n dev.agp.0.%desc | grep -q Intel && install_pkg xf86-video-intel
 
 # ports services enable
-sysrc dbus_enable=YES
-sysrc smartd_enable=YES
-sysrc slim_enable=YES
-sysrc panicmail_enable=YES
+service dbus enable || echo "Can't enable dbus"
+# avahi lets Thunar list mDNS-advertised network shares (SMB, SFTP, NFS) in its
+# Network folder, through gvfs. Most NAS boxes advertise this way.
+service avahi-daemon enable || echo "Can't enable avahi-daemon"
+service smartd enable || echo "Can't enable smartd"
+service slim enable || echo "Can't enable slim"
+service panicmail enable || echo "Can't enable panicmail"
 sysrc panicmail_autosubmit=YES
 
 service dbus start || echo "Can't start dbus"
+service avahi-daemon start || echo "Can't start avahi-daemon"
 
 check_and_add "DEVICESCAN" /usr/local/etc/smartd.conf
 service smartd start || echo "Can't start smartd"
