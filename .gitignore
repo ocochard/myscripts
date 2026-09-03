@@ -1,3 +1,7 @@
 .DS_Store
 CWR-CE/perf-data/*.out.gz
 FreeBSD/ports-tests/db.data
+
+# UEFI/iPXE PoC scratch: fetched ISOs, cloned deps, qemu disks and NVRAM
+FreeBSD/memdisk-poc/
+FreeBSD/ipxe-poc/

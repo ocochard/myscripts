@@ -122,6 +122,42 @@ asked "is this a loadable PE image?", and the answer was no.
 **This is the single most common mistake**: pointing DHCP option 67 at a
 `.ipxe` script file. It cannot work, on any firmware, ever.
 
+### Measured, both ways
+
+Same firmware, same NIC, same TFTP directory — only `bootfile=` differs.
+
+With `bootfile=chain.ipxe` (427-byte text file):
+
+```
+>>Start PXE over IPv4.
+  Station IP address is 10.0.2.15
+  NBP filename is chain.ipxe
+  NBP filesize is 427 Bytes
+ Downloading NBP file...
+  NBP file downloaded successfully.
+BdsDxe: failed to load Boot0001 "UEFI PXEv4 (MAC:525400123456)"
+        from PciRoot(0x0)/Pci(0x3,0x0)/MAC(...)/IPv4(...): Not Found
+```
+
+With `bootfile=ipxe.efi` (the same script's job, as a PE image):
+
+```
+  NBP filename is ipxe.efi
+  NBP filesize is 1170432 Bytes
+  NBP file downloaded successfully.
+BdsDxe: starting Boot0001 "UEFI PXEv4 (MAC:525400123456)" ...
+iPXE 2.21.1+ -- Open Source Network Boot Firmware -- https://ipxe.org
+```
+
+Note what is identical: DHCP succeeded, TFTP transferred **every byte** of the
+script (`downloaded successfully`), and only then did it fail. The network was
+never the problem. `Not Found` is EDK2's BDS wording for "I could not load
+this image" — an unhelpful message for what is really "not a PE image".
+
+Measured on qemu 11.1.0 with the bundled `edk2-x86_64-code.fd`, `virtio-net-pci`,
+and `-device virtio-rng-pci` (see §9 — without the RNG, neither case gets as
+far as DHCP).
+
 ---
 
 ## 3. UEFI network boot, step by step
@@ -356,9 +392,10 @@ tftp://10.0.2.2/boot.ipxe... ok
 boot.ipxe : 205 bytes [script]
 ```
 
-This is the method to reach for on a host whose firmware has no network stack
-(§9) — it solves both problems at once. Full worked example in §7c, disk setup
-in §8.
+This is the method to reach for when the firmware will not netboot for any
+reason — a genuinely network-less build, or the `virtio-rng-pci` trap in §9
+before you have diagnosed it. It sidesteps firmware networking entirely. Full
+worked example in §7c, disk setup in §8.
 
 ### (e) `autoexec.ipxe` on the ESP — no network at all
 
@@ -493,8 +530,9 @@ the assumption that a local disk exists, and you want to netboot it
 disk so the unmodified image is satisfied. A purpose-built netboot setup
 (kernel + NFS root, or kernel + mfsroot) never needs it.
 
-That is why losing memdisk on UEFI (§7b) costs little: you lose the ability to
-netboot USB installer images *verbatim*, not the ability to netboot. And it is
+That is why losing Syslinux memdisk on UEFI (§7b) costs little: you lose the
+ability to netboot USB installer images *verbatim*, not the ability to
+netboot — and even that comes back via `memdisk_uefi` (§7d). And it is
 why `FreeBSD-15.1-RELEASE-amd64-mini-memstick.img` is awkward here — it is
 exactly that kind of image. The image is fighting you, not PXE.
 
@@ -566,9 +604,13 @@ Could not boot: Exec format error (https://ipxe.org/2e008081)
 `file memdisk` says why — `Linux kernel x86 boot executable, bzImage, version
 MEMDISK 6.03`: a 16-bit BIOS program, not a PE image, so it fails the same
 `LoadImage()` test as an iPXE script (§1). It works by hooking INT 13h to serve
-a RAM-backed disk, and UEFI has no INT 13h. A UEFI equivalent would have to
-publish an `EFI_BLOCK_IO_PROTOCOL` instance backed by that RAM; nothing in the
-iPXE/Syslinux toolchain does.
+a RAM-backed disk, and UEFI has no INT 13h.
+
+**A UEFI equivalent does exist** — `memdisk_uefi` (§7d). It is not part of the
+Syslinux or iPXE toolchain, and it does not hand-roll an
+`EFI_BLOCK_IO_PROTOCOL`; it uses UEFI's own `RamDiskProtocol`, which publishes
+the BlockIo instance for it. Everything above still applies to Syslinux's
+`memdisk` binary, which remains BIOS-only.
 
 Why the two lines existed at all: a disk image is *data that expects to be
 read*, not code that can be run, so it needs something to answer its sector
@@ -581,17 +623,23 @@ Purpose-built diskless setups use an NFS or memory-disk root and have no use
 for it. Under UEFI, FreeBSD ships `loader.efi` as a standalone PE file, so you
 point `chain` straight at it, with no shim and no ramdisk.
 
-**Use (a) or (c) instead.** Measured on iPXE 2.21.1+ under
+**Use (a), (c) or (d) instead.** Measured on iPXE 2.21.1+ under
 `edk2-x86_64-code.fd`; the memstick transferred fine (647 MiB, `ok`) and only
 the memdisk step failed.
 
 ### (c) Working UEFI PoC — verified end to end
 
-This is the configuration that actually boots on a FreeBSD host, without
-building anything and without a firmware PXE stack. Two ideas make it work:
+Two runnable scripts accompany this document, both verified end to end:
+`FreeBSD/qemu-uefi-ipxe-poc.sh` for the chainload path described here, and
+`FreeBSD/qemu-uefi-memdisk-poc.sh` for the RAM-disk path of §7d.
 
-1. **Boot iPXE from an ESP**, not over the network. The firmware needs no
-   network stack because it is loading a local file.
+This is the configuration that actually boots on a FreeBSD host without
+building anything and without relying on firmware netboot at all. Two ideas
+make it work:
+
+1. **Boot iPXE from an ESP**, not over the network. The firmware only reads a
+   local file, so firmware network support is irrelevant — this works whether
+   or not you have hit the `virtio-rng-pci` trap (§9).
 2. **Let iPXE do its own DHCP.** Once running, iPXE queries qemu's SLIRP
    server itself and honours `bootfile=` — so the script is fetched over TFTP
    with the *stock packaged binary*. No `EMBED=` rebuild required.
@@ -727,7 +775,7 @@ This is the memdisk problem one layer up. Both approaches need the image's
 
 | approach | needs the image as | why it fails here |
 |---|---|---|
-| memdisk (§7b) | a RAM-backed disk | no UEFI build; image never downloaded |
+| memdisk (§7b) | a RAM-backed disk | Syslinux memdisk has no UEFI build; use `memdisk_uefi` (§7d) |
 | `loader.efi` | files over NFS | SLIRP has no NFS server |
 
 So the fix is never "give it the .img" — it is "present the image's contents
@@ -991,7 +1039,300 @@ explicitly via **DHCP option 17** (`nfs://…` or `tftp://…`) — from the DHC
 server, tagged by user-class, *not* from an iPXE script. See "Which protocol
 the loader picks" in option 2 above for why the distinction matters.
 
-### (d) Do not try to netboot a compressed VM image
+### (d) memdisk_uefi — the UEFI RAM-disk route
+
+`memdisk_uefi` <https://github.com/russor/memdisk_uefi> (Richard Russo,
+BSD-2-Clause-Patent, built on iPXE + EDK II) does under UEFI what Syslinux's
+`memdisk` did under BIOS: boot an unmodified disk image straight from RAM.
+This is the option §7b said did not exist.
+
+**Verified end to end on this host** — FreeBSD 16 host, qemu 11.1.0, guest
+FreeBSD 15.1-RELEASE `bootonly.iso` (sha256 checked against upstream's
+`CHECKSUM.SHA256`, unmodified). The installer reached `bsdinstall` entirely
+from RAM over HTTP, with no DHCP-supplied boot config and no local media.
+Reproduction script: `FreeBSD/qemu-uefi-memdisk-poc.sh` (`-a` to drive the
+loader automatically, no arguments for interactive).
+
+**How it works.** It takes a URL, downloads the image with iPXE's UEFI
+Download protocol, registers it with **`RamDiskProtocol`** (UEFI 2.6+), then
+injects **NFIT and SSDT ACPI tables** so the RAM region presents as an NVDIMM
+(ACPI 6.0). It then boots the image's own `BOOTX64.EFI`.
+
+Observed on a live run — note it reports that `RamDiskProtocol` alone is not
+enough, which is why it adds the tables itself:
+
+```
+Relying on MemDiskProtocol to add ACPI NFIT
+Downloading .................... success
+ram disk registered: VirtualCD(0x9B214000,0xBBB6BFFF,0)
+Adding ACPI NFIT (nvdimm) table, since RamDiskProtocol won't
+SSDT Table added!
+NFIT Table added!
+Handle 0 PciRoot(0x0)/Pci(0x3,0x0)/MAC(525400123456,0x1)/Uri(...): not a path match
+Handle 1 VirtualCD(0x9B214000,0xBBB6BFFF,0)/HD(2,GPT,...,0x50,0x1000) trying to load
+VirtualCD(...)/HD(2,GPT,...,0x50,0x1000)/\EFI\BOOT\BOOTX64.EFI
+loaded
+```
+
+The built artifact is named `memdisk_uefi.elf` but `file(1)` reports **`PE32+
+executable for EFI (application), x86-64`** — the Makefile links it with
+`-Wl,-subsystem:efi_application` through `lld-link`. A direct confirmation of
+§2: the name is irrelevant, `LoadImage()` only accepts PE.
+
+#### Building it
+
+There are no build instructions upstream, and **it does not compile against a
+current iPXE checkout**:
+
+```
+../ipxe/src/include/ipxe/efi/efi_download.h:23:1: error: unknown type name 'FILE_SECBOOT'
+   23 | FILE_SECBOOT ( PERMITTED );
+```
+
+`FILE_SECBOOT` is defined in iPXE's `src/include/compiler.h:951`. iPXE's own
+build force-includes `compiler.h` into every translation unit; memdisk_uefi is
+a standalone `clang` invocation that merely borrows `-I../ipxe/src/include`, so
+the macro is undefined and clang reads the line as a declaration with an
+unknown type. (`FILE_LICENCE` on the line above would fail identically; clang
+just stops at the first error.)
+
+This is not version drift. The macro landed in `e61c636` *[build] Define a
+mechanism for marking Secure Boot permissibility* on **2026-01-13**, five
+months before memdisk_uefi's last commit — so the project has been unbuildable
+against contemporary iPXE that whole time, and its author must be building
+from a pre-January tree.
+
+Two fixes. Pinning iPXE to `e61c636~1` keeps memdisk_uefi's source untouched,
+which is what the PoC script does and what was tested here. Alternatively
+force-include the header and track iPXE HEAD — plausible, but **untested**:
+
+```
+clang $(CFLAGS) -include ../ipxe/src/include/compiler.h -c -o memdisk_uefi.o memdisk_uefi.c
+```
+
+The Makefile hardcodes `../edk2` and `../ipxe`, so all three trees must be
+siblings. Only `MdePkg/Include` is needed from edk2 (a sparse checkout does).
+On FreeBSD the link step also needs an `lld-link` on `PATH`: base ships
+`ld.lld` but no `lld-link`, while the `llvm*` ports install versioned
+`lld-linkNN` — symlink the one matching base clang.
+
+Arguments after the image URL:
+
+| argument | effect |
+|---|---|
+| `harddisk` | expose as a virtual hard disk (default) |
+| `iso` | expose as a virtual CD-ROM |
+| `pause` | wait for a keypress before booting — use this to read errors |
+| `bootonly` | register the RAM disk but use BootServices memory and skip the ACPI tables |
+
+`bootonly` suits images whose loader pulls its own ramdisk and never mounts the
+disk afterwards: the image occupies RAM twice while loading, but that memory is
+released once boot proceeds. Without the ACPI tables there is no NVDIMM for the
+OS to find later, which is exactly the point for such images.
+
+#### The `ExitBootServices()` cliff
+
+This is the part that catches people, and it is not a bug.
+
+Before `ExitBootServices()`, the OS loader reaches the image through ordinary
+UEFI protocols. **After** that call, those protocols are gone — the kernel can
+only keep seeing the RAM disk if it has its own **NVDIMM driver**. On FreeBSD
+that is `nvdimm.ko`, exposing `/dev/spa*`.
+
+It has shipped since FreeBSD 12.0 but is **not compiled into the GENERIC
+installer kernel**, so it must be loaded by hand. Confirmed on this host: it
+is absent from `sys/amd64/conf/GENERIC` and present only as a module, and
+`sys/dev/nvdimm/nvdimm_spa.c:469` builds the device name as `spa%d` from the
+NFIT index — hence `/dev/spa0`.
+
+#### iPXE script
+
+```
+boot memdisk_uefi.elf ${cwduri}FreeBSD-15.0-RELEASE-amd64-bootonly.iso
+echo Error occured, press any key to reboot
+prompt
+reboot
+```
+
+The `prompt` matters: without it a failure message scrolls away before you can
+read it.
+
+#### FreeBSD loader commands
+
+At the loader prompt (option 3 from the menu):
+
+```
+lsdev
+load boot/kernel/kernel
+load boot/kernel/nvdimm.ko
+boot
+```
+
+Two things about this sequence are easy to get wrong, and both were measured
+here rather than read anywhere.
+
+**`lsdev` first is mandatory.** It looks like a diagnostic and is documented
+nowhere, but omit it and the kernel fails to mount root with `error 19`.
+Measured 2/2 fail without it, 2/2 pass with it, same image and same commands
+otherwise. It is **not** a timing effect: substituting a 3-second delay still
+fails, so what matters is the device enumeration `lsdev` performs, not the
+pause it introduces. Root cause not established.
+
+**Do not set `vfs.root.mountfrom`.** A frequently circulated variant adds:
+
+```
+set currdev=cd1:
+set vfs.root.mountfrom="cd9660:/dev/spa0"      # <- breaks the boot
+```
+
+That fails with `error 19`. The RAM disk *is* present as `spa0` — GEOM tastes
+it, printing `GEOM: spa0: the secondary GPT header is not in the last LBA` —
+but `spa0` is the raw NVDIMM block device, not the cd9660 provider. Left
+alone, the loader finds the root by its filesystem label and gets it right:
+
+```
+Trying to mount root from cd9660:/dev/iso9660/15_1_RELEASE_AMD64_BO [ro]...
+nvdimm_acpi_root0: <ACPI NVDIMM root device> on acpi0
+```
+
+Overriding a correct autodetected default with a hand-written device path is
+the whole failure. The README's minimal form is right; the elaborated one is
+not.
+
+For a permanent setup, `nvdimm_load="YES"` in `/boot/loader.conf` replaces the
+manual `load`. Note the standing rule that `/boot/loader.conf` should carry
+only boot-critical modules — here it genuinely is boot-critical, since the
+root filesystem lives on the NVDIMM.
+
+#### Images without an ESP
+
+**Stock FreeBSD release ISOs do not need any of this.** 15.1's
+`bootonly.iso` is already a hybrid image carrying its own ESP:
+
+```console
+$ gpart show md9
+=>     34  1067641  md9  GPT  (521M) [CORRUPT]
+       34       25    1  freebsd-boot  (13K)
+       80     4096    2  efi  (2.0M)
+
+$ find /mnt -type f
+/mnt/EFI/BOOT/bootia32.efi
+/mnt/EFI/BOOT/bootx64.efi
+```
+
+(The `[CORRUPT]` is expected — a hybrid ISO's backup GPT header is not in the
+last LBA, the same condition GEOM reports as `spa0: the secondary GPT header
+is not in the last LBA`. It is cosmetic.)
+
+Partition 2 sits at LBA 80 = **`0x50`**, which is precisely the offset the
+upstream FreeBSD 16 issue below cites for the *working* case. One `iso` line
+is all such an image needs.
+
+If an ISO genuinely has no bootable ESP there is nothing for the firmware to
+load, so a second image supplies one:
+
+```
+boot http://<server>:8000/memdisk_uefi.elf http://<server>:8000/release.iso iso
+boot http://<server>:8000/memdisk_uefi.elf http://<server>:8000/efiboot.img harddisk
+```
+
+The first maps the real ISO as a virtual CD-ROM (`cd1:`); the second maps a
+FAT32 `efiboot.img` containing `BOOTX64.efi`/`loader.efi` as a virtual hard
+disk to boot from. A proper hybrid BIOS+UEFI ISO with its own ESP needs only
+the first line.
+
+Building a hybrid ISO yourself means `makefs -t msdos … efiboot.img` and then
+`makefs -t cd9660 -o bootimage=efiboot.img …`. Many `release.sh`-derived build
+scripts emit BIOS-only images and skip the ESP — which is the whole reason the
+two-image workaround exists.
+
+#### Known issue: FreeBSD 16
+
+FreeBSD 15 releases boot with this method; **FreeBSD 16 currently does not.**
+Upstream issue [#1](https://github.com/russor/memdisk_uefi/issues/1) is open
+with no maintainer response.
+
+The symptom is not an error message. The RAM disk registers and the ACPI
+tables are added, but the filesystem enumeration comes back short:
+
+```
+LocateHandleBuffer ( ByProtocol, SimpleFileSystem, 0x0 ) = 0 ( 2, {
+WRAP uninstalled wrappers
+iPXE>
+```
+
+Two handles — the USB device and the HTTP-loaded image — with the virtual
+disk's ESP missing, so nothing loads and control falls back to iPXE. A working
+FreeBSD 15 run returns **three**, including the GPT partition 2 entry. The
+reporter notes partition 2 starts at a different offset (`0x3B` on 16 vs `0x50`
+on 15), which is the leading suspicion but is not confirmed. The same ISO boots
+fine via qemu's `-cdrom`, so the image itself is sound.
+
+The `0x50` figure is corroborated here from the other direction: the working
+15.1 run resolved
+`VirtualCD(...)/HD(2,GPT,C8E5903A-...,0x50,0x1000)/\EFI\BOOT\BOOTX64.EFI`, and
+`gpart` puts partition 2 at LBA 80 = `0x50`, matching the reporter's
+known-good case exactly. That makes the offset difference a real distinction
+between the two releases rather than a misreading — though still not a
+demonstrated cause. **FreeBSD 16 was not tested here**; only 15.1 was
+available for this run.
+
+#### No DHCP required
+
+The chain works over IPv6 SLAAC as readily as IPv4 DHCP — neither iPXE nor the
+download step needs DHCP-assigned addressing, so router advertisements suffice.
+Static addressing (§6) is the other way to skip DHCP.
+
+#### Testing under qemu
+
+The invocation that actually exercises this path:
+
+```console
+$ qemu-system-x86_64 -m 8G -boot n \
+    -drive if=pflash,unit=0,readonly=on,format=raw,file=/usr/local/share/qemu/edk2-x86_64-code.fd \
+    -drive if=pflash,unit=1,format=raw,file=vars.fd \
+    -netdev user,id=net0,tftp=$PWD,bootfile=ipxe.efi \
+    -device virtio-net-pci,netdev=net0 \
+    -device virtio-rng-pci \
+    -display none -serial mon:stdio
+```
+
+Beware a widely copied variant that passes `-cdrom <freebsd.iso>`: that hands
+the guest the ISO as **local media**, so a successful boot proves nothing about
+the RAM-disk path — the guest may simply have booted the CD-ROM. There is no
+`-cdrom` here by design; the only copy of the image reaches the guest over the
+network.
+
+`-device virtio-rng-pci` is as mandatory here as everywhere else in this
+document (§9): without it the firmware never even sends DHCP.
+
+Serve the ISO over **HTTP, not TFTP** — 521 MB over TFTP is painfully slow.
+The PoC runs `python3 -m http.server` on the host, reachable from the guest at
+SLIRP's `10.0.2.2`, and the iPXE script uses explicit `http://` URLs rather
+than `${cwduri}` (which would resolve back to TFTP, since iPXE itself arrived
+that way):
+
+```
+boot http://10.0.2.2:8000/memdisk_uefi.elf http://10.0.2.2:8000/fbsd.iso iso
+```
+
+On memory: `-m 8G` for a 521 MB image is generous but the headroom is real —
+the image is resident twice while loading, and under `bootonly` more so.
+
+#### What is verified, and what is not
+
+Measured on this host: the build (including the `FILE_SECBOOT` breakage and
+the iPXE pin), the PE nature of the output, the full boot to `bsdinstall`, the
+mandatory `lsdev`, the `vfs.root.mountfrom` failure, and the ESP layout of
+15.1's `bootonly.iso`.
+
+Taken from upstream and **not** reproduced here: the `bootonly` argument's
+behaviour, the IPv6/SLAAC claim above, the two-image `efiboot.img` workaround
+(no ESP-less image was to hand — 15.1 has one), and the FreeBSD 16 failure
+below. Corrected against measurement rather than accepted: the loader command
+sequence, the necessity of the ESP workaround, and the qemu invocation.
+
+### (e) Do not try to netboot a compressed VM image
 
 ```
 FreeBSD-16.0-CURRENT-amd64-BASIC-CLOUDINIT-ufs.raw.xz
@@ -1033,8 +1374,9 @@ Note the absence of `-boot n`: this boots from disk, not the network.
 
 ## 8. Escape hatch: iPXE from a local ESP
 
-When the firmware has no network stack (§9), boot iPXE from a **disk** instead.
-The firmware only has to read a local file — no DHCP, no TFTP, no PXE driver.
+When firmware netboot is unavailable or undiagnosed (§9), boot iPXE from a
+**disk** instead. The firmware only has to read a local file — no DHCP, no
+TFTP, no PXE driver.
 
 ### Do not use `ipxe.usb` under UEFI
 
@@ -1273,23 +1615,89 @@ produces no `tmpfs.ko`, and `reboot -r` needs it.
 
 ## 9. Troubleshooting
 
-### Check the firmware has a network stack first
+### The `-boot n` silent no-op: add `virtio-rng-pci`
 
-On FreeBSD, **no packaged edk2 build can network-boot** — they are compiled
-without `NETWORK_ENABLE`. `-boot n` is then a silent no-op: no DHCP is ever
-sent, and BdsDxe falls through to `Boot0001 "EFI Internal Shell"`.
+**Symptom.** `-boot n` sends no DHCP at all, no `UEFI PXEv4` boot option
+exists, `ifconfig -l` in the EFI Shell prints nothing, and BdsDxe falls
+through to `Boot0001 "EFI Internal Shell"`.
 
-This failure is indistinguishable by eye from a bad boot file, so check the
-firmware before debugging the payload.
+**Cause.** A missing entropy source, not a missing network stack. Add:
 
-**Do not test this with `strings` or a GUID byte-search.** The DXE firmware
-volume is LZMA-compressed (the `LZMA_CUSTOM_DECOMPRESS` GUID
-`ee4e5898-…` is present in the `.fd`, and overall entropy is ~3.5 bits/byte
-with the drivers packed inside). Searching the raw file for `PxeBcDxe`,
-`Dhcp4Dxe`, `SnpDxe`, or their GUIDs returns zero hits **whether or not the
-drivers are there** — it is scanning compressed data and proves nothing.
+```
+-device virtio-rng-pci
+```
 
-Test it behaviorally instead, from the EFI Shell:
+and network boot works immediately on the qemu-bundled
+`/usr/local/share/qemu/edk2-x86_64-code.fd`:
+
+```
+>>Start PXE over IPv4.
+  Station IP address is 10.0.2.15
+  NBP filename is ipxe.efi
+  NBP file downloaded successfully.
+BdsDxe: starting Boot0001 "UEFI PXEv4 (MAC:525400123456)"
+```
+
+The stack is built with `NETWORK_TLS_ENABLE`, and its initialisation needs
+randomness; with no RNG device the network drivers never finish binding, so
+BDS never creates a network boot option. Nothing in the console output points
+at entropy, which is what makes this hard to guess.
+
+**Earlier revisions of this document claimed FreeBSD's edk2 packages are
+built without `NETWORK_ENABLE`. That was wrong on two counts.** There is no
+`NETWORK_ENABLE` key in modern edk2 at all; qemu's `roms/edk2-build.config`
+gives `[build.ovmf.x86_64]` `opts = common`, and `[opts.common]` sets
+`NETWORK_HTTP_BOOT_ENABLE`, `NETWORK_IP6_ENABLE`, `NETWORK_TLS_ENABLE`,
+`NETWORK_ISCSI_ENABLE` and `NETWORK_ALLOW_HTTP_CONNECTIONS` to TRUE. And the
+drivers are demonstrably compiled in — see the decompression check below.
+
+A widely-copied blog diagnosis says "no `ifconfig` in the EFI Shell means the
+firmware lacks `NETWORK_ENABLE`". Do not trust it. `ifconfig` is a ShellPkg
+command, and on this firmware it prints nothing *even though* the full stack
+is present, purely because no driver has bound. The same blog is right about
+the actual fix, `virtio-rng-pci`.
+
+### Proving which drivers are in a firmware image
+
+**`strings` on the raw `.fd` cannot answer this.** The DXE firmware volume is
+LZMA-compressed, so `PxeBcDxe`, `Dhcp4Dxe`, `SnpDxe` and their GUIDs return
+zero hits whether or not the drivers are present — it is scanning compressed
+data. A zero result there is not evidence of absence.
+
+Decompress first, then search. The `ASSERT()` source paths compiled into each
+driver body are the giveaway:
+
+```console
+$ python3 -c '
+import lzma
+d=open("/usr/local/share/qemu/edk2-x86_64-code.fd","rb").read()
+for i in range(len(d)-5):
+    if d[i:i+3]==b"\x5d\x00\x00":
+        try:
+            r=lzma.LZMADecompressor(format=lzma.FORMAT_ALONE).decompress(d[i:i+4_000_000])
+            if len(r)>100000: break
+        except Exception: pass
+for n in [b"UefiPxeBcDxe",b"SnpDxe",b"Dhcp4Dxe",b"VirtioNetDxe"]:
+    print(n.decode(), r.count(n))'
+UefiPxeBcDxe 12
+SnpDxe 21
+Dhcp4Dxe 9
+VirtioNetDxe 14
+```
+
+Inspecting the context confirms these are real code, not metadata — e.g.
+`.../edk2/NetworkPkg/UefiPxeBcDxe/PxeBcDriver.c` and
+`.../edk2/OvmfPkg/VirtioNetDxe/SnpStart.c`.
+
+Validate the extraction with a control: the EFI Shell GUID
+`7C04A583-9E3E-4F1C-AD65-E05268D0B4D1` (visible in the boot log) is **absent**
+from the raw file and **present** after decompression. If your control fails,
+your extraction is broken, not the firmware.
+
+Beware hand-typed GUID constants — byte-order and transcription errors give
+false negatives across the board. Prefer the name search above.
+
+### Behavioural check from the EFI Shell
 
 ```console
 $ mkdir -p esp && printf 'ifconfig -l\r\nreset -s\r\n' > esp/startup.nsh
@@ -1300,54 +1708,44 @@ $ qemu-system-x86_64 -m 2G \
     -display none -serial stdio -no-reboot
 ```
 
-`ifconfig -l` listing one or more interfaces means a network stack is present.
-On FreeBSD's builds it prints **nothing at all** — the command runs, but no
-`EFI_IP4_CONFIG2_PROTOCOL` instance exists to enumerate, because no network
-driver is bound to the NIC. That is the positive confirmation; the mapping
-table showing only block devices (`BLK*`/`FS*`, never a `MAC(...)` path) is
-the corroborating detail.
+Note the command above deliberately omits `-device virtio-rng-pci`, and that
+is exactly what makes it fail: `ifconfig -l` prints **nothing at all**. The
+command runs, but no `EFI_IP4_CONFIG2_PROTOCOL` instance exists to enumerate,
+because no network driver has finished binding. `connect -r` reports
+`Result Success` on every handle and changes nothing.
 
-The Boot Manager Menu gives the same answer and needs no Shell. Drive it over
-serial with `-nographic`:
+Add `-device virtio-rng-pci` and the same firmware enumerates the NIC and
+netboots. So a blank `ifconfig -l` tells you **a driver has not bound** — it
+does not tell you the stack is absent. Check for the RNG device before
+concluding anything about the firmware build.
 
-```console
-$ (sleep 8; printf '\r'; sleep 10) | qemu-system-x86_64 -m 2G -boot n \
-    -drive if=pflash,readonly=on,format=raw,file=<firmware.fd> \
-    -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
-    -nographic -no-reboot
+Measured on the qemu-bundled `edk2-x86_64-code.fd` (qemu-nox11-11.1.0), with
+`-boot n`, a TFTP server, and a valid PE boot file, on both `virtio-net-pci`
+and `e1000`.
+
+### Why `NETWORK_ENABLE` is a red herring
+
+In `OvmfPkg/OvmfPkgX64.dsc` the NetworkPkg fragments are included
+**unconditionally** — `NetworkComponents.dsc.inc`, `NetworkLibs.dsc.inc`,
+`NetworkDefines.dsc.inc` and friends have no surrounding `!if`. The only thing
+`NETWORK_ENABLE` guards in that file is a single line:
+
+```
+!if $(NETWORK_ENABLE) == TRUE
+  SecurityPkg/Hash2DxeCrypto/Hash2DxeCrypto.inf
+!endif
 ```
 
-A firmware that can netboot lists a `UEFI PXEv4 (MAC:...)` entry. FreeBSD's
-`QEMU_UEFI_CODE-x86_64.fd` lists only:
+So **every** OVMF X64 build has the network stack. The `NETWORK_*` flags
+select optional layers on top (IPv6, TLS, iSCSI, HTTP boot), and
+`-D NETWORK_IP6_ENABLE` in `sysutils/edk2` is doing exactly that and nothing
+more.
 
-```
-Please select boot device:
-  EFI Firmware Setup
-  EFI Internal Shell
-```
-
-Measured on both local builds — the qemu-bundled blob and the ported one —
-with `-boot n`, a TFTP server, a valid PE boot file, and (for the split build)
-its `QEMU_UEFI_VARS-x86_64.fd` companion attached as a second pflash.
-
-### About `-D NETWORK_IP6_ENABLE`
-
-`sysutils/edk2` does pass `-D NETWORK_IP6_ENABLE` globally, which looks like it
-should give these builds a network stack. Empirically it does not: the ported
-`QEMU_UEFI_CODE-x86_64.fd` still enumerates no network device by either test
-above.
-
-The likely reason is that in `OvmfPkg`/`NetworkPkg` the network components sit
-inside an `!if $(NETWORK_ENABLE) == TRUE` block, and `NETWORK_IP6_ENABLE` only
-selects IPv6 *within* that block — it does not turn the block on. Not verified
-against the .dsc source here (the edk2 source is not unpacked on this host), so
-treat the mechanism as probable and the measurement as fact.
-
-Confirmed empirically: booting `netboot.xyz.efi` — a valid PE image, `MZ`
-verified — falls through to the EFI Shell exactly like a non-PE file does.
-The firmware never attempts netboot, so the PE distinction never even comes
-into play. The same script works on macOS, where Homebrew and UTM ship edk2
-builds that *do* include the network stack.
+An earlier revision of this section speculated that the components sat inside
+an `!if $(NETWORK_ENABLE)` block that the port failed to turn on. That was
+wrong, and it was wrong because it was reasoning backwards from a bad
+measurement — the real cause of the observed failure was the missing RNG
+device.
 
 ### Where the firmware comes from
 
@@ -1373,10 +1771,15 @@ PLAT_ARGS=	-D NETWORK_IP6_ENABLE
 ```
 
 There is no `OPTIONS_DEFINE` block, so nothing is tunable via `make config`
-or `pkg`. Note that `NETWORK_IP6_ENABLE` adds IPv6 *on top of* the base stack
-and is not the same switch as `NETWORK_ENABLE` — its presence in the Makefile
-does not imply PXE is built in, and the `ifconfig -l` test above shows it is
-not usable in practice on the qemu-bundled blob.
+or `pkg`.
+
+`NETWORK_IP6_ENABLE` adds IPv6 on top of the base stack. It is **not** a
+counterpart to some `NETWORK_ENABLE` switch — no such key exists in modern
+edk2. The base network stack is on by default; the `NETWORK_*` flags only
+select optional layers (IPv6, TLS, iSCSI, HTTP boot).
+
+Both firmwares netboot fine once `-device virtio-rng-pci` is present. The
+qemu-bundled blob is the one verified end-to-end in §11.
 
 Workarounds: boot iPXE from a disk (§8), or build `sysutils/edk2` yourself
 with the network defines set.
@@ -1391,15 +1794,18 @@ pflash.
 
 | symptom | cause |
 |---|---|
-| boot falls straight to EFI Shell, mapping table shows only `BLK0` | firmware has no PXE stack — see above; this is the default on FreeBSD |
+| `-boot n` sends no DHCP, no `UEFI PXEv4` boot option, `ifconfig -l` empty, falls to EFI Shell | missing entropy source — add `-device virtio-rng-pci` (see above). Not a firmware-build problem |
 | firmware downloads the file then errors immediately | not a PE image — check for `MZ`; you probably pointed option 67 at a `.ipxe` script |
 | "unsupported" / image-load failure | wrong architecture in the PE machine field (i386 binary on x86_64 firmware, or vice versa) |
 | iPXE loads iPXE in a loop | DHCP returns the same filename to both firmware and iPXE; needs option-77 matching (§5b), impossible under SLIRP — boot iPXE from an ESP instead (§5d) |
 | iPXE starts but ignores your script | no embedded script (the packaged binary has none, §5a), no `bootfile=` for iPXE's own DHCP (§5d), and no `autoexec.ipxe` on the boot filesystem (§5e) |
 | `file:autoexec.ipxe... Not found` then `file:/autoexec.ipxe... ok` | normal, not an error — iPXE probes next to the binary first, then the volume root (§5e) |
-| `Could not boot: Exec format error` chaining memdisk | memdisk is a 16-bit BIOS bzImage; there is no UEFI build (§7b) |
+| `Could not boot: Exec format error` chaining memdisk | Syslinux memdisk is a 16-bit BIOS bzImage; there is no UEFI build of it (§7b). The UEFI equivalent is `memdisk_uefi` (§7d) |
 | `Could not boot: Error 0x7f0482xx` after a successful `chain` | "Could not start image" (`efi_image.c:405`) — the PE transferred and loaded, but `StartImage()` returned an error. The low byte is the wrapped EFI status, so the same message covers several causes. Note this is also what you see when a payload **ran fine and then gave up**: FreeBSD's `loader.efi` prints its banner, fails to find an NFS root, and returns to iPXE with `0x7f04828e`. Read the lines *above* the error, not the code |
 | loader.efi runs, then `recvrpc: reject` / `Failed to find bootable partition` | netbooted `loader.efi` defaults to an NFS root; SLIRP has no NFS server (§7c) |
+| memdisk_uefi: kernel boots, then `Mounting from cd9660:... failed with error 19` and a `mountroot>` prompt | either you set `vfs.root.mountfrom` (don't — the label autodetect is correct) or you skipped `lsdev` at the loader prompt. Both are §7d; `lsdev` is required and a delay will not substitute for it |
+| memdisk_uefi: `error: unknown type name 'FILE_SECBOOT'` at build time | iPXE too new (macro added 2026-01-13); pin to `e61c636~1` or force-include `compiler.h` (§7d) |
+| memdisk_uefi: `clang: error: unable to execute command: posix_spawn failed` at link time | no `lld-link` on `PATH` — FreeBSD base ships only `ld.lld`; symlink `lld-linkNN` from an `llvm*` port (§7d) |
 | nothing happens at all | missing `-boot n`, or firmware set to disk-first |
 
 Quick check, always worth running first:
@@ -1426,7 +1832,7 @@ in this document.
 flowchart TD
     START([Diskless UEFI machine]) --> Q1{Firmware has a<br/>network stack?}
 
-    Q1 -- "no<br/>(FreeBSD edk2 pkg)" --> ESP[Boot iPXE from<br/>local ESP or USB<br/>EFI/BOOT/BOOTX64.EFI]
+    Q1 -- "no<br/>(or missing virtio-rng)" --> ESP[Boot iPXE from<br/>local ESP or USB<br/>EFI/BOOT/BOOTX64.EFI]
     Q1 -- yes --> FWNET[Firmware DHCP + TFTP<br/>LoadImage on a PE file]
 
     ESP -.->|"NOT ipxe.usb<br/>legacy BIOS MBR"| X0[/UEFI finds<br/>nothing bootable/]
@@ -1520,9 +1926,13 @@ network for local storage rather than making netboot HTTP-capable.
 - An **NFS root is the normal diskless answer**, not a fallback — it is what
   `loader.efi` looks for by default. Alternatives: memory-disk root, or
   iSCSI/AoE via `sanboot`. All are genuinely diskless.
-- `memdisk` is BIOS-only (no UEFI build; `Exec format error`, §7b) and is a
-  narrow workaround for netbooting **USB installer images unmodified** — not
-  the general mechanism. Losing it on UEFI costs little.
+- Syslinux `memdisk` is BIOS-only (`Exec format error` under UEFI, §7b) and is
+  a narrow workaround for netbooting **USB installer images unmodified** — not
+  the general mechanism. Its UEFI counterpart is `memdisk_uefi` (§7d), which
+  uses `RamDiskProtocol` + NFIT/SSDT and needs `nvdimm.ko` to survive
+  `ExitBootServices()`. Verified here booting an unmodified 15.1 installer
+  ISO to `bsdinstall` from RAM over HTTP; at the loader prompt `lsdev` is
+  mandatory and `vfs.root.mountfrom` must be left alone.
 - For FreeBSD, netbooting `loader.efi` directly is the simplest path and skips
   iPXE entirely — but you must still supply that root, and qemu SLIRP has no
   NFS server (§7a, §7c).
