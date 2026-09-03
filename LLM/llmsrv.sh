@@ -5,18 +5,18 @@
 #   - framework2 (Ubuntu 24.04,       Mesa 25.2.8, Vulkan)
 #   - mac        (macOS, Metal)
 #
-# Default: agents-a1-mtp (Agents-A1 Q8_0 + MTP speculative decoding). ~77 t/s TG
-# at 4k on Strix Halo — Q8 weights + MTP beats plain Q4 (~66 t/s), and the
-# Agents-A1 fine-tune is tuned for agentic reasoning + tool calling. See Stage 7
-# in LLM/benches.FrameWork-Desktop.md.
+# Default: qwen38-mtp (Qwen3.8-27B dense Q8_0 + Q8_0 sidecar MTP draft head,
+# both from ggml-org/Qwen3.8-27B-GGUF). Best FreeBSD-source doc accuracy in the
+# DaemonDocs quality bench, with speculative decoding on top. The MTP draft
+# path is UNVERIFIED on FreeBSD/Mesa 26 — see the WARNING on the slot below and
+# fall back to MODEL=qwen38-q8 if cold starts report 0.00 draft acceptance.
 #
 # Usage:
-#   ./llmsrv.sh                  # default: Agents-A1-MTP Q8 (fast + high quality)
-#   USAGE=coding ./llmsrv.sh     # alias for MODEL=agents-a1-mtp
-#   USAGE=doc    ./llmsrv.sh     # alias for MODEL=moe-q8 (plain Q8, no MTP cliff risk)
-#   MODEL=moe-q8 ./llmsrv.sh     # Qwen3.6-35B-A3B Q8 MoE (USAGE=doc; fast, no MTP)
-#   MODEL=dense-q8 ./llmsrv.sh   # Qwen3.6-27B dense Q8 (max-fidelity dense; doc work)
-#   MODEL=qwen38-q8 ./llmsrv.sh  # Qwen3.8-27B dense Q8 (best doc-accuracy; see
+#   ./llmsrv.sh                  # default: qwen38-mtp (Q8 dense + Q8 MTP head)
+#   USAGE=coding ./llmsrv.sh     # alias for MODEL=qwen38-mtp
+#   USAGE=doc    ./llmsrv.sh     # alias for MODEL=qwen38-q8 (spec-off fallback)
+#   MODEL=qwen38-q8 ./llmsrv.sh  # Qwen3.8-27B dense Q8, no MTP (DaemonDocs
+#                                #   production recipe; see
 #                                #   benches.DaemonDocs-model-quality.md)
 #   HOST=0.0.0.0 ./llmsrv.sh     # listen on all interfaces (default: 127.0.0.1)
 #   CTX=131072 ./llmsrv.sh       # extend ctx past 65536 (TTFT collapses past ~30k
@@ -32,24 +32,22 @@ usage() {
 Usage: [ENV=val ...] $(basename "$0") [-h|--help]
 
 Environment variables:
-  USAGE=coding  Alias for MODEL=agents-a1-mtp (default coding recipe)
-  USAGE=doc     Alias for MODEL=moe-q8 (plain Q8, safer for long-form prose)
-  MODEL=agents-a1-mtp
-                protoLabsAI Agents-A1-MTP Q8_0 (default — 77 t/s TG at 4k,
-                Q8 MoE + speculative decoding, agentic fine-tune; fast coding)
-  MODEL=moe-q8  Qwen3.6-35B-A3B MoE Q8_K_XL (USAGE=doc; fast, no MTP)
-  MODEL=dense-q8
-                Qwen3.6-27B dense Q8_K_XL (max-fidelity dense; ~2x fewer
-                hallucinations than the MoE for doc generation —
-                see benches.DaemonDocs-model-quality.md)
+  USAGE=coding  Alias for MODEL=qwen38-mtp (default)
+  USAGE=doc     Alias for MODEL=qwen38-q8 (spec-off fallback)
+  MODEL=qwen38-mtp
+                DEFAULT. Qwen3.8-27B dense Q8_0 + Q8_0 sidecar MTP draft head
+                (ggml-org). Speculative decoding; acceptance UNMEASURED for
+                this Q8/Q8 pairing and the draft path is unverified on
+                FreeBSD/Mesa 26. See the slot comment before relying on it.
   MODEL=qwen38-q8
-                Qwen3.8-27B dense Q8_K_XL (newest gen; best FreeBSD-source
-                doc accuracy in the DaemonDocs quality bench)
+                Qwen3.8-27B dense Q8_K_XL (unsloth), no MTP. Best
+                FreeBSD-source doc accuracy in the DaemonDocs quality bench,
+                and the fallback when the MTP draft path misbehaves.
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
   CTX=N         --ctx-size (default: 131072 — practical sweet spot on Strix
-                Halo. Agents-A1-MTP native max is 262144 (256K); raising up to
-                that is safe — TG/PP are functions of filled depth, not the
+                Halo, and the Qwen3.8-27B base maximum; raising past it needs
+                RoPE scaling — TG/PP are functions of filled depth, not the
                 ceiling. Cost is entirely cold-prefill: ~4 s at 4k, ~40 s at
                 32k, ~5 min at 128k, ~20 min at 256k. Drop to 65536 for a
                 smaller KV footprint if you never work past ~30 k prompts.
@@ -75,13 +73,13 @@ case "${1:-}" in -h|--help|help) usage ;; esac
 # the MODEL= slots the rest of the script switches on. Explicit MODEL= wins.
 if [ -n "${USAGE:-}" ] && [ -z "${MODEL:-}" ]; then
   case "${USAGE}" in
-    coding) MODEL=agents-a1-mtp ;;   # Q8 MoE + MTP: 77 t/s TG at 4k, beats plain Q4
-    doc)    MODEL=moe-q8         ;;  # plain Q8 (no MTP): better prose than Q4, no draft-cliff risk
+    coding) MODEL=qwen38-mtp ;;   # Q8 dense + Q8 sidecar MTP head (default)
+    doc)    MODEL=qwen38-q8  ;;   # spec-off fallback (unsloth Q8_K_XL)
     *) echo "unknown USAGE='${USAGE}' (use coding|doc)" >&2; exit 1 ;;
   esac
 fi
 
-MODEL=${MODEL:-agents-a1-mtp}
+MODEL=${MODEL:-qwen38-mtp}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8080}
 CTX=${CTX:-131072}
@@ -165,54 +163,62 @@ nohost_flag="--no-host"
 model_extra=""
 
 case "${MODEL}" in
-  moe-q8)
-    # Qwen3.6-35B-A3B Q8_K_XL: ~22% slower TG than Q4, better prose quality
-    # (small 3B active path is more sensitive to quant noise; doc work has
-    # no syntax-level error feedback). Available on all hosts.
-    hf_repo="unsloth/Qwen3.6-35B-A3B-GGUF"
-    hf_file="Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf"
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-35B-A3B-GGUF" "${hf_file}")
-    alias="Qwen3.6-35B-A3B-UD-Q8_K_XL"
-    warmup_flag="--no-warmup"
-    ;;
-  dense-q8)
-    # Qwen3.6-27B dense Q8_K_XL. Highest-fidelity dense 27B (least quant noise).
-    # For fact-grounded doc work where quality matters more than speed. ~6-8 t/s.
-    hf_repo="unsloth/Qwen3.6-27B-GGUF"
-    hf_file="Qwen3.6-27B-UD-Q8_K_XL.gguf"
-    model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.6-27B-GGUF" "${hf_file}")
-    alias="Qwen3.6-27B-UD-Q8_K_XL"
+  qwen38-mtp)
+    # DEFAULT. Qwen3.8-27B dense (ggml-org), Q8_0 target + Q8_0 SIDECAR MTP
+    # draft head (mtp-Qwen3.8-27B-Q8_0.gguf) passed via --model-draft — not
+    # embedded like the Agents-A1 models. Both files come from the same repo.
+    #
+    # This is NOT the pairing benched on 2026-08-15. That run used the Q4
+    # pair (Q4_K_M target + q4_0 head) and measured only ~34% draft
+    # acceptance, which the bench attributed to the weak Q4/q4_0 match and
+    # named a higher-precision head as the fix. This slot is that fix; the
+    # acceptance number is therefore UNMEASURED, not ~34%.
+    #
+    # STILL UNVERIFIED on FreeBSD/Mesa 26: the same bench recorded a RADV
+    # GPUVM fault in the draft-mtp dispatch path — `[gfxhub] page fault`,
+    # client ID CPC (0x5), then `ring comp_1.x.0 timeout` and
+    # ErrorDeviceLost — on a coin-flip of cold starts. It reproduced with an
+    # unrelated model too, so it tracks the MTP-on code path, not this GGUF,
+    # and it is a Mesa 26 regression (identical binary+GGUF is clean on
+    # Mesa 25 / Ubuntu). Quant does not affect it. On a dead load every
+    # drafted token is wasted verify compute and throughput falls BELOW
+    # spec-off (7.3 t/s vs 11.2 baseline at N=5).
+    #
+    # So: watch the server log's "draft acceptance = 0.xx" line on every
+    # cold start on framework. If it reads 0.00000, restart; if it keeps
+    # faulting, fall back to MODEL=qwen38-q8 (spec-off; note that is a
+    # different repo and quant, unsloth Q8_K_XL, not these weights).
+    hf_repo="ggml-org/Qwen3.8-27B-GGUF"
+    hf_file="Qwen3.8-27B-Q8_0.gguf"
+    hf_draft="mtp-Qwen3.8-27B-Q8_0.gguf"
+    hf_dir="${HF_HUB}/models--ggml-org--Qwen3.8-27B-GGUF"
+    model=$(hf_resolve "${hf_dir}" "${hf_file}")
+    draft=$(hf_resolve "${hf_dir}" "${hf_draft}")
+    alias="Qwen3.8-27B-Q8_0-MTP"
     warmup_flag=""
-    # Same FreeBSD dense constraint: --no-host crashes 27B dense.
+    # Dense 27B on FreeBSD: --no-host crashes (same class as 3.6 dense).
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
+    if [ -z "${draft}" ] || [ ! -e "${draft}" ]; then
+      echo "draft head ${hf_draft} not cached under ${hf_dir}" >&2
+      echo "fetch it, or run MODEL=qwen38-q8 for the spec-off fallback" >&2
+      exit 1
+    fi
+    model_extra="--jinja --model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 4"
     ;;
   qwen38-q8)
-    # Qwen3.8-27B dense Q8_K_XL (unsloth). Newer generation than the 3.6 dense.
-    # Plain Q8, no MTP (unlike the qwen38-mtp slot). For max-quality doc work.
+    # Spec-off fallback for the default, and the DaemonDocs production recipe.
+    # Note this is a DIFFERENT repo+quant from qwen38-mtp: unsloth Q8_K_XL vs
+    # ggml-org Q8_0. Keep it — when the MTP path dead-loads on FreeBSD this is
+    # the one-env-var recovery, and DaemonDocs runs are graded on accuracy.
     hf_repo="unsloth/Qwen3.8-27B-GGUF"
     hf_file="Qwen3.8-27B-UD-Q8_K_XL.gguf"
     model=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.8-27B-GGUF" "${hf_file}")
     alias="Qwen3.8-27B-UD-Q8_K_XL"
     warmup_flag=""
-    # Dense 27B on FreeBSD: --no-host crashes (same class as 3.6 dense).
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     ;;
-  agents-a1-mtp)
-    # protoLabsAI Agents-A1-MTP Q8_0: same weights as agents-a1 but with an
-    # MTP head grafted in for speculative decoding. Q8_0 (~37.8 GB). Requires
-    # llama.cpp >= b9878 (PR #22673). NVFP4 sibling in the repo is NVIDIA-only
-    # (skip). MoE MTP acceptance is often lower than dense (~3B active path,
-    # less predictable), so measure vs plain agents-a1 before adopting.
-    hf_repo="protoLabsAI/Agents-A1-MTP-GGUF"
-    hf_file="Agents-A1-MTP-Q8_0.gguf"
-    model=$(hf_resolve "${HF_HUB}/models--protoLabsAI--Agents-A1-MTP-GGUF" "${hf_file}")
-    alias="Agents-A1-MTP-Q8_0"
-    warmup_flag="--no-warmup"
-    # MoE + --no-host is safe on both OSes (unlike dense 27B on FreeBSD).
-    model_extra='--jinja --spec-type draft-mtp --spec-draft-n-max 5'
-    ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use moe-q8|dense-q8|qwen38-q8|agents-a1-mtp)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use qwen38-mtp|qwen38-q8)" >&2; exit 1 ;;
 esac
 
 # If the file isn't in the HF cache, hand off to llama-server's -hf/-hff so it
@@ -242,7 +248,7 @@ extra_sampler=""
 # to avoid duplicate flag.
 jinja_flag=""
 case "${MODEL}" in
-  agents-a1-mtp) ;;  # already set in model_extra
+  qwen38-mtp) ;;  # already set in model_extra
   *) [ "${JINJA}" = "1" ] && jinja_flag="--jinja" ;;
 esac
 
@@ -252,10 +258,10 @@ esac
 # --kv-unified                   : no effect for single-client (parallel slots only)
 # --cache-reuse N                : Qwen3 uses M-RoPE; KV-shifting unsupported
 # --batch-size 4096 / --ub 1024  : ~3% slower than 2048/512 on this build
-# --ctx-size > 262144            : Agents-A1-MTP native max is 262144 (256K, extended
-#                                  RoPE theta 1e7 baked in); Qwen3.6-27B/35B-A3B base
-#                                  is 131072. Cold prefill at 256K takes ~20 minutes
-#                                  on Strix Halo — see benches.FrameWork-Desktop.md.
+# --ctx-size > 131072            : Qwen3.8-27B base max is 131072; going past it
+#                                  needs RoPE scaling. Cold prefill is the cost:
+#                                  ~40 s at 32k, ~5 min at 128k on Strix Halo —
+#                                  see benches.FrameWork-Desktop.md.
 # --parallel > 1                 : slots divide ctx; single-client gets full ctx with -p 1
 
 cd "${LLAMA_DIR}"
