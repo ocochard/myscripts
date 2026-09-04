@@ -237,12 +237,37 @@ prompt
 EOF
 
 # --- HTTP server ----------------------------------------------------------
+# A previous run that was SIGKILLed (or whose shell died) leaves this server
+# orphaned to PID 1, still holding $httpport.  The bind then fails and the
+# only clue is buried in http.log.  So: reclaim a stale server of our own
+# before starting a new one, and never touch a listener that is not ours.
+stale=$(pgrep -f "http\.server $httpport .*--directory $workdir" 2>/dev/null || :)
+if [ -n "$stale" ]; then
+  echo "== reclaiming stale http server on port $httpport (pid $stale) =="
+  # shellcheck disable=SC2086
+  kill $stale 2>/dev/null || :
+  for _ in 1 2 3 4 5; do
+    pgrep -f "http\.server $httpport .*--directory $workdir" >/dev/null 2>&1 || break
+    sleep 1
+  done
+fi
+if sockstat -4l 2>/dev/null | grep -q "127\.0\.0\.1:$httpport"; then
+  echo "port $httpport is in use by something that is not ours:" >&2
+  sockstat -4l 2>/dev/null | grep "127\.0\.0\.1:$httpport" >&2
+  echo "free it, or change httpport at the top of this script" >&2
+  exit 1
+fi
+
 python3 -m http.server "$httpport" --bind 127.0.0.1 \
     --directory "$workdir" > "$workdir/http.log" 2>&1 &
 httppid=$!
 trap 'kill $httppid 2>/dev/null' EXIT INT TERM
 sleep 2
-kill -0 $httppid 2>/dev/null || { echo "http server died" >&2; exit 1; }
+kill -0 $httppid 2>/dev/null || {
+  echo "http server died; last lines of $workdir/http.log:" >&2
+  tail -5 "$workdir/http.log" >&2
+  exit 1
+}
 
 qemu_args="-m $mem -boot n
   -drive if=pflash,unit=0,readonly=on,format=raw,file=$efi
@@ -254,6 +279,22 @@ qemu_args="-m $mem -boot n
 
 if [ $auto -eq 0 ]; then
   cat <<'EOM'
+
+##############################################################################
+##                                                                          ##
+##   THIS RUN NEEDS YOU TO TYPE THREE COMMANDS.  DOING NOTHING WILL FAIL.   ##
+##                                                                          ##
+##   If you let the loader autoboot untouched, nvdimm.ko is never loaded,   ##
+##   the RAM disk vanishes at ExitBootServices(), and the kernel dies at    ##
+##   a mountroot> prompt with:                                              ##
+##                                                                          ##
+##       cd0: Attempt to query device size failed: Medium not present       ##
+##       ... failed with error 19                                           ##
+##                                                                          ##
+##   That error is THIS WARNING BEING IGNORED, not a bug.  Run with -a to   ##
+##   have expect(1) type the commands for you instead.                      ##
+##                                                                          ##
+##############################################################################
 
 === At the FreeBSD boot menu, press 3 (Escape to loader prompt), then type:
 
@@ -268,16 +309,24 @@ if [ $auto -eq 0 ]; then
     if you see "unknown command", the kernel was not loaded; press Enter and
     retype.  (This is what the automated variant sends a bare newline for.)
 
-    Do NOT set vfs.root.mountfrom -- the loader autodetects the root by
-    filesystem label and gets it right (an ISO roots on cd9660, e.g.
+    Do not set vfs.root.mountfrom YOURSELF -- the loader autodetects the root
+    by filesystem label and gets it right (an ISO roots on cd9660, e.g.
     /dev/iso9660/15_1_RELEASE_AMD64_BO; a memstick on UFS, e.g.
-    /dev/ufs/FreeBSD_Install).  Overriding it with cd9660:/dev/spa0 fails
-    to mount with error 19.
+    /dev/ufs/FreeBSD_Install).  The release image sets this variable itself,
+    correctly; seeing it listed at a mountroot> prompt is NOT the problem.
+    Overriding it by hand with cd9660:/dev/spa0 is, and fails with error 19.
 
     Exit qemu with: Ctrl-a x
 
 EOM
   echo "    image: $img_file  (memdisk_uefi mode: $img_mode, root: $img_root)"
+  echo
+  # Block here: exec'ing qemu immediately would repaint the terminal with
+  # firmware/iPXE/boot-menu output and scroll the instructions above out of
+  # sight long before the loader prompt appears -- which is precisely how the
+  # commands get missed.  Wait for an ack so they are read first.
+  printf 'Press Enter to start qemu (Ctrl-C to abort)... '
+  read -r _ack || { echo; echo "aborted" >&2; exit 1; }
   echo
   # shellcheck disable=SC2086
   exec qemu-system-${arch} $qemu_args
