@@ -43,6 +43,14 @@ Environment variables:
                 Qwen3.8-27B dense Q8_K_XL (unsloth), no MTP. Best
                 FreeBSD-source doc accuracy in the DaemonDocs quality bench,
                 and the fallback when the MTP draft path misbehaves.
+  MODEL=flashnext
+                Qwen3.8-Flash-Next 125B/6B-active MoE, UD-IQ3_XXS (82 GB) +
+                shared-Q8_0 MTP head at N=2. ~37/35 t/s Total TPS at ~4 k,
+                acceptance 0.74-0.84. REQUIRES ~/llama.cpp-mtp built from
+                llama.cpp PR #28243 (still open — mainline has no qwen4exp MTP
+                graph); forces LLAMA_DIR and lowers CTX to 32768. Do not
+                substitute a bigger quant: IQ4_XS (93.7 GB) cannot load the
+                draft head at all. MTP is flaky on FreeBSD (Mesa 26 RADV).
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
   CTX=N         --ctx-size (default: 131072 — practical sweet spot on Strix
@@ -82,6 +90,10 @@ fi
 MODEL=${MODEL:-qwen38-mtp}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8080}
+# Remember whether the caller set CTX explicitly: a slot may need a lower
+# ceiling than the 131072 default (flashnext), but must not silently override
+# a value the caller asked for.
+CTX_EXPLICIT=${CTX:+1}
 CTX=${CTX:-131072}
 JINJA=${JINJA:-1}
 DRY=${DRY:-0}
@@ -205,6 +217,78 @@ case "${MODEL}" in
     fi
     model_extra="--jinja --model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 4"
     ;;
+  flashnext)
+    # Qwen3.8-Flash-Next, 125B/6B-active `qwen4exp` MoE, UD-IQ3_XXS (82 GB) +
+    # the shared-Q8_0 sidecar MTP head. ~37 t/s Total TPS at ~4 k on FreeBSD
+    # (35 on Ubuntu) with N=2, draft acceptance 0.74-0.84.
+    #
+    # THREE hard requirements, all of them load-time failures if unmet:
+    #
+    # 1. NEEDS ~/llama.cpp-mtp, NOT the default ~/llama.cpp. Mainline has no
+    #    MTP graph for qwen4exp; llama.cpp PR #28243 (`qwen4exp/mtp`) adds it
+    #    and is still OPEN. Mainline accepts --spec-type draft-mtp as a FLAG
+    #    (it exists for other archs) and then fails on a missing tensor, so a
+    #    successful --help proves nothing. LLAMA_DIR is forced below.
+    # 2. IQ3_XXS (82 GB), NOT IQ4_XS (93.7 GB). One quant step up and the
+    #    draft head cannot load at ANY --ctx-size: 93.7 GB resident leaves the
+    #    driver unable to fund a second model's command submission
+    #    (`radv/amdgpu: Not enough memory for command submission` →
+    #    ErrorDeviceLost). Q8_0 is 192 GB and never fits 128 GB UMA.
+    # 3. CTX must stay low. 32768 is proven with MTP on; 65536 is proven
+    #    spec-off (benched: holds a real 32 919-token prompt on both hosts).
+    #    The script-wide 131072 default does NOT fit here, so this slot
+    #    overrides CTX unless the caller set it explicitly.
+    #    CTX=65536 with MTP on is BENCHED GOOD on both hosts (loads clean;
+    #    29.6/27.6 Total TPS at ~32 k vs 21.8/20.6 spec-off — the MTP gain
+    #    actually widens with depth, +36 %/+34 %, and acceptance holds at
+    #    0.77-0.79). The cost is cold TTFT only: ~118 s (FreeBSD) / ~135 s
+    #    (Ubuntu) to first token at ~32 k of filled depth, since prefill runs
+    #    at ~280 t/s and MTP does not accelerate prefill. Raise CTX to 65536
+    #    when you work at depth across many warm turns; keep 32768 for
+    #    interactive use where cold TTFT dominates.
+    #
+    # FreeBSD caveat: MTP is flaky here, NOT unusable. 2 of 6 N values faulted
+    # in the bench with the Mesa-26 RADV compute-write fingerprint already
+    # documented for qwen38-mtp (`[gfxhub] page fault`, client ID CPC (0x5),
+    # `ring comp_1.1.0 timeout`). N=2 and N=4 ran clean. Watch the draft
+    # acceptance on cold start as with qwen38-mtp: 0.00000 means a dead head —
+    # restart, or drop --spec-type for a spec-off run.
+    LLAMA_DIR="${HOME}/llama.cpp-mtp"
+    if [ -z "${CTX_EXPLICIT}" ]; then
+      CTX=32768
+    elif [ "${CTX}" -gt 65536 ] 2>/dev/null; then
+      echo "warning: CTX=${CTX} is above what IQ3_XXS was proven to load" >&2
+      echo "  (32768 with MTP on, 65536 spec-off); expect ErrorDeviceLost" >&2
+    fi
+    hf_repo="unsloth/Qwen3.8-Flash-Next-GGUF"
+    # Sharded: pass shard 00001 (the tensor-free header); llama.cpp opens 2/3.
+    hf_file="UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf"
+    hf_draft="MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
+    hf_dir="${HF_HUB}/models--unsloth--Qwen3.8-Flash-Next-GGUF"
+    model=$(hf_resolve "${hf_dir}" "${hf_file}")
+    draft=$(hf_resolve "${hf_dir}" "${hf_draft}")
+    alias="Qwen3.8-Flash-Next-UD-IQ3_XXS-MTP"
+    warmup_flag=""
+    # Not A/B'd on this arch; keep the FreeBSD-dense precedent of leaving it off.
+    [ "${OS}" = "FreeBSD" ] && nohost_flag=""
+    if [ ! -x "${LLAMA_DIR}/build/bin/llama-server" ]; then
+      echo "MODEL=flashnext needs a PR #28243 build at ${LLAMA_DIR}" >&2
+      echo "  git clone https://github.com/ggml-org/llama.cpp ~/llama.cpp-mtp" >&2
+      echo "  git -C ~/llama.cpp-mtp fetch origin refs/pull/28243/head" >&2
+      echo "  git -C ~/llama.cpp-mtp checkout FETCH_HEAD" >&2
+      echo "  (then cmake -B build -DGGML_VULKAN=ON -DGGML_CCACHE=OFF ...)" >&2
+      exit 1
+    fi
+    if [ -z "${draft}" ] || [ ! -e "${draft}" ]; then
+      echo "draft head ${hf_draft} not cached under ${hf_dir}" >&2
+      echo "MTP is the point of this slot; fetch the head or pick another MODEL" >&2
+      exit 1
+    fi
+    # N=2 is the measured peak on BOTH hosts, and there is no cliff (N=16 still
+    # beats spec-off) — unlike the agents-a1-mtp MoE cliff at N>=8. Mean accepted
+    # draft length is only ~1.8 tokens, so a larger N buys nothing here.
+    model_extra="--model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 2"
+    ;;
   qwen38-q8)
     # Spec-off fallback for the default, and the DaemonDocs production recipe.
     # Note this is a DIFFERENT repo+quant from qwen38-mtp: unsloth Q8_K_XL vs
@@ -218,7 +302,7 @@ case "${MODEL}" in
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use qwen38-mtp|qwen38-q8)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use qwen38-mtp|qwen38-q8|flashnext)" >&2; exit 1 ;;
 esac
 
 # If the file isn't in the HF cache, hand off to llama-server's -hf/-hff so it
@@ -248,7 +332,7 @@ extra_sampler=""
 # to avoid duplicate flag.
 jinja_flag=""
 case "${MODEL}" in
-  qwen38-mtp) ;;  # already set in model_extra
+  qwen38-mtp) ;;  # sets --jinja itself in model_extra; JINJA=0 cannot disable it
   *) [ "${JINJA}" = "1" ] && jinja_flag="--jinja" ;;
 esac
 
