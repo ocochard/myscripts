@@ -1047,11 +1047,16 @@ BSD-2-Clause-Patent, built on iPXE + EDK II) does under UEFI what Syslinux's
 This is the option §7b said did not exist.
 
 **Verified end to end on this host** — FreeBSD 16 host, qemu 11.1.0, guest
-FreeBSD 15.1-RELEASE `bootonly.iso` (sha256 checked against upstream's
-`CHECKSUM.SHA256`, unmodified). The installer reached `bsdinstall` entirely
-from RAM over HTTP, with no DHCP-supplied boot config and no local media.
+FreeBSD 15.1-RELEASE `bootonly.iso` and FreeBSD 16.0-CURRENT
+`mini-memstick.img` (both sha256-checked against upstream, unmodified). The
+installer reached `bsdinstall` entirely from RAM over HTTP, with no
+DHCP-supplied boot config and no local media.
+
 Reproduction script: `FreeBSD/qemu-uefi-memdisk-poc.sh` (`-a` to drive the
-loader automatically, no arguments for interactive).
+loader automatically, no arguments for interactive). It takes an image
+selector — `15.1-iso`, `16.0-memstick`, `16.0-iso`, or an arbitrary URL — and
+picks `iso`/`harddisk` mode and the expected root filesystem accordingly.
+`16.0-iso` is expected to fail; see below.
 
 **How it works.** It takes a URL, downloads the image with iPXE's UEFI
 Download protocol, registers it with **`RamDiskProtocol`** (UEFI 2.6+), then
@@ -1162,21 +1167,45 @@ read it.
 At the loader prompt (option 3 from the menu):
 
 ```
-lsdev
 load boot/kernel/kernel
 load boot/kernel/nvdimm.ko
 boot
 ```
 
-Two things about this sequence are easy to get wrong, and both were measured
-here rather than read anywhere.
+`nvdimm.ko` is the whole point: it is not in `GENERIC`, and after
+`ExitBootServices()` the RAM disk is reachable only through it.
 
-**`lsdev` first is mandatory.** It looks like a diagnostic and is documented
-nowhere, but omit it and the kernel fails to mount root with `error 19`.
-Measured 2/2 fail without it, 2/2 pass with it, same image and same commands
-otherwise. It is **not** a timing effect: substituting a 3-second delay still
-fails, so what matters is the device enumeration `lsdev` performs, not the
-pause it introduces. Root cause not established.
+**If you automate this, terminate the menu keypress.** Earlier revisions of
+this document claimed a leading `lsdev` was mandatory, on the evidence that
+omitting it produced `error 19` reproducibly. That was a harness artifact, now
+traced: the `3` that dismisses the boot menu is echoed at the loader prompt
+without a newline, so `3` and the next command arrive concatenated —
+
+```
+OK 3load boot/kernel/kernel
+unknown command
+```
+
+— the kernel is never loaded, `load boot/kernel/nvdimm.ko` then correctly
+refuses with `elf64_obj_loadfile: can't load module before kernel` →
+`operation not permitted`, and `boot` autoloads a kernel with no NVDIMM
+driver. No driver, no `spa0`, no `iso9660` label, so root mount fails with
+`error 19`. `lsdev` "fixed" it only by absorbing the stray `3`.
+
+Any throwaway input does the same, which is what pins the mechanism — a bare
+newline suffices, and nothing here enumerates devices:
+
+| pre-load input | loader sees | `nvdimm.ko` | result |
+|---|---|---|---|
+| nothing | `3load boot/kernel/kernel` | not loaded | `error 19` |
+| bare `\r` | `3` | loaded | boots |
+| `lsdev` | `3lsdev` | loaded | boots |
+| `echo probe` | `3echo probe` | loaded | boots |
+| `show currdev` | `3show currdev` | loaded | boots |
+| `lsmod` | `3lsmod` | loaded | boots |
+
+So `lsdev` is *not* required, and typing the commands by hand was never
+affected. The PoC script sends a bare `\r` after the menu key.
 
 **Do not set `vfs.root.mountfrom`.** A frequently circulated variant adds:
 
@@ -1224,9 +1253,10 @@ $ find /mnt -type f
 last LBA, the same condition GEOM reports as `spa0: the secondary GPT header
 is not in the last LBA`. It is cosmetic.)
 
-Partition 2 sits at LBA 80 = **`0x50`**, which is precisely the offset the
-upstream FreeBSD 16 issue below cites for the *working* case. One `iso` line
-is all such an image needs.
+Partition 2 sits at LBA 80 = **`0x50`**, matching the `HD(2,GPT,…,0x50,0x1000)`
+in the boot trace above. One `iso` line is all such an image needs. The
+FreeBSD 16 ISO gets this offset wrong, which is the whole of its failure —
+see below.
 
 If an ISO genuinely has no bootable ESP there is nothing for the firmware to
 load, so a second image supplies one:
@@ -1246,36 +1276,77 @@ Building a hybrid ISO yourself means `makefs -t msdos … efiboot.img` and then
 scripts emit BIOS-only images and skip the ESP — which is the whole reason the
 two-image workaround exists.
 
-#### Known issue: FreeBSD 16
+#### FreeBSD 16: the ISO is broken, not memdisk_uefi
 
-FreeBSD 15 releases boot with this method; **FreeBSD 16 currently does not.**
-Upstream issue [#1](https://github.com/russor/memdisk_uefi/issues/1) is open
-with no maintainer response.
+FreeBSD 16 `bootonly.iso` does not boot this way. It is filed against
+memdisk_uefi as upstream issue
+[#1](https://github.com/russor/memdisk_uefi/issues/1), which spots the offset
+difference but not its cause. The defect is in **FreeBSD's `mkimg(1)`**, and
+the fix is in review as [D59377](https://reviews.freebsd.org/D59377).
 
-The symptom is not an error message. The RAM disk registers and the ACPI
-tables are added, but the filesystem enumeration comes back short:
+The FreeBSD 16 **`mini-memstick.img` boots fine** — so this is not a
+memdisk_uefi regression and not an "MBR vs GPT" problem (the memstick is MBR).
+Only the ISO is affected:
+
+| image | mode | result |
+|---|---|---|
+| 15.1 `bootonly.iso` | `iso` | boots to `bsdinstall` |
+| 16.0 `mini-memstick.img` | `harddisk` | boots to `bsdinstall` |
+| 16.0 `bootonly.iso` | `iso` | **`ran out of disks to try after 1 disks tried`** |
+
+**Root cause.** The 16.0 ISO's GPT entry 2 starts at LBA 59 (`0x3B`) while its
+FAT filesystem is at LBA 80 (`0x50`) — the same place 15.1 puts it. LBA 59 is
+zero-filled, so EDK2's `PartitionDxe` correctly declines to publish a
+`SimpleFileSystem` handle for it, and memdisk_uefi has nothing to boot. The
+short handle count in the upstream report is the symptom, not the defect.
+
+`release/amd64/mkisoimages.sh` is not at fault — it computes the offset
+correctly, and `etdump` reports identical geometry on both ISOs
+(`et_lba=20;et_sectors=4096`, i.e. `espstart` = 40960 bytes = LBA 80). The bug
+is in `mkimg`, which **silently discards the offset in the `::size` partition
+form** and packs the partition against the preceding one instead:
+
+```console
+$ mkimg -s gpt --capacity 588574720 -b /boot/pmbr \
+    -p freebsd-boot:=/boot/isoboot -p efi::2097152:40960 -o hybrid.img
+$ gpart show md6
+       34       25    1  freebsd-boot  (13K)
+       59     4096    2  efi  (2.0M)     <-- requested LBA 80
+```
+
+Same command, only `::` vs `:=` differing:
+
+| specification | actual | expected |
+|---|---|---|
+| `efi::2097152:40960` | LBA 59 | LBA 80 |
+| `efi::2097152:+10752` | LBA 59 | LBA 80 |
+| `efi:=esp.bin:40960` | LBA 80 | LBA 80 |
+| `efi:=esp.bin:+10752` | LBA 80 | LBA 80 |
+
+`mkisoimages.sh` uses exactly the broken form: `-p efi::$espsize:$espstart`.
+
+Introduced by `50c1240ebfaf` (*mkimg: Fix parsing of filenames containing
+colons*, PR 257960, 2026-04-16), which split the shared
+`case PART_KIND_SIZE: case PART_KIND_FILE:` fallthrough so a filename
+containing a colon could be `stat()`ed before being split. The shared
+offset-parsing block stayed under `PART_KIND_FILE`; the new `PART_KIND_SIZE`
+case ends with a bare `break` before reaching it, so `abs_offset` is never set
+and placement uses `SCHEME_META_PART_BEFORE` instead of
+`SCHEME_META_PART_ABSOLUTE`.
+
+**Main only** — not in any stable branch or release tag, which is exactly why
+15.1 works and 16.0-CURRENT does not. Snapshots built after 2026-04-16 are
+affected.
+
+**Proof it is the ISO and not the boot method:** rebuilding *only* the 32 KB
+hybrid GPT header of the same 16.0 ISO with a patched `mkimg`, leaving every
+other byte identical, boots it to `bsdinstall` through memdisk_uefi:
 
 ```
-LocateHandleBuffer ( ByProtocol, SimpleFileSystem, 0x0 ) = 0 ( 2, {
-WRAP uninstalled wrappers
-iPXE>
+### PASS: installer reached
 ```
 
-Two handles — the USB device and the HTTP-loaded image — with the virtual
-disk's ESP missing, so nothing loads and control falls back to iPXE. A working
-FreeBSD 15 run returns **three**, including the GPT partition 2 entry. The
-reporter notes partition 2 starts at a different offset (`0x3B` on 16 vs `0x50`
-on 15), which is the leading suspicion but is not confirmed. The same ISO boots
-fine via qemu's `-cdrom`, so the image itself is sound.
-
-The `0x50` figure is corroborated here from the other direction: the working
-15.1 run resolved
-`VirtualCD(...)/HD(2,GPT,C8E5903A-...,0x50,0x1000)/\EFI\BOOT\BOOTX64.EFI`, and
-`gpart` puts partition 2 at LBA 80 = `0x50`, matching the reporter's
-known-good case exactly. That makes the offset difference a real distinction
-between the two releases rather than a misreading — though still not a
-demonstrated cause. **FreeBSD 16 was not tested here**; only 15.1 was
-available for this run.
+Full write-up and patch: `FreeBSD/docs/bugreport_mkimg_size_offset.txt`.
 
 #### No DHCP required
 
@@ -1322,15 +1393,22 @@ the image is resident twice while loading, and under `bootonly` more so.
 #### What is verified, and what is not
 
 Measured on this host: the build (including the `FILE_SECBOOT` breakage and
-the iPXE pin), the PE nature of the output, the full boot to `bsdinstall`, the
-mandatory `lsdev`, the `vfs.root.mountfrom` failure, and the ESP layout of
-15.1's `bootonly.iso`.
+the iPXE pin), the PE nature of the output, the full boot to `bsdinstall` for
+both 15.1 `bootonly.iso` and 16.0 `mini-memstick.img`, the stray-menu-keypress
+artifact behind the `error 19` runs (isolated by varying only the pre-load
+command, six variants),
+the `vfs.root.mountfrom` failure, the ESP layout of 15.1's `bootonly.iso`, the
+16.0 ISO failure, and its `mkimg` root cause — including the GPT-patched ISO
+booting to prove the diagnosis.
 
 Taken from upstream and **not** reproduced here: the `bootonly` argument's
-behaviour, the IPv6/SLAAC claim above, the two-image `efiboot.img` workaround
-(no ESP-less image was to hand — 15.1 has one), and the FreeBSD 16 failure
-below. Corrected against measurement rather than accepted: the loader command
-sequence, the necessity of the ESP workaround, and the qemu invocation.
+behaviour, the IPv6/SLAAC claim above, and the two-image `efiboot.img`
+workaround (no ESP-less image was to hand — both tested images have one).
+Corrected against measurement rather than accepted: the loader command
+sequence, the necessity of the ESP workaround, the qemu invocation, and the
+attribution of the FreeBSD 16 failure to memdisk_uefi. Corrected against
+measurement made *here* — this document previously claimed a leading `lsdev`
+was mandatory; it is not, and the earlier claim is retracted in §7d.
 
 ### (e) Do not try to netboot a compressed VM image
 
@@ -1803,7 +1881,8 @@ pflash.
 | `Could not boot: Exec format error` chaining memdisk | Syslinux memdisk is a 16-bit BIOS bzImage; there is no UEFI build of it (§7b). The UEFI equivalent is `memdisk_uefi` (§7d) |
 | `Could not boot: Error 0x7f0482xx` after a successful `chain` | "Could not start image" (`efi_image.c:405`) — the PE transferred and loaded, but `StartImage()` returned an error. The low byte is the wrapped EFI status, so the same message covers several causes. Note this is also what you see when a payload **ran fine and then gave up**: FreeBSD's `loader.efi` prints its banner, fails to find an NFS root, and returns to iPXE with `0x7f04828e`. Read the lines *above* the error, not the code |
 | loader.efi runs, then `recvrpc: reject` / `Failed to find bootable partition` | netbooted `loader.efi` defaults to an NFS root; SLIRP has no NFS server (§7c) |
-| memdisk_uefi: kernel boots, then `Mounting from cd9660:... failed with error 19` and a `mountroot>` prompt | either you set `vfs.root.mountfrom` (don't — the label autodetect is correct) or you skipped `lsdev` at the loader prompt. Both are §7d; `lsdev` is required and a delay will not substitute for it |
+| memdisk_uefi: kernel boots, then `Mounting from cd9660:... failed with error 19` and a `mountroot>` prompt | `nvdimm.ko` is not in the running kernel, so there is no `spa0` and no label to mount — the autodetect line is correct, do **not** set `vfs.root.mountfrom`. Scroll up: if you see `OK 3load boot/kernel/kernel` / `unknown command`, the menu keypress was concatenated with your command and the kernel was never loaded; send a bare newline after the menu key (§7d) |
+| memdisk_uefi: `ran out of disks to try after 1 disks tried` | no bootable ESP on the RAM disk. On a FreeBSD 16 `bootonly.iso` this is the `mkimg` offset bug ([D59377](https://reviews.freebsd.org/D59377)) putting GPT entry 2 at LBA 59 instead of 80 — use `mini-memstick.img` instead (§7d) |
 | memdisk_uefi: `error: unknown type name 'FILE_SECBOOT'` at build time | iPXE too new (macro added 2026-01-13); pin to `e61c636~1` or force-include `compiler.h` (§7d) |
 | memdisk_uefi: `clang: error: unable to execute command: posix_spawn failed` at link time | no `lld-link` on `PATH` — FreeBSD base ships only `ld.lld`; symlink `lld-linkNN` from an `llvm*` port (§7d) |
 | nothing happens at all | missing `-boot n`, or firmware set to disk-first |
@@ -1931,8 +2010,8 @@ network for local storage rather than making netboot HTTP-capable.
   the general mechanism. Its UEFI counterpart is `memdisk_uefi` (§7d), which
   uses `RamDiskProtocol` + NFIT/SSDT and needs `nvdimm.ko` to survive
   `ExitBootServices()`. Verified here booting an unmodified 15.1 installer
-  ISO to `bsdinstall` from RAM over HTTP; at the loader prompt `lsdev` is
-  mandatory and `vfs.root.mountfrom` must be left alone.
+  ISO to `bsdinstall` from RAM over HTTP; at the loader prompt load
+  `nvdimm.ko` before `boot` and leave `vfs.root.mountfrom` alone.
 - For FreeBSD, netbooting `loader.efi` directly is the simplest path and skips
   iPXE entirely — but you must still supply that root, and qemu SLIRP has no
   NFS server (§7a, §7c).

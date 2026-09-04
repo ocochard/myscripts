@@ -22,10 +22,14 @@
 #   4. at the loader prompt use the RELATIVE-path README form and do NOT set
 #      vfs.root.mountfrom: the root is autodetected by filesystem label
 #      (cd9660 for an ISO, UFS for a memstick), never /dev/spa0
-#   5. run lsdev FIRST.  Not cosmetic: without it the kernel fails to mount
-#      root with error 19 (measured 2/2 fail without, 2/2 pass with).  It is
-#      not a timing effect -- a 3 s sleep in its place still fails, so the
-#      device enumeration itself is what matters.  Not documented upstream.
+#   5. when driving the loader with expect(1), send a bare newline before the
+#      first command.  The "3" that dismisses the boot menu is echoed at the
+#      prompt but not terminated, so "3" + "load boot/kernel/kernel" arrive as
+#      the single word "3load boot/kernel/kernel" -> "unknown command", the
+#      kernel is never loaded, "load nvdimm.ko" then fails with "can't load
+#      module before kernel", and boot proceeds without the NVDIMM driver ->
+#      root mount fails with error 19.  This is a harness artifact, not a
+#      FreeBSD requirement: typing the commands by hand is unaffected.
 #
 # Interactive: this script stops at the loader prompt and prints the three
 # lines to type. Run with -a to drive them automatically via expect(1).
@@ -253,7 +257,6 @@ if [ $auto -eq 0 ]; then
 
 === At the FreeBSD boot menu, press 3 (Escape to loader prompt), then type:
 
-    lsdev
     load boot/kernel/kernel
     load boot/kernel/nvdimm.ko
     boot
@@ -261,8 +264,9 @@ if [ $auto -eq 0 ]; then
     nvdimm.ko is NOT in GENERIC, and after ExitBootServices() the UEFI RAM
     disk is only reachable through it.  Relative paths, exactly as shown.
 
-    The lsdev is REQUIRED, not cosmetic: skip it and the kernel fails to
-    mount root with error 19.  Replacing it with a delay does not help.
+    Watch that the first command is not prefixed by the "3" you pressed --
+    if you see "unknown command", the kernel was not loaded; press Enter and
+    retype.  (This is what the automated variant sends a bare newline for.)
 
     Do NOT set vfs.root.mountfrom -- the loader autodetects the root by
     filesystem label and gets it right (an ISO roots on cd9660, e.g.
@@ -297,8 +301,10 @@ expect {
   timeout { puts "\n### FAIL: no loader prompt"; exit 2 }
 }
 sleep 1
-# lsdev is required -- see note 5 in the header.
-send "lsdev\r";                        expect "OK "
+# Terminate the "3" menu keypress echoed at the prompt.  Without this the
+# loader reads "3load boot/kernel/kernel" as one word, answers "unknown
+# command", and the kernel is never loaded -- see note 5 in the header.
+send "\r";                             expect "OK "
 send "load boot/kernel/kernel\r";      expect "OK "
 send "load boot/kernel/nvdimm.ko\r";   expect "OK "
 send "boot\r"
