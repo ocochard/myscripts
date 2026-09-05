@@ -50,14 +50,15 @@ Environment variables:
                 shared-Q8_0 MTP head at N=2. ~37/35 t/s Total TPS at ~4 k,
                 acceptance 0.74-0.84. REQUIRES ~/llama.cpp-mtp built from
                 llama.cpp PR #28243 (still open — mainline has no qwen4exp MTP
-                graph); forces LLAMA_DIR and lowers CTX to 32768. Do not
+                graph); forces LLAMA_DIR. Takes the full 131072 CTX. Do not
                 substitute a bigger quant: IQ4_XS (93.7 GB) cannot load the
                 draft head at all. MTP is flaky on FreeBSD (Mesa 26 RADV).
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
   CTX=N         --ctx-size (default: 131072 — practical sweet spot on Strix
-                Halo, and the Qwen3.8-27B base maximum; raising past it needs
-                RoPE scaling — TG/PP are functions of filled depth, not the
+                Halo, NOT a ceiling: the Qwen3.8-27B GGUF declares Context
+                Length 262144, and 262144 loads with no RoPE scaling.
+                TG/PP are functions of filled depth, not the declared
                 ceiling. Cost is entirely cold-prefill: ~4 s at 4k, ~40 s at
                 32k, ~5 min at 128k, ~20 min at 256k. Drop to 65536 for a
                 smaller KV footprint if you never work past ~30 k prompts.

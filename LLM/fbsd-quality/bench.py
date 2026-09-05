@@ -49,6 +49,39 @@ F_CONTEXT = "context_exhausted"
 F_NOPROGRESS = "no_progress"
 
 
+# Appended to every task prompt. This is ENVIRONMENT information, not
+# scaffolding: it says nothing about the kernel task (no bsd.kmod.mk, no SYSDIR,
+# no header names), only how to use this harness. tasks.py already states such
+# facts ("source tree at /usr/src", "64 cores available").
+#
+# Measured need: `import os` was denied in 8 of 13 runs, hitting EVERY model
+# including claude-opus-4-5. smolagents' CodeAgent sandboxes imports and its
+# default allowlist is
+#   collections datetime itertools math queue random re stat statistics time
+#   unicodedata
+# so `os` — the obvious way to list a directory — raises InterpreterError and
+# the step is lost. Models then fall back to run_shell, which works, so this
+# cost steps without changing any outcome.
+#
+# `os` is deliberately NOT added to additional_authorized_imports: bench.py
+# runs as root for bhyve, and in-process os.* calls would execute as root,
+# bypassing the --agent-user privilege separation that run_shell gets by
+# dropping to an unprivileged user via su. Telling the model the rule is free;
+# widening the sandbox is not.
+ENV_NOTE = """
+
+Notes on this environment (not hints about the task):
+- Your Python runs in a sandbox that allows only these imports: collections,
+  datetime, itertools, math, queue, random, re, stat, statistics, time,
+  unicodedata. `import os`, `pathlib`, `glob` and `subprocess` will fail.
+  To inspect or manipulate the filesystem use the run_shell tool (ls, find,
+  grep, cat) or the read_file / write_file / grep_src tools.
+- One code block must finish within its time budget, so avoid piling several
+  slow commands into a single block. A tree-wide grep of the kernel source is
+  slow: scope it to a subdirectory, or run it as its own step.
+"""
+
+
 _SRC_WRITE_RE = None
 
 
@@ -235,7 +268,7 @@ def src_revision(src_root):
 def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
                agent_user=None, shell_timeout=300, shell_clock=None,
                backend="openai", panic_state=None, progress=None,
-               seed=None, temperature=None):
+               seed=None, temperature=None, snippet_timeout=180):
     """A smolagents CodeAgent with filesystem + shell tools, rooted at workdir.
 
     Tool surface is deliberately small and generic: read/write files, run a
@@ -396,9 +429,25 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
 
     model = _build_model(model_id, api_base, api_key, backend, seed,
                          temperature)
+    # snippet_timeout raises smolagents' own executor budget, which defaults to
+    # local_python_executor.MAX_EXECUTION_TIME_SECONDS = 30 and bounds the whole
+    # <code> block. 30 s is too tight HERE for a reason specific to this bench:
+    # the tasks require exploring /usr/src, and one legitimate `grep -r` over
+    # sys/ (~90k files) can exceed it on a cold cache — costing a step for work
+    # that was correct, just slow.
+    #
+    # This is NOT about model or GPU speed. Inference happens before the
+    # snippet runs and is not covered by this budget: measured steps of 87 s,
+    # 163 s and 80 s never tripped the 30 s limit, and shell_s is 0.0-6.3% of
+    # total run time (on one t3, 7.3 s of shell against 9059 s of inference).
+    # Raising this cannot speed up a slow endpoint.
+    #
+    # Passed via executor_kwargs, which agents.create_python_executor merges
+    # into LocalPythonExecutor(**...) — a supported parameter, not a patch.
     return CodeAgent(tools=[write_file, read_file, grep_src, run_shell,
                             debug_last_panic],
                      model=model, max_steps=max_steps, add_base_tools=False,
+                     executor_kwargs={"timeout_seconds": snippet_timeout},
                      step_callbacks=([progress] if progress else None))
 
 
@@ -520,6 +569,12 @@ class NoProgressDetector:
         self.steps = 0
         self.last_sig = None
         self.stopped_reason = None
+        # Steps lost to a malformed reply or a blown snippet budget rather
+        # than to the task itself. See _count_error for why these are counted.
+        self.parse_errors = 0
+        self.timeout_errors = 0
+        self.sandbox_errors = 0
+        self.step_errors = 0
 
     def _signature(self):
         """(name, size, mtime) of every source-ish file the agent may write."""
@@ -539,8 +594,61 @@ class NoProgressDetector:
             pass
         return tuple(sig)
 
+    def _count_error(self, memory_step):
+        """Count steps that failed before any code ran.
+
+        A CodeAgent step is only useful if the model wrapped its Python in
+        <code>...</code>. Some models answer in their own native tool-call
+        syntax instead — observed with Qwen3.8-Flash-Next under --jinja, which
+        emits
+
+            <tool_call><function=code>print(run_shell(...))</function></tool_call>
+
+        (sometimes with a stray </parameter>). smolagents matches
+        <code>(.*?)</code>, finds nothing, and raises AgentParsingError; the
+        error is fed back as an observation and the model retries.
+
+        This matters for the numbers, not for correctness: the Python inside
+        those replies was valid every time, so the model knew the answer and
+        lost the step to the envelope. Left uncounted it silently inflates
+        iterations / wall_s / tokens_in and makes a format mismatch look like
+        weaker capability. Counted separately, a reader can subtract it.
+
+        Typed on AgentParsingError rather than grepped from the message, so a
+        reworded smolagents error does not silently stop counting.
+
+        timeout_errors counts a second, unrelated way a step dies before
+        producing anything: smolagents' own
+        local_python_executor.MAX_EXECUTION_TIME_SECONDS = 30, which bounds the
+        WHOLE <code> snippet. That is far tighter than this bench's
+        shell_timeout (300 s, per subprocess), so on a slow snippet the
+        smolagents limit always fires first and the bench's own limit never
+        gets a chance. Observed when a model put a tree-wide grep of
+        /usr/src/sys and a second command in one snippet: the grep alone ate
+        the 30 s. Not a model error in the same sense as a parse failure — the
+        code was valid and simply too slow — so it is counted apart from both
+        parse_errors and the task's own outcome.
+        """
+        err = getattr(memory_step, "error", None)
+        if err is None:
+            return
+        self.step_errors += 1
+        name = type(err).__name__
+        if name == "AgentParsingError":
+            self.parse_errors += 1
+        elif "maximum execution time" in str(err):
+            # Matched on the message: smolagents raises this as a generic
+            # execution error, so there is no dedicated class to type on.
+            self.timeout_errors += 1
+        elif "InterpreterError" in str(err) or "unauthorized import" in str(err):
+            # Sandbox denial (usually `import os`). ENV_NOTE now warns about
+            # this, so a nonzero count means the model ignored the note —
+            # itself worth knowing.
+            self.sandbox_errors += 1
+
     def __call__(self, memory_step, agent=None, **_kw):
         self.steps += 1
+        self._count_error(memory_step)
         cur = self._signature()
         if cur != self.last_sig:
             self.last_sig = cur
@@ -669,7 +777,8 @@ def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
 
 def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
             src_root, agent_user=None, backend="openai", artifact_dir=None,
-            rep=1, no_progress_patience=8, seed=None, temperature=None):
+            rep=1, no_progress_patience=8, seed=None, temperature=None,
+            snippet_timeout=180):
     """One attempt at one task. Returns a result dict."""
     workdir = os.path.join(root_dir, task["id"])
     shutil.rmtree(workdir, ignore_errors=True)
@@ -708,8 +817,9 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     try:
         agent = make_agent(model_id, api_base, api_key, workdir, max_steps,
                            src_root, agent_user, shell_timeout, clock,
-                           backend, panic_state, progress, seed, temperature)
-        agent.run(task["prompt"].replace("/usr/src", src_root))
+                           backend, panic_state, progress, seed, temperature,
+                           snippet_timeout)
+        agent.run(task["prompt"].replace("/usr/src", src_root) + ENV_NOTE)
     except Exception as e:                      # noqa: BLE001
         msg = f"{type(e).__name__}: {e}"
         # Distinguish "the endpoint could not hold the conversation" from a
@@ -725,12 +835,25 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
             rec["failure_class"] = F_HARNESS
         rec["failure_detail"] = msg[:300]
         _finish_timing(t0)
+        # Also on the failure path: a run that died mid-flight is exactly where
+        # knowing how many steps went to retries matters.
+        rec["parse_errors"] = progress.parse_errors
+        rec["timeout_errors"] = progress.timeout_errors
+        rec["sandbox_errors"] = progress.sandbox_errors
+        rec["step_errors"] = progress.step_errors
         _archive(rec, workdir, None, None, artifact_dir, agent)
         return rec
 
     _finish_timing(t0)
     rec["iterations"] = _agent_steps(agent)
     rec["stopped_early"] = progress.stopped_reason
+    # Steps the model lost to a malformed reply or a blown snippet budget.
+    # Subtract from iterations to compare capability rather than format
+    # compliance under this harness.
+    rec["parse_errors"] = progress.parse_errors
+    rec["timeout_errors"] = progress.timeout_errors
+    rec["sandbox_errors"] = progress.sandbox_errors
+    rec["step_errors"] = progress.step_errors
     rec["endpoint"] = metrics_delta(m_before, endpoint_metrics(api_base))
     tin, tout = _agent_tokens(agent)
     rec["tokens_in"], rec["tokens_out"] = tin, tout
@@ -863,8 +986,8 @@ def summarise(records):
 
     print()
     print(f"{'model':<22} {'task':<18} {'pass':<7} {'iter':>5} "
-          f"{'model_s':>8} {'shell_s':>8} {'tok_out':>8}  failure")
-    print("-" * 104)
+          f"{'reparse':>7} {'model_s':>8} {'shell_s':>8} {'tok_out':>8}  failure")
+    print("-" * 112)
     for model, recs in by_model.items():
         # Group reps of the same task: with MTP enabled the same model can pass
         # or fail the same task run-to-run (speculative decoding is not
@@ -881,12 +1004,29 @@ def summarise(records):
             fails = sorted({r["failure_class"] for r in rs if r["failure_class"]})
             mean = lambda k: sum(r.get(k, 0) or 0 for r in rs) / n
             print(f"{model:<22} {task:<18} {verdict:<7} "
-                  f"{mean('iterations'):>5.0f} {mean('model_s'):>8.1f} "
+                  f"{mean('iterations'):>5.0f} {mean('parse_errors'):>7.0f} "
+                  f"{mean('model_s'):>8.1f} "
                   f"{mean('shell_s'):>8.1f} {mean('tokens_out'):>8.0f}  "
                   f"{','.join(fails)}")
         if any(len(v) == 1 for v in by_task.values()):
             print(f"{'':<22} (single rep: pass/fail is not reliable with MTP "
                   f"on — use --reps 3+)")
+        # 'reparse' = steps where the model's reply was not wrapped in
+        # <code>...</code>, so smolagents raised before running anything. The
+        # Python inside is usually fine; the step is lost to the envelope. A
+        # nonzero column means iterations/model_s/tok_out overstate the real
+        # cost of solving the task by that many steps.
+        if any((r.get("parse_errors") or 0) for r in recs):
+            print(f"{'':<22} (reparse > 0: reply not in <code> tags — native "
+                  f"tool-call syntax; retried steps inflate iter/model_s)")
+        if any((r.get("timeout_errors") or 0) for r in recs):
+            n = sum((r.get("timeout_errors") or 0) for r in recs)
+            print(f"{'':<22} ({n} step(s) hit the per-snippet time budget "
+                  f"(--snippet-timeout); code was valid but too slow)")
+        if any((r.get("sandbox_errors") or 0) for r in recs):
+            n = sum((r.get("sandbox_errors") or 0) for r in recs)
+            print(f"{'':<22} ({n} step(s) lost to a denied import despite the "
+                  f"prompt naming the allowlist)")
         passed = [r for r in recs if r["passed"]]
         reached = max((r["tier"] for r in passed), default=0)
         print(f"{'':<24} {'-> tier_reached':<18} {reached}")
@@ -947,6 +1087,16 @@ def main():
                          "0.6). Pass 0 for greedy decoding — maximally "
                          "reproducible, but no longer the production sampling "
                          "the DaemonDocs bench uses.")
+    ap.add_argument("--snippet-timeout", type=int, default=180, metavar="SEC",
+                    help="wall-clock budget for ONE <code> snippet "
+                         "(smolagents' executor limit, default there is 30 s). "
+                         "Raised because a legitimate grep -r over /usr/src/sys "
+                         "can exceed 30 s on a cold cache and lose a step for "
+                         "correct-but-slow work. This does NOT bound model "
+                         "inference — that happens before the snippet runs — so "
+                         "raising it cannot compensate for a slow endpoint; "
+                         "shell time is 0-6%% of a run. Per-subprocess limits "
+                         "come from each task's timeout_s instead.")
     ap.add_argument("--no-progress-patience", type=int, default=8,
                     metavar="N",
                     help="stop the agent after N consecutive steps that "
@@ -1034,7 +1184,7 @@ def main():
                                   src_used, args.agent_user, args.backend,
                                   artifact_dir, rep + 1,
                                   args.no_progress_patience, args.seed,
-                                  args.temperature)
+                                  args.temperature, args.snippet_timeout)
                     rec["rep"] = rep + 1
                     rec["run_id"] = run_id
                     rec["api_base"] = args.api_base
