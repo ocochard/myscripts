@@ -19,6 +19,10 @@ fusion + MTP accepted-token-replay fix, PRs #26124 / #26320); Ubuntu was flat
 within noise. `--spec-draft-n-max 5` and the N≥8 cliff are unchanged, so
 `llmsrv.sh` defaults still hold. See the "b10267 re-bench" tables at the end.
 
+> New to these numbers? **[Concepts](#concepts-what-the-numbers-in-this-document-mean)**
+> defines PP / TG / TTFT / Total TPS, what MTP draft *acceptance* is and whether
+> a high value is good, and the UMA/GTT/KV memory terms.
+
 ## TL;DR
 
 - **Default coding recipe: `MODEL=agents-a1-mtp`** — b10267: **79 t/s** Total
@@ -37,10 +41,11 @@ within noise. `--spec-draft-n-max 5` and the N≥8 cliff are unchanged, so
 - **ROCm is dead on gfx1151** (MES — MicroEngine Scheduler — 0x83 firmware
   bug). Vulkan-only.
 - **Qwen3.8-Flash-Next (125B `qwen4exp`) runs — at UD-IQ3_XXS (82 GB), not
-  bigger.** MTP works there (~37 t/s Total TPS at N=2, acceptance 0.74-0.84,
-  ≥65 k context). One step up, UD-IQ4_XS (93.7 GB), cannot load an MTP head at
-  all and caps context at 16-32 k; Q8_0 (192 GB) never fits. Needs the unmerged
-  PR #28243. Still ~half of `agents-a1-mtp`. Added 2026-09-04.
+  bigger.** MTP works there (~37/35 t/s Total TPS at N=2, acceptance 0.76-0.80,
+  ≥65 k context). One step up, UD-IQ4_XS (93.7 GB), needs a raised GTT aperture,
+  loads in ~18 min, accepts *fewer* drafts, and on Linux that aperture
+  **panicked the kernel**; Q8_0 (192 GB) never fits. Needs the unmerged
+  PR #28243. Still ~half of `agents-a1-mtp`. Added 2026-09-05.
 
 ## Which recipe to use
 
@@ -59,8 +64,8 @@ formatted `frwk-bsd / frwk-linux`.
 | `moe-q8`             | Qwen3.6-35B-A3B Q8_K_XL         |            44 / 45      |            39 / 40       | Plain Q8. `USAGE=doc` alias.                 |
 | `mtp`                | Qwen3.6-27B-MTP Q8_K_XL + N=5   |            16 / 17      |            15 / 15       | Dense MTP: 2.5× vs off, still ~5× slower decode than MoE. |
 | `dense`              | Qwen3.6-27B Q4_K_XL             |            12 / 12      |            11 / 11       | Highest quality per token; slow.             |
-| `flashnext`          | Qwen3.8-Flash-Next UD-IQ3_XXS + MTP N=2 |    **37 / 35**  |          **30 / 28**     | 125B `qwen4exp`, 82 GB. MTP works at both depths (accept 0.77-0.79); gain *widens* with depth. 32 k needs `CTX=65536` and ~2 min cold TTFT. Needs unmerged PR #28243; frwk-bsd MTP flaky (Mesa 26). |
-| _(no slot)_          | Qwen3.8-Flash-Next UD-IQ4_XS    |            28 / 27      |            n/a           | 93.7 GB — one step too big: no MTP, ctx caps 32 k/16 k. Use IQ3_XXS instead. |
+| `flashnext`          | Qwen3.8-Flash-Next UD-IQ3_XXS + MTP N=2 |    **37 / 35**  |          **30 / 28**     | 125B `qwen4exp`, 82 GB. MTP works at both depths (accept 0.76-0.80); gain *widens* with depth. 32 k needs `CTX=65536` and ~2 min cold TTFT. Needs unmerged PR #28243; frwk-bsd MTP flaky (Mesa 26). |
+| _(no slot)_          | Qwen3.8-Flash-Next UD-IQ4_XS    |          n/a            |            n/a           | 93.7 GB. Loads only with a raised GTT aperture, ~18 min to load, acceptance *worse* (0.68). On Linux that aperture panicked the kernel. Use IQ3_XXS. |
 
 ★ = current default in `LLM/llmsrv.sh`. `USAGE=coding` → `agents-a1-mtp`;
 `USAGE=doc` → `moe-q8`.
@@ -135,6 +140,99 @@ run (same recipe on those slots, no drift).
 4. Build llama.cpp with `-DGGML_VULKAN=ON`. Runtime ICD `libvulkan_radeon.so`
    ships in `mesa-dri` (the `mesa-libgallium` package is OpenGL-only and not
    used by llama.cpp's Vulkan backend).
+
+## Concepts: what the numbers in this document mean
+
+Skip if you already know. Every term below appears unexplained in the tables.
+
+### The two phases of a request
+
+A request has two distinct phases with completely different performance
+characteristics, which is why every table here reports them separately:
+
+- **PP — Prompt Processing**, a.k.a. *prefill*. The model reads your whole
+  prompt and builds the KV cache. All tokens are processed **in parallel**, so
+  this is compute/bandwidth-rich and hits hundreds of tokens/s. Cost scales with
+  prompt length, and worse than linearly — attention is O(n²), which is why
+  `pp4096` at `d=32768` is far below `pp4096` at `d=0`.
+- **TG — Token Generation**, a.k.a. *decode*. The model emits the answer **one
+  token at a time**, and each token must re-read the whole model from memory. It
+  is therefore **memory-bandwidth-bound**, not compute-bound, and lands at
+  single-digit-to-tens of tokens/s. This is why TG is nearly identical between
+  FreeBSD and Ubuntu everywhere in this document while PP differs a lot: you
+  cannot compile your way past a bandwidth wall.
+
+Derived figures:
+
+- **TTFT (Time To First Token)** — wall-clock until the first token appears.
+  Dominated by prefill on a cold cache. At ~32 k this is ~2 minutes on this
+  hardware, which is a usability problem even when throughput looks fine.
+- **`d=N` / depth** — how many tokens are *already* in the KV cache before the
+  measurement. `d=0` is a cold cache; `d=32768` simulates a long conversation.
+- **Total TPS** — `(prompt_tokens + generated_tokens) / wall_clock`. The
+  end-to-end number, and **the one to compare recipes on**, because it includes
+  both phases as a user actually experiences them.
+
+### MTP / speculative decoding, and what "acceptance" measures
+
+TG is slow because each token needs a full pass over the model. Speculative
+decoding attacks that: a small, cheap **draft model** (here an **MTP** —
+Multi-Token Prediction — head, ~2.6 GB beside a ~82 GB main model) guesses the
+next few tokens, and the big model then **verifies them all in a single pass**.
+`--spec-draft-n-max N` sets how many tokens it may guess ahead.
+
+The trick is that verification is *exact*: the main model checks each guess
+against what it would have produced itself, and discards from the first
+mismatch onward. **The output is bit-identical to running without MTP** — only
+the speed changes. There is no quality tradeoff to weigh.
+
+**Draft acceptance % = accepted draft tokens / total draft tokens.** It is the
+guesser's hit rate.
+
+- **Higher is better.** Each accepted token was produced for the price of a
+  cheap draft step instead of a full model pass. ~0.80 means 4 of 5 guesses
+  survive.
+- **Low acceptance is worse than useless**, because rejected guesses still cost
+  verify compute. `qwen38-mtp`'s ~34 % made throughput *slower* than
+  speculation-off in this document; **0.00000 means a dead draft head** — the
+  throughput number that accompanies it is void, not merely poor. That is the
+  single value to watch on a cold start.
+- **But acceptance is not the goal — Total TPS is.** Acceptance is a diagnostic
+  for *why* a recipe is fast or slow, not a score to maximise. Flash-Next
+  IQ4_XS accepted 0.68 and was unusable; IQ3_XXS accepted 0.76-0.80 and is the
+  recommended recipe. Never pick a recipe on acceptance alone.
+- Acceptance is **prompt-dependent** (coding prompts score higher than
+  throwaway ones here), so quote it against a stated prompt.
+
+**Mean accepted length (`len`)** — how many tokens were accepted per draft
+*attempt*, and **the figure that actually converts into speed**. It sets the
+useful ceiling on `N`, and two heads measured in this document show it matters
+more than the acceptance percentage does:
+
+| head                          | accept | `len` | speedup vs spec-off |
+|-------------------------------|-------:|------:|--------------------:|
+| Flash-Next `shared-Q8_0`      |   0.76 |  1.00 | ~1.3× (35.5 vs 27.3)|
+| Qwen3.8-27B `mtp-…-Q8_0`      |   0.50 |  5.00 | **2.2× (16.8 vs 7.6)**|
+
+The Qwen3.8-27B head has *lower* acceptance yet a much bigger speedup, because
+when it hits it lands **all five** drafted tokens, whereas Flash-Next's head
+reliably lands exactly one and never two. So `N=2` captures Flash-Next's entire
+benefit (larger `N` only drafts tokens that get discarded), while a `len 5.00`
+head genuinely rewards a larger `N`. **Read `len` alongside acceptance — neither
+number alone tells you whether MTP is worth enabling.**
+
+### Memory terms
+
+- **UMA (Unified Memory Architecture)** — CPU and GPU share one pool of RAM;
+  there is no separate video memory to copy into.
+- **GTT (Graphics Translation Table)** — the aperture through which the GPU
+  addresses system RAM. With a 512 M VRAM carve-out, **model weights live in
+  GTT**, so the GTT size is the real ceiling on model size, *not* installed RAM.
+  See the aperture discussion in the Flash-Next section — a 66 GB GTT on a
+  128 GB machine is what blocked a 93.7 GB model.
+- **KV cache** — per-token attention state kept for the whole context.
+  `--ctx-size` reserves it up front, so a large context costs memory even when
+  unused.
 
 ## Methodology
 
@@ -566,7 +664,12 @@ Ubuntu moved **−2 % / −3 %**, inside run-to-run noise (`-r 2`), i.e. unchang
 No config change warranted — b10267 is a free modest win on FreeBSD and neutral
 on Ubuntu.
 
-## Qwen3.8-27B (`qwen38-mtp` slot) — sidecar MTP is unstable, don't adopt (2026-08-15)
+## Qwen3.8-27B (`qwen38-mtp` slot) — Q4 pair unstable; Q8 pair works (2026-08-15, updated 2026-09-05)
+
+> The original 2026-08-15 verdict below ("don't adopt") was measured on the
+> **Q4_K_M + q4_0** pair. The **Q8_0 + Q8_0** pair that `llmsrv.sh` actually
+> serves was benched on 2026-09-05 and **is worth using** — 2.2-2.4× from MTP.
+> See "Follow-up 2026-09-05" at the end of this section.
 
 Scope: **`ggml-org/Qwen3.8-27B-GGUF` Q4_K_M + sidecar MTP-Q4_0 draft head**,
 `frwk-bsd` only, llama.cpp **b10440 (`6b4344ecc`)**. Prompted by the llama.cpp
@@ -646,6 +749,67 @@ head to lift acceptance toward the ~80 % the embedded dense MTP achieves. The
 DGX-Spark CUDA recipe sidesteps (a) entirely and may pair with a better head in
 the NVFP4 path, so it can look fine there while failing here — that is a
 driver+head finding, not proof the base model is good.
+
+### Follow-up 2026-09-05: prediction (b) was right — the Q8/Q8 pair works
+
+Re-benched on frwk-linux (Ubuntu 26.04.1, Mesa 26.0.8, b10801) with the **Q8_0
+target + Q8_0 sidecar head** that `llmsrv.sh`'s `qwen38-mtp` slot actually
+serves — *not* the Q4/q4_0 pair benched above. New registry slot
+`qwen38-mtp-q8`; `bench-all.sh`'s old `qwen38-mtp` entry still names the Q4 pair,
+which is not even cached on that host.
+
+| config                | TTFT (ms) | PP t/s | Total TPS | draft accept        |
+|-----------------------|----------:|-------:|----------:|--------------------:|
+| spec-off, ~4 k        |  19 984.1 |  202.8 |       7.6 | –                   |
+| spec-off, ~32 k       | 201 071.4 |  163.9 |       7.1 | –                   |
+| **MTP N=5, ~4 k**     |  14 972.2 |  270.5 |  **16.8** | 0.50400 (len 5.00)  |
+| **MTP N=5, ~32 k**    | 175 265.1 |  188.6 |  **17.3** | 0.54825 (len 5.00)  |
+
+**MTP is worth 2.2-2.4× on this pair** (7.6 → 16.8 at ~4 k; 7.1 → 17.3 at
+~32 k), so the "pointless" verdict above applies to the **Q4 pair only**. The
+higher-precision head lifted acceptance from ~34 % to **0.50-0.55**, exactly the
+fix predicted in (b).
+
+`--spec-draft-n-max` sweep at ~4 k — **the peak is N=4, and N≥8 is a cliff**:
+
+| n_max | Total TPS | accept  | len   |
+|------:|----------:|--------:|------:|
+|     2 |      15.6 | 0.74769 |  2.00 |
+|     3 |      16.6 | 0.63978 |  3.00 |
+| **4** |  **17.6** | 0.59219 |  4.00 |
+|     5 |      16.7 | 0.50400 |  5.00 |
+|     8 |   **5.4** | 0.34840 |  8.00 |
+|    16 |   **5.3** | 0.19318 | 16.00 |
+
+`llmsrv.sh` already pins `--spec-draft-n-max 4` — **that is the measured optimum;
+do not raise it.** At N=8 acceptance collapses to 0.348 and throughput falls
+*below spec-off* (5.4 vs 7.6); at N=16 acceptance is 0.193 and it is worse still.
+The wasted verify compute on long drafts swamps the gain. This is the same N≥8
+cliff documented for `agents-a1-mtp`, and unlike Flash-Next, whose curve stays
+flat out to N=16.
+
+Two counter-intuitive details worth keeping:
+
+- **`len` tracks `N` exactly** (2→2.00, 3→3.00, 5→5.00, 8→8.00) while acceptance
+  falls monotonically. So a long `len` is *not* evidence that a larger `N` is
+  better — it just means the head drafts whatever it is allowed. Judge `N` on
+  Total TPS alone.
+- **Acceptance and throughput move in opposite directions here.** N=2 has the
+  best hit rate (0.748) and *worse* speed than N=4 (15.6 vs 17.6). Compare with
+  Flash-Next, which has *higher* acceptance (0.76) but a far smaller speedup
+  (~1.3× vs 2.2×) because its head lands only one token per attempt.
+- Unexplained: MTP also cut TTFT at ~32 k by 13 % (201 s → 175 s). MTP should not
+  touch prefill; not investigated.
+
+Still true from the verdict above: this remains one of the **slowest** recipes
+here (16.8 vs `agents-a1-mtp`'s 79), and frwk-bsd's Mesa-26 CPC fault is
+unaddressed. It is the `llmsrv.sh` default for **quality** — it wins the
+DaemonDocs hallucination bench at 6.4 mean violations — not for speed. That
+bench never tested `agents-a1-mtp` or `flashnext`, so **whether a faster recipe
+is also more accurate is an open question**; answering it means re-running
+`~/score_models.py` (4 fact-dense chapters × 3 reps), and note its
+"same `UD-Q8_K_XL` quant for every model" fairness axis cannot hold for
+Agents-A1 (Q8_0) or Flash-Next (IQ3_XXS only).
 
 ## Huihui abliterated 27B: Qwen3.8 vs Qwen3.6-MTP (Q8_0, 2026-08-20)
 
@@ -793,272 +957,247 @@ shape as every other dense-MTP model here → keep `--spec-draft-n-max 5`).
   uncensored behaviour is specifically required; otherwise the MoE default wins
   on speed by a wide margin.
 
-## Qwen3.8-Flash-Next UD-IQ4_XS — one quant step too big (2026-09-04)
+## Qwen3.8-Flash-Next — 125B MoE on 128 GB UMA (2026-09-05)
 
-> **Superseded for practical use by the UD-IQ3_XXS section below**, which fits
-> and runs MTP. Kept because it establishes *where* the 128 GB ceiling bites and
-> rules out several candidate causes.
+Scope: **`unsloth/Qwen3.8-Flash-Next-GGUF`**, both hosts, llama.cpp **b10801
+(`2c967293c`)** — which is
+**[PR #28243](https://github.com/ggml-org/llama.cpp/pull/28243) (`qwen4exp/mtp`),
+still OPEN**. Built to `~/llama.cpp-mtp` so `~/llama.cpp` and the `llmsrv.sh`
+endpoints stay on mainline. Mainline cannot do MTP for this architecture at all:
+it has **zero** MTP references in `src/models/qwen4exp.cpp` (the PR adds 67 and
++329 lines). It *does* accept `--spec-type draft-mtp` as a flag, because the flag
+exists for other architectures — so a successful `--help` proves nothing.
 
-Scope: **`unsloth/Qwen3.8-Flash-Next-GGUF` UD-IQ4_XS (93.7 GB)** + the
-`shared-Q8_0` sidecar MTP head, both hosts, llama.cpp **b10801 (`2c967293c`)**
-— which is **[PR #28243](https://github.com/ggml-org/llama.cpp/pull/28243)
-(`qwen4exp/mtp`), still OPEN, not mainline**. Built to `~/llama.cpp-mtp` so
-`~/llama.cpp` and the `llmsrv.sh` endpoints stay on mainline.
-
-A new architecture, not another Qwen3.x repack: arch `qwen4exp`, 125B total /
-6B active, 512 experts (10 routed + 1 shared), 48 layers of
+A new architecture, not a Qwen3.x repack: arch `qwen4exp`, 125B total / 6B
+active, 512 experts (10 routed + 1 shared), 48 layers of
 `3 × (Gated DeltaNet → MoE) → 1 × (Qwen Sparse Attention → MoE)`, plus a 20 M-entry
-n-gram embedding (51B params on its own). Native context 262 144.
+n-gram embedding (51B params alone). Native context 262 144.
 
-### Result: fastest decode-per-parameter here, but 93.7 GB of weights starves the context
+### Verdict: use UD-IQ3_XXS (82 GB) + MTP at N=2. Nothing larger is worth it.
 
-| Metric (spec-off)          | frwk-bsd | frwk-linux | vs `moe-q8` (Qwen3.6-35B-A3B Q8) |
-|----------------------------|---------:|-----------:|----------------------------------|
-| llama-bench pp4096 d=0     |   196.70 | **311.51** | Ubuntu wins PP by **58 %**       |
-| llama-bench tg128 d=0      |    24.29 |      24.31 | OS-neutral, as expected          |
-| llama-bench pp4096 d=8192  |   192.41 | **291.64** |                                  |
-| llama-bench tg128 d=8192   |    22.50 |      22.21 |                                  |
-| llama-bench pp4096 d=32768 |   186.95 |  **crash** | bsd fits this depth, Ubuntu does not |
-| llama-bench tg128 d=32768  |    19.25 |      crash |                                  |
-| server Total TPS @ ~4 k    | **25.8** |       24.4 | `moe-q8` = 44 / 45               |
+`llmsrv.sh` slot: **`MODEL=flashnext`**. ~37 Total TPS at ~4 k on frwk-bsd,
+35 on frwk-linux; 29.6 / 27.6 still at ~32 k; acceptance 0.76-0.80 that holds at
+depth. It does **not** displace `agents-a1-mtp` (79/71) as the coding default —
+roughly half the speed — but it is the only way to run a 125B model here at
+usable speed.
 
-`± values in bench-all output; server rows are bench_model.py -t 256 -r 2.`
-frwk-bsd server row ran at `--ctx-size 32768`, frwk-linux at `16384` — the most
-each host would load (see the fit table). The `~32 k` server row is `?` on both:
-`coding_prompt_32k.txt` (32 919 tokens) does not fit either context.
+Quant selection is forced by memory, and the ceiling is **the GTT aperture, not
+total RAM**:
 
-### The actual finding: a fit ceiling, not a speed problem
+| quant        |   size | verdict                                             |
+|--------------|-------:|-----------------------------------------------------|
+| Q8_0         | 192 GB | never fits 128 GB                                   |
+| UD-Q6_K_XL   | 169 GB | never fits                                          |
+| UD-Q5_K_XL   | 158 GB | never fits                                          |
+| UD-Q4_K_XL   | 111 GB | upstream's own recommended pairing — does not fit here |
+| UD-IQ4_XS    | 93.7 GB| loads, but **not worth using** — see below          |
+| **UD-IQ3_XXS**| **82 GB** | **the recipe**                                   |
 
-Probed both hosts directly, load-or-die, at 93.7 GB of resident weights:
+### IQ3_XXS numbers
 
-| `--ctx-size` | MTP | frwk-bsd | frwk-linux |
-|-------------:|-----|----------|------------|
-| 32768        | off | **yes**  | no         |
-| 16384        | off | yes      | yes        |
-| 16384        | on  | no       | no         |
-| 8192         | on  | no       | no         |
+llama-bench depth sweep, spec-off. frwk-linux measured on **Ubuntu 26.04.1**
+(Mesa 26.0.8, GCC 15.2.0); the 24.04 column (Mesa 25.2.8, GCC 13.3) is kept
+because the delta is the point:
 
-1. **MTP does not load at any context size on either host.** Dropping ctx 4×
-   (32768 → 8192) changes nothing, and the failure lands at *draft-model load*
-   ~20 s in, not at KV allocation:
-   `radv/amdgpu: Not enough memory for command submission` →
-   `vk::Queue::submit: ErrorDeviceLost`. The head itself is only 2.6 GB, so this
-   is not head size — it is that loading a *second* model needs a Vulkan command
-   submission the driver cannot fund once 93.7 GB is resident. Not the Mesa-26
-   CPC-write fault documented for `qwen38-mtp`: **0** `[gfxhub] page fault` lines
-   in dmesg, and it reproduces identically on Ubuntu/Mesa 25.
-   Ruled out as causes: **our own flags** — upstream's bare recipe
-   (`--model --model-draft --spec-type draft-mtp --spec-draft-n-max 5`, no
-   `--flash-attn`, no batch/ctx/device overrides) dies the same way; and **head
-   choice** — `shared-Q8_0` (upstream's pick, borrows token_embd/LM head from the
-   target) and the self-contained `Q8_0` both fail. Note upstream's example pairs
-   the head with **UD-Q4_K_XL (111 GB)**, which cannot fit here at all, so that
-   recipe implicitly assumes >128 GB of memory.
-2. **FreeBSD fits more context than Ubuntu on identical silicon** — 32768 vs
-   16384 spec-off. Same weights, same build, same 128 GB UMA.
-   **OPEN, not investigated:** Ubuntu's 58 % PP lead (311 vs 197 t/s at d=0)
-   inverts this doc's usual finding that FreeBSD wins PP on MoE. Decode is
-   identical (24.29 vs 24.31), so it is prefill-specific. Deliberately left
-   unexplained here — troubleshoot separately rather than guessing a cause.
-3. **Q8_0 was never an option.** 192 GB of weights against 128 GB of UMA; so are
-   Q6_K_XL (169 GB), Q5_K_XL (158 GB) and Q4_K_XL (111 GB, upstream's own
-   recommended pairing). UD-IQ4_XS at 93.7 GB is the largest quant that loads at
-   all, and it only leaves room for 16-32 k of context.
+| depth | frwk-bsd `pp4096` | frwk-linux 24.04 | frwk-linux 26.04 | frwk-bsd `tg128` | linux 24.04 | linux 26.04 |
+|------:|------------------:|-----------------:|-----------------:|-----------------:|------------:|------------:|
+|     0 |            207.42 |           312.44 |       **328.03** |            26.45 |       26.33 |       26.79 |
+|  8192 |            194.17 |           291.15 |       **319.71** |            23.97 |       23.92 |       24.37 |
+| 32768 |            190.45 |           224.71 |       **238.79** |            20.11 |       19.76 |       20.07 |
 
-### Verdict
+**The 26.04 upgrade bought 5-10 % prefill and nothing else** — `tg128` moved
+1.6-1.9 %, inside the error bars. That is this document's usual split: PP is
+compiler/driver-bound, TG is memory-bandwidth-bound.
 
-**Not adoptable as a coding recipe, and not because it is slow.** Decode is the
-best per-parameter result in this document — 24.3 t/s of raw tg128 out of a 125B
-model — and Ubuntu's 311 t/s PP is the highest prefill measured here. On the
-metric that decides a recipe, though, it loses: 26/24 Total TPS at ~4 k against
-`moe-q8`'s 44/45 and the `agents-a1-mtp` default's 79/71, because there is no
-MTP to multiply decode and the prefill advantage cannot offset that. The
-blockers are structural: usable context caps at 16-32 k against the 131 072 every
-other recipe in this doc runs at, and MTP — the entire reason for building an
-unmerged PR — cannot load alongside the weights. `agents-a1-mtp` remains the
-default.
+> **Do not cite the frwk-bsd `pp4096` column.** Re-measured on the same binaries
+> and GGUFs it does **397-413 t/s** — faster than Ubuntu — at every flag
+> combination tried, including `bench-all.sh`'s exact one (410.80 ± 1.17). Nine
+> variants (batch overrides, `-n 128` interleaved generation, `--mmap`,
+> `--flash-attn 0`, `-ub 256/512/1024`) all landed in 397-413, so no flag
+> explains the low readings; they are an artifact of that bench session
+> (unrecorded thermal state or a leftover resident process). See "Method notes"
+> below before chasing any cross-OS gap.
 
-Two things would change the picture, in order of value:
+llama-server + `bench_model.py -t 256 -r 2`:
 
-- **A smaller quant — DONE, and it works.** UD-IQ3_XXS (82 GB) was benched the
-  same day and confirms finding 1: freeing 11.8 GB makes MTP load on both hosts
-  and lifts spec-off context to ≥65 536. **Use IQ3_XXS, not IQ4_XS, on this
-  machine** — see the next section.
-- **PR #28243 merging**, so this stops requiring a side build. Track it before
-  re-benching — the MTP graph is new code and the failure mode above may simply
-  be an unfinished memory-fitting path (`qwen4exp requires ctx_other to be set`
-  appears on every start, described in-tree as normal during fitting).
+| config                        | frwk-bsd | frwk-linux (26.04) |
+|-------------------------------|---------:|-------------------:|
+| spec-off, ~4 k                |     28.2 |               27.3 |
+| **MTP N=2, ~4 k**             | **37.0** |           **35.5** |
+| MTP N=5, ~4 k                 |     37.1 |               35.4 |
+| spec-off, ~32 k (`CTX=65536`) |     21.8 |               20.6 |
+| **MTP N=2/5, ~32 k**          | **29.6** |           **27.6** |
 
-Harness changes made for this run (kept, all models benefit): `bench-all.sh`
-gained an 8th registry field (`ctx`) for per-slot `--ctx-size`, sharded-GGUF
-support (pass shard `00001`, llama.cpp opens the rest), `--metrics` plus a
-`spec_metrics()` scraper so a dead draft head is visible as `0.00000` instead
-of masquerading as a merely-slow row, and a quant-column regex that handles
-`UD-IQ4_XS`-style names. Note `llama-bench` has **no** `--ctx-size` (it sizes KV
-from `-d`), so the field applies to the server stages only.
+**MTP earns its keep at every depth, and its advantage widens with depth**
+(+31 % at 4 k → +36 % at 32 k on frwk-bsd). It accelerates decode, not prefill —
+TTFT is unchanged (118 s vs 116 s at ~32 k) — so the whole gain lands on
+generation and compounds over the generated tokens regardless of prompt depth.
+MTP-on at 32 k (29.6) beats spec-off at 4 k (28.2).
 
-## Qwen3.8-Flash-Next UD-IQ3_XXS — MTP works here; this is the usable quant (2026-09-04)
+`--spec-draft-n-max` sweep at ~4 k (Total TPS):
 
-Scope: same model/build/harness as the IQ4_XS section above, but
-**UD-IQ3_XXS (81.96 GB)** — 11.8 GB smaller. Run directly to test that
-section's finding 1 (MTP fails for lack of headroom, not head size).
-`--ctx-size 32768`, `shared-Q8_0` head, `--spec-type draft-mtp`.
+| n_max | frwk-bsd | frwk-linux 24.04 | frwk-linux 26.04 | 26.04 accept       |
+|------:|---------:|-----------------:|-----------------:|-------------------:|
+|     2 | **37.0** |         **35.0** |         **35.5** | 0.76423 (len 1.00) |
+|     3 |     33.8 |             34.4 |             34.6 | 0.77637 (len 1.00) |
+|     4 |     36.2 |             34.6 |             34.1 | 0.80282 (len 1.00) |
+|     5 |  (fault) |             32.9 |             35.4 | 0.76316 (len 1.00) |
+|     8 |     35.7 |             34.4 |             34.7 | 0.80282 (len 1.00) |
+|    16 |  (fault) |             33.4 |             34.6 | 0.80282 (len 1.00) |
 
-### Confirmed: the 11.8 GB buys both MTP and 4× the context
+**The curve is flat: 34.1-35.5 across N=2..16 on 26.04, a 4 % spread.** N=2 is
+nominally the peak but within noise of the rest — keep it (never worse, cheapest)
+without expecting a measurable loss elsewhere. There is **no cliff**, unlike the
+MoE cliff documented for `agents-a1-mtp` (50 % drop at N≥8).
 
-| `--ctx-size` | MTP | frwk-bsd | frwk-linux | at IQ4_XS (93.7 GB) |
-|-------------:|-----|----------|------------|---------------------|
-| 32768        | on  | **UP**   | **UP**     | both failed         |
-| 16384        | on  | **UP**   | **UP**     | both failed         |
-| 65536        | off | **UP**   | **UP**     | not reachable       |
-| 32768        | off | UP       | **UP**     | bsd only            |
+The mechanism, measured rather than inferred: **`len 1.00` at every N**, and
+`accepted_tokens_per_pos` reads position 0 = *n*, **position 1 = 0** at every
+context size. The head lands exactly one token per draft, so nothing above N=2
+can ever be used.
 
-### llama-bench depth sweep (spec-off)
+**Acceptance is stack-independent** — 0.76316 on Mesa 26.0.8 vs 0.763-0.831 on
+Mesa 25.2.8: same head across two Mesa majors, two GCC majors, two Ubuntu
+releases. It *is* prompt-dependent, though: a short throwaway prompt measured
+0.372, so quote the 4 k-coding-prompt figure only for coding-shaped work.
 
-| depth | frwk-bsd pp4096 | frwk-linux pp4096 | frwk-bsd tg128 | frwk-linux tg128 |
-|------:|----------------:|------------------:|---------------:|-----------------:|
-|     0 |  207.42 ± 2.08  |  **312.44 ± 1.98**|  26.45 ± 0.08  |   26.33 ± 0.46   |
-|  8192 |  194.17 ± 0.47  |  **291.15 ± 5.37**|  23.97 ± 0.06  |   23.92 ± 0.46   |
-| 32768 |  190.45 ± 0.72  |  **224.71 ± 0.66**|  20.11 ± 0.13  |   19.76 ± 0.03   |
+frwk-bsd's `(fault)` at N=5 and N=16 is the **Mesa-26 RADV CPC-write fault**
+already documented for `qwen38-mtp` (`[gfxhub] page fault`,
+`Faulty UTCL2 client ID: CPC (0x5)`, `PERMISSION_FAULTS: 0x5`,
+`ring comp_1.x.0 timeout`). N=2 and N=4 ran clean. **On frwk-bsd MTP is flaky but
+usable; on frwk-linux it is stable.**
 
-Decode is up ~9 % vs IQ4_XS (26.4 vs 24.3 at d=0) and Ubuntu now completes
-d=32768, which crashed at IQ4_XS. TG stays OS-neutral at every depth.
+### Why not IQ4_XS (93.7 GB)
 
-### llama-server, spec-off, at `--ctx-size 65536`
+It loads on both hosts *if* the GTT aperture is large enough — but it is not
+worth using, and on Linux it is dangerous:
 
-Re-run at 65536 to fill the `~32 k` cells the 32768 run could not
-(`coding_prompt_32k.txt` is 32 919 tokens). 65536 holds under a real deep prompt
-on both hosts — `n_ctx_slot = 65536`, no `ErrorDeviceLost`.
+- **frwk-bsd:** loads and serves (HTTP 200, 0 GPU faults) but takes **~18 minutes
+  to load** and prefills a 4 k prompt in minutes. Draft acceptance **0.68085
+  (64/94)** — *worse* than IQ3_XXS's 0.76-0.80 on the same prompt, so the bigger
+  main quant did not even buy better speculation. No Total TPS was ever captured.
+- **frwk-linux:** at the driver-default 65.9 GB aperture the draft head cannot
+  load at **any** `--ctx-size` (32768/16384/8192 all fail ~20 s in with
+  `radv/amdgpu: Not enough memory for command submission` →
+  `vk::Queue::submit: ErrorDeviceLost`). Raising `amdgpu.gttsize` to 120000 makes
+  it load and serve — **and that configuration kernel-panicked the host** (next
+  subsection).
 
-| Depth | frwk-bsd TTFT (ms) | PP t/s | Total TPS | frwk-linux TTFT (ms) | PP t/s | Total TPS |
-|-------|-------------------:|-------:|----------:|---------------------:|-------:|----------:|
-| ~4 k  |           14 116.7 |  288.0 |  **28.2** |             15 649.9 |  258.9 |      26.9 |
-| ~32 k |          115 658.5 |  285.1 |  **21.8** |            132 091.0 |  249.8 |      20.6 |
+Ruled out as causes of the aperture failure, so they need not be re-tested: our
+own flags (upstream's bare recipe fails identically), head choice (`shared-Q8_0`
+and self-contained `Q8_0` both fail), and the Mesa-26 CPC fault (**0** dmesg
+faults; it reproduces on Mesa 25 too).
 
-**The cost of deep context here is TTFT, not throughput.** Total TPS only drops
-~23 % from 4 k to 32 k (28.2 → 21.8), but time-to-first-token goes to
-**116 s on frwk-bsd / 132 s on frwk-linux** — near two minutes before the first
-token appears. PP t/s barely moves (288 → 285), so this is prefill volume, not a
-slowdown: ~33 k tokens at ~285 t/s ≈ 115 s. Interactive use at 32 k is therefore
-painful on a cold cache regardless of OS; it only pays off across many warm-cache
-turns, the same caveat this doc already records for `agents-a1-mtp` at 262 144.
+llama.cpp cannot warn about this: for `qwen4exp` its memory fitter fails to
+measure the draft model at all (`common/fit.cpp:226` catching the throw from
+`llama-context.cpp:158`) and therefore fits the main model **alone**. The two
+"harmless" warnings printed on every Flash-Next start are the visible edge of
+that blind spot:
 
-Note frwk-bsd's PP lead inverts here (285 vs 250) — the opposite of the
-llama-bench `pp4096` result at the same quant (207 vs 312). The two tools measure
-different windows (`bench_model.py` derives PP from TTFT), so do not read them as
-contradicting; both are recorded, and the OS gap is the deferred open item above.
-
-### MTP on/off at ~4 k — a real gain, unlike every other sidecar-MTP slot here
-
-| config      | frwk-bsd Total TPS | frwk-linux Total TPS |
-|-------------|-------------------:|---------------------:|
-| off         |               28.2 |                 26.9 |
-| on N=5      |           **37.1** |                 32.7 |
-| on N=2/best |         **37.0** (N=2) |           **35.0** (N=2) |
-| gain (best) |          **+31 %** |              **+30 %** |
-
-**Draft acceptance 0.74-0.84** on both hosts **on `coding_prompt.txt`** — the
-range that makes speculation pay, and the reason this differs from `qwen38-mtp`
-(~34 %, pointless) and `huihui-36-q8`. It is prompt-dependent, not a constant: a
-short throwaway prompt through `llmsrv.sh` measured 0.372 (32 accepted / 86
-drafted). Quote the 4 k-coding-prompt figure only for coding-shaped work.
-
-Mean accepted draft length is ~1.8 tokens, and `/metrics`
-`spec_decode_num_accepted_tokens_per_pos_total` shows why: position 0 accepts,
-**position 1 accepts zero**. Only the first speculated token ever lands, which
-is the mechanism behind N=2 being the peak — larger N drafts tokens that are
-never used.
-
-### MTP-on at `--ctx-size 65536`, both depths (N=2)
-
-MTP loads and runs fine at 65536 — `n_ctx_slot = 65536`, no `ErrorDeviceLost` on
-either host, so the IQ4_XS-era worry that a deeper context would re-break the
-draft head does not apply at 82 GB.
-
-| Depth | Host       | MTP-on Total TPS | spec-off (same ctx) | gain     | accept  | TTFT (ms) |
-|-------|------------|-----------------:|--------------------:|----------|--------:|----------:|
-| ~4 k  | frwk-bsd   |             36.9 |                28.2 | **+31 %**| 0.76923 |  14 404.9 |
-| ~32 k | frwk-bsd   |         **29.6** |                21.8 | **+36 %**| 0.78556 | 118 139.6 |
-| ~4 k  | frwk-linux |             34.3 |                26.9 | **+28 %**| 0.78667 |  16 028.3 |
-| ~32 k | frwk-linux |         **27.6** |                20.6 | **+34 %**| 0.77322 | 134 510.9 |
-
-**The MTP gain gets *larger* with depth, not smaller** (+31 → +36 % on frwk-bsd),
-and MTP-on at 32 k (29.6) beats spec-off at 4 k (28.2). Acceptance is stable at
-0.77-0.79 across both depths, so the draft head does not degrade as context
-fills. This contradicts the plausible guess that prefill-dominance would dilute
-speculation: TTFT is unchanged by MTP (118 s vs 116 s spec-off — MTP accelerates
-decode, not prefill), so the whole gain lands on the generation phase, where it
-compounds over the 256 generated tokens regardless of how deep the prompt was.
-
-`accepted_tokens_per_pos` still reads **position 0 = 359, position 1 = 0** at
-this context — every accepted token is the first speculated one, at both depths.
-That is the invariant behind N=2: this head reliably lands exactly one token.
-
-### `--spec-draft-n-max` sweep at ~4 k (Total TPS)
-
-| n_max | frwk-bsd | frwk-linux |
-|------:|---------:|-----------:|
-|     2 | **37.0** |   **35.0** |
-|     3 |     33.8 |       34.4 |
-|     4 |     36.2 |       34.6 |
-|     5 |  (fault) |       32.9 |
-|     8 |     35.7 |       34.4 |
-|    16 |  (fault) |       33.4 |
-
-**N=2 is the peak on both hosts, and there is no cliff** — 16 still beats
-spec-off (33.4 vs 26.9 on Ubuntu). That is unlike the MoE cliff documented for
-`agents-a1-mtp` (50 % drop at N≥8); the curve here is flat-to-slightly-declining
-from N=3 to N=16, consistent with a short mean draft length (~1.8) meaning large
-N never gets used.
-
-frwk-bsd's `(fault)` at N=5 and N=16 is the **Mesa-26 RADV compute-write fault**,
-not memory: 3 dmesg faults with the exact fingerprint already documented for
-`qwen38-mtp` — `[gfxhub] page fault`, `Faulty UTCL2 client ID: CPC (0x5)`,
-`PERMISSION_FAULTS: 0x5`, `ring comp_1.1.0 timeout`. Ubuntu/Mesa 25 completed all
-six N values with zero faults. Note the IQ4_XS failure was a *different* thing
-(zero dmesg faults, hit both OSes) — do not conflate them.
-
-### Verdict
-
-**IQ3_XXS is the quant to use for this model on 128 GB UMA, with MTP on,
-`--spec-draft-n-max 2`, and `--ctx-size 65536`.** ~37 Total TPS at ~4 k on
-frwk-bsd / 35 on frwk-linux, **29.6 / 27.6 still at ~32 k**, 65 k of context
-usable with MTP on, and acceptance 0.77-0.79 that holds at depth — MTP earns its
-keep at every depth measured, and its advantage widens as context fills. It still does **not** displace `agents-a1-mtp` (79/71) as the coding
-default — it is roughly half the speed — but it is the first way to run a 125B
-model on this machine at usable speed, and it is the right slot when the larger
-model's quality is specifically wanted.
-
-Caveats to respect:
-
-- **frwk-bsd needs the Mesa fix for reliable MTP.** Two of six N values faulted.
-  Same RADV bug as `qwen38-mtp`/`huihui-36-q8`; N=2 and N=4 ran clean, so it is
-  usable but not dependable. On frwk-linux MTP is stable.
-- **Deep context works but is TTFT-bound.** At `CTX=65536` and ~32 k of filled
-  depth: 29.6 / 27.6 Total TPS with MTP on, but 118 s / 135 s to first token.
-  Throughput at depth is fine; the cold-cache wait is the cost. (The `?` cells in
-  the two `--ctx-size 32768` MTP tables above are superseded by the 65536 table —
-  they were a context limit, not a failure.)
-- **Per-N acceptance is approximate.** The exact values above come from a
-  side-channel log tap, because the in-flight run had the old
-  `draft_acceptance()` (which read `$NF` — the *mean len* field — not the ratio,
-  hence the bogus `1.76`/`1.81` in the raw `Draft accept` column). The 0.74-0.84
-  range is solid; per-N attribution is not. `spec_metrics()` (scrapes
-  `llamacpp:spec_decode_*` from `--metrics`) now replaces it and is correct for
-  future runs.
-- **PR #28243 is still unmerged**, so this needs the `~/llama.cpp-mtp` side build.
-
-### Runtime
-
-`llmsrv.sh` gained `MODEL=flashnext`, verified end-to-end on frwk-bsd
-(loads, serves, `spec_decode` counters non-zero):
-
-```sh
-MODEL=flashnext ./llmsrv.sh
+```
+E llama_init_from_model: failed to initialize the context:
+    qwen4exp requires ctx_other to be set (this warning is normal during ...)
+W operator(): failed to measure the memory of the extra model, fitting without it
 ```
 
-The slot forces `LLAMA_DIR=~/llama.cpp-mtp` (mainline cannot do qwen4exp MTP),
-lowers `CTX` to 32768 unless the caller set it explicitly, warns above 65536,
-pins `--spec-draft-n-max 2`, and refuses to start with a pointer to the build
-recipe if `~/llama.cpp-mtp` is missing. It is **not** the default and not a
-`USAGE=` alias — `qwen38-mtp` stays the default.
+They are expected. A start is fine if it reaches `model loaded`. Do not silence
+them by redirecting stderr — real load errors look similar at a glance.
+
+### DANGER: `gttsize=120000` panicked the Linux kernel
+
+```
+BUG: unable to handle page fault for address: 0000000000004008
+Oops: 0000 [#1] SMP NOPTI
+CPU: 17 UID: 1000 PID: 15762 Comm: llama-server  Kdump: loaded  Tainted: G W
+Hardware name: Framework Desktop (AMD Ryzen AI Max 300 Series)/FRANMFCP06, BIOS 03.06
+RIP: 0010:ttm_resource_manager_next+0x130/0x370 [ttm]
+kernel 7.0.0-31-generic
+```
+
+A near-NULL read inside **TTM's GTT resource-manager walk**, from `llama-server`,
+at 6144 s uptime with ~70 GB of GTT resident while running IQ4_XS + MTP. The host
+went down hard (ping answered; every userspace port closed). A userspace process
+must not be able to panic the kernel — this is an amdgpu/TTM bug. Dump preserved
+at `/var/crash/202609051020/` (299 KB dmesg + 69 GB memory image).
+
+frwk-linux was recovered by upgrading to Ubuntu 26.04.1 and now **boots and runs
+clean on the same kernel 7.0.0-31 with `gttsize=120000` still set**, so neither
+the kernel version nor the aperture alone is sufficient — the panic needed the
+~94 GB workload. IQ3_XXS peaks at ~54 GB of GTT and ran a full bench with **0 TTM
+faults**, comfortably inside the safe envelope.
+
+Notably **frwk-bsd also loads `ttm.ko`**, ran the identical IQ4_XS + MTP workload
+at the identical `gttsize=120000`, and served for over an hour with 0 faults — so
+a 120 GB aperture is not inherently unsafe; the fault is in the Linux TTM path.
+
+### Aperture and the "RAM consumed" numbers
+
+The hosts are the *same* machine (8 × 16 GB = 128 GB installed on both; FreeBSD's
+`hw.physmem` 136.6 GB vs Linux's `MemTotal` 122.8 GB is a measurement-basis plus
+`crashkernel=…128G-:4096M` difference, not less RAM). VRAM is 512 M on both, so
+**all weights live in GTT, which is system RAM mapped for the GPU**:
+
+| host                    | GTT aperture | observed while loaded | reading |
+|-------------------------|-------------:|----------------------:|---------|
+| frwk-linux (default)    |      65.9 GB |            **66.4 GB**| pinned at the ceiling — starved |
+| frwk-bsd                |     120000 MB|            **110 GB+**| allocated what the model wanted |
+| frwk-linux (gttsize set)|     120000 MB|              69.6 GB  | free to allocate past the old ceiling |
+
+`llama-server`'s own RSS is **0.5 GB** while GTT-used is 69.6 GB and `free`
+reports 67 GB used — GTT is billed to the *GPU driver*, not the process, so
+`htop` shows tens of GB with nothing to attribute them to. The aperture is not
+pre-reserved: with no server running frwk-bsd reports `11G Wired, 69G Free`
+despite `gttsize: 120000`. So frwk-bsd's larger figure was always the correct
+one, and `66.4 GB` sitting a hair above a 65.9 GB aperture is the entire IQ4_XS
+failure in one number.
+
+Linux config (frwk-bsd needs nothing — `hw.amdgpu.gttsize=120000` already):
+
+```sh
+# /etc/modprobe.d/amdgpu-gtt.conf      (CONFIG_DRM_AMDGPU=m, so modprobe.d is
+options amdgpu gttsize=120000          #  correct; needs a reboot to take)
+```
+
+Both hosts then log `amdgpu: 120000M of GTT memory ready` — **that dmesg line is
+the figure to quote.** `mem_info_gtt_total` says 125.8 GB and
+`llama-bench --list-devices` says 120512 MiB for the same aperture.
+
+### Method notes (learned the hard way, 2026-09-05)
+
+- **`bench_model.py`'s `PP t/s` is not a prefill rate.** It is
+  `prompt_tokens / ttft` (`bench_model.py:170`) — a TTFT derivative including
+  request overhead. It read frwk-bsd *ahead* (288 vs 259) while `llama-bench`
+  read it behind; that apparent contradiction is two different metrics, not a
+  discrepancy. Use `llama-bench pp4096` for prefill claims.
+- **Mesa `fp16: dot2` is a minor-version gate, not "Mesa 26".** frwk-bsd
+  (26.2.1) exposes `shaderMixedFloatDotProductFloat16AccFloat32` and takes
+  entirely different SPIR-V matmul/flash-attn shaders
+  (`device->dot2_f16`, `ggml-vulkan.cpp:6797`); frwk-linux on **26.0.8** still
+  reports `fp16: 1`. Worth ~3 % on frwk-bsd, and **not** the cause of any
+  cross-OS gap.
+- **This model loads slowly and logs nothing while doing it.** IQ3_XXS takes
+  tens of seconds; IQ4_XS took ~18 minutes at 98 % CPU with no output.
+  `llama-server` binds its port and answers **HTTP 503 long before init
+  completes**, so 503 proves only that the process is alive. Wait for 200 or for
+  process death — never infer failure from silence.
+- **After a kernel panic, the first console output you see is the *next* boot
+  failing, not the crash.** Scroll to the lowest timestamp; the `Comm:` and
+  `RIP:` lines on the original Oops name the culprit.
+- **Draft acceptance must come from `--metrics`, not the log.** Scrape
+  `llamacpp:spec_decode_num_{draft,accepted}_tokens_total` (and
+  `..._per_pos_total`). The server's log line ends with `mean len = N`, so a
+  naive `$NF` parse silently reports mean length as the acceptance ratio — which
+  is where an earlier "~1.8 tokens" figure in this document came from.
+
+### Harness changes (kept; all models benefit)
+
+`bench-all.sh` gained an 8th registry field (`ctx`) for per-slot `--ctx-size`
+(**server stages only** — `llama-bench` has no such flag and prints usage,
+reporting `crash` at every depth), sharded-GGUF support (pass shard `00001`,
+llama.cpp opens the rest), `--metrics` plus `spec_metrics()` so a dead draft head
+reads `0.00000` instead of passing as a merely-slow row, and a quant-column regex
+that handles `UD-IQ4_XS`-style names.
+
+`llmsrv.sh` gained `MODEL=flashnext`, verified end-to-end: it forces
+`LLAMA_DIR=~/llama.cpp-mtp`, lowers `CTX` to 32768 unless set explicitly, warns
+above 65536, pins `--spec-draft-n-max 2`, and refuses to start with the build
+recipe if the PR build is missing.

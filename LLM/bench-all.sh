@@ -82,10 +82,11 @@ qwen-mtp-q8  : models--havenoammo--Qwen3.6-27B-MTP-UD-GGUF      : Qwen3.6-27B-MT
 agents-a1-q4 : models--InternScience--Agents-A1-Q4_K_M-GGUF     : Agents-A1-Q4_K_M.gguf               : moe   : 0 : - : - : Agents-A1 Q4_K_M
 agents-a1-mtp: models--protoLabsAI--Agents-A1-MTP-GGUF          : Agents-A1-MTP-Q8_0.gguf             : moe   : 1 : - : - : Agents-A1-MTP Q8_0
 qwen38-mtp   : models--ggml-org--Qwen3.8-27B-GGUF               : Qwen3.8-27B-Q4_K_M.gguf             : dense : 1 : mtp-Qwen3.8-27B-Q4_0.gguf : - : Qwen3.8-27B Q4_K_M
+qwen38-mtp-q8: models--ggml-org--Qwen3.8-27B-GGUF               : Qwen3.8-27B-Q8_0.gguf               : dense : 1 : mtp-Qwen3.8-27B-Q8_0.gguf : - : Qwen3.8-27B Q8_0
 huihui-38-q8 : models--huihui-ai--Huihui-Qwen3.8-27B-abliterated-GGUF     : Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf            : dense : 0 : - : - : Huihui-Qwen3.8-27B-abl Q8_0
 huihui-36-q8 : models--huihui-ai--Huihui-Qwen3.6-27B-abliterated-MTP-GGUF : Huihui-Qwen3.6-27B-abliterated-ggml-model-Q8_0.gguf : dense : 1 : - : - : Huihui-Qwen3.6-27B-abl-MTP Q8_0
 flashnext-iq4: models--unsloth--Qwen3.8-Flash-Next-GGUF : UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf : moe : 1 : MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf : 16384 : Qwen3.8-Flash-Next UD-IQ4_XS
-flashnext-iq3: models--unsloth--Qwen3.8-Flash-Next-GGUF : UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf : moe : 1 : MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf : 65536 : Qwen3.8-Flash-Next UD-IQ3_XXS
+flashnext-iq3: models--unsloth--Qwen3.8-Flash-Next-GGUF : UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf : moe : 1 : MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf : 32768 : Qwen3.8-Flash-Next UD-IQ3_XXS
 '
 
 # Filter by ONLY= if set.

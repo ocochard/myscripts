@@ -36,9 +36,11 @@ Environment variables:
   USAGE=doc     Alias for MODEL=qwen38-q8 (spec-off fallback)
   MODEL=qwen38-mtp
                 DEFAULT. Qwen3.8-27B dense Q8_0 + Q8_0 sidecar MTP draft head
-                (ggml-org). Speculative decoding; acceptance UNMEASURED for
-                this Q8/Q8 pairing and the draft path is unverified on
-                FreeBSD/Mesa 26. See the slot comment before relying on it.
+                (ggml-org). Speculative decoding; MEASURED 2026-09-05 on
+                frwk-linux (Ubuntu 26.04, b10801): acceptance 0.504 with
+                mean accepted length 5.00 — MTP is worth 2.2x here
+                (7.6 -> 16.8 Total TPS at ~4 k). Draft path still unverified
+                on FreeBSD/Mesa 26. See the slot comment.
   MODEL=qwen38-q8
                 Qwen3.8-27B dense Q8_K_XL (unsloth), no MTP. Best
                 FreeBSD-source doc accuracy in the DaemonDocs quality bench,
@@ -183,8 +185,26 @@ case "${MODEL}" in
     # This is NOT the pairing benched on 2026-08-15. That run used the Q4
     # pair (Q4_K_M target + q4_0 head) and measured only ~34% draft
     # acceptance, which the bench attributed to the weak Q4/q4_0 match and
-    # named a higher-precision head as the fix. This slot is that fix; the
-    # acceptance number is therefore UNMEASURED, not ~34%.
+    # named a higher-precision head as the fix. This slot is that fix, and
+    # the fix WORKED — measured 2026-09-05 on frwk-linux (Ubuntu 26.04,
+    # b10801, registry slot `qwen38-mtp-q8`):
+    #
+    #   draft acceptance 0.504, mean accepted length 5.00
+    #   Total TPS @~4 k: 7.6 spec-off -> 16.8 with MTP N=5  (2.2x)
+    #
+    # Note acceptance (0.50) is LOWER than Flash-Next's 0.76 yet the speedup
+    # is much larger (2.2x vs ~1.3x), because this head lands ALL FIVE
+    # drafted tokens when it hits (len 5.00) while Flash-Next's lands exactly
+    # one. Length, not acceptance %, is what converts into throughput.
+    #
+    # Context for the default choice: at 16.8 Total TPS this slot is one of
+    # the SLOWEST recipes in benches.FrameWork-Desktop.md (agents-a1-mtp does
+    # 79/71). It is the default for QUALITY, not speed — it wins the
+    # DaemonDocs hallucination bench at 6.4 mean violations
+    # (benches.DaemonDocs-model-quality.md). That bench never tested
+    # agents-a1-mtp or flashnext, so whether a faster recipe is also more
+    # accurate is an OPEN question. Use USAGE=coding (agents-a1-mtp) when you
+    # want speed.
     #
     # STILL UNVERIFIED on FreeBSD/Mesa 26: the same bench recorded a RADV
     # GPUVM fault in the draft-mtp dispatch path — `[gfxhub] page fault`,
@@ -253,6 +273,34 @@ case "${MODEL}" in
     # `ring comp_1.1.0 timeout`). N=2 and N=4 ran clean. Watch the draft
     # acceptance on cold start as with qwen38-mtp: 0.00000 means a dead head —
     # restart, or drop --spec-type for a spec-off run.
+    #
+    # DO NOT substitute IQ4_XS (93.7 GB) here to "get more quality". On
+    # frwk-linux that combination needs amdgpu.gttsize raised well past the
+    # 65.9 GB default, and doing so KERNEL-PANICKED the host on 7.0.0-31:
+    #   BUG: unable to handle page fault for address: 0000000000004008
+    #   RIP: ttm_resource_manager_next+0x130/0x370 [ttm]  Comm: llama-server
+    # (see benches.FrameWork-Desktop.md, "gttsize=120000 panicked the Linux
+    # kernel"). frwk-bsd survives the same workload but takes ~18 min to load
+    # and prefills far slower. IQ3_XXS is both safer and faster.
+    #
+    # EXPECTED NOISE on every start of this slot — not an error, do not chase:
+    #   E llama_init_from_model: failed to initialize the context:
+    #     qwen4exp requires ctx_other to be set (this warning is normal ...)
+    #   W operator(): failed to measure the memory of the extra model,
+    #     fitting without it: failed to create llama_context from model
+    # llama.cpp's memory fitter probe-loads the DRAFT model to budget for both
+    # models competing for memory (common/fit.cpp add_extra_memory). qwen4exp
+    # throws there (src/llama-context.cpp:158), the probe is caught at
+    # common/fit.cpp:226, and the main model is then fitted ALONE. The server
+    # loads and serves correctly afterwards; the E-line is llama.cpp logging
+    # its own internal throw before catching it.
+    #
+    # The real consequence: because the draft head's memory is never counted,
+    # nothing stops you from picking a main quant that leaves no room for it —
+    # which is exactly how IQ4_XS fails (ErrorDeviceLost at draft load). That
+    # is why this slot pins IQ3_XXS and CTX rather than trusting the fitter.
+    # Do not silence this by redirecting stderr: it would hide real load errors
+    # (ErrorDeviceLost, missing tensors) that look similar at a glance.
     LLAMA_DIR="${HOME}/llama.cpp-mtp"
     if [ -z "${CTX_EXPLICIT}" ]; then
       CTX=32768
@@ -284,6 +332,13 @@ case "${MODEL}" in
       echo "MTP is the point of this slot; fetch the head or pick another MODEL" >&2
       exit 1
     fi
+    # Pre-announce the fitter noise so it does not read as a failed start.
+    echo "note: two lines below are EXPECTED on this slot and harmless —" >&2
+    echo "  'qwen4exp requires ctx_other to be set' (E) and" >&2
+    echo "  'failed to measure the memory of the extra model' (W)." >&2
+    echo "  llama.cpp probe-loads the draft head to size memory, qwen4exp does" >&2
+    echo "  not support that probe, so it fits the main model alone and carries" >&2
+    echo "  on. Startup is OK if you then see 'model loaded'." >&2
     # N=2 is the measured peak on BOTH hosts, and there is no cliff (N=16 still
     # beats spec-off) — unlike the agents-a1-mtp MoE cliff at N>=8. Mean accepted
     # draft length is only ~1.8 tokens, so a larger N buys nothing here.
