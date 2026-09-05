@@ -117,6 +117,35 @@ The MoE's headline weakness is **inventing function names** (5.2/draft) and
 hallucination" failure DaemonDocs was built to catch. The dense model roughly
 halves both.
 
+## Worth adding: a fixed sampler seed
+
+`score_models.py` sets `api_base` / `model_id` / `api_key` in `MODEL_CONFIG`
+but **no seed**, so `llama-server` defaults to `-1` — a fresh random seed per
+request. At the production sampling used here (`temp 0.6, top_p 0.95,
+top_k 20`) that is a large part of why "rep-to-rep variance is large
+(single-chapter scores swing 4→20)".
+
+Measured on this hardware (see `fbsd-quality/README.md`), with MTP **on** —
+4 seeded vs 4 unseeded generations of one prompt, compared by pairwise text
+similarity:
+
+| | mean similarity | min | identical pairs |
+|---|---:|---:|---:|
+| **seeded** | **0.884** | 0.768 | **3 of 6** |
+| unseeded | 0.433 | 0.340 | 0 of 6 |
+
+A fixed seed roughly doubles run-to-run similarity, so the same confidence
+needs fewer reps — directly useful for a bench that pays for 3 reps per
+(model, chapter) precisely because of this variance. Full determinism is not
+achievable while MTP is enabled (speculative accept/reject varies with batch
+composition), and MTP must stay on because the bench also reports speed.
+
+Note the speed benches (`bench-all.sh`, `bench_model.py`,
+`bench-agents-a1.sh`) do **not** need this: `bench_model.py` already runs at
+`temperature=0.0` (greedy — no sampling RNG to seed) and already discards a
+warm-up run, and they measure tokens/second at a fixed token count rather than
+which tokens are produced. `llama-bench` generates no real text at all.
+
 ## Caveats (read before trusting the exact numbers)
 
 This run was **stopped early by design** once the ranking was unambiguous and

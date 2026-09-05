@@ -254,18 +254,27 @@ case "${MODEL}" in
     #    driver unable to fund a second model's command submission
     #    (`radv/amdgpu: Not enough memory for command submission` →
     #    ErrorDeviceLost). Q8_0 is 192 GB and never fits 128 GB UMA.
-    # 3. CTX must stay low. 32768 is proven with MTP on; 65536 is proven
-    #    spec-off (benched: holds a real 32 919-token prompt on both hosts).
-    #    The script-wide 131072 default does NOT fit here, so this slot
-    #    overrides CTX unless the caller set it explicitly.
-    #    CTX=65536 with MTP on is BENCHED GOOD on both hosts (loads clean;
-    #    29.6/27.6 Total TPS at ~32 k vs 21.8/20.6 spec-off — the MTP gain
-    #    actually widens with depth, +36 %/+34 %, and acceptance holds at
-    #    0.77-0.79). The cost is cold TTFT only: ~118 s (FreeBSD) / ~135 s
-    #    (Ubuntu) to first token at ~32 k of filled depth, since prefill runs
-    #    at ~280 t/s and MTP does not accelerate prefill. Raise CTX to 65536
-    #    when you work at depth across many warm turns; keep 32768 for
-    #    interactive use where cold TTFT dominates.
+    # 3. CTX: the full 131072 FITS, with MTP on. Verified 2026-09-05 on
+    #    frwk-linux — `n_ctx_slot = 131072`, `model loaded`, no
+    #    ErrorDeviceLost. So this slot uses the script-wide default and does
+    #    NOT clamp it.
+    #
+    #    HISTORY, because the old value was wrong and may be in your notes:
+    #    this slot previously forced CTX=32768 and the comment claimed "CTX
+    #    must stay low". That number was derived for UD-IQ4_XS (93.7 GB), where
+    #    a 131072 KV really does overcommit, and it was carried over to
+    #    IQ3_XXS (82 GB) without being re-derived. The follow-up probe only
+    #    tested 32768 and 65536, so "65536 is proven" was recorded as if it
+    #    were a ceiling when it was merely the largest value tried. It is not
+    #    a ceiling: 131072 loads.
+    #
+    #    Benched depth behaviour (unchanged, still useful): at ~32 k of filled
+    #    depth MTP gives 29.6/27.6 Total TPS vs 21.8/20.6 spec-off — the gain
+    #    WIDENS with depth (+36 %/+34 %) and acceptance holds at 0.77-0.79.
+    #    A large ctx costs nothing until you fill it; filling it costs cold
+    #    TTFT ~118 s (FreeBSD) / ~135 s (Ubuntu) at ~32 k, because prefill runs
+    #    ~280 t/s and MTP does not accelerate prefill. Lower CTX only if cold
+    #    TTFT matters more to you than depth.
     #
     # FreeBSD caveat: MTP is flaky here, NOT unusable. 2 of 6 N values faulted
     # in the bench with the Mesa-26 RADV compute-write fingerprint already
@@ -298,15 +307,16 @@ case "${MODEL}" in
     # The real consequence: because the draft head's memory is never counted,
     # nothing stops you from picking a main quant that leaves no room for it —
     # which is exactly how IQ4_XS fails (ErrorDeviceLost at draft load). That
-    # is why this slot pins IQ3_XXS and CTX rather than trusting the fitter.
+    # is why this slot pins IQ3_XXS rather than trusting the fitter.
     # Do not silence this by redirecting stderr: it would hide real load errors
     # (ErrorDeviceLost, missing tensors) that look similar at a glance.
     LLAMA_DIR="${HOME}/llama.cpp-mtp"
-    if [ -z "${CTX_EXPLICIT}" ]; then
-      CTX=32768
-    elif [ "${CTX}" -gt 65536 ] 2>/dev/null; then
-      echo "warning: CTX=${CTX} is above what IQ3_XXS was proven to load" >&2
-      echo "  (32768 with MTP on, 65536 spec-off); expect ErrorDeviceLost" >&2
+    # No CTX clamp: 131072 with MTP on is verified to load on this quant (see
+    # note 3 above). Only warn past the model's native 262144, which would
+    # need RoPE scaling.
+    if [ "${CTX}" -gt 262144 ] 2>/dev/null; then
+      echo "warning: CTX=${CTX} exceeds the model's native 262144 context;" >&2
+      echo "  that needs RoPE/YaRN scaling and is untested here" >&2
     fi
     hf_repo="unsloth/Qwen3.8-Flash-Next-GGUF"
     # Sharded: pass shard 00001 (the tensor-free header); llama.cpp opens 2/3.
@@ -397,9 +407,15 @@ esac
 # --kv-unified                   : no effect for single-client (parallel slots only)
 # --cache-reuse N                : Qwen3 uses M-RoPE; KV-shifting unsupported
 # --batch-size 4096 / --ub 1024  : ~3% slower than 2048/512 on this build
-# --ctx-size > 131072            : Qwen3.8-27B base max is 131072; going past it
-#                                  needs RoPE scaling. Cold prefill is the cost:
-#                                  ~40 s at 32k, ~5 min at 128k on Strix Halo —
+# --ctx-size > 262144            : the Qwen3.8-27B GGUF declares
+#                                  `Context Length: 262144`, so 262144 is
+#                                  NATIVE and needs no RoPE scaling. (An
+#                                  earlier version of this note claimed the
+#                                  base max was 131072 — that was wrong; read
+#                                  it off the GGUF, not from memory.) Cold
+#                                  prefill is the real cost: ~40 s at 32k,
+#                                  ~5 min at 128k on Strix Halo, and KV
+#                                  reservation scales linearly with ctx —
 #                                  see benches.FrameWork-Desktop.md.
 # --parallel > 1                 : slots divide ctx; single-client gets full ctx with -p 1
 

@@ -64,7 +64,7 @@ formatted `frwk-bsd / frwk-linux`.
 | `moe-q8`             | Qwen3.6-35B-A3B Q8_K_XL         |            44 / 45      |            39 / 40       | Plain Q8. `USAGE=doc` alias.                 |
 | `mtp`                | Qwen3.6-27B-MTP Q8_K_XL + N=5   |            16 / 17      |            15 / 15       | Dense MTP: 2.5× vs off, still ~5× slower decode than MoE. |
 | `dense`              | Qwen3.6-27B Q4_K_XL             |            12 / 12      |            11 / 11       | Highest quality per token; slow.             |
-| `flashnext`          | Qwen3.8-Flash-Next UD-IQ3_XXS + MTP N=2 |    **37 / 35**  |          **30 / 28**     | 125B `qwen4exp`, 82 GB. MTP works at both depths (accept 0.76-0.80); gain *widens* with depth. 32 k needs `CTX=65536` and ~2 min cold TTFT. Needs unmerged PR #28243; frwk-bsd MTP flaky (Mesa 26). |
+| `flashnext`          | Qwen3.8-Flash-Next UD-IQ3_XXS + MTP N=2 |    **37 / 35**  |          **30 / 28**     | 125B `qwen4exp`, 82 GB. MTP works at both depths (accept 0.76-0.80); gain *widens* with depth. Full `CTX=131072` fits with MTP on (verified 2026-09-05); ~2 min cold TTFT at ~32 k filled. Needs unmerged PR #28243; frwk-bsd MTP flaky (Mesa 26). |
 | _(no slot)_          | Qwen3.8-Flash-Next UD-IQ4_XS    |          n/a            |            n/a           | 93.7 GB. Loads only with a raised GTT aperture, ~18 min to load, acceptance *worse* (0.68). On Linux that aperture panicked the kernel. Use IQ3_XXS. |
 
 ★ = current default in `LLM/llmsrv.sh`. `USAGE=coding` → `agents-a1-mtp`;
@@ -1198,6 +1198,8 @@ reads `0.00000` instead of passing as a merely-slow row, and a quant-column rege
 that handles `UD-IQ4_XS`-style names.
 
 `llmsrv.sh` gained `MODEL=flashnext`, verified end-to-end: it forces
-`LLAMA_DIR=~/llama.cpp-mtp`, lowers `CTX` to 32768 unless set explicitly, warns
-above 65536, pins `--spec-draft-n-max 2`, and refuses to start with the build
-recipe if the PR build is missing.
+`LLAMA_DIR=~/llama.cpp-mtp`, uses the full `CTX=131072` (verified to load with
+MTP on — an earlier clamp to 32768 was carried over from IQ4_XS and was never
+a real limit for this quant), warns past the model's native 262144, pins
+`--spec-draft-n-max 2`, and refuses to start with the build recipe if the PR
+build is missing.

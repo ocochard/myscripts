@@ -1,0 +1,15 @@
+# fbsd-quality harness deps. run.sh installs these automatically into
+# .venv (created with --system-site-packages); no manual step needed.
+#
+# Prefer FreeBSD packages where they exist — they are built and tested against
+# this OS — and let pip fill only the gaps:
+#
+#   pkg install py312-anthropic      # native Anthropic client (installed here)
+#   pkg install py312-openai         # if you'd rather not pip it
+#
+# smolagents is not in pkg, so it comes from pip.
+smolagents>=1.0
+
+# Only needed if pkg's versions are absent; run.sh prints which copy is in use.
+openai>=1.40
+anthropic>=0.40
