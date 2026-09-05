@@ -22,12 +22,23 @@
 #      writes `allow_lazy_installs: false` into the default config.yaml,
 #      not True as on Linux/macOS.
 #
-# The test does NOT need an LLM API key: skills-list is offline, the
-# gateway can start without ever making an outbound call, and the lazy-
-# install check inspects config only.  Actual LLM round-trip is a
-# separate concern.
+# Steps 1-4 do NOT need an LLM API key: skills-list is offline, the gateway
+# can start without ever making an outbound call, and the lazy-install check
+# inspects config only.
+#
+# Step 5 adds two real LLM round-trips, one per client stack, because a bug
+# in one is invisible to the other:
+#
+#   5a. OpenAI-compatible path (`--provider custom`) against a local
+#       llama.cpp server.  FAILs if the server's advertised n_ctx is below
+#       hermes's floor -- see HERMES_MIN_CTX.
+#
+#   5b. Anthropic Messages path (`--provider anthropic`).  SKIPped unless
+#       ANTHROPIC_BASE_URL is set and reachable.
 #
 # Usage:  sh hermes-agent_test.sh
+#         ANTHROPIC_BASE_URL=http://127.0.0.1:20000/proxy/<name>/ \
+#             sh hermes-agent_test.sh
 #
 # Runs as normal user; the script sudo's for pkg add/delete + rc.d.
 # Cleans up (pkg delete, sysrc -x, /etc/rc.conf revert) on any exit.
@@ -47,6 +58,20 @@ PKGDIR=/usr/local/poudriere/data/packages/${JAIL}-${TREE}/.latest/All
 # a name that goes stale when the server swaps models.
 LLAMA_URL=${LLAMA_URL:-http://192.168.100.8:8080}
 LLAMA_MODEL=${LLAMA_MODEL:-}
+
+# hermes >= 0.21 refuses any model advertising a context window below this
+# floor, before it issues a single request.  Kept as a variable so a future
+# upstream change is a one-line edit.
+HERMES_MIN_CTX=${HERMES_MIN_CTX:-64000}
+
+# Anthropic-Messages backend for the round-trip check (step 5b).  The
+# OpenAI-compatible path (step 5a) cannot reach agent/anthropic_adapter.py,
+# so a bug there is structurally invisible to it -- that is exactly how the
+# anthropic 1.x httpx2 breakage shipped unnoticed in 0.17.0.  Unset by
+# default: the step SKIPs unless ANTHROPIC_BASE_URL names a reachable
+# endpoint, so the test stays useful without one.
+ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-5}
 
 # --- OS gate ---------------------------------------------------------------
 if [ "$(uname -s)" != "FreeBSD" ]; then
@@ -225,6 +250,27 @@ print(m[0].get("id") or m[0].get("name") or "") if m else print("")' 2>/dev/null
 		printf 'SKIP  LLM round-trip: no model reported by %s/v1/models\n' \
 			"${LLAMA_URL}"
 	else
+	# Assert the server's context window meets hermes's floor BEFORE the
+	# round-trip.  hermes does enforce this itself, but it reports the
+	# refusal as a generic non-zero exit buried in 40 lines of agent
+	# output; checking here turns that into a one-line actionable FAIL.
+	# This is a FAIL, not a SKIP: a server launched with too small a -c is
+	# a misconfiguration that silently disables the only test step which
+	# actually exercises the model, and a silent SKIP would let the suite
+	# report success while never talking to an LLM at all.
+	LLAMA_NCTX=$(curl -sf -m 5 "${LLAMA_URL}/props" 2>/dev/null | \
+		python3 -c 'import sys,json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print(0); raise SystemExit
+print(d.get("default_generation_settings", {}).get("n_ctx") or d.get("n_ctx") or 0)' \
+		2>/dev/null)
+	: "${LLAMA_NCTX:=0}"
+	if [ "${LLAMA_NCTX}" -gt 0 ] && [ "${LLAMA_NCTX}" -lt "${HERMES_MIN_CTX}" ]; then
+		fail "$(printf '%s serves n_ctx=%s but hermes requires >=%s; restart llama-server with -c %s' \
+			"${LLAMA_URL}" "${LLAMA_NCTX}" "${HERMES_MIN_CTX}" "${HERMES_MIN_CTX}")"
+	fi
 	LLM_HOME=$(mktemp -d /tmp/hermes-llm.XXXXXX)
 	LLM_OUT="${LLM_HOME}/out.txt"
 	set +e
@@ -256,6 +302,64 @@ print(m[0].get("id") or m[0].get("name") or "") if m else print("")' 2>/dev/null
 	pass "hermes LLM round-trip via custom provider ($(wc -c <"${LLM_OUT}" | tr -d ' ') bytes from ${LLAMA_MODEL})"
 	rm -rf "${LLM_HOME}"
 	fi
+fi
+
+# --- 5b. LLM round-trip via the Anthropic Messages path -------------------
+# Separate step because it exercises a different client stack:
+# agent/anthropic_adapter.py builds an anthropic.Anthropic client, whereas
+# step 5a goes through the OpenAI SDK.  Objects crossing the SDK boundary
+# (Timeout, http_client) must come from the httpx flavour that SDK is built
+# against -- httpx for anthropic 0.x, httpx2 for 1.x -- and getting it wrong
+# fails at request time with "Invalid `timeout` argument".  FreeBSD's
+# misc/py-anthropic moves independently of upstream's pin, so this needs
+# permanent coverage rather than a one-off manual check.
+#
+# SKIPs unless ANTHROPIC_BASE_URL is set and reachable, e.g.:
+#   ANTHROPIC_BASE_URL=http://127.0.0.1:20000/proxy/<name>/ sh hermes-agent_test.sh
+if [ -z "${ANTHROPIC_BASE_URL}" ]; then
+	printf 'SKIP  Anthropic round-trip: ANTHROPIC_BASE_URL not set\n'
+elif ! curl -sf -m 5 -o /dev/null -X POST "${ANTHROPIC_BASE_URL%/}/v1/messages" \
+		-H 'content-type: application/json' \
+		-H 'anthropic-version: 2023-06-01' \
+		-d "$(printf '{"model":"%s","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}' \
+			"${ANTHROPIC_MODEL}")" 2>/dev/null; then
+	printf 'SKIP  Anthropic round-trip: %s not reachable\n' "${ANTHROPIC_BASE_URL}"
+else
+	ANT_HOME=$(mktemp -d /tmp/hermes-ant.XXXXXX)
+	ANT_OUT="${ANT_HOME}/out.txt"
+	set +e
+	env \
+		HOME="${ANT_HOME}" \
+		ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL}" \
+		ANTHROPIC_API_KEY="sk-local-anthropic" \
+		timeout 120 hermes --provider anthropic -m "${ANTHROPIC_MODEL}" \
+			--yolo --cli --safe-mode \
+			-z "Reply with the single word PONG." \
+		>"${ANT_OUT}" 2>&1
+	rc=$?
+	set -e
+	if [ "${rc}" -ne 0 ]; then
+		printf '%s\n' "$(sed -n '1,40p' "${ANT_OUT}")"
+		rm -rf "${ANT_HOME}"
+		fail "hermes Anthropic round-trip exited ${rc}"
+	fi
+	# An httpx/httpx2 mismatch surfaces as a runtime message rather than a
+	# non-zero exit in some code paths, so match it explicitly on top of
+	# the generic provider-error grep.
+	if grep -qiE 'httpx2|httpx\.Timeout|invalid .?timeout' "${ANT_OUT}"; then
+		printf '%s\n' "$(sed -n '1,40p' "${ANT_OUT}")"
+		rm -rf "${ANT_HOME}"
+		fail "hermes Anthropic round-trip hit an httpx/httpx2 SDK mismatch"
+	fi
+	if grep -qiE 'error|econnrefused|unauthorized|api key|not found|traceback' \
+		"${ANT_OUT}"; then
+		printf '%s\n' "$(sed -n '1,40p' "${ANT_OUT}")"
+		rm -rf "${ANT_HOME}"
+		fail "hermes Anthropic round-trip surfaced a provider error"
+	fi
+	[ -s "${ANT_OUT}" ] || { rm -rf "${ANT_HOME}"; fail "hermes Anthropic round-trip produced no output"; }
+	pass "hermes LLM round-trip via anthropic provider ($(wc -c <"${ANT_OUT}" | tr -d ' ') bytes from ${ANTHROPIC_MODEL})"
+	rm -rf "${ANT_HOME}"
 fi
 
 # --- 6. Uninstall (cleanup handled by trap, but assert the pkg is clean) --
