@@ -461,8 +461,20 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
             content: Full file contents.
         """
         full = os.path.realpath(os.path.join(workdir, path))
-        if not full.startswith(os.path.realpath(workdir)):
-            return "ERROR: path escapes the working directory"
+        # On a kernel-patching tier the deliverable IS an edit to the source
+        # tree, so the tree is a legitimate write target alongside the
+        # workdir. Without this the model cannot do the task at all: in the
+        # v7 calibration all three write_file calls to
+        # sys/fs/unionfs/union_vnops.c were rejected as "path escapes the
+        # working directory", and its `patch` fallback was then refused by the
+        # _writes_into_src tripwire, so it was structurally unable to patch
+        # anything and was interrupted for making no progress.
+        allowed = [os.path.realpath(workdir)]
+        if _kernel_tier:
+            allowed.append(os.path.realpath(src_root))
+        if not any(full.startswith(a) for a in allowed):
+            return ("ERROR: path escapes the working directory"
+                    + (" and the source tree" if _kernel_tier else ""))
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w") as fh:
             fh.write(content)
@@ -600,7 +612,9 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
         # would corrupt the user's tree and contaminate later repetitions.
         # This is a guard-rail, not a sandbox — see check_src_clean(), which
         # detects mutation after the fact regardless of what slipped through.
-        if _writes_into_src(command, src_root):
+        # The tripwire protects tiers 1-5, where touching the tree is always a
+        # mistake. On a kernel-patching tier it is the POINT, so it is off.
+        if not _kernel_tier and _writes_into_src(command, src_root):
             return (f"ERROR: refusing to run a command that writes into the "
                     f"source tree ({src_root}). Build in your working "
                     f"directory instead; the tree is for reading only.")
@@ -1308,8 +1322,15 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     # verify the agent did not modify it. A dirtied tree invalidates every
     # later repetition, so this is recorded loudly rather than ignored.
     # src_baseline excludes dirt that was already there before the run — see
-    # check_src_clean().
-    rec["src_dirtied"] = check_src_clean(src_root, src_baseline)
+    # check_src_clean(). On a kernel-patching tier a modified tree is the
+    # DELIVERABLE, not damage, so record it as the model's diff instead of
+    # flagging it: reporting "SOURCE TREE MODIFIED" for the patch the task
+    # asked for would be the same cried-wolf problem the baseline fixed.
+    if task.get("needs_kernel_build"):
+        rec["src_patched"] = check_src_clean(src_root, src_baseline)
+        rec["src_dirtied"] = None
+    else:
+        rec["src_dirtied"] = check_src_clean(src_root, src_baseline)
 
     # The bug-fix tier patches the SOURCE TREE, not the workdir: there is no
     # .c and no Makefile for builder.build() to find, so it takes its own
