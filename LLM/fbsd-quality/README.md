@@ -18,6 +18,12 @@ facilities with **no Linux analogue**, so Linux muscle memory is useless:
 | 1 | `EVENTHANDLER` (`process_exit`) | FreeBSD-only hook pattern; needs the `exitlist_fn` signature and `EVENTHANDLER_REGISTER` arity from `sys/sys/eventhandler.h` |
 | 2 | `osd` — Object-Specific Data | `sys/kern/kern_osd.c` is 457 lines with essentially no tutorials; needs `osd_register`/`osd_set`/`osd_get` semantics |
 | 3 | `subr_unit` unit allocator | `new_unrhdr`/`alloc_unr`/`free_unr`; obscure, self-contained, and the allocation sequence is deterministic so it is trivially verifiable |
+| 4 | `hhook` — helper hook points | the module must **both publish a hook point and consume it**, i.e. write the two halves of an API that in-tree are written by different subsystems (`hhook_head_register` by TCP/socket code, `hhook_add_hook` by a Khelp module). Also needs a struct filled in correctly and a constant found in a header the prompt does not name. |
+| 5 | `epoch` — deferred reclamation | the only tier whose observable is **asynchronous**: `epoch_call()` defers to a grace period, so a model that reads it as "call this now" emits the two lines in the wrong order and fails on ordering alone. Also requires knowing that a *non*-preemptible epoch is needed for `in_epoch()` to report true. |
+| 6 | `release(7)` / `src.conf` trimming | opt-in, different in kind: a long-horizon build-engineering task scored on whether the image boots, not on a dmesg marker. |
+
+Tiers 1-3 are **saturated** — every model tested passes all three (see Results),
+so they no longer discriminate on pass/fail. Tiers 4-5 exist because of that.
 
 Deliberately **not** a hello-world module: that is ~15 lines and appears in
 every driver tutorial, so it measures recall rather than engineering.
@@ -39,8 +45,8 @@ and capable models all finish in 1-2. So every run records:
 ### Build time is measured, but not charged to the model
 
 `wall_s` covers the whole attempt, so it includes every `make(1)` the agent
-ran. That is fine for tiers 1-3 (a module builds in seconds) but would be
-actively misleading for the tier-4 image task, where a build can be minutes and
+ran. That is fine for tiers 1-5 (a module builds in seconds) but would be
+actively misleading for the tier-6 image task, where a build can be minutes and
 would swamp the number meant to describe the model.
 
 So `run_shell` accumulates its own elapsed time and the results carry all three:
@@ -127,7 +133,7 @@ host (3.1 GB tree, 2.1 GB of it `.git`):
 | `shallow` | **45 s, 1.3 GB** — `git clone --depth 1` | yes | yes |
 | `none` | 0 | no | yes |
 
-**`ro` is the right default**: tiers 1-3 only ever *read* the tree (the agent
+**`ro` is the right default**: tiers 1-5 only ever *read* the tree (the agent
 builds in its own workdir with `SYSDIR` pointing at it), so writability buys
 nothing and read-only makes mutation *impossible* rather than merely detected —
 which matters because the bench runs as root for bhyve.
@@ -307,12 +313,12 @@ A fair question, and the line is drawn deliberately:
   API. Finding those is the test. (An early draft of this harness had a
   hand-written hello-world module lying around as a "reference"; it was deleted
   precisely because it would have leaked the answer.)
-- **Tier 4 is the case to watch**, since it asks the model to do the same job as
+- **Tier 6 (the image task) is the case to watch**, since it asks the model to do the same job as
   `mkimage.sh`. Its prompt was checked against every trap discovered while
   writing that script — `/usr/obj`, `bsd.kmod.mk`, `SYSDIR`, `memstick`,
   `WITHOUT_*`, `GENERIC-NODEBUG`, `/rescue`, hardlinks, `nullfs`, `mdconfig` —
   and mentions **none** of them.
-- The one thing tier 4 *does* state is that a module must match the kernel's
+- The one thing tier 6 *does* state is that a module must match the kernel's
   `__FreeBSD_version`. That is stated on purpose: without it the task is unfair
   rather than hard, because a model could build a perfect image that fails for
   an invisible ABI reason.
@@ -372,7 +378,7 @@ KMOD=	exit_monitor
 
 Note `shell_s` is 0.3-0.8 s against 89-170 s of `model_s`: for these tiers the
 build is negligible, which is exactly why the two clocks are reported
-separately (it would be badly misleading for tier 4).
+separately (it would be badly misleading for tier 6).
 
 One caveat on t2, recorded in `tasks.py`: the model passed using
 `osd_thread_register()`/`osd_thread_set()` — the `OSD_THREAD` wrappers — where

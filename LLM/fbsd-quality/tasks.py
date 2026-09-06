@@ -69,7 +69,15 @@ working directory.""",
         # legitimate pass; but if the process type specifically matters,
         # tighten this by having the module also print something only the
         # process path can produce (e.g. the pid whose osd slot was set).
-        "marker_re": r"FBSDQ:osd:slot=\d+:roundtrip=0xdeadbeef",
+        # `0x(?:0x)?` tolerates a doubled prefix from printf("...=0x%p", v):
+        # %p sets sharpflag with no width (sys/kern/subr_prf.c:838) and that
+        # prepends its own "0x" (line 937). SCORING CHANGE, 2026-09-06: the
+        # Qwen3.8-27B frwk-linux run was scored wrong_output for printing
+        # roundtrip=0x0xdeadbeef. Its OSD logic was correct and the round-trip
+        # real; only the format string was off. Rejecting that measured printf
+        # pedantry rather than kernel knowledge, so it is now accepted — which
+        # means that one historical row would score differently today.
+        "marker_re": r"FBSDQ:osd:slot=\d+:roundtrip=0x(?:0x)?deadbeef",
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a facility called OSD ("object-specific data") that lets
@@ -135,6 +143,125 @@ Produce the C source and whatever build file is needed so that running `make`
 in your working directory produces a loadable `.ko`. Write all files into your
 working directory.""",
     },
+    {
+        "id": "t4-hhook",
+        "tier": 4,
+        "facility": "hhook (helper hook points)",
+        # WHY THIS IS HARDER THAN 1-3: the module must both PROVIDE a hook point
+        # and CONSUME it, so it has to understand two halves of the API that are
+        # normally written by different subsystems (hhook_head_register is
+        # called by TCP/socket code; hhook_add_hook by a khelp module).
+        #
+        # ANTI-CHEAT, verified against sys/kern/kern_hhook.c:120 —
+        #     hhk->hhk_func(hhh->hhh_type, hhh->hhh_id, hhk->hhk_udata,
+        #                   ctx_data, ...)
+        # the callback's type and id come from the HEAD THE KERNEL STORED, not
+        # from anything the module passes at call time. So printing them from
+        # inside the callback proves a real hhook_run_hooks() dispatch happened.
+        # Calling the function directly would mean hand-supplying all four
+        # values, and the udata pointer round-trip (0xfeedface) additionally
+        # proves the registration carried the module's own data through.
+        #
+        # Type 2 == HHOOK_TYPE_SOCKET in sys/sys/hhook.h. The task deliberately
+        # does NOT say that: finding the constant is part of the work. id=42 is
+        # arbitrary and chosen to not collide with anything in-tree.
+        # `0x(?:0x)?` tolerates a doubled prefix. In the kernel printf, %p sets
+        # sharpflag when no width is given (sys/kern/subr_prf.c:838) and that
+        # prepends its own "0x" (line 937), so the natural
+        #     printf("...udata=0x%p...", udata)
+        # emits udata=0x0xfeedface. That is a format slip, not a kernel-API
+        # error — the pointer value is right and the hhook dispatch really
+        # happened — and this bench measures kernel knowledge, not printf
+        # pedantry. A local model already lost t2 to exactly this.
+        "marker_re": r"FBSDQ:hhook:type=2:id=42:udata=0x(?:0x)?feedface:ran=1",
+        "prompt": """Write a loadable FreeBSD kernel module.
+
+The FreeBSD kernel has a "helper hook" facility that lets one subsystem publish
+a named hook point which other code can then attach callback functions to. It
+is the mechanism the Khelp framework is built on.
+
+Requirements, all performed when the module loads:
+- Register a new hook point of the SOCKET hook type, with hook id 42, that is
+  not virtualised (not per-vnet).
+- Attach one callback function to that hook point, passing the pointer value
+  0xfeedface as the callback's private data.
+- Invoke the hook point so your callback actually runs.
+- From INSIDE the callback, print exactly one line to the kernel message
+  buffer, using the hook type and hook id the callback is handed and the
+  private-data pointer it receives:
+
+      FBSDQ:hhook:type=<type>:id=<id>:udata=0x<pointer in lowercase hex>:ran=1
+
+- Detach the callback and deregister the hook point when the module unloads, so
+  load/unload/reload does not panic the machine.
+
+You are writing against the FreeBSD source tree at /usr/src. Read the tree for
+the hook-type constants, the registration and invocation functions, the
+callback's exact signature, and the struct you must fill in to attach a
+callback — do not guess any of them.
+
+Produce the C source and whatever build file is needed so that running `make`
+in your working directory produces a loadable `.ko`. Write all files into your
+working directory.""",
+    },
+    {
+        "id": "t5-epoch",
+        "tier": 5,
+        "facility": "epoch (deferred reclamation)",
+        # WHY THIS IS THE HARDEST TIER: it is the only task whose observable is
+        # produced ASYNCHRONOUSLY. epoch_call() defers the callback to a grace
+        # period, so the module must wait for it rather than print inline — and
+        # a model that treats epoch_call() as "call this now" produces the two
+        # lines in the wrong order and fails on ordering alone.
+        #
+        # ANTI-CHEAT: in_epoch() reads curthread's epoch record
+        # (sys/kern/subr_epoch.c:938), so inside=1 cannot be produced by a
+        # global flag. Note the epoch must be NON-preemptible: the preempt path
+        # (in_epoch_verbose_preempt) returns 0 when THREAD_CAN_SLEEP(), which
+        # would make a correct module print inside=0. The prompt therefore says
+        # "does not allow sleeping", which is the observable property rather
+        # than the flag name.
+        #
+        # The two lines must appear in this order; the runner greps for the
+        # second, which cannot be reached until the grace period elapses.
+        "marker_re": r"FBSDQ:epoch:inside=1\b[\s\S]*FBSDQ:epoch:reclaimed=1",
+        "prompt": """Write a loadable FreeBSD kernel module.
+
+The FreeBSD kernel has an epoch-based reclamation facility: readers enter a
+short section, and memory that readers might still be looking at is freed only
+after every reader that could see it has finished.
+
+Requirements, all performed when the module loads:
+- Create your own epoch that does NOT allow a reader to sleep while inside it.
+- Enter a reader section, and while inside it ask the kernel whether the
+  current thread really is inside that epoch. Print exactly one line with the
+  answer as 1 or 0:
+
+      FBSDQ:epoch:inside=<1 or 0>
+
+- Leave the reader section.
+- Allocate a small object, then schedule it for DEFERRED reclamation via the
+  epoch facility, so that a callback of yours runs once the grace period has
+  passed. Do not free it directly.
+- From INSIDE that deferred callback, free the object and print exactly one
+  line:
+
+      FBSDQ:epoch:reclaimed=1
+
+- Make sure the deferred callback has actually run before the module finishes
+  loading, so both lines are in the message buffer in the order shown above.
+- Destroy the epoch when the module unloads, so load/unload/reload does not
+  panic the machine.
+
+You are writing against the FreeBSD source tree at /usr/src. Read the tree for
+the epoch creation flags, the reader-section calls, the deferred-call function,
+its callback signature, and how a callback recovers the object it was given —
+do not guess any of them.
+
+Produce the C source and whatever build file is needed so that running `make`
+in your working directory produces a loadable `.ko`. Write all files into your
+working directory.""",
+    },
 ]
 
 
@@ -156,10 +283,13 @@ working directory.""",
 # presence in training data.
 #
 # NOTE the harness does NOT depend on this succeeding — mkimage.sh builds the
-# bench guest deterministically. Tier 4 asks the model to do the same job.
+# bench guest deterministically. This tier asks the model to do the same job.
 IMAGE_TASK = {
-    "id": "t4-diskimage",
-    "tier": 4,
+    # Tier 6, above the kernel-API ladder (1-5), because it is a different KIND
+    # of task and because tier_reached is max(tier) over passed tasks — two
+    # tasks sharing a tier number would make that metric ambiguous.
+    "id": "t6-diskimage",
+    "tier": 6,
     "facility": "release(7) / src.conf build trimming",
     # Scored by the harness, not a dmesg marker: does the produced image boot
     # in bhyve and reach a shell? See bench.py verify_image().
