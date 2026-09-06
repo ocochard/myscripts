@@ -20,10 +20,10 @@ facilities with **no Linux analogue**, so Linux muscle memory is useless:
 | 3 | `subr_unit` unit allocator | `new_unrhdr`/`alloc_unr`/`free_unr`; obscure, self-contained, and the allocation sequence is deterministic so it is trivially verifiable |
 | 4 | `hhook` — helper hook points | the module must **both publish a hook point and consume it**, i.e. write the two halves of an API that in-tree are written by different subsystems (`hhook_head_register` by TCP/socket code, `hhook_add_hook` by a Khelp module). Also needs a struct filled in correctly and a constant found in a header the prompt does not name. |
 | 5 | `epoch` — deferred reclamation | the only tier whose observable is **asynchronous**: `epoch_call()` defers to a grace period, so a model that reads it as "call this now" emits the two lines in the wrong order and fails on ordering alone. Also requires knowing that a *non*-preemptible epoch is needed for `in_epoch()` to report true. |
-| 6 | `release(7)` / `src.conf` trimming | opt-in, different in kind: a long-horizon build-engineering task scored on whether the image boots, not on a dmesg marker. |
+| 6 | **fix a real kernel bug** (`vfs_lookup_cross_mount` / unionfs lock recursion) | opt-in, and different in kind: diagnosis from evidence rather than API discovery. A script panics a test machine; the model must reproduce it, localise it, patch `sys/`, rebuild and show the panic gone — while a hidden regression it never sees proves the fix generalises. |
 
 Tiers 1-3 are **saturated** — every model tested passes all three (see Results),
-so they no longer discriminate on pass/fail. Tiers 4-5 exist because of that.
+so they no longer discriminate on pass/fail. Tiers 4-6 exist because of that.
 
 Deliberately **not** a hello-world module: that is ~15 lines and appears in
 every driver tutorial, so it measures recall rather than engineering.
@@ -46,7 +46,7 @@ and capable models all finish in 1-2. So every run records:
 
 `wall_s` covers the whole attempt, so it includes every `make(1)` the agent
 ran. That is fine for tiers 1-5 (a module builds in seconds) but would be
-actively misleading for the tier-6 image task, where a build can be minutes and
+actively misleading for tier 6, where each `buildkernel` is ~80 s and
 would swamp the number meant to describe the model.
 
 So `run_shell` accumulates its own elapsed time and the results carry all three:
@@ -128,15 +128,27 @@ host (3.1 GB tree, 2.1 GB of it `.git`):
 
 | `--src-mode` | cost per run | independent tree | writable |
 |---|---|---|---|
-| **`ro`** (default) | **~0 s, 0 bytes** — nullfs bind | no (shared) | **no** |
-| `zfs-clone` | ~0 s, ~0 bytes (CoW) | yes | yes |
+| **`auto`** (default) | as `zfs-clone`, else `ro` | when on ZFS | when on ZFS |
+| `zfs-clone` | **63 ms, ~0 bytes** (CoW) | yes | yes |
+| `ro` | ~0 s, 0 bytes — nullfs bind | no (shared) | **no** |
 | `shallow` | **45 s, 1.3 GB** — `git clone --depth 1` | yes | yes |
 | `none` | 0 | no | yes |
 
-**`ro` is the right default**: tiers 1-5 only ever *read* the tree (the agent
-builds in its own workdir with `SYSDIR` pointing at it), so writability buys
-nothing and read-only makes mutation *impossible* rather than merely detected —
-which matters because the bench runs as root for bhyve.
+**`auto` resolves to `zfs-clone` on ZFS and `ro` otherwise.** A CoW clone gives
+every tier an independent *writable* tree for 63 ms and ~0 bytes, which removes
+a class of harness bug: tier 6 needed two special cases (`write_file`'s workdir
+check and the `_writes_into_src` tripwire) purely because the default tree was
+read-only, and a model that cannot edit the tree cannot do that task at all.
+It also stops any tier contaminating another.
+
+`git clone` is deliberately **not** the uniform mechanism despite being the
+obvious one: same properties, ~700x the time, 1.3 GB per run landing in
+`wall_s`, it requires the tree to be a git repo, and the pinned tier-6 tree is
+shallow with a single commit.
+
+`ro` remains worth choosing explicitly: it is the only mode where mutation is
+*impossible* rather than merely detected after the fact, which matters because
+the bench runs as root for bhyve.
 
 Use `zfs-clone` when a run needs a **different revision** (e.g. stable-14 vs
 16-CURRENT) — that is the one case independence is genuinely useful.
@@ -545,3 +557,43 @@ logic, real round-trip, doubled prefix. t2/t4/t5 now accept `0x(?:0x)?`, still
 rejecting a triple prefix, wrong hook type, wrong id and a lost `udata`. That
 historical t2 row would score differently today; a rescore is in flight, and
 the 15/15 table above is as measured under the old marker.
+
+### Tier 6 — bug-fix tier, reference calibration (2026-09-06)
+
+`claude-opus-4-5` **PASSES**: 40 iters, 330 s model / 110 s shell, 13 046
+tok_out, and `src_patched` records `M sys/kern/vfs_lookup.c`.
+
+**It independently reproduced the reference patch** — same file, same function,
+same fix (`LK_CANRECURSE` after the shared->exclusive upgrade in
+`vfs_lookup_cross_mount()`) — from a panic message alone. The prompt is five
+lines and names no subsystem, file or symptom; the reproducer is bare commands.
+
+The trace shows the intended workflow, not a lucky guess: `test_kernel` twice
+(reproduce -> PANICKED, verify after patching -> completed), 34 `grep_src` and
+18 `read_file` calls in between, zero errors, no `run_shell` at all. It read
+the panic, localised to `union_vnops.c:2257`, then followed the lock path up
+into `vfs_lookup_cross_mount()` rather than patching where the panic fired.
+
+Scored behaviourally: it had to satisfy the hidden `regress-t6.sh` (5 cases,
+baked into the guest image, never visible to the agent), which the reference
+patch also passes and the unpatched control fails by panicking with no verdict.
+
+**Getting here took seven harness bugs, every one of which produced a wrong
+verdict rather than an error.** Recorded because they are the failure modes
+this kind of tier invites:
+
+| bug | symptom | why it was wrong |
+|---|---|---|
+| reproducer carried the reporter's comments | model read panic, file:line and the tmpfs/UFS table in step 1 | everything stripped from the prompt was sitting in the file handed over |
+| no-progress detector watched the workdir | interrupted at step 41 while correctly patching `sys/kern/` | a kernel tier's deliverable is a modified TREE |
+| unbooted VM reported as "completed" | model told its reproducer ran fine; never saw the panic | empty console scored as success |
+| `virtio-9p` attached unconditionally | bhyve refuses to start when the sharepath is missing, exits with zero console | root cause of the above |
+| `write_file` + `_writes_into_src` blocked tree writes | model structurally unable to patch anything | both guards are right for tiers 1-5, wrong here |
+| `tmpfs.ko` shipped though tmpfs is in GENERIC | `Module tmpfs failed to register: 17` on a console the model reads | alarming non-problem |
+| DDB tunables added to tidy panic teardown | guest went silent after the handshake, never ran its script | my own regression; reverted, root cause unestablished |
+
+Two of those were mine-fixing-mine, and one diagnosis (a send-timing race) was
+simply wrong — the 1.5 s pause it produced is kept because it is correct on its
+own terms, but labelled as not being the fix. The lesson worth carrying: on
+this tier a harness fault and a failed fix look identical from the outside, so
+every t6 verdict needs the console checked, not just the pass/fail.
