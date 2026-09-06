@@ -169,7 +169,16 @@ def build_env():
         # Belt and braces: the make knob stops bsd.*.mk routing the compiler
         # through ccache, and CCACHE_DISABLE stops ccache itself if something
         # invokes it directly anyway.
-        "WITH_CCACHE_BUILD": "no",
+        #
+        # It MUST be WITHOUT_CCACHE_BUILD=1, not WITH_CCACHE_BUILD=no. Read
+        # share/mk/bsd.mkopt.mk:110-120: for a default-no option, `WITH_X=no`
+        # is still *defined*, and with WITHOUT_X unset the .if takes the
+        # MK_X:=yes branch — so WITH_CCACHE_BUILD=no ENABLES ccache. The build
+        # even warns ("Use WITHOUT_CCACHE_BUILD=1 instead of
+        # WITH_CCACHE_BUILD=no") and a buildkernel run with the wrong spelling
+        # was observed still invoking /usr/local/bin/ccache. Only
+        # CCACHE_DISABLE saved it, which is exactly why both are set.
+        "WITHOUT_CCACHE_BUILD": "1",
         "CCACHE_DISABLE": "1",
     }
 
