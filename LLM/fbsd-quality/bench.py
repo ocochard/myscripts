@@ -109,9 +109,35 @@ def _writes_into_src(command, src_root):
     return real in command or src_root in command
 
 
-def check_src_clean(src_root):
-    """Did the previous task modify the source tree? Returns a short
-    description of the damage, or None.
+def _src_dirty_set(src_root):
+    """Set of `git status --porcelain` lines for the tree, or None on error."""
+    r = subprocess.run(["git", "-C", src_root, "status", "--porcelain"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    return {ln.strip() for ln in r.stdout.splitlines() if ln.strip()}
+
+
+def check_src_clean(src_root, baseline=None):
+    """Did THIS RUN modify the source tree? Returns a description, or None.
+
+    `baseline` is the dirty-set captured before the run started; anything in it
+    is pre-existing and not attributable to the agent. Pass it always — without
+    it this reports the user's own untracked files as damage.
+
+    Why that matters (bug fixed 2026-09-06): /usr/src here carries two
+    untracked files of the user's, sys/amd64/conf/MDR1 and MDROOT, dated well
+    before any bench run. Every task therefore ended with
+
+        !! SOURCE TREE MODIFIED: 2 modified path(s) ...
+           Later reps are contaminated. Use --src-mode=ro to make this
+           impossible.
+
+    on all 16 runs — while ALREADY running --src-mode=ro, which nullfs-mounts
+    the tree read-only so the agent physically cannot write to it. A warning
+    that fires on every run and recommends the mode already in use trains the
+    reader to ignore it, which would mask a real mutation. Diffing against the
+    baseline makes a report mean something.
 
     Caveat for parallel runs: the tree is SHARED state. If two bench processes
     point at the same --src, this cannot attribute a modification to one of
@@ -119,15 +145,15 @@ def check_src_clean(src_root):
     behaviour (both runs are contaminated), but give each endpoint its own
     tree if you need clean attribution.
     """
-    r = subprocess.run(["git", "-C", src_root, "status", "--porcelain"],
-                       capture_output=True, text=True)
-    if r.returncode == 0:
-        dirty = [ln for ln in r.stdout.splitlines() if ln.strip()]
-        if dirty:
-            return f"{len(dirty)} modified path(s), e.g. " + \
-                   "; ".join(d.strip()[:60] for d in dirty[:3])
+    now = _src_dirty_set(src_root)
+    if now is None:
         return None
-    return None
+    new = now - (baseline or set())
+    if not new:
+        return None
+    out = sorted(new)
+    return f"{len(out)} modified path(s), e.g. " + \
+           "; ".join(d[:60] for d in out[:3])
 
 
 def src_abi_version(src_root):
@@ -778,7 +804,7 @@ def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
 def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
             src_root, agent_user=None, backend="openai", artifact_dir=None,
             rep=1, no_progress_patience=8, seed=None, temperature=None,
-            snippet_timeout=180):
+            snippet_timeout=180, src_baseline=None):
     """One attempt at one task. Returns a result dict."""
     workdir = os.path.join(root_dir, task["id"])
     shutil.rmtree(workdir, ignore_errors=True)
@@ -861,7 +887,9 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     # The tree is normally writable and the bench may be running as root, so
     # verify the agent did not modify it. A dirtied tree invalidates every
     # later repetition, so this is recorded loudly rather than ignored.
-    rec["src_dirtied"] = check_src_clean(src_root)
+    # src_baseline excludes dirt that was already there before the run — see
+    # check_src_clean().
+    rec["src_dirtied"] = check_src_clean(src_root, src_baseline)
 
     b = builder.build(workdir, src_root=src_root)
     if not b.ok:
@@ -1143,9 +1171,14 @@ def main():
         print("WARNING: running as root without --agent-user. The agent's "
               "shell will be root and can modify the source tree or the host. "
               "Pass --agent-user <unprivileged user>.", file=sys.stderr)
-    dirty = check_src_clean(args.src)
-    if dirty:
-        print(f"WARNING: source tree already dirty before the run: {dirty}",
+    # Snapshot pre-existing dirt ONCE, before any task runs, and diff every
+    # later check against it so only this run's damage is reported.
+    src_baseline = _src_dirty_set(args.src) or set()
+    if src_baseline:
+        preview = "; ".join(sorted(src_baseline)[:3])
+        print(f"NOTE: source tree already has {len(src_baseline)} modified "
+              f"path(s) before the run, e.g. {preview[:120]}\n"
+              f"      These are excluded from per-task src_dirtied reporting.",
               file=sys.stderr)
 
     src_v, host_v = check_abi(args.src)
@@ -1201,7 +1234,8 @@ def main():
                                   src_used, args.agent_user, args.backend,
                                   artifact_dir, rep + 1,
                                   args.no_progress_patience, args.seed,
-                                  args.temperature, args.snippet_timeout)
+                                  args.temperature, args.snippet_timeout,
+                                  src_baseline)
                     rec["rep"] = rep + 1
                     rec["run_id"] = run_id
                     rec["api_base"] = args.api_base
