@@ -458,6 +458,14 @@ class BhyveRunner:
                 # /etc/rc prints FBSDQ-GUEST-READY immediately before
                 # `exec /rescue/sh`, so that marker is the reliable handshake.
                 if not sent and "FBSDQ-GUEST-READY" in joined:
+                    # /etc/rc prints the handshake and THEN execs /rescue/sh,
+                    # so give the shell a moment to exist before typing at it.
+                    # (This was first added on the theory that the missing pause
+                    # explained a guest that booted and never ran its script.
+                    # That was wrong — the cause was two loader tunables, see
+                    # mkimage.sh — but the pause is correct on its own terms and
+                    # costs 1.5 s per boot.)
+                    time.sleep(1.5)
                     for ln in script:
                         try:
                             proc.stdin.write((ln + "\n").encode())

@@ -267,6 +267,29 @@ p9fs_load="YES"
 virtio_p9fs_load="YES"
 EOF
 
+# NOT SET HERE, deliberately: debug.debugger_on_panic="0" and
+# kern.panic_reboot_wait_time="0".
+#
+# The problem they were meant to solve is real. GENERIC has KDB and KDB_TRACE
+# but not KDB_UNATTENDED, so a panicking guest sits at "db>" forever and the
+# console driver keeps typing shell commands at the debugger prompt — a t6 log
+# shows `db> echo FBSDQ-DONE` and `db> shutdown -p now`, both answered "No such
+# command". The VM then never powers off cleanly and the panic path relies on
+# the boot timeout expiring.
+#
+# But adding those two tunables MADE IT WORSE: the guest went silent right
+# after the FBSDQ-GUEST-READY handshake and never ran the script at all, on an
+# image that was otherwise identical and had worked minutes before. Bisected by
+# deleting just those two lines from a built image, which restored the correct
+# behaviour (boots, runs the script, panics at union_vnops.c:2257). Root cause
+# not established — plausibly the reboot racing the console read — so they stay
+# out until it is.
+#
+# The cost of leaving them out is only an untidy teardown on panic: the panic
+# and its backtrace are still captured, the dump is still written, and the
+# verdict is still correct. If this needs fixing properly, do it with
+# KDB_UNATTENDED in a kernel config rather than a loader tunable.
+
 # init runs this instead of /etc/rc: print a marker vmrunner can match, then
 # hand over an interactive shell.
 # NOTE: /rescue has sysctl but NOT uname, so the handshake uses

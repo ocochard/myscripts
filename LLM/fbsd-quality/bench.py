@@ -336,7 +336,19 @@ def prepare_src(src_root, mode, run_dir):
     "shallow" is the weakest of the three: it is the only one that costs real
     time and space, and it still leaves the tree writable. Prefer ro, or zfs
     clone when the run genuinely needs a different revision.
+
+    mode="auto" (the default) resolves to zfs-clone when src_root is on ZFS,
+    else ro. Rationale: a CoW clone gives EVERY tier an independent writable
+    tree for 63 ms and ~0 bytes, which removes a class of harness bug — the t6
+    tier needed two special cases (write_file's workdir check and the
+    _writes_into_src tripwire) purely because the default tree was read-only —
+    and stops any tier contaminating another. It falls back to ro rather than
+    exiting so the bench still runs on a host whose tree is not on ZFS, where
+    an explicit --src-mode=zfs-clone is a hard error.
     """
+    if mode == "auto":
+        mode = "zfs-clone" if _zfs_dataset_for(src_root) else "ro"
+
     if mode == "none":
         return src_root, None
 
@@ -1045,9 +1057,16 @@ def _build_candidate_kernel(src_root, extra_root_files=None, artifact_dir=None):
 
     img = os.path.join(artifact_dir or "/tmp", "t6-candidate.img")
     ienv = dict(env)
-    # unionfs/tmpfs because mkimage.sh ships only p9fs/virtio_* by default and
-    # the tier's filesystems would otherwise be silently absent.
-    ienv["EXTRA_MODULES"] = "unionfs tmpfs"
+    # unionfs only. mkimage.sh ships just p9fs/virtio_* by default, so unionfs
+    # would otherwise be silently absent (kldload -n exits 0 on a missing
+    # module, so nothing would report it). tmpfs is deliberately NOT listed:
+    # it is compiled into GENERIC, and shipping tmpfs.ko makes the guest try to
+    # load a duplicate —
+    #   module_register: cannot register tmpfs from tmpfs.ko; already loaded
+    #   Module tmpfs failed to register: 17
+    # which is harmless (EEXIST) but looks alarming on a console the model
+    # reads, and could cost it steps chasing a non-problem.
+    ienv["EXTRA_MODULES"] = "unionfs"
     if extra_root_files:
         ienv["EXTRA_ROOT_FILES"] = extra_root_files
     try:
@@ -1552,15 +1571,22 @@ def main():
                     help="FreeBSD source tree the model reads (default /usr/src). "
                          "The tasks target real kernel APIs, which move between "
                          "branches, so the tree used is recorded in the results.")
-    ap.add_argument("--src-mode", default="ro",
-                    choices=("ro", "zfs-clone", "shallow", "none"),
+    ap.add_argument("--src-mode", default="auto",
+                    choices=("auto", "ro", "zfs-clone", "shallow", "none"),
                     help="how to give this run its tree. "
-                         "ro (default): nullfs read-only bind — free, and makes "
-                         "mutation impossible; the tasks only read. "
-                         "zfs-clone: free CoW clone, independent and writable — "
-                         "use when a run needs a different revision. "
-                         "shallow: git clone --depth 1 (~45 s, ~1.3 GB) for "
-                         "non-ZFS trees. "
+                         "auto (default): zfs-clone when --src is on ZFS, else "
+                         "ro — so every tier gets an independent WRITABLE tree "
+                         "where that is free, without breaking a non-ZFS host. "
+                         "zfs-clone: CoW clone, independent and writable; "
+                         "measured at 63 ms and ~0 bytes on this host, against "
+                         "45 s and 1.3 GB for a git clone of the same tree, "
+                         "which is why ZFS is the mechanism rather than git. "
+                         "ro: nullfs read-only bind — also free, and the only "
+                         "mode where mutation is IMPOSSIBLE rather than merely "
+                         "detected after the fact; use it to hold a tier-1..5 "
+                         "run to reading only. "
+                         "shallow: git clone --depth 1 for non-ZFS trees that "
+                         "must be writable. "
                          "none: use --src directly (shared + writable; only "
                          "safe with --agent-user).")
     ap.add_argument("--agent-user", default=None, metavar="USER",
