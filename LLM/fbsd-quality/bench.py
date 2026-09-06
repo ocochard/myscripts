@@ -109,8 +109,8 @@ def _writes_into_src(command, src_root):
     return real in command or src_root in command
 
 
-def ccache_env(src_root):
-    """Environment that makes ccache SAFE for kernel builds, or {} if unused.
+def build_env():
+    """Extra environment for the agent's shell: disable ccache, or {}.
 
     This host sets WITH_CCACHE_BUILD=yes globally in /etc/make.conf, so any
     `make buildkernel` the agent runs picks ccache up automatically. That is a
@@ -141,39 +141,36 @@ def ccache_env(src_root):
     where `make buildkernel` actually runs (builder.build() sets
     __MAKE_CONF=/dev/null and so never sees ccache at all).
 
-    Returns {} when ccache is not actually in play, so the bench runs
-    unchanged on a host without it: the settings are meaningless there, and
-    exporting CCACHE_* on a machine with no ccache would be misleading noise
-    in the logs. Both conditions must hold — the binary must exist AND the
-    build must be configured to use it, since WITH_CCACHE_BUILD is what makes
-    bsd.*.mk route the compiler through ccache. Either one missing means no
-    ccache, hence nothing to make safe.
+    DECISION: ccache is DISABLED for bench builds rather than made safe.
 
-    NOT yet proven end-to-end: it must be validated by a deliberate
-    patch -> rebuild -> reproducer cycle before any scored run relies on it.
-    Until then prefer disabling ccache for the tier if a result looks like a
-    stale-object false negative.
+    CCACHE_BASEDIR + CCACHE_NOHASHDIR should fold the build root into the hash
+    and stop the collisions, and that is what this function did at first. But
+    "should" is the problem: it was never validated by a real
+    patch -> rebuild -> reproducer cycle, and the failure it guards against is
+    SILENT and INDISTINGUISHABLE from a wrong answer. A tier that scores a
+    correct patch as failed, for reasons in the build cache, produces
+    confidently wrong results — far worse than a slower build. The speed was
+    never the point of this bench either: model latency dominates
+    (shell_s is 0-6 % of run time on tiers 1-3).
+
+    WITH_CCACHE_BUILD=no is passed to the agent's shell, which is where
+    `make buildkernel` runs. builder.build() already sets
+    __MAKE_CONF=/dev/null and so never saw ccache at all.
+
+    Returns {} when ccache is not installed, so a host without it gets no
+    pointless CCACHE_* / WITH_CCACHE_BUILD noise in its logs. If you want the
+    speed back, prove the BASEDIR/NOHASHDIR variant first: patch
+    sys/kern/vfs_lookup.c, rebuild, and confirm the reproducer's behaviour
+    actually changes.
     """
     if not shutil.which("ccache"):
         return {}
-    # WITH_CCACHE_BUILD may come from /etc/make.conf, /etc/src.conf or the
-    # environment. Absent everywhere -> the build will not use ccache.
-    enabled = os.environ.get("WITH_CCACHE_BUILD") is not None
-    if not enabled:
-        for conf in ("/etc/make.conf", "/etc/src.conf"):
-            try:
-                with open(conf) as fh:
-                    if re.search(r"^\s*WITH_CCACHE_BUILD\s*=\s*yes",
-                                 fh.read(), re.M):
-                        enabled = True
-                        break
-            except OSError:
-                continue
-    if not enabled:
-        return {}
     return {
-        "CCACHE_BASEDIR": os.path.realpath(src_root),
-        "CCACHE_NOHASHDIR": "true",
+        # Belt and braces: the make knob stops bsd.*.mk routing the compiler
+        # through ccache, and CCACHE_DISABLE stops ccache itself if something
+        # invokes it directly anyway.
+        "WITH_CCACHE_BUILD": "no",
+        "CCACHE_DISABLE": "1",
     }
 
 
@@ -592,11 +589,11 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
             # treat every run as able to touch the host.
             argv = ["su", "-m", agent_user, "-c", command]
             use_shell = False
-        # ccache correctness, not speed: see ccache_env(). `su -m` preserves
+        # ccache correctness, not speed: see build_env(). `su -m` preserves
         # the environment, so these reach the agent's own `make`. Empty dict
         # on a host without ccache, so nothing is exported there.
         shell_env = dict(os.environ)
-        shell_env.update(ccache_env(src_root))
+        shell_env.update(build_env())
         try:
             p = subprocess.run(argv, shell=use_shell, cwd=workdir,
                                capture_output=True, text=True,
@@ -841,12 +838,28 @@ class NoProgressDetector:
         # Interrupt by shrinking the agent's own budget: smolagents checks
         # max_steps between steps, so this ends the loop cleanly at the next
         # boundary without raising through the middle of a tool call.
-        if agent is not None and getattr(agent, "max_steps", None):
-            if agent.max_steps > self.steps:
-                self.stopped_reason = (
-                    f"no file created or modified in {self.stale} consecutive "
-                    f"steps (stopped at step {self.steps})")
-                agent.max_steps = self.steps
+        # Interrupt via agent.interrupt(), which sets interrupt_switch —
+        # checked by _run_stream at the top of EVERY iteration.
+        #
+        # BUG FIXED 2026-09-06: this used to do `agent.max_steps = self.steps`,
+        # which never worked. MultiStepAgent.run() evaluates
+        #     max_steps = max_steps or self.max_steps
+        # ONCE and then loops on that LOCAL variable in _run_stream, so
+        # lowering the attribute mid-run is not observed. The detector fired
+        # and recorded a stopped_reason, the agent carried on regardless, and
+        # 26 of 38 result rows claimed an early stop while demonstrably
+        # running past it (e.g. "stopped at step 9" on a run that reached 62).
+        # Only --max-steps ever bounded anything, and one row was classed
+        # failure_class=no_progress purely because the reason string was set.
+        #
+        # interrupt() raises AgentError("Agent interrupted.") out of run(),
+        # which run_one() catches; stopped_reason is what distinguishes that
+        # from a real harness fault, so it must stay set before interrupting.
+        if agent is not None and hasattr(agent, "interrupt"):
+            self.stopped_reason = (
+                f"no file created or modified in {self.stale} consecutive "
+                f"steps (stopped at step {self.steps})")
+            agent.interrupt()
 
 
 def _build_model(model_id, api_base, api_key, backend, seed=None,
@@ -1009,21 +1022,27 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
         # bug. Misfiling a context overflow as "harness" hides a genuine
         # finding.
         low = msg.lower()
-        if ("exceed_context_size" in low or "context size" in low
-                or "context length" in low or "too many tokens" in low):
-            rec["failure_class"] = F_CONTEXT
-        else:
-            rec["failure_class"] = F_HARNESS
-        rec["failure_detail"] = msg[:300]
-        _finish_timing(t0)
-        # Also on the failure path: a run that died mid-flight is exactly where
-        # knowing how many steps went to retries matters.
-        rec["parse_errors"] = progress.parse_errors
-        rec["timeout_errors"] = progress.timeout_errors
-        rec["sandbox_errors"] = progress.sandbox_errors
-        rec["step_errors"] = progress.step_errors
-        _archive(rec, workdir, None, None, artifact_dir, agent)
-        return rec
+        # Our own no-progress detector calls agent.interrupt(), which raises
+        # out of run(). That is neither a harness fault nor a verdict: fall
+        # THROUGH to the build + VM steps so whatever the model did write is
+        # still scored. A model that produced a working module and then idled
+        # must be judged on the module, not on the interrupt.
+        if not (progress.stopped_reason and "interrupt" in low):
+            if ("exceed_context_size" in low or "context size" in low
+                    or "context length" in low or "too many tokens" in low):
+                rec["failure_class"] = F_CONTEXT
+            else:
+                rec["failure_class"] = F_HARNESS
+            rec["failure_detail"] = msg[:300]
+            _finish_timing(t0)
+            # Also on the failure path: a run that died mid-flight is exactly
+            # where knowing how many steps went to retries matters.
+            rec["parse_errors"] = progress.parse_errors
+            rec["timeout_errors"] = progress.timeout_errors
+            rec["sandbox_errors"] = progress.sandbox_errors
+            rec["step_errors"] = progress.step_errors
+            _archive(rec, workdir, None, None, artifact_dir, agent)
+            return rec
 
     _finish_timing(t0)
     rec["iterations"] = _agent_steps(agent)
