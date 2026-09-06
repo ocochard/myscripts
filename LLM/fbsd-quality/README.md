@@ -157,7 +157,28 @@ you run as root without it.
 There is also a string-matching tripwire that refuses shell commands which
 write into `--src`, and a post-task `git status` check that reports a dirtied
 tree. Both are **accident detectors, not containment** — a root agent can defeat
-either trivially. `--agent-user` is the actual boundary.
+either trivially.
+
+**`--agent-user` is NOT a security boundary on this host, and an earlier
+version of this section wrongly said it was.** The agent user here
+(`olivier`) has `NOPASSWD: ALL`, so the agent reaches root in one `sudo`. That
+is not theoretical: models in earlier runs ran `sudo kldload` on the HOST and
+it succeeded — one of them loaded a module built from the tree into the running
+host kernel, which was refused only because the ABI happened to mismatch
+(`KLD ...: depends on kernel - not available or version mismatch`). A matching
+ABI would have loaded agent-written kernel code into `bigone`.
+
+So the honest statement is: `--agent-user` demotes the agent's *default*
+privilege, which stops careless writes, and nothing more. Real containment
+would need a sudoers rule restricting that user to the commands the bench
+actually needs (`bhyve`, `bhyvectl`, `mdconfig`, `kldload` of a guest image),
+or running the bench under a user without blanket sudo. Until then, treat every
+run as capable of touching the host, and do not run this on a machine you care
+about.
+
+The corollary for task design: a task may legitimately *require* privilege (an
+agent that has to build its own guest image needs `mdconfig` and `mount`), so
+the sudo access is load-bearing, not merely an oversight to be removed.
 
 ## Building the guest image
 

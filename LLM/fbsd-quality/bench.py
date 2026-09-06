@@ -109,6 +109,132 @@ def _writes_into_src(command, src_root):
     return real in command or src_root in command
 
 
+def ccache_env(src_root):
+    """Environment that makes ccache SAFE for kernel builds, or {} if unused.
+
+    This host sets WITH_CCACHE_BUILD=yes globally in /etc/make.conf, so any
+    `make buildkernel` the agent runs picks ccache up automatically. That is a
+    real speedup (the cache here runs ~43 % hits) and worth keeping — but it
+    has a documented failure mode on this machine that would silently corrupt
+    a bug-fixing tier.
+
+    The trap: ccache's default hash does not capture the kernel build-id, so
+    after a kernel rebuild it can serve a module .o cached against an OLDER
+    kernel. The resulting .ko then fails to load with
+
+        KLD foo.ko: depends on kernel - not available or version mismatch
+
+    Confirmed on this host 2026-05-26: a stale /boot/kernel/nmdm.ko of 28376
+    bytes (cached February object) against 16064 bytes for a fresh
+    non-cached build, and `buildkernel && installkernel` did NOT clear it.
+
+    Why that is fatal specifically for the unionfs tier: the model patches
+    sys/kern/vfs_lookup.c, rebuilds, and gets a kernel whose changed file
+    recompiled but whose unionfs.ko came from cache. The reproducer still
+    panics, and the model concludes ITS CORRECT PATCH DID NOT WORK. That is a
+    false negative indistinguishable from a wrong fix — it would measure the
+    harness's plumbing, not the model, and quietly poison the tier's results.
+
+    CCACHE_BASEDIR folds the build root into the hash and CCACHE_NOHASHDIR
+    stops the cwd being hashed away, so objects built against different trees
+    or kernels stop colliding. Set for the agent's own shell, because that is
+    where `make buildkernel` actually runs (builder.build() sets
+    __MAKE_CONF=/dev/null and so never sees ccache at all).
+
+    Returns {} when ccache is not actually in play, so the bench runs
+    unchanged on a host without it: the settings are meaningless there, and
+    exporting CCACHE_* on a machine with no ccache would be misleading noise
+    in the logs. Both conditions must hold — the binary must exist AND the
+    build must be configured to use it, since WITH_CCACHE_BUILD is what makes
+    bsd.*.mk route the compiler through ccache. Either one missing means no
+    ccache, hence nothing to make safe.
+
+    NOT yet proven end-to-end: it must be validated by a deliberate
+    patch -> rebuild -> reproducer cycle before any scored run relies on it.
+    Until then prefer disabling ccache for the tier if a result looks like a
+    stale-object false negative.
+    """
+    if not shutil.which("ccache"):
+        return {}
+    # WITH_CCACHE_BUILD may come from /etc/make.conf, /etc/src.conf or the
+    # environment. Absent everywhere -> the build will not use ccache.
+    enabled = os.environ.get("WITH_CCACHE_BUILD") is not None
+    if not enabled:
+        for conf in ("/etc/make.conf", "/etc/src.conf"):
+            try:
+                with open(conf) as fh:
+                    if re.search(r"^\s*WITH_CCACHE_BUILD\s*=\s*yes",
+                                 fh.read(), re.M):
+                        enabled = True
+                        break
+            except OSError:
+                continue
+    if not enabled:
+        return {}
+    return {
+        "CCACHE_BASEDIR": os.path.realpath(src_root),
+        "CCACHE_NOHASHDIR": "true",
+    }
+
+
+_HOST_KLD_RE = None
+
+
+def _loads_module_on_host(command):
+    """Return the offending fragment if `command` would (un)load a module in
+    the HOST kernel, else None.
+
+    Measured motivation: across every run in this repo's logs, ALL 53 uses of
+    sudo were host module manipulation — kldload 21, kldstat 12, kldunload 10,
+    dmesg 9, strings 1. Not one was a legitimate need. The harness already
+    loads the module in a throwaway guest and hands back its console, so a
+    model doing it on the host is testing its work in the wrong kernel.
+
+    Why refuse rather than merely warn: a module built from --src carries the
+    TREE's __FreeBSD_version, and this host routinely runs a slightly older
+    kernel, so kldload is usually rejected with "depends on kernel - not
+    available or version mismatch". That rejection is luck, not safety. When
+    the versions match, an agent-written module loads into the running host
+    kernel. The unionfs bug tier makes that concrete: its whole point is code
+    that panics a kernel, and the guest is disposable while the host is not.
+
+    kldstat is included, which is NOT obvious — it is read-only and cannot
+    hurt the host. It is refused because every one of its 12 uses in the logs
+    was checking whether the model's OWN module had loaded into the host
+    kernel, either in the same command as a kldload or immediately after one
+    (`kldstat | grep fbsdq`, `kldstat -q -n fbsdq.ko && echo STILL LOADED`).
+    Allowing it would leave the model a probe that answers the wrong question:
+    with kldload refused, `kldstat | grep fbsdq` finds nothing and reads as
+    "my module is broken" when it was never meant to load there. Refusing it
+    with a pointer to the guest console is more useful than a truthful but
+    misleading empty result.
+
+    dmesg is included for the same reason, and it is the most misleading of
+    the three. All 9 of its uses grep the HOST message buffer for the model's
+    own marker (`dmesg | grep FBSDQ:exit:pid=`, "dmesg tail after failed
+    load"), always alongside a kldload. With the load refused,
+    `dmesg | grep -ac 'FBSDQ:exit:pid='` returns 0 — which reads as "my
+    event handler never fired", pointing the model at its handler logic when
+    the real answer is that the module never ran in this kernel. A refusal
+    naming the guest console is strictly more useful than that.
+
+    This is not a sandbox (see the comment in run_shell: agent_user can sudo,
+    so real containment needs a sudoers rule); it removes the foot-guns that
+    models demonstrably reach for.
+    """
+    global _HOST_KLD_RE
+    if _HOST_KLD_RE is None:
+        # Anchored at a word start but require the command position: a bare
+        # mention inside a path or filename (grep kldload sys/kern/...) should
+        # not be refused, so require the token to be followed by end-of-string,
+        # whitespace-then-a-flag/argument, or a shell separator — and NOT by a
+        # path-like argument that names the source tree.
+        _HOST_KLD_RE = re.compile(r"(?:^|[;&|]\s*|\bsudo\s+(?:-n\s+)?)"
+                                  r"(kldload|kldunload|kldstat|dmesg)\b")
+    m = _HOST_KLD_RE.search(command)
+    return m.group(1) if m else None
+
+
 def _src_dirty_set(src_root):
     """Set of `git status --porcelain` lines for the tree, or None on error."""
     r = subprocess.run(["git", "-C", src_root, "status", "--porcelain"],
@@ -435,17 +561,46 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
             return (f"ERROR: refusing to run a command that writes into the "
                     f"source tree ({src_root}). Build in your working "
                     f"directory instead; the tree is for reading only.")
+        bad_kld = _loads_module_on_host(command)
+        if bad_kld:
+            return (f"ERROR: refusing `{bad_kld}` — that would load or unload "
+                    f"a kernel module in the HOST kernel, not the test VM. "
+                    f"The harness loads your module in a throwaway bhyve "
+                    f"guest and returns its console output; you do not need "
+                    f"to (and must not) load it here. Just build the .ko.")
         argv = command
         use_shell = True
         if agent_user:
-            # Real privilege separation: the bench itself needs root for
-            # bhyve, but the agent's shell does not and must not have it.
+            # Drop the agent's shell to an unprivileged user. The bench itself
+            # needs root for bhyve; the agent's own commands do not.
+            #
+            # NOT a security boundary, despite what an earlier version of this
+            # comment claimed. If agent_user can sudo, the agent is one hop
+            # from root and nothing here stops it: the only command filter is
+            # _writes_into_src(), which matches redirects/cp/rm against the
+            # SOURCE TREE path, so `sudo kldload ./foo.ko` matches nothing and
+            # passes straight through. Observed in real runs — models ran
+            # `sudo kldload` on the HOST and it succeeded; one loaded a module
+            # built from the tree into the running host kernel, refused only
+            # because the ABI happened to mismatch. With a matching ABI that is
+            # agent-written kernel code in the host kernel.
+            #
+            # This is deliberate as far as it goes: some tasks legitimately
+            # need privilege (building a guest image needs mdconfig/mount), so
+            # the fix is a sudoers rule scoping agent_user to the commands the
+            # bench actually needs — not removing sudo. Until that exists,
+            # treat every run as able to touch the host.
             argv = ["su", "-m", agent_user, "-c", command]
             use_shell = False
+        # ccache correctness, not speed: see ccache_env(). `su -m` preserves
+        # the environment, so these reach the agent's own `make`. Empty dict
+        # on a host without ccache, so nothing is exported there.
+        shell_env = dict(os.environ)
+        shell_env.update(ccache_env(src_root))
         try:
             p = subprocess.run(argv, shell=use_shell, cwd=workdir,
                                capture_output=True, text=True,
-                               timeout=shell_timeout)
+                               timeout=shell_timeout, env=shell_env)
             out = (p.stdout or "") + (p.stderr or "")
             return f"exit={p.returncode}\n{out[-20_000:]}"
         except subprocess.TimeoutExpired:
