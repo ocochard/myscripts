@@ -349,6 +349,12 @@ none in the scoring:
 
 ### Reference baseline — the ladder is calibrated
 
+> **Superseded by the v2 table below.** These are the original (v1) numbers,
+> taken before the harness gained `ENV_NOTE` and the raised snippet budget.
+> They are kept because the calibration *conclusion* still holds and because
+> the before/after is the evidence that the harness fixes did something. Do
+> **not** compare them against v2 numbers — different harness.
+
 `claude-opus-4-5` (native `/v1/messages` proxy), `--src-mode ro`,
 src `5b10c3c3e3d5`, smolagents 1.26.0 via LiteLLM, 2026-09-05:
 
@@ -386,6 +392,117 @@ One caveat on t2, recorded in `tasks.py`: the model passed using
 the prompt asks for the *process* type. The API use was genuine and the
 round-trip real, so it is a legitimate pass, but the marker cannot tell the two
 object types apart. Tighten it if that distinction matters.
+
+### v2 — all runs under one harness (2026-09-06)
+
+Everything above this heading is **v1**. Two harness changes invalidated it,
+so every model was re-run — including the Opus reference, because Opus was
+affected too (it also lost steps to the import sandbox). Re-running only the
+local models would have given them a hint the reference never got, biasing the
+comparison in their favour.
+
+What changed between v1 and v2:
+
+* `ENV_NOTE` — the prompt now states the Python sandbox allowlist and warns
+  that one code block has a time budget. Environment information, not
+  scaffolding (see the policy section: it names no `bsd.kmod.mk`, no `SYSDIR`,
+  no header).
+* `--snippet-timeout` default 30 s -> **180 s**.
+
+Config identical across all v2 runs: `--src-mode ro`, src `5b10c3c3e3d5`,
+`--max-steps 60`, `--no-progress-patience 8`, `--reps 1`, `--seed 42` on the
+local endpoints (omitted for Opus — the Anthropic API has no seed parameter,
+so passing one would look reproducible without being so).
+
+| model | host | task | pass | iters | model_s | shell_s | tok_out | reparse |
+|-------|------|------|------|------:|--------:|--------:|--------:|--------:|
+| claude-opus-4-5 | proxy | t1-eventhandler | **yes** | 23 | 94.5 | 0.4 | 2 471 | 0 |
+| claude-opus-4-5 | proxy | t2-osd | **yes** | 28 | 162.5 | 1.0 | 5 202 | 0 |
+| claude-opus-4-5 | proxy | t3-unr | **yes** | 25 | 99.3 | 0.5 | 2 692 | 0 |
+| Flash-Next IQ3_XXS | frwk-bsd | t1-eventhandler | **yes** | 49 | 2 118.3 | 5.0 | 39 065 | 0 |
+| Flash-Next IQ3_XXS | frwk-bsd | t2-osd | **yes** | 49 | 2 463.8 | 132.8 | 50 840 | 0 |
+| Flash-Next IQ3_XXS | frwk-bsd | t3-unr | **yes** | 58 | 1 381.2 | 1.6 | 27 236 | 8 |
+| Flash-Next IQ3_XXS | frwk-linux | t1-eventhandler | **yes** | 41 | 1 833.9 | 5.4 | 35 641 | 0 |
+| Flash-Next IQ3_XXS | frwk-linux | t2-osd | **yes** | 44 | 1 574.4 | 474.1 | 30 924 | 0 |
+| Flash-Next IQ3_XXS | frwk-linux | t3-unr | **yes** | 49 | 1 645.3 | 5.5 | 31 700 | 0 |
+
+**9/9 PASS.** Two things follow.
+
+**1. Flash-Next solves all three tiers. Its earlier 0/3 was my bug, not the
+model.** In v1 it scored `no_files_written` / `context_exhausted` / `compile` —
+and that was entirely the `CTX=32768` clamp described below. At 131072 the same
+quant passes every tier on both hosts. A configuration value I derived for a
+different quant and never re-derived cost a completely wrong conclusion about
+this model's capability.
+
+**2. The harness fixes worked, and the ladder is still discriminating.** The
+three counters that motivated the re-run went to near zero: 13 sandbox denials
+across the v1 corpus -> 2 in v2, and both v2 cases are a model ignoring a note
+it was given rather than a harness that never mentioned the rule. Opus did not
+get easier — 23/28/25 iters, versus 27/32/20 in v1 — so the tasks were not
+accidentally trivialised by the note.
+
+Cost gap to the reference is the real result, and it is large:
+
+| | Opus | Flash-Next (best host) | ratio |
+|---|---:|---:|---:|
+| median iters | 25 | 44 | 1.8x |
+| median model_s | 99 | 1 645 | **17x** |
+| median tok_out | 2 692 | 31 700 | 12x |
+
+Same verdict, ~17x the wall time and ~12x the output tokens.
+
+**Do not read frwk-linux's win as an OS effect.** It leads on every tier
+(41/44/49 vs 49/49/58), but at `--reps 1` with MTP on that is one sample, and
+the `reparse` column shows why that matters — see the next subsection.
+
+#### The reparse asymmetry was noise, and I called it wrong
+
+In v1 the `<code>`-envelope failures were **Ubuntu 6, FreeBSD 0**. I proposed a
+mechanism: MTP draft acceptance perturbing token choice at the tag boundary,
+noting both endpoints ran identical launch args and the same GGUF template.
+
+In v2 they are **FreeBSD 8, Ubuntu 0** — the same asymmetry, opposite host.
+
+A host-linked mechanism cannot switch hosts. This is run-to-run variance in one
+model under unseeded-in-practice MTP sampling, and the v1 pattern was a
+single-run artifact I over-read. The honest statement at n=1 was "could be
+noise"; proposing a mechanism gave it far more weight than one run supports.
+
+The failure mode itself is real and worth keeping counted: Flash-Next under
+`--jinja` sometimes answers in Qwen native tool-call syntax
+(`<tool_call><function=code>…`, occasionally with a stray `</parameter>`)
+instead of `<code>…</code>`. smolagents raises `AgentParsingError`, feeds it
+back, and the model retries. The Python inside is valid every time — the step
+is lost to the envelope, not to capability. That is why `reparse` is reported
+next to `iters`: t3 on frwk-bsd used 58 iterations, 8 of which produced nothing.
+
+#### MTP behaviour under a real agent workload
+
+`draft_mean_len` is **1.00** on all six Flash-Next tasks — exactly one accepted
+token per draft, which is the `--spec-draft-n-max 2` setting in the `flashnext`
+slot doing what the speed bench predicted. Acceptance is flat and host-agnostic:
+
+| host | t1 | t2 | t3 |
+|------|---:|---:|---:|
+| frwk-bsd | 0.510 | 0.526 | 0.530 |
+| frwk-linux | 0.543 | 0.525 | 0.531 |
+
+0.51-0.54 on every task on both hosts. Compare the same field on the v1
+`qwen38-mtp` runs, which ranged 0.60-0.76 — so acceptance here is a property of
+the model and quant, not of the OS.
+
+#### Still outstanding
+
+`qwen38-mtp` (`Qwen3.8-27B-Q8_0-MTP`) has **not** been re-run under v2 at the
+time of writing; its rows in `results.jsonl` are v1 only and are not comparable
+with the table above. Until that run lands, the v2 comparison is Opus vs
+Flash-Next.
+
+One snippet still hit the raised 180 s budget (frwk-linux t2): a `grep -rl`
+over `/root /home /usr/local /tmp`. That is an expensive search by choice, not
+a too-strict limit — note `shell_s = 474 s` on that task, an order of magnitude
+above every other row.
 
 ### Local models, and why the first comparisons were invalid
 
@@ -599,6 +716,63 @@ All three were in the plumbing, none in scoring — and all three produced
 Still not exercised: the panic path (no module has panicked yet, so `dump`/
 `savecore`/`kgdb` are untested end-to-end) and tier 4.
 
+### Harness bugs found by scanning ALL logs (the v2 trigger)
+
+The three above were found by watching runs. Grepping the **whole** log corpus
+(13 runs, 75 k lines) found three more that no single run made obvious — and
+one of them had been silently taxing every model, including the reference.
+
+Census across the v1 corpus:
+
+| class | count | runs | who |
+|-------|------:|-----:|-----|
+| sandbox denial (`import os`) | 13 | 8/13 | **every model, Opus included** |
+| snippet timeout (30 s) | 11 | 6/13 | both hosts, both local models |
+| reparse (`<code>` envelope) | 6 | 1/13 | Flash-Next (see v2 — it moved) |
+| context exhausted (HTTP 400) | 1 | 1/13 | Flash-Next at `CTX=32768` |
+| real 5xx / 429 | **0** | — | endpoints were stable throughout |
+
+1. **Sandbox denial — mine, and the costly one.** `CodeAgent` sandboxes imports
+   and `bench.py` passed no `additional_authorized_imports`, so the allowlist
+   was smolagents' default 11 stdlib modules. `import os` — the obvious way to
+   list a directory — raised `InterpreterError` and burned a step. Models then
+   fell back to `run_shell`, which works, so it changed no verdict but taxed
+   every run.
+
+   Deliberately **not** fixed by widening the sandbox: `bench.py` runs as root
+   for bhyve, so in-process `os.*` would execute as root and bypass the
+   `--agent-user` privilege separation that `run_shell` gets by dropping through
+   `su`. That trades a real security property for a few steps. `ENV_NOTE` states
+   the rule in the prompt instead.
+
+2. **Snippet timeout.** smolagents' own
+   `local_python_executor.MAX_EXECUTION_TIME_SECONDS = 30` bounds the *whole*
+   `<code>` block, and is far tighter than this bench's `shell_timeout` (300 s,
+   per subprocess) — so it always fires first and the bench's own limit never
+   gets a chance. Raised to 180 s via `--snippet-timeout`, passed through
+   `executor_kwargs` (a supported `LocalPythonExecutor` parameter, not a patch).
+
+   Worth being precise, because the natural reading is wrong: **this budget
+   does not cover inference.** It starts after the model's reply arrives.
+   Measured steps of 87 s, 163 s and 80 s never tripped the 30 s limit, and
+   `shell_s` is 0.0-6.3 % of run time (on one t3, 7.3 s of shell against
+   9 059 s of inference). Raising it cannot compensate for a slow endpoint.
+   What it does fix is a legitimate `grep -r` over `/usr/src/sys` (~90 k files)
+   exceeding 30 s on a cold cache — losing a step for correct-but-slow work.
+
+3. **`503` was a false positive I nearly reported as endpoint instability.**
+   A bare-number grep for HTTP codes matched `503:` in *kernel source line
+   numbers* the agent had printed. Checked before reporting: the whole corpus
+   contains exactly one real API error (the `CTX=32768` 400). Endpoints never
+   misbehaved.
+
+All four counters (`parse_errors`, `timeout_errors`, `sandbox_errors`,
+`step_errors`) are now written on the success **and** failure paths — a run that
+dies mid-flight is exactly where the retry count matters most. `parse_errors` is
+typed on `AgentParsingError` so a reworded message cannot silently stop the
+count; the other two are message-matched because smolagents raises them as
+generic execution errors with no class to type on.
+
 Next: harder tiers (`khelp`/`hhook`, `epoch` read sections) are worth adding now
 that 1-3 are known-passable — they were deferred only to avoid a bench that
-floors out.
+floors out. And `qwen38-mtp` still needs its v2 run.
