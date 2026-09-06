@@ -72,12 +72,29 @@ say() { echo "FBSDQ:regress:$1"; }
 ok()   { say "$1:OK"; }
 bad()  { say "$1:FAIL"; FAILED=$((FAILED + 1)); }
 
-# Load what we need. -n so an already-loaded module is not an error, and a
-# missing module is caught later by the mount failing rather than here: a
-# model that fixed the bug by making unionfs unloadable must FAIL, not error
-# out ambiguously.
+# Load what we need. -n so an already-loaded module is not an error.
 kldload -n unionfs 2>/dev/null
 kldload -n tmpfs 2>/dev/null
+
+# Distinguish "the filesystem is not available at all" (a HARNESS fault) from
+# "the model broke unionfs" (a real FAIL). `kldload -n` exits 0 when the module
+# is simply absent, so rc alone cannot tell these apart — during bring-up the
+# image shipped only p9fs/virtio_*, every case failed at the mount, and the
+# cause was invisible until the image was opened by hand. Build the guest with
+#   EXTRA_MODULES="unionfs tmpfs" ./mkimage.sh ...
+#
+# Use `kldstat -m` (MODULE name), never `-n` (FILE name): -n only matches a
+# separately loaded .ko, so it reports absent for anything compiled into the
+# kernel. tmpfs is in GENERIC, so `kldstat -q -n tmpfs` fails on a perfectly
+# good kernel — which aborted the first control run before it could reach the
+# actual test.
+for _m in unionfs tmpfs; do
+	if ! kldstat -q -m "$_m" 2>/dev/null; then
+		say "SETUP:MISSING-FS:$_m"
+		say "VERDICT:FAIL:setup"
+		exit 1
+	fi
+done
 
 cleanup() {
 	# Unmount deepest-first. Ignore errors: this runs on the failure path too.
@@ -208,6 +225,8 @@ fi
 #   Catches a fix that leaks a reference or wedges teardown — the mount cases
 #   above can all pass while unload hangs or panics.
 # ---------------------------------------------------------------------------
+# -m not -n, same reason as above; and only attempt the reload when unionfs
+# is a loadable file rather than compiled in.
 if kldstat -q -n unionfs 2>/dev/null; then
 	if kldunload unionfs 2>/dev/null && kldload unionfs 2>/dev/null; then
 		ok reload

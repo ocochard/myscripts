@@ -193,7 +193,15 @@ for ko in "$KERNEL"/*.ko; do
 done
 echo "    kernel + $KO_N modules ($(du -sh "$MNT/boot/kernel" | awk '{print $1}'))"
 
-for m in p9fs virtio_p9fs virtio_blk; do
+# p9fs/virtio_* are what the harness itself needs to share the workdir in and
+# load a module. EXTRA_MODULES adds anything a specific tier needs: the t6
+# bug-fix tier needs unionfs and tmpfs, which are modules (they are `optional`
+# in sys/conf/files, not in GENERIC), and without them every one of its cases
+# fails at the mount. Note `kldload -n` SUCCEEDS on a missing module by design,
+# so a script cannot detect the omission that way — it shows up later as an
+# unexplained mount failure. Build with:
+#   EXTRA_MODULES="unionfs tmpfs" ./mkimage.sh ...
+for m in p9fs virtio_p9fs virtio_blk ${EXTRA_MODULES:-}; do
 	[ -f "$MNT/boot/kernel/$m.ko" ] && continue
 	# Not in the obj kernel dir (e.g. -k pointed at a bare kernel): take it
 	# from the tree's module build, NEVER from the running host's /boot —
