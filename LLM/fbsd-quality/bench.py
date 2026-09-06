@@ -740,7 +740,7 @@ class NoProgressDetector:
     no_progress failure is distinguishable from a genuine step-cap exhaustion.
     """
 
-    def __init__(self, workdir, patience=8):
+    def __init__(self, workdir, patience=40):
         self.workdir = workdir
         self.patience = patience
         self.stale = 0
@@ -971,7 +971,7 @@ def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
 
 def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
             src_root, agent_user=None, backend="openai", artifact_dir=None,
-            rep=1, no_progress_patience=8, seed=None, temperature=None,
+            rep=1, no_progress_patience=40, seed=None, temperature=None,
             snippet_timeout=180, src_baseline=None):
     """One attempt at one task. Returns a result dict."""
     workdir = os.path.join(root_dir, task["id"])
@@ -1316,14 +1316,24 @@ def main():
                          "raising it cannot compensate for a slow endpoint; "
                          "shell time is 0-6%% of a run. Per-subprocess limits "
                          "come from each task's timeout_s instead.")
-    ap.add_argument("--no-progress-patience", type=int, default=8,
+    ap.add_argument("--no-progress-patience", type=int, default=40,
                     metavar="N",
                     help="stop the agent after N consecutive steps that "
                          "create or modify no source file (0 disables). "
                          "Catches a model that has the knowledge but keeps "
                          "investigating instead of writing code, which a "
                          "global --max-steps cannot distinguish from working "
-                         "steadily.")
+                         "steadily. Default 40, set from measurement: in runs "
+                         "that PASSED, the first source file appeared at step "
+                         "22 (opus t4), 14 (opus t5) and 29 (flash t4), so "
+                         "reading 20-30 steps of kernel source before writing "
+                         "anything is normal work on the harder tiers, not a "
+                         "stall. The old default of 8 was set while the "
+                         "detector was inert (it mutated agent.max_steps, "
+                         "which smolagents ignores) and so was never "
+                         "calibrated; once the detector actually worked it cut "
+                         "every tier-4/5 run at 10 iterations, including a "
+                         "configuration that had passed at 62.")
     ap.add_argument("--workdir", default=None, metavar="DIR",
                     help="scratch dir for the agent (default: a per-run dir "
                          "under /tmp keyed by model + pid, so two bench "
