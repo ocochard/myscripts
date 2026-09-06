@@ -98,7 +98,7 @@ class BhyveRunner:
         self.bootrom = bootrom or "/usr/local/share/uefi-firmware/BHYVE_UEFI.fd"
 
     def _argv(self, vmname, disk):
-        return [
+        argv = [
             "bhyve",
             "-c", str(self.cpus),
             "-m", self.memory,
@@ -106,14 +106,24 @@ class BhyveRunner:
             "-l", f"bootrom,{self.bootrom}",
             "-s", "0,hostbridge",
             "-s", f"1,virtio-blk,{disk}",
-            # ro=1: the guest only needs to READ the .ko the host built. This
-            # also stops a misbehaving guest from corrupting the agent's
-            # working directory mid-run.
-            "-s", f"2,virtio-9p,{SHARE_TAG}={self.share_dir},ro",
             "-s", "31,lpc",
             "-l", "com1,stdio",
-            vmname,
         ]
+        # The 9p share is only added when it EXISTS. bhyve refuses to start if
+        # the virtio-9p sharepath is missing, and it exits immediately with an
+        # empty console — which is precisely how the first t6 calibration
+        # produced "test machine completed" on a VM that never booted: the
+        # share_dir was an artifacts/_dumps path that had not been created yet.
+        # run_script needs no share at all (the script is inside the image), so
+        # requiring one there would be wrong as well as fragile.
+        #
+        # ro=1 on the share: the guest only needs to READ the .ko the host
+        # built, and read-only stops a misbehaving guest corrupting the agent's
+        # working directory mid-run.
+        if self.share_dir and os.path.isdir(self.share_dir):
+            argv[-2:-2] = ["-s",
+                           f"2,virtio-9p,{SHARE_TAG}={self.share_dir},ro"]
+        return argv + [vmname]
 
     def _private_disk(self, vmname):
         """Give this VM its own copy of the base image.
