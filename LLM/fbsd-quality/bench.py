@@ -898,6 +898,15 @@ def _dump_trace(agent, path):
     whether the model looked in the right header, misread a signature, or never
     searched at all. smolagents renames its history attribute across versions,
     so probe rather than pin.
+
+    NOT a token-accounting record — do not sum it to audit tokens_out. It keeps
+    one final `model_output` per RETAINED memory step, so it omits retried calls
+    and anything memory trimming dropped. Summing this trace for one task gave
+    ~7 400 tokens against a true 54 750 (7.4x), which looked like a metering bug
+    and was not: tokens_out matches the endpoint's tokens_predicted exactly on
+    every recorded task, and tokens_predicted equals n_decode + accepted drafts
+    to within 1%, so it counts DELIVERED output, not rejected drafts. For token
+    questions use rec["tokens_out"] or the endpoint's /metrics.
     """
     steps = None
     for attr in ("memory", "logs"):
@@ -986,8 +995,9 @@ def summarise(records):
 
     print()
     print(f"{'model':<22} {'task':<18} {'pass':<7} {'iter':>5} "
-          f"{'reparse':>7} {'model_s':>8} {'shell_s':>8} {'tok_out':>8}  failure")
-    print("-" * 112)
+          f"{'reparse':>7} {'model_s':>8} {'shell_s':>8} {'tok_out':>8} "
+          f"{'tok/dec':>8}  failure")
+    print("-" * 122)
     for model, recs in by_model.items():
         # Group reps of the same task: with MTP enabled the same model can pass
         # or fail the same task run-to-run (speculative decoding is not
@@ -1003,11 +1013,18 @@ def summarise(records):
             verdict = f"{npass}/{n}" if n > 1 else ("YES" if npass else "no")
             fails = sorted({r["failure_class"] for r in rs if r["failure_class"]})
             mean = lambda k: sum(r.get(k, 0) or 0 for r in rs) / n
+            # tok/dec = delivered output tokens per decode step. With MTP on
+            # this is the speculation payoff (>1 means drafts are landing);
+            # 1.00 means every token cost a full decode. Blank for endpoints
+            # that expose no /metrics, e.g. the Anthropic proxy.
+            dec = sum((r.get("endpoint") or {}).get("n_decode") or 0 for r in rs)
+            out = sum(r.get("tokens_out", 0) or 0 for r in rs)
+            tpd = f"{out / dec:.2f}" if dec else "-"
             print(f"{model:<22} {task:<18} {verdict:<7} "
                   f"{mean('iterations'):>5.0f} {mean('parse_errors'):>7.0f} "
                   f"{mean('model_s'):>8.1f} "
-                  f"{mean('shell_s'):>8.1f} {mean('tokens_out'):>8.0f}  "
-                  f"{','.join(fails)}")
+                  f"{mean('shell_s'):>8.1f} {mean('tokens_out'):>8.0f} "
+                  f"{tpd:>8}  {','.join(fails)}")
         if any(len(v) == 1 for v in by_task.values()):
             print(f"{'':<22} (single rep: pass/fail is not reliable with MTP "
                   f"on — use --reps 3+)")

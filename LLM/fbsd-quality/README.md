@@ -398,46 +398,96 @@ Config, identical across all runs: `--src-mode ro`, src `5b10c3c3e3d5`,
 local endpoints (omitted for Opus — the Anthropic API has no seed parameter,
 so passing one would look reproducible without being so).
 
-| model | host | task | pass | iters | model_s | shell_s | tok_out | reparse |
-|-------|------|------|------|------:|--------:|--------:|--------:|--------:|
-| claude-opus-4-5 | proxy | t1-eventhandler | **yes** | 23 | 94.5 | 0.4 | 2 471 | 0 |
-| claude-opus-4-5 | proxy | t2-osd | **yes** | 28 | 162.5 | 1.0 | 5 202 | 0 |
-| claude-opus-4-5 | proxy | t3-unr | **yes** | 25 | 99.3 | 0.5 | 2 692 | 0 |
-| Flash-Next IQ3_XXS | frwk-bsd | t1-eventhandler | **yes** | 49 | 2 118.3 | 5.0 | 39 065 | 0 |
-| Flash-Next IQ3_XXS | frwk-bsd | t2-osd | **yes** | 49 | 2 463.8 | 132.8 | 50 840 | 0 |
-| Flash-Next IQ3_XXS | frwk-bsd | t3-unr | **yes** | 58 | 1 381.2 | 1.6 | 27 236 | 8 |
-| Flash-Next IQ3_XXS | frwk-linux | t1-eventhandler | **yes** | 41 | 1 833.9 | 5.4 | 35 641 | 0 |
-| Flash-Next IQ3_XXS | frwk-linux | t2-osd | **yes** | 44 | 1 574.4 | 474.1 | 30 924 | 0 |
-| Flash-Next IQ3_XXS | frwk-linux | t3-unr | **yes** | 49 | 1 645.3 | 5.5 | 31 700 | 0 |
+Columns:
 
-**9/9 PASS.** Two things follow.
+| column | meaning |
+|---|---|
+| `iters` | agent loop turns consumed — one model call plus its tool call. Bounded by `--max-steps` (60 here). |
+| `model_s` | `wall_s − shell_s`: the model's own latency. **Compare models on this.** |
+| `shell_s` | time inside `run_shell`, i.e. mostly `make`. Charged to the approach, not the model. |
+| `tok_out` | output tokens the endpoint actually delivered. From smolagents' counter, which matches llama-server's `tokens_predicted` exactly on every row here. Delivered, **not** drafted: `tokens_predicted` equals `n_decode + accepted drafts` to within 1 %, and is *smaller* than `spec_decode_num_draft_tokens_total`. |
+| `tok/dec` | `tok_out ÷ n_decode` — delivered tokens per decode step, i.e. the MTP payoff. 1.00 means speculation buys nothing; higher is better. Blank where the endpoint exposes no `/metrics` (the Anthropic proxy). |
+| `reparse` | steps whose reply was not wrapped in `<code>…</code>`, so smolagents raised `AgentParsingError` before running anything. **These steps are counted in `iters` but produced nothing** — subtract them to compare capability rather than format compliance. Explained below. |
 
-**1. Flash-Next solves all three tiers.** An earlier run scored it 0/3
-(`no_files_written` / `context_exhausted` / `compile`), which was entirely the
-`CTX=32768` clamp described below — a value derived for UD-IQ4_XS and carried
-to IQ3_XXS without being re-derived. At 131072 the same quant passes every tier
-on both hosts. A stale configuration value produced a completely wrong
-conclusion about this model's capability, which is the main reason this doc
-reports one harness only.
+Two further counters are in `results.jsonl` but omitted from the table because
+they are 0 or 1 on nearly every row: `timeout_errors` (a code block exceeding
+`--snippet-timeout`) and `sandbox_errors` (a denied `import`). Both are
+surfaced as footnotes under the summary table `bench.py` prints.
 
-**2. The ladder is still discriminating.** The concern with adding `ENV_NOTE`
-was that it might make the tasks easier. It did not: Opus still needs 23-28
-steps per tier, and the two sandbox denials that remain are a model ignoring a
-note it was given rather than a harness that never stated the rule.
+| model | host | task | pass | iters | model_s | shell_s | tok_out | tok/dec | reparse |
+|-------|------|------|------|------:|--------:|--------:|--------:|--------:|--------:|
+| claude-opus-4-5 | proxy | t1-eventhandler | **yes** | 23 | 94.5 | 0.4 | 2 471 | — | 0 |
+| claude-opus-4-5 | proxy | t2-osd | **yes** | 28 | 162.5 | 1.0 | 5 202 | — | 0 |
+| claude-opus-4-5 | proxy | t3-unr | **yes** | 25 | 99.3 | 0.5 | 2 692 | — | 0 |
+| Flash-Next IQ3_XXS | frwk-bsd | t1-eventhandler | **yes** | 49 | 2 118.3 | 5.0 | 39 065 | 1.50 | 0 |
+| Flash-Next IQ3_XXS | frwk-bsd | t2-osd | **yes** | 49 | 2 463.8 | 132.8 | 50 840 | 1.52 | 0 |
+| Flash-Next IQ3_XXS | frwk-bsd | t3-unr | **yes** | 58 | 1 381.2 | 1.6 | 27 236 | 1.52 | 8 |
+| Flash-Next IQ3_XXS | frwk-linux | t1-eventhandler | **yes** | 41 | 1 833.9 | 5.4 | 35 641 | 1.53 | 0 |
+| Flash-Next IQ3_XXS | frwk-linux | t2-osd | **yes** | 44 | 1 574.4 | 474.1 | 30 924 | 1.51 | 0 |
+| Flash-Next IQ3_XXS | frwk-linux | t3-unr | **yes** | 49 | 1 645.3 | 5.5 | 31 700 | 1.52 | 0 |
+| Qwen3.8-27B Q8 MTP | frwk-bsd | t1-eventhandler | **yes** | 53 | 1 559.4 | 0.9 | 20 165 | 3.81 | 0 |
+| Qwen3.8-27B Q8 MTP | frwk-bsd | t2-osd | **yes** | 62 | 4 261.9 | 12.9 | 54 750 | 3.36 | 0 |
+| Qwen3.8-27B Q8 MTP | frwk-bsd | t3-unr | **yes** | 42 | 819.6 | 0.7 | 11 042 | 3.66 | 0 |
+| Qwen3.8-27B Q8 MTP | frwk-linux | t1-eventhandler | **yes** | 57 | 3 130.3 | 2.6 | 37 693 | 3.46 | 0 |
+| Qwen3.8-27B Q8 MTP | frwk-linux | t2-osd | **yes** | 28 | 1 731.6 | 1.3 | 25 363 | 3.39 | 0 |
+| Qwen3.8-27B Q8 MTP | frwk-linux | t3-unr | **yes** | 46 | 516.8 | 1.6 | 5 468 | 3.58 | 0 |
 
-Cost gap to the reference is the real result, and it is large:
+**15/15 PASS.** Three things follow.
 
-| | Opus | Flash-Next (best host) | ratio |
+**1. Tiers 1-3 no longer discriminate on pass/fail.** Every model passed every
+tier on both hosts. Earlier "0/3" and "2/3" scores were harness artifacts — the
+`CTX=32768` clamp and an over-tight step cap, both described below — not model
+limits. Flash-Next in particular went from 0/3 to 3/3 with no change to the
+model, only to its context size.
+
+That is the most important finding here and it is a **limitation of the
+ladder**: as a quality gate these three tiers are now saturated, and only cost
+separates the models. Adding the harder tiers already sketched below
+(`khelp`/`hhook`, `epoch` read sections) is the obvious next step — they were
+deferred precisely to avoid a bench that floors out, and the opposite happened.
+
+**2. The tasks were not trivialised by `ENV_NOTE`.** The concern with adding it
+was that it might hand models the answer. It did not: Opus still needs 23-28
+steps per tier, unchanged from before the note, and the local models still need
+28-62. What vanished was the wasted retries, not the difficulty.
+
+**3. Cost is what separates the models now**, and the gap is large. Medians
+over all six runs per local model, against Opus's three:
+
+| | median iters | median model_s | median tok_out |
 |---|---:|---:|---:|
-| median iters | 25 | 44 | 1.8x |
-| median model_s | 99 | 1 645 | **17x** |
-| median tok_out | 2 692 | 31 700 | 12x |
+| claude-opus-4-5 | 25 | **99** | 2 692 |
+| Flash-Next IQ3_XXS | 49 (2.0x) | 1 740 (**18x**) | 33 670 (13x) |
+| Qwen3.8-27B Q8 MTP | 50 (2.0x) | 1 646 (**17x**) | 22 764 (8x) |
 
-Same verdict, ~17x the wall time and ~12x the output tokens.
+Both local models need almost exactly **twice** the agent steps and roughly
+**17-18x** the wall time for the same verdict. The two are near-identical on
+steps and time; Qwen3.8-27B is the more economical on tokens.
 
-**Do not read frwk-linux's win as an OS effect.** It leads on every tier
-(41/44/49 vs 49/49/58), but at `--reps 1` with MTP on that is one sample, and
-the `reparse` column shows why that matters — see the next subsection.
+Why the wall-clock gap is so much larger than the step gap: decode dominates.
+Measured live on frwk-bsd mid-run, prefill ran at 132.6 tok/s but decode at
+**16.6 tok/s**, and decode was 84 % of elapsed time. At that rate ~900 tokens
+of output *is* ~54 s, so a model's cost here is set by how many tokens it emits
+per step, not by how many steps it takes.
+
+**The two local models get very different value from MTP**, and the `tok/dec`
+column is where it shows:
+
+| model | tok/dec | draft acceptance |
+|---|---:|---:|
+| Qwen3.8-27B Q8 MTP | **3.4-3.8** | 0.60-0.75 |
+| Flash-Next IQ3_XXS | 1.50-1.53 | 0.51-0.54 |
+
+Qwen3.8-27B extracts more than twice as many tokens per decode step. That is
+the `qwen38-mtp` slot's `--spec-draft-n-max 4` against the `flashnext` slot's
+`2`, compounded by higher acceptance — and it is why a dense 27B stays
+competitive on wall time with a 125B MoE that has far more raw throughput.
+
+**Do not read frwk-linux's lead as an OS effect.** It totals less time than
+frwk-bsd for both models (Flash-Next 5 054 s vs 5 963 s; Qwen3.8-27B 5 379 s vs
+6 641 s), which looks systematic — but at `--reps 1` these are single samples,
+the two hosts contended for this machine while running in parallel, and the
+`reparse` column shows how far one sample can swing. See the next subsection.
 
 #### The reparse asymmetry is noise — worked example of an n=1 trap
 
@@ -467,27 +517,27 @@ next to `iters`: t3 on frwk-bsd used 58 iterations, 8 of which produced nothing.
 
 #### MTP behaviour under a real agent workload
 
-`draft_mean_len` is **1.00** on all six Flash-Next tasks — exactly one accepted
-token per draft, which is the `--spec-draft-n-max 2` setting in the `flashnext`
-slot doing what the speed bench predicted. Acceptance is flat and host-agnostic:
+Scraped per task from each endpoint's `/metrics`, so these are measurements of
+the deployment rather than of the prompt harness:
 
-| host | t1 | t2 | t3 |
-|------|---:|---:|---:|
-| frwk-bsd | 0.510 | 0.526 | 0.530 |
-| frwk-linux | 0.543 | 0.525 | 0.531 |
+| model | slot `n-max` | `draft_mean_len` | acceptance | `tok/dec` |
+|---|---:|---:|---:|---:|
+| Flash-Next IQ3_XXS | 2 | 1.00 | 0.51-0.54 | 1.50-1.53 |
+| Qwen3.8-27B Q8 MTP | 4 | 4.00 | 0.60-0.75 | 3.36-3.81 |
 
-0.51-0.54 on every task on both hosts. `qwen38-mtp` on the same hardware ranges
-0.60-0.76, so acceptance is a property of the model and quant rather than of
-the OS. (Acceptance is scraped from the endpoint's `/metrics` and does not
-depend on the prompt harness, so that figure stays comparable even though the
-run it came from is not.)
+`draft_mean_len` sits exactly at each slot's `--spec-draft-n-max`, which is the
+speed bench's prediction confirmed under a real agent workload rather than a
+synthetic one.
 
-#### Still outstanding
+Acceptance is **host-agnostic and model-specific**: Flash-Next holds 0.51-0.54
+across every task on both hosts, Qwen3.8-27B 0.60-0.75, with the per-host
+spread smaller than the per-model gap. So acceptance tracks model and quant,
+not the OS.
 
-`qwen38-mtp` (`Qwen3.8-27B-Q8_0-MTP`) has **not** completed a run under this
-harness at the time of writing, so the comparison above is Opus vs Flash-Next
-only. Its older rows are excluded for the reason given at the top of this
-section.
+The practical consequence is in `tok/dec`: Qwen3.8-27B returns 3.4-3.8 tokens
+per decode step against Flash-Next's ~1.5. Since decode is ~84 % of elapsed
+time, that is most of why a dense 27B keeps pace on wall clock with a 125B MoE
+of far greater raw throughput.
 
 One snippet still hit the raised 180 s budget (frwk-linux t2): a `grep -rl`
 over `/root /home /usr/local /tmp`. That is an expensive search by choice, not
@@ -746,6 +796,12 @@ typed on `AgentParsingError` so a reworded message cannot silently stop the
 count; the other two are message-matched because smolagents raises them as
 generic execution errors with no class to type on.
 
-Next: harder tiers (`khelp`/`hhook`, `epoch` read sections) are worth adding now
-that 1-3 are known-passable — they were deferred only to avoid a bench that
-floors out. And `qwen38-mtp` still needs a run under this harness.
+Next: harder tiers (`khelp`/`hhook`, `epoch` read sections) are now **needed**,
+not merely nice to have — every model passes 1-3, so the ladder is saturated
+and only cost separates them. They were deferred to avoid a bench that floors
+out; the opposite happened.
+
+One snippet still hit the raised 180 s budget (frwk-linux t2): a `grep -rl`
+over `/root /home /usr/local /tmp`. That is an expensive search by choice
+rather than a too-strict limit — note `shell_s = 474 s` on that row, an order
+of magnitude above every other.
