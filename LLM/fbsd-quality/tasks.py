@@ -321,20 +321,30 @@ BUGFIX_TASK = {
     #   STEP1-OK - the mount still works (not disabled to dodge the panic)
     #   STEP2-OK - the lookup that used to panic now returns real content
     #   STEP3-OK - teardown is clean, so the fix did not leak or wedge
-    # Printed by the harness's OWN reproducer script, not by anything the
-    # model writes — so the model is never told these strings. Neutral names:
-    # "unionfs" in a marker would hand over the subsystem, which is the first
-    # thing the model is supposed to work out.
-    "marker_re": (r"FBSDQ:repro:STEP1-OK[\s\S]*"
-                  r"FBSDQ:repro:STEP2-OK[\s\S]*"
-                  r"FBSDQ:repro:STEP3-OK"),
+    # Scored by verify_kernel_fix(), NOT by verify()'s marker match: this tier
+    # never builds a .ko, so it takes its own build -> image -> boot -> hidden
+    # regression path. The string below is what that path requires, printed by
+    # regress-t6.sh (baked into the guest image, never visible to the model).
+    # Kept as marker_re for consistency with the other tiers, but note that a
+    # panicking kernel prints NO verdict at all, so absence of this string is
+    # the failure condition rather than presence of any "FAIL".
+    "marker_re": r"FBSDQ:regress:VERDICT:PASS",
     "timeout_s": 5400,
     "needs_kernel_build": True,
-    "prompt": """The script /root/repro.sh panics the test machine.
+    "repro_script": "repro-t6.sh",
+    # repro.sh is copied into the agent's workdir by run_one(); the agent runs
+    # it on a disposable VM via the test_kernel tool, which builds the current
+    # tree and boots it. Deliberately NOT told which subsystem, which file, or
+    # what the panic says — reproducing and localising it is the task.
+    "prompt": """The script repro.sh in your working directory panics a
+machine.
 
 Fix the FreeBSD kernel so it does not, by patching the source tree at /usr/src
 and rebuilding. Every operation the script performs must still work afterwards
-— making the panic go away by disabling something does not count.""",
+— making the panic go away by disabling something does not count.
+
+Use the test_kernel tool to run it: that builds the kernel from the tree and
+runs the script on a disposable test machine, so crashing it is safe.""",
 }
 
 

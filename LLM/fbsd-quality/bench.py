@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zlib
 import time
 
 import tasks as tasklib
@@ -426,7 +427,8 @@ def src_revision(src_root):
 def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
                agent_user=None, shell_timeout=300, shell_clock=None,
                backend="openai", panic_state=None, progress=None,
-               seed=None, temperature=None, snippet_timeout=180):
+               seed=None, temperature=None, snippet_timeout=180,
+               kernel_tier=False, artifact_dir=None):
     """A smolagents CodeAgent with filesystem + shell tools, rooted at workdir.
 
     Tool surface is deliberately small and generic: read/write files, run a
@@ -446,6 +448,9 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
     # it. Empty on the first iteration, which is why the tool explains itself
     # rather than erroring.
     _panic_state = panic_state if panic_state is not None else {}
+    # Only the kernel-patching tier gets test_kernel; for tiers 1-5 the
+    # harness loads the module itself and a VM tool would be noise.
+    _kernel_tier = kernel_tier
 
     @tool
     def write_file(path: str, content: str) -> str:
@@ -506,6 +511,38 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
             return head + more
         except subprocess.TimeoutExpired:
             return "ERROR: grep timed out"
+
+    @tool
+    def test_kernel(script: str = "repro.sh") -> str:
+        """Build the kernel from the source tree and run a script on a test
+        machine booted with it. Use this to reproduce a crash, and again after
+        changing the source, to see whether your change worked.
+
+        The test machine is disposable and separate from this one: crashing it
+        is safe and expected. Its console output, including any panic and
+        backtrace, is returned to you. If it panics, the crash dump is kept and
+        debug_last_panic can inspect it.
+
+        Building takes about a minute. Nothing you do here can affect the
+        machine you are working on.
+
+        Args:
+            script: name of a shell script in your working directory to run on
+                the test machine. Defaults to "repro.sh".
+        """
+        if not _kernel_tier:
+            return ("ERROR: this task does not use a test kernel; build a "
+                    "module and the harness will load it for you.")
+        path = os.path.join(workdir, os.path.basename(script))
+        if not os.path.exists(path):
+            return f"ERROR: no such script in your working directory: {script}"
+        _t = time.time()
+        try:
+            out = _run_candidate_kernel(src_root, path, panic_state,
+                                        artifact_dir or workdir)
+        finally:
+            _shell_clock["seconds"] += time.time() - _t
+        return out
 
     @tool
     def debug_last_panic(gdb_commands: str = "bt") -> str:
@@ -631,8 +668,10 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
     #
     # Passed via executor_kwargs, which agents.create_python_executor merges
     # into LocalPythonExecutor(**...) — a supported parameter, not a patch.
-    return CodeAgent(tools=[write_file, read_file, grep_src, run_shell,
-                            debug_last_panic],
+    _tools = [write_file, read_file, grep_src, run_shell, debug_last_panic]
+    if kernel_tier:
+        _tools.append(test_kernel)
+    return CodeAgent(tools=_tools,
                      model=model, max_steps=max_steps, add_base_tools=False,
                      executor_kwargs={"timeout_seconds": snippet_timeout},
                      step_callbacks=([progress] if progress else None))
@@ -749,9 +788,15 @@ class NoProgressDetector:
     no_progress failure is distinguishable from a genuine step-cap exhaustion.
     """
 
-    def __init__(self, workdir, patience=40):
+    def __init__(self, workdir, patience=40, src_root=None):
         self.workdir = workdir
         self.patience = patience
+        # For a kernel-patching tier the deliverable is a MODIFIED SOURCE TREE,
+        # not a file in the workdir. Without this the detector watched the
+        # wrong directory: in the first t6 calibration the model was editing
+        # sys/kern/vfs_lookup.c and was interrupted at step 41 for "no file
+        # created or modified in 40 consecutive steps".
+        self.src_root = src_root
         self.stale = 0
         self.steps = 0
         self.last_sig = None
@@ -764,8 +809,27 @@ class NoProgressDetector:
         self.step_errors = 0
 
     def _signature(self):
-        """(name, size, mtime) of every source-ish file the agent may write."""
+        """(name, size, mtime) of every source-ish file the agent may write.
+
+        With src_root set, the tree's dirty set is included: `git status
+        --porcelain` is cheap (it does not walk 116k files the way an os.walk
+        would) and changes the moment a source file is edited, so patching the
+        kernel counts as progress.
+        """
         sig = []
+        if self.src_root:
+            try:
+                r = subprocess.run(["git", "-C", self.src_root, "status",
+                                    "--porcelain"], capture_output=True,
+                                   text=True, timeout=60)
+                if r.returncode == 0:
+                    # zlib.crc32, not hash(): PYTHONHASHSEED is randomised per
+                    # process, so hash() would make signatures
+                    # incomparable across a restart.
+                    sig.append(("__tree__", len(r.stdout),
+                                zlib.crc32(r.stdout.encode())))
+            except Exception:                        # noqa: BLE001
+                pass
         try:
             for name in sorted(os.listdir(self.workdir)):
                 if not name.endswith((".c", ".h", ".mk")) and name not in (
@@ -940,6 +1004,93 @@ def find_kernel_debug(src_root):
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def _build_candidate_kernel(src_root, extra_root_files=None, artifact_dir=None):
+    """buildkernel from src_root, then bake a bootable image from it.
+
+    Returns (image_path, None) or (None, error_string). Shared by the agent's
+    test_kernel tool and by verify_kernel_fix so the model is scored on exactly
+    the pipeline it was iterating against — if these diverged, a model could
+    pass its own testing and fail scoring for reasons that are ours.
+    """
+    obj = os.environ.get("MAKEOBJDIRPREFIX", "/usr/obj") + os.path.realpath(src_root)
+    kern_dir = os.path.join(obj, "amd64.amd64/sys/GENERIC")
+    env = dict(os.environ)
+    env.update({"__MAKE_CONF": "/dev/null", "SRCCONF": "/dev/null"})
+    env.update(build_env())
+    try:
+        p = subprocess.run(["make", "-C", src_root, "-j",
+                            str(os.cpu_count() or 8),
+                            "buildkernel", "KERNCONF=GENERIC"],
+                           capture_output=True, text=True, timeout=3600,
+                           env=env)
+    except subprocess.TimeoutExpired:
+        return None, "buildkernel timed out after 3600s"
+    if p.returncode != 0:
+        tail = ((p.stdout or "") + (p.stderr or ""))[-2500:]
+        return None, f"buildkernel failed:\n{tail}"
+
+    img = os.path.join(artifact_dir or "/tmp", "t6-candidate.img")
+    ienv = dict(env)
+    # unionfs/tmpfs because mkimage.sh ships only p9fs/virtio_* by default and
+    # the tier's filesystems would otherwise be silently absent.
+    ienv["EXTRA_MODULES"] = "unionfs tmpfs"
+    if extra_root_files:
+        ienv["EXTRA_ROOT_FILES"] = extra_root_files
+    try:
+        m = subprocess.run([os.path.join(HERE, "mkimage.sh"),
+                            "-o", img, "-s", "2g", "-S", src_root,
+                            "-k", kern_dir],
+                           capture_output=True, text=True, timeout=1800,
+                           env=ienv)
+    except subprocess.TimeoutExpired:
+        return None, "mkimage.sh timed out"
+    if m.returncode != 0:
+        return None, f"mkimage.sh failed: {(m.stderr or '')[-500:]}"
+    return img, None
+
+
+def _run_candidate_kernel(src_root, host_script, panic_state, artifact_dir):
+    """Agent-facing: build the kernel, boot it, run the agent's own script.
+
+    The script comes from the agent's workdir and is copied into the image, so
+    it is the agent's to change — unlike the hidden regression, which the agent
+    never sees and which only verify_kernel_fix runs.
+    """
+    img, err = _build_candidate_kernel(src_root,
+                                       extra_root_files=host_script,
+                                       artifact_dir=artifact_dir)
+    if err:
+        return f"BUILD FAILED\n{err}"
+    dump_dir = os.path.join(artifact_dir, "_dumps")
+    runner = vmrunner.BhyveRunner(disk_img=img, share_dir=dump_dir,
+                                  dump_dir=dump_dir)
+    res = runner.run_script("/root/" + os.path.basename(host_script))
+    if res.panicked and panic_state is not None and res.dump_disk:
+        try:
+            core, kern = runner.extract_core(res.dump_disk, src_root)
+            if core:
+                panic_state["core"] = core
+                panic_state["kernel"] = kern
+        except Exception:                            # noqa: BLE001
+            pass
+    console = res.console or ""
+    # A boot that produced NOTHING must never be reported as success. In the
+    # first t6 calibration this returned "test machine completed" with an empty
+    # console on every attempt, so the model was told its reproducer ran fine
+    # and never saw the panic it was asked to fix — while the same image, driven
+    # by hand, booted and panicked correctly. Require the guest's own readiness
+    # handshake as proof it got as far as a shell.
+    if "FBSDQ-GUEST-READY" not in console:
+        return ("ERROR: the test machine did not reach a shell — no "
+                f"FBSDQ-GUEST-READY handshake in {len(console)} bytes of "
+                f"console. This is a harness fault, not your code.\n"
+                f"{console[-4000:]}")
+    tail = console[-12000:]
+    status = ("PANICKED" if res.panicked else
+              "TIMED OUT" if res.timed_out else "completed")
+    return f"test machine {status}\n{tail}"
+
+
 def verify_kernel_fix(task, src_root, artifact_dir=None, jobs=None):
     """Score the t6 bug-fix tier: rebuild the model's kernel, boot it, run the
     HIDDEN regression, and require its verdict.
@@ -970,47 +1121,15 @@ def verify_kernel_fix(task, src_root, artifact_dir=None, jobs=None):
     if not os.path.exists(regress):
         return False, F_HARNESS, f"missing regression script: {regress}"
 
-    obj = os.environ.get("MAKEOBJDIRPREFIX", "/usr/obj") + os.path.realpath(src_root)
-    kern_dir = os.path.join(obj, "amd64.amd64/sys/GENERIC")
-    jobs = jobs or str(os.cpu_count() or 8)
+    # Same builder the agent's test_kernel tool uses, so the model is scored on
+    # exactly the pipeline it iterated against.
+    img, err = _build_candidate_kernel(src_root, extra_root_files=regress,
+                                       artifact_dir=artifact_dir)
+    if err:
+        cls = F_COMPILE if "buildkernel" in err else F_HARNESS
+        return False, cls, err
 
-    # 1. Build the kernel the model's patch produces. Measured at 76-77 s off a
-    #    warm /usr/obj, so this is not the cost centre it looks like. ccache is
-    #    disabled (build_env) because a stale cached object would silently
-    #    produce a kernel that does not contain the model's change.
-    env = dict(os.environ)
-    env.update({"__MAKE_CONF": "/dev/null", "SRCCONF": "/dev/null"})
-    env.update(build_env())
-    try:
-        p = subprocess.run(["make", "-C", src_root, "-j", jobs,
-                            "buildkernel", "KERNCONF=GENERIC"],
-                           capture_output=True, text=True, timeout=3600,
-                           env=env)
-    except subprocess.TimeoutExpired:
-        return False, F_COMPILE, "buildkernel timed out after 3600s"
-    if p.returncode != 0:
-        tail = (p.stdout or "")[-1500:] + (p.stderr or "")[-1500:]
-        return False, F_COMPILE, f"buildkernel failed:\n{tail[-2500:]}"
-
-    # 2. Bake an image from THAT kernel, with unionfs/tmpfs (the tier needs
-    #    them and mkimage.sh ships only p9fs/virtio_* by default) and with the
-    #    hidden regression script inside.
-    img = os.path.join(artifact_dir or "/tmp", "t6-candidate.img")
-    ienv = dict(env)
-    ienv["EXTRA_MODULES"] = "unionfs tmpfs"
-    ienv["EXTRA_ROOT_FILES"] = regress
-    try:
-        m = subprocess.run([os.path.join(HERE, "mkimage.sh"),
-                            "-o", img, "-s", "2g", "-S", src_root,
-                            "-k", kern_dir],
-                           capture_output=True, text=True, timeout=1800,
-                           env=ienv)
-    except subprocess.TimeoutExpired:
-        return False, F_HARNESS, "mkimage.sh timed out"
-    if m.returncode != 0:
-        return False, F_HARNESS, f"mkimage.sh failed: {(m.stderr or '')[-500:]}"
-
-    # 3. Boot it and run the hidden regression.
+    # Boot it and run the hidden regression.
     dump_dir = os.path.join(artifact_dir or "/tmp", "_dumps")
     runner = vmrunner.BhyveRunner(disk_img=img, share_dir=dump_dir,
                                   dump_dir=dump_dir)
@@ -1024,6 +1143,15 @@ def verify_kernel_fix(task, src_root, artifact_dir=None, jobs=None):
     if "SETUP:MISSING-FS" in console or "VERDICT:FAIL:setup" in console:
         # The guest could not run the test at all — our fault, not the model's.
         return False, F_HARNESS, _console_tail(console)
+    if "FBSDQ-GUEST-READY" not in console:
+        # Never score a model on a VM that never booted. The first t6
+        # calibration returned F_WRONG with an EMPTY failure_detail for exactly
+        # this reason, which reads as "the fix did not work" when in fact
+        # nothing was ever tested.
+        return False, F_HARNESS, (
+            f"test VM never reached a shell (no FBSDQ-GUEST-READY in "
+            f"{len(console)} bytes) — harness fault, verdict not attributable "
+            f"to the model\n{console[-2000:]}")
     if res.timed_out:
         return False, F_TIMEOUT, _console_tail(console)
     return False, F_WRONG, _console_tail(console)
@@ -1082,6 +1210,18 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
         # The agent writes here as an unprivileged user.
         shutil.chown(workdir, user=agent_user)
 
+    # The bug-fix tier hands the agent a reproducer to run. It goes in the
+    # WORKDIR (the agent's own directory) — unlike the hidden regression, which
+    # is baked into the guest image precisely so the agent cannot read it.
+    if task.get("repro_script"):
+        src_repro = os.path.join(HERE, task["repro_script"])
+        if os.path.exists(src_repro):
+            dst = os.path.join(workdir, "repro.sh")
+            shutil.copyfile(src_repro, dst)
+            os.chmod(dst, 0o755)
+            if agent_user:
+                shutil.chown(dst, user=agent_user)
+
     rec = {
         "task": task["id"], "tier": task["tier"], "facility": task["facility"],
         "model": model_id, "src_root": src_root, "src_rev": src_revision(src_root),
@@ -1097,7 +1237,11 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     # Populated by verify() if the guest panics; read by the agent's
     # debug_last_panic tool. Empty means "no dump", which the tool explains.
     panic_state = {}
-    progress = NoProgressDetector(workdir, patience=no_progress_patience)
+    progress = NoProgressDetector(
+        workdir, patience=no_progress_patience,
+        # Only the kernel-patching tier: for tiers 1-5 the deliverable is in
+        # the workdir and watching the tree would call a stale change progress.
+        src_root=src_root if task.get("needs_kernel_build") else None)
     shell_timeout = task.get("timeout_s", 300)
 
     def _finish_timing(t0):
@@ -1113,7 +1257,8 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
         agent = make_agent(model_id, api_base, api_key, workdir, max_steps,
                            src_root, agent_user, shell_timeout, clock,
                            backend, panic_state, progress, seed, temperature,
-                           snippet_timeout)
+                           snippet_timeout,
+                           bool(task.get("needs_kernel_build")), artifact_dir)
         agent.run(task["prompt"].replace("/usr/src", src_root) + ENV_NOTE)
     except Exception as e:                      # noqa: BLE001
         msg = f"{type(e).__name__}: {e}"
