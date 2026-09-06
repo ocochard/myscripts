@@ -3,7 +3,12 @@
 
 set -e
 
-kldload -n unionfs tmpfs
+# NOT under set -e: `kldload -n unionfs tmpfs` exits 1 here because tmpfs is
+# compiled into GENERIC, so "loading" it fails even though the filesystem is
+# perfectly available. With set -e that aborted the whole script at this line
+# and it produced no output at all — which read as "the kernel no longer
+# panics", i.e. a false PASS.
+kldload -n unionfs tmpfs || true
 
 D=/var/tmp/fbsdq-repro
 rm -rf $D

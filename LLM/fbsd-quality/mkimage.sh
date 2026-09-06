@@ -232,7 +232,7 @@ echo "==> loader from ${LOADER_SRC:-<none>}"
 
 echo "==> installing static userland from $RESCUE"
 mkdir -p "$MNT/rescue" "$MNT/bin" "$MNT/sbin" "$MNT/etc" "$MNT/dev" \
-         "$MNT/mnt" "$MNT/tmp" "$MNT/var/run" "$MNT/var/log"
+         "$MNT/mnt" "$MNT/tmp" "$MNT/var/run" "$MNT/var/log" "$MNT/var/tmp"
 # PRESERVE HARDLINKS. /rescue is ~150 names hardlinked to ONE ~20 MB static
 # binary: `du` says 12 MB, but cp(1) -R breaks the links and writes 150
 # separate copies — 3.0 GB, which overflows any sane image. tar keeps them.
