@@ -438,7 +438,7 @@ surfaced as footnotes under the summary table `bench.py` prints.
 | Qwen3.8-27B Q8 MTP | frwk-linux | t2-osd | **yes** | 28 | 1 731.6 | 1.3 | 25 363 | 3.39 | 0 |
 | Qwen3.8-27B Q8 MTP | frwk-linux | t3-unr | **yes** | 46 | 516.8 | 1.6 | 5 468 | 3.58 | 0 |
 
-**15/15 PASS.** Three things follow.
+**15/15 PASS** on tiers 1-3. Three things follow.
 
 **1. Tiers 1-3 no longer discriminate on pass/fail.** Every model passed every
 tier on both hosts. Earlier "0/3" and "2/3" scores were harness artifacts — the
@@ -493,4 +493,34 @@ competitive on wall time with a 125B MoE that has far more raw throughput.
 frwk-bsd for both models (Flash-Next 5 054 s vs 5 963 s; Qwen3.8-27B 5 379 s vs
 6 641 s), which looks systematic — but at `--reps 1` these are single samples,
 the two hosts contended for this machine while running in parallel, and the
-`reparse` column shows how far one sample can swing. See the next subsection.
+`reparse` column swings far enough on one sample to show why.
+
+### Tiers 4-5 — reference calibration only (2026-09-06)
+
+Added because tiers 1-3 saturated. Reference model only so far, to settle
+whether they are solvable at all: a task no model can pass is broken, not hard.
+
+| model | task | pass | iters | model_s | shell_s | tok_out |
+|-------|------|------|------:|--------:|--------:|--------:|
+| claude-opus-4-5 | t4-hhook | **yes** | 32 | 157.7 | 1.0 | 5 370 |
+| claude-opus-4-5 | t5-epoch | **yes** | 19 | 94.0 | 0.4 | 3 164 |
+
+Verified from the guest console, not the verdict: t4 printed
+`type=2:id=42:udata=0xfeedface:ran=1` (type and id come from the kernel's
+stored hook head, so a real dispatch happened), t5 printed `inside=1` then
+`reclaimed=1` in that order (the deferred callback really ran later). The t4
+trace shows discovery, not recall: it read `hhook.h` and `kern_hhook.c`, then
+used `HHOOK_TYPE_SOCKET` — a constant the prompt never names.
+
+Both cost the reference *less* than tier 2 (28 iters / 162 s), so "harder" here
+means more API surface to discover, not more turns. No local model has
+attempted them; that is the next run.
+
+**Marker fix these tiers exposed.** In `sys/kern/subr_prf.c`, `%p` sets
+`sharpflag` when given no width (line 838) and that prepends its own `0x`
+(line 937), so `printf("...=0x%p", p)` emits `0x0xfeedface`. That is why the
+Qwen3.8-27B frwk-linux t2 row was scored `wrong_output` earlier — correct OSD
+logic, real round-trip, doubled prefix. t2/t4/t5 now accept `0x(?:0x)?`, still
+rejecting a triple prefix, wrong hook type, wrong id and a lost `udata`. That
+historical t2 row would score differently today; a rescore is in flight, and
+the 15/15 table above is as measured under the old marker.
