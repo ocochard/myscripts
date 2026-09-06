@@ -347,24 +347,10 @@ none in the scoring:
    Switched to `sysctl -n kern.osreldate` — which is also the exact number
    `kldload` compares, so it is the better value anyway.
 
-### Reference baseline — the ladder is calibrated
+### The ladder is calibrated
 
-> **Superseded by the v2 table below.** These are the original (v1) numbers,
-> taken before the harness gained `ENV_NOTE` and the raised snippet budget.
-> They are kept because the calibration *conclusion* still holds and because
-> the before/after is the evidence that the harness fixes did something. Do
-> **not** compare them against v2 numbers — different harness.
-
-`claude-opus-4-5` (native `/v1/messages` proxy), `--src-mode ro`,
-src `5b10c3c3e3d5`, smolagents 1.26.0 via LiteLLM, 2026-09-05:
-
-| task | pass | iters | model_s | shell_s | tok_in | tok_out |
-|------|------|------:|--------:|--------:|-------:|--------:|
-| t1-eventhandler | **yes** | 27 | 130.1 | 0.4 | 476 253 | 3 934 |
-| t2-osd | **yes** | 32 | 169.4 | 0.8 | 909 195 | 5 663 |
-| t3-unr | **yes** | 20 | 88.7 | 0.3 | 253 908 | 3 052 |
-
-All three verified by evidence, not just the verdict:
+`claude-opus-4-5` passes all three tiers (numbers in the results table below),
+verified by evidence rather than by the verdict alone:
 
 ```
 t1: FBSDQ-MOUNTED -> FBSDQ-LOADED -> FBSDQ:exit:pid=28/29/30 -> FBSDQ-UNLOADED
@@ -375,7 +361,8 @@ t3: FBSDQ:unr:a=0:b=1:c=2:reuse=1              (real allocator; a faked
 
 **So tiers 1-3 are solvable with no scaffolding**, and a local model failing
 them is real signal rather than a broken harness — which was the open question
-this run existed to answer. The agent discovered `bsd.kmod.mk` unaided, e.g.:
+the calibration run existed to answer. The agent discovered `bsd.kmod.mk`
+unaided, e.g.:
 
 ```make
 SRCS=	exit_monitor.c
@@ -393,23 +380,20 @@ the prompt asks for the *process* type. The API use was genuine and the
 round-trip real, so it is a legitimate pass, but the marker cannot tell the two
 object types apart. Tighten it if that distinction matters.
 
-### v2 — all runs under one harness (2026-09-06)
+### Results (2026-09-06)
 
-Everything above this heading is **v1**. Two harness changes invalidated it,
-so every model was re-run — including the Opus reference, because Opus was
-affected too (it also lost steps to the import sandbox). Re-running only the
-local models would have given them a hint the reference never got, biasing the
-comparison in their favour.
+Every model here ran under one identical harness. Earlier runs exist in
+`results.jsonl` but were taken before the harness gained `ENV_NOTE` and the
+raised snippet budget, so they are **not comparable and are not reported** —
+including the earlier Opus reference, which was affected too (it also lost
+steps to the import sandbox). That is why the reference was re-run rather than
+reused: keeping it would have given the local models a hint the reference never
+got.
 
-What changed between v1 and v2:
+Filter to the current harness with `run_id` prefix `v2-`; anything else in
+`results.jsonl` predates it.
 
-* `ENV_NOTE` — the prompt now states the Python sandbox allowlist and warns
-  that one code block has a time budget. Environment information, not
-  scaffolding (see the policy section: it names no `bsd.kmod.mk`, no `SYSDIR`,
-  no header).
-* `--snippet-timeout` default 30 s -> **180 s**.
-
-Config identical across all v2 runs: `--src-mode ro`, src `5b10c3c3e3d5`,
+Config, identical across all runs: `--src-mode ro`, src `5b10c3c3e3d5`,
 `--max-steps 60`, `--no-progress-patience 8`, `--reps 1`, `--seed 42` on the
 local endpoints (omitted for Opus — the Anthropic API has no seed parameter,
 so passing one would look reproducible without being so).
@@ -428,19 +412,18 @@ so passing one would look reproducible without being so).
 
 **9/9 PASS.** Two things follow.
 
-**1. Flash-Next solves all three tiers. Its earlier 0/3 was my bug, not the
-model.** In v1 it scored `no_files_written` / `context_exhausted` / `compile` —
-and that was entirely the `CTX=32768` clamp described below. At 131072 the same
-quant passes every tier on both hosts. A configuration value I derived for a
-different quant and never re-derived cost a completely wrong conclusion about
-this model's capability.
+**1. Flash-Next solves all three tiers.** An earlier run scored it 0/3
+(`no_files_written` / `context_exhausted` / `compile`), which was entirely the
+`CTX=32768` clamp described below — a value derived for UD-IQ4_XS and carried
+to IQ3_XXS without being re-derived. At 131072 the same quant passes every tier
+on both hosts. A stale configuration value produced a completely wrong
+conclusion about this model's capability, which is the main reason this doc
+reports one harness only.
 
-**2. The harness fixes worked, and the ladder is still discriminating.** The
-three counters that motivated the re-run went to near zero: 13 sandbox denials
-across the v1 corpus -> 2 in v2, and both v2 cases are a model ignoring a note
-it was given rather than a harness that never mentioned the rule. Opus did not
-get easier — 23/28/25 iters, versus 27/32/20 in v1 — so the tasks were not
-accidentally trivialised by the note.
+**2. The ladder is still discriminating.** The concern with adding `ENV_NOTE`
+was that it might make the tasks easier. It did not: Opus still needs 23-28
+steps per tier, and the two sandbox denials that remain are a model ignoring a
+note it was given rather than a harness that never stated the rule.
 
 Cost gap to the reference is the real result, and it is large:
 
@@ -456,18 +439,23 @@ Same verdict, ~17x the wall time and ~12x the output tokens.
 (41/44/49 vs 49/49/58), but at `--reps 1` with MTP on that is one sample, and
 the `reparse` column shows why that matters — see the next subsection.
 
-#### The reparse asymmetry was noise, and I called it wrong
+#### The reparse asymmetry is noise — worked example of an n=1 trap
 
-In v1 the `<code>`-envelope failures were **Ubuntu 6, FreeBSD 0**. I proposed a
-mechanism: MTP draft acceptance perturbing token choice at the tag boundary,
-noting both endpoints ran identical launch args and the same GGUF template.
+This one is recorded because it is the clearest available demonstration of why
+`--reps 1` cannot support a claim, and the two runs involved are the evidence.
 
-In v2 they are **FreeBSD 8, Ubuntu 0** — the same asymmetry, opposite host.
+The first Flash-Next run split **Ubuntu 6, FreeBSD 0**. That looked
+host-linked, and I proposed a mechanism — MTP draft acceptance perturbing token
+choice at the tag boundary — noting both endpoints ran identical launch args
+and the same GGUF template.
 
-A host-linked mechanism cannot switch hosts. This is run-to-run variance in one
-model under unseeded-in-practice MTP sampling, and the v1 pattern was a
-single-run artifact I over-read. The honest statement at n=1 was "could be
-noise"; proposing a mechanism gave it far more weight than one run supports.
+The repeat run split **FreeBSD 8, Ubuntu 0**: same asymmetry, opposite host.
+
+A host-linked mechanism cannot switch hosts. It is run-to-run variance in one
+model under unseeded-in-practice MTP sampling, and the first pattern was a
+single-run artifact. The honest statement at n=1 was "could be noise";
+proposing a mechanism gave it far more weight than one sample supports. Treat
+every single-rep column in the table above the same way.
 
 The failure mode itself is real and worth keeping counted: Flash-Next under
 `--jinja` sometimes answers in Qwen native tool-call syntax
@@ -488,80 +476,65 @@ slot doing what the speed bench predicted. Acceptance is flat and host-agnostic:
 | frwk-bsd | 0.510 | 0.526 | 0.530 |
 | frwk-linux | 0.543 | 0.525 | 0.531 |
 
-0.51-0.54 on every task on both hosts. Compare the same field on the v1
-`qwen38-mtp` runs, which ranged 0.60-0.76 — so acceptance here is a property of
-the model and quant, not of the OS.
+0.51-0.54 on every task on both hosts. `qwen38-mtp` on the same hardware ranges
+0.60-0.76, so acceptance is a property of the model and quant rather than of
+the OS. (Acceptance is scraped from the endpoint's `/metrics` and does not
+depend on the prompt harness, so that figure stays comparable even though the
+run it came from is not.)
 
 #### Still outstanding
 
-`qwen38-mtp` (`Qwen3.8-27B-Q8_0-MTP`) has **not** been re-run under v2 at the
-time of writing; its rows in `results.jsonl` are v1 only and are not comparable
-with the table above. Until that run lands, the v2 comparison is Opus vs
-Flash-Next.
+`qwen38-mtp` (`Qwen3.8-27B-Q8_0-MTP`) has **not** completed a run under this
+harness at the time of writing, so the comparison above is Opus vs Flash-Next
+only. Its older rows are excluded for the reason given at the top of this
+section.
 
 One snippet still hit the raised 180 s budget (frwk-linux t2): a `grep -rl`
 over `/root /home /usr/local /tmp`. That is an expensive search by choice, not
 a too-strict limit — note `shell_s = 474 s` on that task, an order of magnitude
 above every other row.
 
-### Local models, and why the first comparisons were invalid
+### Three ways this bench produced wrong answers before
 
-Two attempts at comparing local models produced numbers that should **not** be
-read as model rankings. Recording why, because the failure modes are easy to
-repeat:
+Not results — **design constraints**, each one paid for with a run that
+measured the harness instead of the model. They are why the current defaults
+are what they are.
 
-**Attempt 1 — different models on different OSes (confounded on two axes).**
-`qwen38-mtp` on frwk-bsd vs `flashnext` on frwk-linux. Beyond the obvious model
-confound, the endpoints served **different context sizes** — 131072 vs 32768 —
-because `llmsrv.sh` pinned a low `CTX` for the Flash-Next slot. This agent loop
-resends its whole history each step, so context is a hard limiter: flashnext hit
-`exceed_context_size_error` at 37 856 tokens on t2 and the task simply ended.
-That was initially misfiled as `failure_class=harness`; it is now
-`context_exhausted`, because a deployment limit is a finding, not a harness bug.
+**1. Comparing across endpoints with different context sizes.** The first local
+comparison ran `qwen38-mtp` at 131072 against `flashnext` at 32768, because
+`llmsrv.sh` pinned a low `CTX` for the Flash-Next slot. This agent loop resends
+its whole history each step, so context is a hard limiter, not a detail: the
+32768 endpoint hit `exceed_context_size_error` at 37 856 tokens and the task
+simply ended. Initially misfiled as `failure_class=harness`; it is now
+`context_exhausted`, because a deployment limit is a finding about the
+deployment, not a bug in the bench.
 
-The `CTX=32768` itself was **wrong**: it was derived for UD-IQ4_XS (93.7 GB),
-where a 131072 KV genuinely overcommits, then carried over to IQ3_XXS (82 GB)
-without re-deriving. A direct probe shows **131072 loads fine with MTP on**
-(`n_ctx_slot = 131072`). Fixed in `llmsrv.sh`.
+The `CTX=32768` was itself wrong — derived for UD-IQ4_XS (93.7 GB), where a
+131072 KV genuinely overcommits, then carried to IQ3_XXS (82 GB) without being
+re-derived. 131072 loads fine with MTP on (`n_ctx_slot = 131072`). Fixed in
+`llmsrv.sh`. **Always read `n_ctx` off `/props` on both endpoints before
+comparing them.**
 
-**Attempt 2 — same model, same context, both OSes** (`Qwen3.8-27B-Q8_0-MTP`,
-`CTX=131072`, identical hardware). This is the valid design, and its headline
-result is a *methodology* finding:
+**2. An arbitrary step cap silently converts "slow" into "failed".** With
+`--max-steps 32`, every local-model run consumed exactly 32 steps and several
+were scored as failures. The traces showed real waste — one run wrote no `.c`
+file at all and spent its last three steps on `run_shell`, having already
+stated it had the API details it needed — so I concluded the failure was
+"behavioural, not capacity".
 
-| os | task | pass | iters | model_s | tok_out |
-|----|------|------|------:|--------:|--------:|
-| ubuntu  | t1-eventhandler | **yes** | 32 | 1413.3 | 23 145 |
-| freebsd | t1-eventhandler | no (`no_files_written`) | 32 | 1551.4 | 15 251 |
-| ubuntu  | t2-osd | no (`no_files_written`) | 32 | 1499.2 | — |
+That was wrong. Re-run at `--max-steps 60`, the same model passed the same task
+**one step past the old cap**. Both things were true, and the second mattered
+more: it does waste steps on reconnaissance, *and* it was one step short. The
+"local models score 0/3" framing was an artifact of the cap, not a measurement.
 
-**Every `qwen38-mtp` run consumed exactly the step cap (32)**, including the one
-that passed — whereas Opus finished in 20-32.
+**3. Reading a single rep as a result.** See the reparse worked example above:
+one run's host asymmetry reversed completely on the repeat. At `--reps 1` with
+MTP on, any per-tier verdict is one sample.
 
-That first looked like the cap deciding the outcome, but the traces say
-otherwise. In the failing frwk-bsd t1 run the model wrote **no `.c` file at
-all**, and its last three steps are nothing but `run_shell` (eight calls in
-step 32 alone). At step 31 it states *"I now have all the API details I
-need"* — and then keeps investigating `bsd.init.mk`, `printf` availability and
-the working directory instead of writing the module.
-
-From that I concluded the failure was "behavioural, not capacity" — the model
-having the knowledge but refusing to commit to code. **That conclusion was
-wrong.** Re-run with `--max-steps 60`, the same model **passed t1 at
-`iters=33`** — one single step past the old cap of 32.
-
-So both things are true, and the second one mattered more:
-
-* it *does* waste steps on reconnaissance (the trace evidence above is real);
-* it *was also* one step short of finishing.
-
-The lesson is about the harness, not the model: **an arbitrary step cap silently
-converts "slow" into "failed"**, and the earlier "local models score 0/3"
-framing was an artifact of my cap rather than a measurement of the models.
-
-Why a cap exists at all: it bounds cost and stops runaway loops (Opus used
-909 k input tokens on t2 within 32 steps; unbounded that becomes millions). But
-one global number conflates "looping" with "working steadily but slowly", so
-the harness now has both:
+Why a step cap exists at all: it bounds cost and stops runaway loops (Opus used
+909 k input tokens on one task within 32 steps; unbounded that becomes
+millions). But one global number conflates "looping" with "working steadily but
+slowly", so the harness now has both:
 
 * `--max-steps` (default 25) — the hard cost ceiling;
 * `--no-progress-patience N` (default 8) — stop after N consecutive steps that
@@ -716,19 +689,19 @@ All three were in the plumbing, none in scoring — and all three produced
 Still not exercised: the panic path (no module has panicked yet, so `dump`/
 `savecore`/`kgdb` are untested end-to-end) and tier 4.
 
-### Harness bugs found by scanning ALL logs (the v2 trigger)
+### Harness bugs found by scanning ALL logs (what triggered the re-run)
 
 The three above were found by watching runs. Grepping the **whole** log corpus
 (13 runs, 75 k lines) found three more that no single run made obvious — and
 one of them had been silently taxing every model, including the reference.
 
-Census across the v1 corpus:
+Census across the corpus at that point (13 runs, all pre-fix):
 
 | class | count | runs | who |
 |-------|------:|-----:|-----|
 | sandbox denial (`import os`) | 13 | 8/13 | **every model, Opus included** |
 | snippet timeout (30 s) | 11 | 6/13 | both hosts, both local models |
-| reparse (`<code>` envelope) | 6 | 1/13 | Flash-Next (see v2 — it moved) |
+| reparse (`<code>` envelope) | 6 | 1/13 | Flash-Next (host asymmetry: noise) |
 | context exhausted (HTTP 400) | 1 | 1/13 | Flash-Next at `CTX=32768` |
 | real 5xx / 429 | **0** | — | endpoints were stable throughout |
 
@@ -775,4 +748,4 @@ generic execution errors with no class to type on.
 
 Next: harder tiers (`khelp`/`hhook`, `epoch` read sections) are worth adding now
 that 1-3 are known-passable — they were deferred only to avoid a bench that
-floors out. And `qwen38-mtp` still needs its v2 run.
+floors out. And `qwen38-mtp` still needs a run under this harness.
