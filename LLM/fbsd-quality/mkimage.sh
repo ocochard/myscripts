@@ -302,6 +302,32 @@ exec /rescue/sh
 EOF
 chmod 0755 "$MNT/etc/rc"
 
+# EXTRA_ROOT_FILES: host files to bake into the guest's /root.
+#
+# This is how the t6 tier's HIDDEN regression script gets in. It must go in the
+# IMAGE and not on the p9fs share, because the share is the agent's own
+# workdir: anything there is readable (and writable) by the model, and a model
+# that can read the regression can satisfy it narrowly instead of fixing the
+# bug. The image is built by the harness after the agent has finished, so it
+# never sees this file.
+#
+#   EXTRA_ROOT_FILES="/path/to/regress-t6.sh" ./mkimage.sh ...
+if [ -n "${EXTRA_ROOT_FILES:-}" ]; then
+	mkdir -p "$MNT/root"
+	for f in $EXTRA_ROOT_FILES; do
+		[ -f "$f" ] || { echo "$0: EXTRA_ROOT_FILES: no such file: $f" >&2; exit 1; }
+		# Fixed name: the harness runs /root/regress.sh, and a script whose
+		# name varied with its host path would be unrunnable.
+		case "$f" in
+		*regress*) dst=regress.sh ;;
+		*)         dst=$(basename "$f") ;;
+		esac
+		cp -p "$f" "$MNT/root/$dst"
+		chmod 0755 "$MNT/root/$dst"
+		echo "    + /root/$dst (baked in, not on the share)"
+	done
+fi
+
 # Stamp the version so a mismatch between image and /usr/src is diagnosable.
 echo "$KVER" > "$MNT/etc/fbsdq-kernel-version"
 

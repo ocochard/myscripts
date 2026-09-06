@@ -937,6 +937,98 @@ def find_kernel_debug(src_root):
     return None
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def verify_kernel_fix(task, src_root, artifact_dir=None, jobs=None):
+    """Score the t6 bug-fix tier: rebuild the model's kernel, boot it, run the
+    HIDDEN regression, and require its verdict.
+
+    Returns (passed, failure_class, detail).
+
+    Three deliberate properties:
+
+    * The model patched the TREE, not a workdir, so there is no .ko to build
+      and builder.build() does not apply — that is why this is a separate path
+      rather than a branch inside verify().
+
+    * The regression script is baked INTO the image (mkimage.sh copies it to
+      /root/regress.sh) and is never placed on the p9fs share. If it were
+      shared, the agent could read it and satisfy it narrowly, which is the
+      whole reason it exists. run_script() mounts no share at all.
+
+    * A panic during regression is a FAIL, not a harness error: the model's
+      kernel crashed. The script's contract makes that unambiguous — a
+      panicking kernel prints no VERDICT line, so absence of VERDICT:PASS is
+      the failure condition rather than the presence of any "FAIL" string.
+
+    Validated end to end before any model ran it: the reference patch yields
+    5/5 OK + VERDICT:PASS, and the unpatched control panics at
+    union_vnops.c:2257 with zero VERDICT lines.
+    """
+    regress = os.path.join(HERE, "regress-t6.sh")
+    if not os.path.exists(regress):
+        return False, F_HARNESS, f"missing regression script: {regress}"
+
+    obj = os.environ.get("MAKEOBJDIRPREFIX", "/usr/obj") + os.path.realpath(src_root)
+    kern_dir = os.path.join(obj, "amd64.amd64/sys/GENERIC")
+    jobs = jobs or str(os.cpu_count() or 8)
+
+    # 1. Build the kernel the model's patch produces. Measured at 76-77 s off a
+    #    warm /usr/obj, so this is not the cost centre it looks like. ccache is
+    #    disabled (build_env) because a stale cached object would silently
+    #    produce a kernel that does not contain the model's change.
+    env = dict(os.environ)
+    env.update({"__MAKE_CONF": "/dev/null", "SRCCONF": "/dev/null"})
+    env.update(build_env())
+    try:
+        p = subprocess.run(["make", "-C", src_root, "-j", jobs,
+                            "buildkernel", "KERNCONF=GENERIC"],
+                           capture_output=True, text=True, timeout=3600,
+                           env=env)
+    except subprocess.TimeoutExpired:
+        return False, F_COMPILE, "buildkernel timed out after 3600s"
+    if p.returncode != 0:
+        tail = (p.stdout or "")[-1500:] + (p.stderr or "")[-1500:]
+        return False, F_COMPILE, f"buildkernel failed:\n{tail[-2500:]}"
+
+    # 2. Bake an image from THAT kernel, with unionfs/tmpfs (the tier needs
+    #    them and mkimage.sh ships only p9fs/virtio_* by default) and with the
+    #    hidden regression script inside.
+    img = os.path.join(artifact_dir or "/tmp", "t6-candidate.img")
+    ienv = dict(env)
+    ienv["EXTRA_MODULES"] = "unionfs tmpfs"
+    ienv["EXTRA_ROOT_FILES"] = regress
+    try:
+        m = subprocess.run([os.path.join(HERE, "mkimage.sh"),
+                            "-o", img, "-s", "2g", "-S", src_root,
+                            "-k", kern_dir],
+                           capture_output=True, text=True, timeout=1800,
+                           env=ienv)
+    except subprocess.TimeoutExpired:
+        return False, F_HARNESS, "mkimage.sh timed out"
+    if m.returncode != 0:
+        return False, F_HARNESS, f"mkimage.sh failed: {(m.stderr or '')[-500:]}"
+
+    # 3. Boot it and run the hidden regression.
+    dump_dir = os.path.join(artifact_dir or "/tmp", "_dumps")
+    runner = vmrunner.BhyveRunner(disk_img=img, share_dir=dump_dir,
+                                  dump_dir=dump_dir)
+    res = runner.run_script("/root/regress.sh")
+    console = res.console or ""
+
+    if "FBSDQ:regress:VERDICT:PASS" in console:
+        return True, None, None
+    if res.panicked:
+        return False, F_PANIC, _console_tail(console)
+    if "SETUP:MISSING-FS" in console or "VERDICT:FAIL:setup" in console:
+        # The guest could not run the test at all — our fault, not the model's.
+        return False, F_HARNESS, _console_tail(console)
+    if res.timed_out:
+        return False, F_TIMEOUT, _console_tail(console)
+    return False, F_WRONG, _console_tail(console)
+
+
 def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
            src_root="/usr/src", artifact_dir=None):
     """Build already succeeded; now load in the VM and check the marker."""
@@ -1073,6 +1165,17 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     # src_baseline excludes dirt that was already there before the run — see
     # check_src_clean().
     rec["src_dirtied"] = check_src_clean(src_root, src_baseline)
+
+    # The bug-fix tier patches the SOURCE TREE, not the workdir: there is no
+    # .c and no Makefile for builder.build() to find, so it takes its own
+    # build -> image -> boot -> hidden-regression path instead.
+    if task.get("needs_kernel_build"):
+        ok, fclass, detail = verify_kernel_fix(task, src_root, artifact_dir)
+        rec["passed"] = ok
+        rec["failure_class"] = fclass
+        rec["failure_detail"] = detail
+        _archive(rec, workdir, None, detail, artifact_dir, agent)
+        return rec
 
     b = builder.build(workdir, src_root=src_root)
     if not b.ok:
@@ -1405,6 +1508,33 @@ def main():
             os.path.dirname(os.path.abspath(args.out)), "artifacts", run_id)
         os.makedirs(artifact_dir, exist_ok=True)
         print(f"artifacts={artifact_dir}", file=sys.stderr)
+
+    # A tier that patches the kernel needs a WRITABLE tree. The default
+    # --src-mode=ro nullfs-mounts it read-only, so the model's first edit
+    # fails and the tier becomes unpassable-by-construction — which would read
+    # as a model failure, not a misconfiguration. Refuse up front rather than
+    # burn an hour of buildkernel discovering it.
+    #
+    # Why not a writable unionfs overlay on the read-only tree, which would
+    # cost only the changed files and make the model's diff trivial to extract
+    # from the upper layer? Because the t6 bug IS a unionfs bug, and THIS HOST
+    # RUNS THE BUGGY KERNEL (bigone is 1600020; sys/kern/vfs_lookup.c has no
+    # LK_CANRECURSE on the upgrade branch). Hosting the source tree on unionfs
+    # would drive the panicking code path on the machine running the bench,
+    # with the panic's occurrence depending on whether the mount point sits on
+    # tmpfs — precisely the fragile distinction under test. The model also
+    # patches and rebuilds that code mid-run, so the filesystem holding its
+    # sources could change semantics underneath it, and a build failure would
+    # be impossible to attribute between a bad patch and a broken overlay.
+    # zfs-clone gives the same independence for ~8 KB with none of that.
+    if any(t.get("needs_kernel_build") for t in selected):
+        if args.src_mode in ("ro", "none"):
+            sys.exit(
+                f"--tasks includes a kernel-patching tier, which must modify "
+                f"the source tree, but --src-mode={args.src_mode} "
+                f"{'mounts it read-only' if args.src_mode == 'ro' else 'shares the real tree'}.\n"
+                f"Use --src-mode=zfs-clone (free CoW, independent, writable) "
+                f"with --src pointing at a tree that still HAS the bug.")
 
     src_used, src_cleanup = prepare_src(args.src, args.src_mode, workdir)
     print(f"run_id={run_id}  workdir={workdir}\n"

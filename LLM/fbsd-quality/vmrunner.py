@@ -250,9 +250,54 @@ class BhyveRunner:
             return VMResult("", False, False, False,
                             reason=f"bootrom missing: {self.bootrom}")
 
-        vmname = f"{VM_PREFIX}{uuid.uuid4().hex[:8]}"
-        script = self._guest_script(ko_name, post_load_cmd)
+        return self._boot_and_drive(self._guest_script(ko_name,
+                                                       post_load_cmd))
 
+    def run_script(self, guest_path, disk_img=None):
+        """Boot and run a script that is ALREADY INSIDE the guest image.
+
+        For the t6 bug-fix tier: the model rebuilds a kernel, the harness bakes
+        it into an image together with the hidden regression script, and this
+        boots that image and runs the script.
+
+        guest_path is a path in the GUEST (e.g. /root/regress.sh), never a host
+        path and never anything on the p9fs share — the whole point is that the
+        agent cannot read or alter it. No share is mounted here at all.
+
+        disk_img overrides the runner's image for this call, so one runner can
+        verify several kernels without being reconstructed.
+
+        Returns VMResult exactly as run_module does, so callers treat a panic
+        during regression the same way as a panic during module load: the disk
+        is preserved and the core is recoverable.
+        """
+        _require_root()
+        if not os.path.exists(self.bootrom):
+            return VMResult("", False, False, False,
+                            reason=f"bootrom missing: {self.bootrom}")
+        return self._boot_and_drive(
+            [f"sh {guest_path}", "echo FBSDQ-DONE", "shutdown -p now"],
+            disk_img=disk_img)
+
+    def _boot_and_drive(self, script, disk_img=None):
+        """Boot a private copy of the image, type `script`, tear down.
+
+        Extracted from run_module so run_script gets the same private-disk
+        isolation, the same leak-proof teardown and the same panic-evidence
+        preservation. Duplicating that was not an option: the teardown is the
+        part that previously leaked a live bhyve process and a stray disk image
+        when the console loop raised.
+        """
+        vmname = f"{VM_PREFIX}{uuid.uuid4().hex[:8]}"
+        saved_disk = self.disk_img
+        if disk_img:
+            self.disk_img = disk_img
+        try:
+            return self.__boot_and_drive(vmname, script)
+        finally:
+            self.disk_img = saved_disk
+
+    def __boot_and_drive(self, vmname, script):
         disk, disk_tmp = self._private_disk(vmname)
         if disk is None:
             return VMResult("", False, False, False,
