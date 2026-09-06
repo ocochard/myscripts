@@ -266,64 +266,81 @@ working directory.""",
 
 
 # ---------------------------------------------------------------------------
-# Tier 4 is a different KIND of task from 1-3: a long-horizon build-engineering
-# problem rather than "write 40 lines of kernel C". It is kept separate (opt-in
-# via --tasks) because:
+# Tier 6 — fix a REAL kernel bug.
 #
-#   * it takes minutes-to-an-hour, not seconds, so it needs its own timeout and
-#     would otherwise dominate a tier-1..3 sweep's wall_s
-#   * it is scored on a different observable (a bootable image + how much the
-#     model managed to trim), not a dmesg marker
-#   * "iterations" means something different when one iteration is a 10-minute
-#     make(1) run
+# A different KIND of task from 1-5, and the first that is not "write a module
+# against an API you looked up". The model is handed a command line that panics
+# the kernel and must reproduce it, work out why from the panic and the source,
+# patch the kernel, rebuild, and show the panic is gone. Diagnosis from
+# evidence, not API discovery.
 #
-# It is also the task most likely to be genuinely hard for the right reason:
-# knowing that release/ has cheaper targets than `memstick`, and which
-# WITHOUT_* knobs are safe, is FreeBSD build knowledge with very little
-# presence in training data.
+# Kept opt-in (name it with --tasks) because it is in a different cost class:
+# every attempt needs `make buildkernel`, minutes to tens of minutes each,
+# against seconds for a module. A tier-1..5 sweep would be swamped by it.
 #
-# NOTE the harness does NOT depend on this succeeding — mkimage.sh builds the
-# bench guest deterministically. This tier asks the model to do the same job.
-IMAGE_TASK = {
-    # Tier 6, above the kernel-API ladder (1-5), because it is a different KIND
-    # of task and because tier_reached is max(tier) over passed tasks — two
-    # tasks sharing a tier number would make that metric ambiguous.
-    "id": "t6-diskimage",
+# THE BUG (found in the wild, BSD Router Project, 2026-09):
+#   mount -t unionfs -o below onto a mount point that lives on tmpfs, then look
+#   the mount point up -> panic:
+#     lockmgr_xlock_hard: recursing on non recursive lockmgr
+#     @ sys/fs/unionfs/union_vnops.c:2257
+#   namei -> vfs_lookup -> vfs_lookup_cross_mount -> unionfs_root ->
+#   _vn_lock, re-locking a vnode this thread already holds exclusively.
+#
+#   vfs_lookup_cross_mount() passes LK_CANRECURSE when the covered vnode
+#   arrives already exclusive, but NOT on the branch that upgrades a shared
+#   lock to exclusive — although it then holds it across VFS_ROOT() just the
+#   same. Which branch is taken depends on the filesystem holding the mount
+#   point, which is why tmpfs panics and UFS does not.
+#
+# REQUIRES the pinned tree (see README): sys/kern/vfs_lookup.c must still lack
+# the LK_CANRECURSE on the upgrade branch, and the guest kernel must be built
+# from that same tree. On a tree where the fix has landed there is no bug and
+# the task is unpassable-by-construction.
+#
+# SCORING IS BEHAVIOURAL, NOT DIFF-MATCHING. A reference patch exists and is
+# developer-reviewed, but the reporter's own analysis says allowing the
+# recursion may be papering over an invariant that belongs in unionfs instead
+# (which locks the covered vnode in unionfs_lock() because in `below` mode
+# um_uppervp IS the covered vnode, and which does not set MNTK_LOOKUP_SHARED so
+# the crossing is always forced exclusive). A model that fixes it there could
+# be MORE right. So the patch is a reference, not an answer key — exactly the
+# role claude-opus-4-5 plays for tiers 1-5.
+#
+# ANTI-CHEAT is mandatory here, unlike tiers 1-5. "The reproducer stops
+# panicking" is trivially satisfiable by breaking the feature: return an error
+# from unionfs_mount, delete the `below` handling, refuse to load the module.
+# The marker chain therefore requires the mount to SUCCEED, the lookup to
+# return real directory content, and the unmount to be clean — and the harness
+# additionally re-checks the documented differential (a non-`below` unionfs
+# mount must still work) so a fix cannot pass by disabling unionfs.
+BUGFIX_TASK = {
+    "id": "t6-unionfs-panic",
     "tier": 6,
-    "facility": "release(7) / src.conf build trimming",
-    # Scored by the harness, not a dmesg marker: does the produced image boot
-    # in bhyve and reach a shell? See bench.py verify_image().
-    "marker_re": r"FBSDQ-GUEST-READY \d+",
+    "facility": "vfs_lookup_cross_mount / unionfs lock recursion",
+    # Ordered chain, all three required:
+    #   STEP1-OK - the mount still works (not disabled to dodge the panic)
+    #   STEP2-OK - the lookup that used to panic now returns real content
+    #   STEP3-OK - teardown is clean, so the fix did not leak or wedge
+    # Printed by the harness's OWN reproducer script, not by anything the
+    # model writes — so the model is never told these strings. Neutral names:
+    # "unionfs" in a marker would hand over the subsystem, which is the first
+    # thing the model is supposed to work out.
+    "marker_re": (r"FBSDQ:repro:STEP1-OK[\s\S]*"
+                  r"FBSDQ:repro:STEP2-OK[\s\S]*"
+                  r"FBSDQ:repro:STEP3-OK"),
     "timeout_s": 5400,
-    "prompt": """Build the smallest bootable FreeBSD disk image you can, from
-the source tree at /usr/src, suitable for booting under bhyve with UEFI.
+    "needs_kernel_build": True,
+    "prompt": """The script /root/repro.sh panics the test machine.
 
-Requirements:
-- The image must boot to a usable root shell on the SERIAL console (com1) with
-  no interactive input — no getty prompt to answer, no boot-menu delay.
-- Once booted it must be able to load a kernel module from a virtio-9p share,
-  so the p9fs and virtio_p9fs kernel modules must be present and loadable.
-- It must run the kernel built from this same source tree. A module built
-  against /usr/src will not load into a kernel of a different
-  __FreeBSD_version.
-- Print the image path you produced when you are done.
-
-Constraints that matter:
-- Optimise for BUILD TIME and IMAGE SIZE, not for completeness. Nothing in the
-  image needs to serve users, run a network service, or compile anything.
-  Aggressively disable everything you do not need.
-- There is an existing object tree from a previous build; reuse it rather than
-  rebuilding from scratch if you can work out how.
-- You have 64 cores available.
-
-Read /usr/src to work out which build targets exist and which build-time
-options are available — do not guess target names or option names.""",
+Fix the FreeBSD kernel so it does not, by patching the source tree at /usr/src
+and rebuilding. Every operation the script performs must still work afterwards
+— making the panic go away by disabling something does not count.""",
 }
 
 
 def by_id(task_id):
-    if task_id == IMAGE_TASK["id"]:
-        return IMAGE_TASK
+    if task_id == BUGFIX_TASK["id"]:
+        return BUGFIX_TASK
     for t in TASKS:
         if t["id"] == task_id:
             return t
