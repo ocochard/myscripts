@@ -440,7 +440,8 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
                agent_user=None, shell_timeout=300, shell_clock=None,
                backend="openai", panic_state=None, progress=None,
                seed=None, temperature=None, snippet_timeout=180,
-               kernel_tier=False, artifact_dir=None):
+               kernel_tier=False, artifact_dir=None,
+               agent_type="code"):
     """A smolagents CodeAgent with filesystem + shell tools, rooted at workdir.
 
     Tool surface is deliberately small and generic: read/write files, run a
@@ -451,7 +452,7 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
     same harness can bench against 16-CURRENT, a stable branch, or a pinned
     checkout without editing the tasks.
     """
-    from smolagents import CodeAgent, tool
+    from smolagents import CodeAgent, ToolCallingAgent, tool
 
     # Shared with run_one so it can subtract tool time from wall_s.
     _shell_clock = shell_clock if shell_clock is not None else {
@@ -697,6 +698,27 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
     _tools = [write_file, read_file, grep_src, run_shell, debug_last_panic]
     if kernel_tier:
         _tools.append(test_kernel)
+    if agent_type == "toolcalling":
+        # ToolCallingAgent asks for STRUCTURED TOOL CALLS instead of Python in
+        # <code> tags. Use it for a model whose post-training pulls it toward
+        # native tool-call syntax: Flash-Next lost 13 of 42 t6 steps to
+        # AgentParsingError, every one of them emitting <tool_call>...</tool_call>
+        # and closing with </code> while never opening one — half-complying with
+        # the CodeAgent contract while reaching for the form it was trained on.
+        #
+        # Widening code_block_tags to accept <tool_call> does NOT fix that: the
+        # payload inside is <function=...><parameter=...> XML, not Python, so it
+        # parses and then fails at execution. Tested.
+        #
+        # NOT comparable with CodeAgent rows: one tool call per step by
+        # construction, so iteration counts mean something different. Record it
+        # as its own row, never as a replacement.
+        #
+        # executor_kwargs/snippet_timeout do not apply — there is no Python
+        # executor. The tools and the no-progress detector transfer unchanged.
+        return ToolCallingAgent(tools=_tools, model=model,
+                                max_steps=max_steps, add_base_tools=False,
+                                step_callbacks=([progress] if progress else None))
     return CodeAgent(tools=_tools,
                      model=model, max_steps=max_steps, add_base_tools=False,
                      executor_kwargs={"timeout_seconds": snippet_timeout},
@@ -830,6 +852,7 @@ class NoProgressDetector:
         # Steps lost to a malformed reply or a blown snippet budget rather
         # than to the task itself. See _count_error for why these are counted.
         self.parse_errors = 0
+        self.toolcall_errors = 0
         self.timeout_errors = 0
         self.sandbox_errors = 0
         self.step_errors = 0
@@ -911,8 +934,29 @@ class NoProgressDetector:
             return
         self.step_errors += 1
         name = type(err).__name__
+        msg = str(err)
         if name == "AgentParsingError":
-            self.parse_errors += 1
+            # smolagents raises AgentParsingError for BOTH agent classes, but
+            # the two mean different things and a single counter hides which
+            # harness is mismatched to which model. Split them:
+            #
+            #   toolcall_errors — ToolCallingAgent could not find a JSON tool
+            #     call ("does not contain any JSON blob"). The model was asked
+            #     for a structured call and produced prose or some other shape.
+            #
+            #   parse_errors — CodeAgent could not find <code>...</code>.
+            #     Observed with Qwen-template models emitting native
+            #     <tool_call><function=...> instead, closing </code> without
+            #     ever opening one.
+            #
+            # A model failing BOTH ways is telling you something different
+            # from one that fails only under the agent class it was not
+            # trained for, and that is the distinction worth having when a new
+            # model is dropped in.
+            if "tool call" in msg.lower() or "json blob" in msg.lower():
+                self.toolcall_errors += 1
+            else:
+                self.parse_errors += 1
         elif "maximum execution time" in str(err):
             # Matched on the message: smolagents raises this as a generic
             # execution error, so there is no dedicated class to type on.
@@ -1234,7 +1278,7 @@ def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
 def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
             src_root, agent_user=None, backend="openai", artifact_dir=None,
             rep=1, no_progress_patience=40, seed=None, temperature=None,
-            snippet_timeout=180, src_baseline=None):
+            snippet_timeout=180, src_baseline=None, agent_type="code"):
     """One attempt at one task. Returns a result dict."""
     workdir = os.path.join(root_dir, task["id"])
     shutil.rmtree(workdir, ignore_errors=True)
@@ -1291,7 +1335,8 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
                            src_root, agent_user, shell_timeout, clock,
                            backend, panic_state, progress, seed, temperature,
                            snippet_timeout,
-                           bool(task.get("needs_kernel_build")), artifact_dir)
+                           bool(task.get("needs_kernel_build")), artifact_dir,
+                           agent_type)
         agent.run(task["prompt"].replace("/usr/src", src_root) + ENV_NOTE)
     except Exception as e:                      # noqa: BLE001
         msg = f"{type(e).__name__}: {e}"
@@ -1330,6 +1375,7 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     # Subtract from iterations to compare capability rather than format
     # compliance under this harness.
     rec["parse_errors"] = progress.parse_errors
+    rec["toolcall_errors"] = progress.toolcall_errors
     rec["timeout_errors"] = progress.timeout_errors
     rec["sandbox_errors"] = progress.sandbox_errors
     rec["step_errors"] = progress.step_errors
@@ -1535,6 +1581,10 @@ def summarise(records):
         if any((r.get("parse_errors") or 0) for r in recs):
             print(f"{'':<22} (reparse > 0: reply not in <code> tags — native "
                   f"tool-call syntax; retried steps inflate iter/model_s)")
+        if any((r.get("toolcall_errors") or 0) for r in recs):
+            n = sum((r.get("toolcall_errors") or 0) for r in recs)
+            print(f"{'':<22} ({n} step(s) produced no parseable tool call — "
+                  f"model asked for JSON, emitted something else)")
         if any((r.get("timeout_errors") or 0) for r in recs):
             n = sum((r.get("timeout_errors") or 0) for r in recs)
             print(f"{'':<22} ({n} step(s) hit the per-snippet time budget "
@@ -1610,6 +1660,17 @@ def main():
                          "0.6). Pass 0 for greedy decoding — maximally "
                          "reproducible, but no longer the production sampling "
                          "the DaemonDocs bench uses.")
+    ap.add_argument("--agent-type", default="code",
+                    choices=("code", "toolcalling"),
+                    help="smolagents agent class. code (default): the model "
+                         "writes Python in <code> tags. toolcalling: the model "
+                         "emits structured tool calls instead — use it for a "
+                         "model whose training pulls it toward native "
+                         "tool-call syntax, which under CodeAgent shows up as "
+                         "parse_errors (Flash-Next lost 13 of 42 t6 steps that "
+                         "way). NOT comparable with code rows: one tool call "
+                         "per step by construction, so iteration counts differ "
+                         "in kind. Record it as a separate row.")
     ap.add_argument("--snippet-timeout", type=int, default=180, metavar="SEC",
                     help="wall-clock budget for ONE <code> snippet "
                          "(smolagents' executor limit, default there is 30 s). "
@@ -1750,7 +1811,7 @@ def main():
                                   artifact_dir, rep + 1,
                                   args.no_progress_patience, args.seed,
                                   args.temperature, args.snippet_timeout,
-                                  src_baseline)
+                                  src_baseline, args.agent_type)
                     rec["rep"] = rep + 1
                     rec["run_id"] = run_id
                     rec["api_base"] = args.api_base
