@@ -657,3 +657,47 @@ threshold (40 steps without a source change) is what ended both runs, so a
 model that would have patched at step 45 is scored the same as one that never
 would. Both figures are the defaults, unchanged from the Opus run that passed
 at 40 iterations.
+
+#### Flash-Next under `ToolCallingAgent` — the harness was half the problem
+
+Run as a separate row (`--agent-type toolcalling`), **not** a replacement: that
+class issues one tool call per step by construction, so its iteration counts are
+not comparable with the `CodeAgent` rows above.
+
+| harness | successful actions | parse failures | success rate | patched? |
+|---|---:|---:|---:|---|
+| `CodeAgent` | 11 | 13 | 46 % | no |
+| `ToolCallingAgent` | 25 | 17 | **60 %** | no |
+
+Matching the harness to the model **more than doubled the work it completed**
+(11 -> 25 successful actions) and it used the source-reading tools it never
+touched under `CodeAgent`. So a real part of the earlier result was harness
+mismatch, and the `CodeAgent` row understates this model.
+
+But it still **failed the tier, and still never patched the tree** — same
+`no_progress` stop at step 41 as before. The agent class was necessary, not
+sufficient.
+
+**The residual failure is context-sensitive**, which is the more useful finding.
+Errors by step bucket:
+
+| steps | 1-10 | 11-20 | 21-30 | 31-40 |
+|---|---:|---:|---:|---:|
+| parse failures | 2 | 5 | 6 | 4 |
+
+A fixed per-call failure probability would stay flat. Rising with context —
+80 % success at step 10, 72 % by step 18, 60 % overall — points at degradation
+as the conversation grows, not at a static inability to emit the format.
+
+Leading suspicion is the quantisation: Flash-Next runs **UD-IQ3_XXS** (~3
+bits/weight) against qwen38's **Q8_0** (~8). Across every run in this repo the
+gap is stark — Flash-Next 28 parse failures in 583 iterations (4.8 %), qwen38 1
+in 917 (0.1 %), Opus 0 in 351 — while both serve near-identical Qwen templates
+containing the same `<function>`/`<parameter>` constructs, so the template does
+not explain it.
+
+**That hypothesis is not testable on this hardware, and is recorded as
+unproven.** The only heavier quant available, UD-IQ4_XS (93.7 GB), needs a
+raised GTT aperture, takes ~18 min to load, has *worse* draft acceptance
+(0.68 vs 0.76-0.80), and on Linux that aperture panicked the kernel. So "use a
+heavier quant for agentic work" is a plausible reading, not a demonstrated one.
