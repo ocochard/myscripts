@@ -329,12 +329,25 @@ case "${MODEL}" in
     #
     #   QUANT=UD-IQ4_XS MODEL=flashnext ./llmsrv.sh
     #
-    # Added to test whether heavy quantisation is what makes this model
-    # substitute its native <tool_call> format for the harness's requested
-    # one: IQ3_XXS shows 28 parse failures in 583 agent iterations (4.8%)
-    # against 1 in 917 (0.1%) for the Q8 dense model. Same architecture, same
-    # chat template, only the quant differs — which is the comparison IQ4_XS
-    # makes possible.
+    # ATTEMPTED 2026-09-07 and it does NOT work, confirming the warning in
+    # this slot's own help text ("IQ4_XS cannot load the draft head at all").
+    # QUANT=UD-IQ4_XS wedges at exactly:
+    #   common_speculative_init_result: loading draft model .../MTP/
+    #     mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf
+    # and then spins at 99% CPU in state R with no further log output —
+    # killed at 41 minutes against the ~18 min the bench doc predicts for a
+    # successful load. Not an aperture shortfall: 87.2 GB model + 2.6 GB head
+    # = 89.8 GB against a 117.2 GB GTT aperture.
+    #
+    # So the quantisation question this was meant to settle — whether IQ3_XXS
+    # is what makes this model substitute its native <tool_call> format for
+    # the harness's requested one (28 parse failures in 583 iterations, 4.8%,
+    # against 1 in 917 for the Q8 dense model) — REMAINS UNTESTABLE on this
+    # hardware. It is moot in practice anyway: bench.py now detects the
+    # tool-call template and selects ToolCallingAgent, which is the real fix.
+    #
+    # Keep the override for spec-off experiments (drop --spec-type), but do
+    # not expect MTP to work with it.
     q="${QUANT:-UD-IQ3_XXS}"
     hf_file="${q}/Qwen3.8-Flash-Next-${q}-00001-of-00003.gguf"
     hf_draft="MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
