@@ -1103,8 +1103,51 @@ def _build_model(model_id, api_base, api_key, backend, seed=None,
         kw["seed"] = seed
     if temperature is not None:
         kw["temperature"] = temperature
-    return OpenAIServerModel(model_id=model_id, api_base=api_base,
-                             api_key=api_key or "none", **kw)
+    class _ReasoningAwareModel(OpenAIServerModel):
+        """Recover a reply whose entire content landed in reasoning_content.
+
+        THE BUG THIS FIXES, measured on v14: 23 of 23 rejected turns had
+        reasoning_content populated, content == '' and tool_calls == None.
+        smolagents reads only content and tool_calls — grep its models.py for
+        reasoning_content and you get nothing — so it saw an empty message,
+        fell back to scanning the text for a JSON blob, found none, and raised
+        AgentParsingError.
+
+        The model was working correctly the whole time. One rejected turn's
+        reasoning said, verbatim:
+
+            "Let me first reproduce the panic. Let's run test_kernel with the
+             script. ... Let me call test_kernel first."
+
+        i.e. it had decided on exactly the right action. llmsrv.sh passes
+        --jinja and the server logs "chat template supports preserving
+        reasoning, it is enabled by default", so llama.cpp routes thinking into
+        reasoning_content — a field this harness discarded.
+
+        Fixed here rather than by --reasoning-format none or
+        --reasoning-budget 0, because suppressing the thinking would also
+        remove the step where the model works out WHAT to do. On a diagnosis
+        tier that is the task. Merging preserves it and makes it parseable.
+        """
+
+        def generate(self, *args, **kwargs):
+            msg = super().generate(*args, **kwargs)
+            if getattr(msg, "tool_calls", None):
+                return msg
+            if (msg.content or "").strip():
+                return msg
+            reasoning = ""
+            raw = getattr(msg, "raw", None)
+            try:
+                reasoning = (raw.choices[0].message.reasoning_content or "")
+            except Exception:                        # noqa: BLE001
+                reasoning = getattr(msg, "reasoning_content", "") or ""
+            if reasoning.strip():
+                msg.content = reasoning
+            return msg
+
+    return _ReasoningAwareModel(model_id=model_id, api_base=api_base,
+                                api_key=api_key or "none", **kw)
 
 
 def find_kernel_debug(src_root):
