@@ -935,11 +935,12 @@ class NoProgressDetector:
         """
         err = getattr(memory_step, "error", None)
         if err is None or type(err).__name__ != "AgentParsingError":
-            return
+            return False
         n = getattr(agent, "step_number", None) if agent is not None else None
         if isinstance(n, int) and n > 1:
             agent.step_number = n - 1
             self.refunded += 1
+        return True
 
     def _signature(self):
         """(name, size, mtime) of every source-ish file the agent may write.
@@ -1060,7 +1061,15 @@ class NoProgressDetector:
     def __call__(self, memory_step, agent=None, **_kw):
         self.steps += 1
         self._count_error(memory_step)
-        self._refund_parse_failure(memory_step, agent)
+        if self._refund_parse_failure(memory_step, agent):
+            # A step that produced NO ACTION is not evidence of a stall: it
+            # neither wrote a file nor failed to, because nothing ran. Counting
+            # it toward `stale` made the refund half a fix — v17 got its 25
+            # steps back from --max-steps and was then stopped by the detector
+            # anyway at "40 consecutive steps with no file change", 25 of which
+            # were these. Skip the staleness check for them, exactly as the
+            # cap now skips them.
+            return
         cur = self._signature()
         if cur != self.last_sig:
             self.last_sig = cur
@@ -1727,10 +1736,11 @@ def summarise(records):
                   f"tool-call syntax; retried steps inflate iter/model_s)")
         if any((r.get("no_toolcall") or 0) for r in recs):
             n = sum((r.get("no_toolcall") or 0) for r in recs)
-            print(f"{'':<22} ({n} step(s) produced NO tool call — the reply "
-                  f"had no action in it; smolagents recovers on the next "
-                  f"step and --max-steps is refunded, so these cost latency "
-                  f"and tokens but not budget)")
+            print(f"{'':<22} ({n} step(s) replied with no tool call, so "
+                  f"nothing ran. smolagents feeds the error back and the model "
+                  f"retries; these are refunded from --max-steps AND excluded "
+                  f"from the no-progress count, so they cost wall time and "
+                  f"tokens but neither budget nor patience)")
         if any((r.get("timeout_errors") or 0) for r in recs):
             n = sum((r.get("timeout_errors") or 0) for r in recs)
             print(f"{'':<22} ({n} step(s) hit the per-snippet time budget "
