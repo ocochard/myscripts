@@ -1804,7 +1804,20 @@ def main():
                     help="comma-separated task ids (default: all tiers, ascending)")
     ap.add_argument("--reps", type=int, default=1,
                     help="repetitions per task; >1 recommended, results are noisy")
-    ap.add_argument("--max-steps", type=int, default=25)
+    ap.add_argument("--max-steps", type=int, default=100,
+                    help="hard cost ceiling on agent loop turns. Default 100, "
+                         "set from measurement: claude-opus-4-5 needed 40 "
+                         "productive steps to pass tier 6 (34 grep_src + 18 "
+                         "read_file + 2 test_kernel + 2 write_file), so the "
+                         "old default of 25 could not have passed it at all "
+                         "and 60 left only 1.5x headroom over the reference. "
+                         "A local model re-deriving more from source "
+                         "legitimately needs more reading turns. Cost at 100 "
+                         "steps: ~14 min for the proxy model, ~49 min for a "
+                         "local endpoint at ~29 s/step. Steps that produced no "
+                         "action are refunded and do not count against this "
+                         "(see NoProgressDetector._refund_parse_failure), so "
+                         "this bounds WORK rather than round trips.")
     ap.add_argument("--seed", type=int, default=None,
                     help="fixed RNG seed for the endpoint's sampler. Use this "
                          "for any cross-host comparison: llmsrv.sh sets no "
