@@ -600,11 +600,11 @@ every t6 verdict needs the console checked, not just the pass/fail.
 
 #### Local models on tier 6 (2026-09-07)
 
-| model | pass | iters | model_s | shell_s | src_patched | outcome |
-|-------|------|------:|--------:|--------:|---|---|
-| claude-opus-4-5 | **yes** | 40 | 330 | 110 | `M sys/kern/vfs_lookup.c` | fixed it |
-| Qwen3.8-27B Q8 MTP | no | 42 | 5 390 | 92 | none | `no_progress` at step 41 |
-| Flash-Next IQ3_XXS | no | 42 | 682 | 89 | none | `no_progress` at step 41 |
+| model | pass | iters | reparse | model_s | shell_s | src_patched | outcome |
+|-------|------|------:|--------:|--------:|--------:|---|---|
+| claude-opus-4-5 | **yes** | 40 | 0 | 330 | 110 | `M sys/kern/vfs_lookup.c` | fixed it |
+| Qwen3.8-27B Q8 MTP | no | 42 | 0 | 5 390 | 92 | none | `no_progress` at step 41 |
+| Flash-Next IQ3_XXS | no | 42 | **13** | 682 | 89 | none | `no_progress`; 13 of 42 steps lost to the `<code>` envelope |
 
 **Neither local model wrote a single byte to the tree.** `write_file` was called
 zero times by either, and the harness blocked nothing — no `escapes the working
@@ -617,12 +617,37 @@ of `vfs_lookup_cross_mount` and 64 of `LK_CANRECURSE` in its trace — the right
 function and the right flag — with no patch. Diagnosis without commitment is a
 distinct failure from not knowing, and only the trace separates them.
 
-The two models also work very differently. Opus used 34 `grep_src` + 18
-`read_file` and **no** `run_shell`; qwen38 used **98 `run_shell`** (60 `grep`,
-26 `sed`) and never touched the source-reading tools. Flash-Next did least
-work of the three (14 `run_shell`, 8 `read_file`, 682 s) and reached the
-function only 6 times. So the gap here is not reading ability — qwen38 read
-plenty — but converting a diagnosis into an edit.
+The three work very differently, and only two of the three failures are about
+capability.
+
+Opus used 34 `grep_src` + 18 `read_file` and **no** `run_shell`. qwen38 used
+**98 `run_shell`** (60 `grep`, 26 `sed`) and never touched the source-reading
+tools at all — so its gap is not reading, it read plenty, but converting a
+diagnosis into an edit.
+
+**Flash-Next's failure is largely the harness's format, not its reasoning.**
+13 of its 42 steps were `parse_errors` — the `<code>` envelope failure — against
+only 11 successful `code_action`s. More than half its productive attempts were
+discarded before running. It emits Qwen native tool-call syntax instead:
+
+```
+<tool_call>
+<function=read_file>
+<parameter=path>
+</parameter>
+```
+
+which smolagents rejects with `AgentParsingError`. Its median `model_output` is
+174 chars (max 352) against Opus's 306/2352, so it is also producing far less
+per step. The counters make the distinction visible — `parse=13` for
+Flash-Next, `parse=0` for both Opus and qwen38 — and an earlier version of this
+section wrongly read its low activity as doing "least work", when it was
+largely being *prevented* from working.
+
+That is a real cost of running a Qwen-template model under `CodeAgent`, and it
+inflates `iterations` while deflating everything the model achieves. A
+`ToolCallingAgent` run would measure its kernel ability more honestly, at the
+price of no longer being the same harness the other rows used.
 
 So tier 6 discriminates sharply where tiers 1-3 saturated: reference passes,
 both local models fail, and the traces say why.
