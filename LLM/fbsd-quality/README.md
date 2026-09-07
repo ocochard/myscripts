@@ -686,8 +686,19 @@ Errors by step bucket:
 | parse failures | 2 | 5 | 6 | 4 |
 
 A fixed per-call failure probability would stay flat. Rising with context —
-80 % success at step 10, 72 % by step 18, 60 % overall — points at degradation
-as the conversation grows, not at a static inability to emit the format.
+80 % success at step 10, 72 % by step 18, 60 % overall — means the model
+reaches for its trained format more often as the system prompt recedes.
+
+**Not truncation, and not corrupted output.** Each failure is a COMPLETE,
+well-formed reply in the wrong format — a canonical Qwen3-Coder tool call, 104
+characters, opening and closing `<tool_call>` correctly. In all 13 CodeAgent
+failures the opening `<code>` is missing and the closing `</code>` is present,
+which is the opposite of what a truncated response looks like (a cut-off reply
+loses its tail, not its head). The trailing `</code>` is not even the model's:
+`agents.py:1654` passes it as a stop sequence and llama.cpp echoes the matched
+stop string back. Probed directly, the endpoint returns `finish_reason: stop`
+with complete JSON at 274 tokens, and still `stop` with ~10 k and ~25 k context
+prefixes — no truncation at any size.
 
 Leading suspicion is the quantisation: Flash-Next runs **UD-IQ3_XXS** (~3
 bits/weight) against qwen38's **Q8_0** (~8). Across every run in this repo the
@@ -701,3 +712,81 @@ unproven.** The only heavier quant available, UD-IQ4_XS (93.7 GB), needs a
 raised GTT aperture, takes ~18 min to load, has *worse* draft acceptance
 (0.68 vs 0.76-0.80), and on Linux that aperture panicked the kernel. So "use a
 heavier quant for agentic work" is a plausible reading, not a demonstrated one.
+
+#### Root cause: the harness assumed a post-training style, and never checked
+
+The parse failures were never a model defect. `CodeAgent` was hardcoded in this
+bench's **first commit** — `git log -S ToolCallingAgent` shows that class never
+appeared in `bench.py` until the day this was diagnosed — so it was not a choice
+between two options. It was the class smolagents leads with, adopted without
+asking which post-training the benchmarked models had.
+
+The two classes make opposite assumptions:
+
+| | tools described | suits models trained to |
+|---|---|---|
+| `CodeAgent` | in the prompt, as Python | write code |
+| `ToolCallingAgent` | in the API `tools` array | emit structured tool calls |
+
+Flash-Next is the second kind. Asked for Python it replied with a **canonical**
+Qwen3-Coder tool call — the exact format
+[SGLang's `qwen3_coder_detector`](https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/function_call/qwen3_coder_detector.py)
+parses, and the one llama.cpp auto-selects a parser for by sniffing
+`<tool_call>` + `<function=` + `<parameter=` in the template
+(`common/chat.cpp:3596`). That parser was already active on our endpoint. It had
+nothing to attach to only because `CodeAgent` sends **no `tools` array**, so the
+reply passed through as plain text and smolagents rejected it for lacking
+`<code>`.
+
+Two dead ends worth recording, both tested rather than assumed:
+
+* **Retagging `code_block_tags` to Qwen's tags does not work.** It parses, then
+  fails one layer down: the extracted payload is
+  `<function=read_file><parameter=path>` — XML, not Python — so a `SyntaxError`
+  replaces the parse error and nothing is gained.
+* **`--tool-call-parser` is not a llama-server flag.** It is vLLM/SGLang;
+  `llama-server --help` has zero matches. llama.cpp infers the format from the
+  template, so the equivalent levers are `--chat-template-file`,
+  `--chat-template-kwargs` and `--reasoning-preserve` — the last of which this
+  build already enables by default.
+
+**Why it hid for five tiers.** Flash-Next passed t1-t5 under `CodeAgent`,
+because on short tasks it complied often enough. The mismatch only became
+visible on t6, where 40+ steps of accumulating context let the trained habit
+outweigh the system prompt. A defect that degrades with task length is far
+harder to spot than one that fails outright — which is why it was first
+misattributed to quantisation.
+
+**The fix** is `--agent-type auto` (now the default): read the endpoint's
+advertised chat template and select `toolcalling` when it carries those three
+tokens, else `code`. Deliberately the same test llama.cpp uses — if llama.cpp
+picks its Qwen3-Coder parser for a template, `CodeAgent` is wrong for that
+model. It falls back to `code` whenever the template cannot be read (an
+Anthropic proxy exposes no `/props`, and Opus handles `CodeAgent` fine), so it
+can only help. Verified live: Flash-Next -> `toolcalling`, Opus -> `code`,
+loading endpoint -> `code`, dead endpoint -> `code`.
+
+The `parse_errors` / `toolcall_errors` split exists so this is visible on run
+one for the next model, instead of after a trace dive.
+
+#### The quantisation hypothesis is unproven, and untestable here
+
+Flash-Next shows 28 parse failures in 583 iterations (4.8 %) against qwen38's 1
+in 917 (0.1 %) and Opus's 0 in 351, while both Qwen models serve near-identical
+templates carrying the same `<function>`/`<parameter>` constructs — so the
+template does not explain the gap and quantisation (IQ3_XXS ~3 bit vs Q8_0 ~8
+bit) was the obvious suspect.
+
+It cannot be tested on this hardware. `QUANT=UD-IQ4_XS` wedges at
+`common_speculative_init_result: loading draft model .../mtp-...-shared-Q8_0.gguf`
+and spins at 99 % CPU in state `R` with no further output — killed at **41
+minutes** against the ~18 min a successful load is documented to take, and CPU
+time advanced 1:1 with wall clock throughout, so it is compute-bound rather than
+deadlocked. Not an aperture shortfall: 87.2 GB model + 2.6 GB head = 89.8 GB
+against a 117.2 GB GTT aperture. This confirms the warning already in the
+`flashnext` slot's help text — *"IQ4_XS cannot load the draft head at all"*.
+
+For contrast, IQ3_XXS reloads in **~43 seconds**.
+
+The question is also moot in practice: with the agent class detected correctly,
+the model is no longer asked for a format it was not trained to emit.
