@@ -110,6 +110,53 @@ def _writes_into_src(command, src_root):
     return real in command or src_root in command
 
 
+def detect_agent_type(api_base, backend):
+    """Pick the smolagents agent class the ENDPOINT'S MODEL is trained for.
+
+    THE ROOT CAUSE THIS EXISTS TO FIX. bench.py hardcoded CodeAgent from its
+    first commit — not as a decision between two options, but as the class
+    smolagents leads with. That encodes an assumption about post-training that
+    nothing validated per model, and it silently mismatched Flash-Next:
+
+      * CodeAgent describes tools IN THE PROMPT as Python and sends NO `tools`
+        array, so llama.cpp's Qwen3-Coder parser (auto-selected from the
+        template, chat.cpp:3596) has nothing to attach to.
+      * Flash-Next answers with a CANONICAL Qwen3-Coder tool call anyway —
+        <tool_call><function=name><parameter=key>value — which then passes
+        through as plain text and is rejected for lacking <code>.
+
+    The model was behaving correctly; the harness asked the wrong question. It
+    cost 13 of 42 steps on t6, and hid for five tiers because on short tasks
+    the model complied often enough — the failure only compounds as context
+    grows and the trained habit outweighs the system prompt.
+
+    Detection uses the same three tokens llama.cpp keys on, read from the
+    server's own advertised chat template. That is deliberate: if llama.cpp
+    selects its Qwen3-Coder parser for this template, the model emits that
+    format, and CodeAgent is the wrong class for it.
+
+    Returns "toolcalling" or "code". Falls back to "code" whenever the
+    template cannot be read (an Anthropic proxy exposes no /props, and Opus
+    handles CodeAgent perfectly well), so this can only ever help.
+    """
+    if backend != "openai":
+        return "code"
+    root = api_base.rstrip("/")
+    for suffix in ("/v1", "/v1/"):
+        if root.endswith(suffix):
+            root = root[: -len(suffix)]
+            break
+    try:
+        r = subprocess.run(["curl", "-s", "-m", "10", f"{root}/props"],
+                           capture_output=True, text=True, timeout=15)
+        tmpl = json.loads(r.stdout).get("chat_template") or ""
+    except Exception:                                # noqa: BLE001
+        return "code"
+    if all(tok in tmpl for tok in ("<tool_call>", "<function=", "<parameter=")):
+        return "toolcalling"
+    return "code"
+
+
 def build_env():
     """Extra environment for the agent's shell: disable ccache, or {}.
 
@@ -1660,9 +1707,15 @@ def main():
                          "0.6). Pass 0 for greedy decoding — maximally "
                          "reproducible, but no longer the production sampling "
                          "the DaemonDocs bench uses.")
-    ap.add_argument("--agent-type", default="code",
-                    choices=("code", "toolcalling"),
-                    help="smolagents agent class. code (default): the model "
+    ap.add_argument("--agent-type", default="auto",
+                    choices=("auto", "code", "toolcalling"),
+                    help="smolagents agent class. auto (default): read the "
+                         "endpoint's chat template and pick toolcalling when "
+                         "it advertises Qwen3-Coder XML tool calls, else code "
+                         "— so a tool-call-trained model is not silently asked "
+                         "to write Python in <code> tags, which cost "
+                         "Flash-Next 13 of 42 steps on t6. "
+                         "code: the model "
                          "writes Python in <code> tags. toolcalling: the model "
                          "emits structured tool calls instead — use it for a "
                          "model whose training pulls it toward native "
@@ -1722,6 +1775,11 @@ def main():
               "Pass --agent-user <unprivileged user>.", file=sys.stderr)
     # Snapshot pre-existing dirt ONCE, before any task runs, and diff every
     # later check against it so only this run's damage is reported.
+    if args.agent_type == "auto":
+        args.agent_type = detect_agent_type(args.api_base, args.backend)
+        print(f"agent-type=auto -> {args.agent_type} "
+              f"(from the endpoint's chat template)", file=sys.stderr)
+
     src_baseline = _src_dirty_set(args.src) or set()
     if src_baseline:
         preview = "; ".join(sorted(src_baseline)[:3])

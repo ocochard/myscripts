@@ -321,12 +321,27 @@ case "${MODEL}" in
     fi
     hf_repo="unsloth/Qwen3.8-Flash-Next-GGUF"
     # Sharded: pass shard 00001 (the tensor-free header); llama.cpp opens 2/3.
-    hf_file="UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf"
+    # QUANT overrides the default IQ3_XXS. Only IQ4_XS is a sane alternative,
+    # and ONLY on frwk-bsd: on frwk-linux the raised amdgpu.gttsize it needs
+    # kernel-panicked the host (see the comment above). FreeBSD already runs
+    # hw.amdgpu.gttsize=120000 and survives the same workload, at ~18 min to
+    # load and worse draft acceptance (0.68 vs 0.76-0.80).
+    #
+    #   QUANT=UD-IQ4_XS MODEL=flashnext ./llmsrv.sh
+    #
+    # Added to test whether heavy quantisation is what makes this model
+    # substitute its native <tool_call> format for the harness's requested
+    # one: IQ3_XXS shows 28 parse failures in 583 agent iterations (4.8%)
+    # against 1 in 917 (0.1%) for the Q8 dense model. Same architecture, same
+    # chat template, only the quant differs — which is the comparison IQ4_XS
+    # makes possible.
+    q="${QUANT:-UD-IQ3_XXS}"
+    hf_file="${q}/Qwen3.8-Flash-Next-${q}-00001-of-00003.gguf"
     hf_draft="MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
     hf_dir="${HF_HUB}/models--unsloth--Qwen3.8-Flash-Next-GGUF"
     model=$(hf_resolve "${hf_dir}" "${hf_file}")
     draft=$(hf_resolve "${hf_dir}" "${hf_draft}")
-    alias="Qwen3.8-Flash-Next-UD-IQ3_XXS-MTP"
+    alias="Qwen3.8-Flash-Next-${q}-MTP"
     warmup_flag=""
     # Not A/B'd on this arch; keep the FreeBSD-dense precedent of leaving it off.
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
