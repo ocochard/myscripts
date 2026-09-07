@@ -766,7 +766,7 @@ Anthropic proxy exposes no `/props`, and Opus handles `CodeAgent` fine), so it
 can only help. Verified live: Flash-Next -> `toolcalling`, Opus -> `code`,
 loading endpoint -> `code`, dead endpoint -> `code`.
 
-The `parse_errors` / `toolcall_errors` split exists so this is visible on run
+The `parse_errors` / `no_toolcall` split exists so this is visible on run
 one for the next model, instead of after a trace dive.
 
 #### The quantisation hypothesis is unproven, and untestable here

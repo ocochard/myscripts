@@ -899,7 +899,7 @@ class NoProgressDetector:
         # Steps lost to a malformed reply or a blown snippet budget rather
         # than to the task itself. See _count_error for why these are counted.
         self.parse_errors = 0
-        self.toolcall_errors = 0
+        self.no_toolcall = 0
         self.timeout_errors = 0
         self.sandbox_errors = 0
         self.step_errors = 0
@@ -987,9 +987,15 @@ class NoProgressDetector:
             # the two mean different things and a single counter hides which
             # harness is mismatched to which model. Split them:
             #
-            #   toolcall_errors — ToolCallingAgent could not find a JSON tool
-            #     call ("does not contain any JSON blob"). The model was asked
-            #     for a structured call and produced prose or some other shape.
+            #   no_toolcall — the reply carried NO structured tool call, and
+            #     the text fallback then found no JSON blob either. Named for
+            #     what it MEANS, not for the exception: agents.py only calls
+            #     parse_tool_calls() when chat_message.tool_calls is empty, so
+            #     this fires when the model reasoned or narrated instead of
+            #     committing to a call. It is NOT a malformed call and NOT a
+            #     broken parser — probed with a real tools array the same
+            #     endpoint returns finish_reason=tool_calls with a clean
+            #     structured call, so the machinery works.
             #
             #   parse_errors — CodeAgent could not find <code>...</code>.
             #     Observed with Qwen-template models emitting native
@@ -1001,7 +1007,7 @@ class NoProgressDetector:
             # trained for, and that is the distinction worth having when a new
             # model is dropped in.
             if "tool call" in msg.lower() or "json blob" in msg.lower():
-                self.toolcall_errors += 1
+                self.no_toolcall += 1
             else:
                 self.parse_errors += 1
         elif "maximum execution time" in str(err):
@@ -1422,7 +1428,7 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     # Subtract from iterations to compare capability rather than format
     # compliance under this harness.
     rec["parse_errors"] = progress.parse_errors
-    rec["toolcall_errors"] = progress.toolcall_errors
+    rec["no_toolcall"] = progress.no_toolcall
     rec["timeout_errors"] = progress.timeout_errors
     rec["sandbox_errors"] = progress.sandbox_errors
     rec["step_errors"] = progress.step_errors
@@ -1628,10 +1634,10 @@ def summarise(records):
         if any((r.get("parse_errors") or 0) for r in recs):
             print(f"{'':<22} (reparse > 0: reply not in <code> tags — native "
                   f"tool-call syntax; retried steps inflate iter/model_s)")
-        if any((r.get("toolcall_errors") or 0) for r in recs):
-            n = sum((r.get("toolcall_errors") or 0) for r in recs)
-            print(f"{'':<22} ({n} step(s) produced no parseable tool call — "
-                  f"model asked for JSON, emitted something else)")
+        if any((r.get("no_toolcall") or 0) for r in recs):
+            n = sum((r.get("no_toolcall") or 0) for r in recs)
+            print(f"{'':<22} ({n} step(s) produced NO tool call at all — "
+                  f"the model reasoned instead of acting)")
         if any((r.get("timeout_errors") or 0) for r in recs):
             n = sum((r.get("timeout_errors") or 0) for r in recs)
             print(f"{'':<22} ({n} step(s) hit the per-snippet time budget "
