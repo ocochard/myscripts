@@ -790,3 +790,49 @@ For contrast, IQ3_XXS reloads in **~43 seconds**.
 
 The question is also moot in practice: with the agent class detected correctly,
 the model is no longer asked for a format it was not trained to emit.
+
+#### Auto-detection works; the model still fails, for a different reason
+
+`v13`, Flash-Next IQ3_XXS on t6 with `--agent-type auto`. The harness selected
+the class by itself — the run log opens with
+
+```
+agent-type=auto -> toolcalling (from the endpoint's chat template)
+```
+
+so the root-cause fix operates without the operator knowing anything about
+Qwen tool-call formats.
+
+| run | agent class | successful calls | failures | rate | patched? |
+|---|---|---:|---:|---:|---|
+| v10 | `code` (hardcoded) | 11 | 13 `parse_errors` | 46 % | no |
+| v11 | `toolcalling` (manual) | 25 | 17 | 60 % | no |
+| v13 | `toolcalling` (**auto**) | 26 | 16 `no_toolcall` | 62 % | no |
+
+The formatting failure is **gone**: `parse_errors=0` in v13, against 13 in v10.
+The model no longer emits `<tool_call>` XML where Python was wanted, because it
+is no longer asked for Python.
+
+What remains is a different failure, and the counter rename records it:
+`no_toolcall` fires when the reply carries **no structured tool call at all**
+and the text fallback finds no JSON either. `agents.py` only reaches that
+fallback when `chat_message.tool_calls` is already empty, so these are turns
+where the model produced content and never called anything. The machinery is
+demonstrably fine — probed directly with a real `tools` array the same endpoint
+returns `finish_reason: tool_calls` with a clean structured call and empty
+content.
+
+So Flash-Next's t6 failure is now the same shape as qwen38's: it investigates,
+it does not commit. Neither model ever wrote a byte to the tree.
+
+**An instrumentation gap this exposed.** What those 16 turns actually contained
+could not be recovered: smolagents leaves `ActionStep.model_output` unset on a
+rejected step, and `_dump_trace` only saved that field, so the rejected reply
+was captured nowhere. It now also saves `model_output_message`, which survives
+rejection — the evidence needed to distinguish "reasoned instead of acting"
+from "emitted the wrong shape" will exist on the next run rather than having to
+be inferred.
+
+Note `v13`'s row records `no_toolcall=None` because the run started before the
+rename landed; the 16 are in `step_errors`, and the figures above come from the
+log.

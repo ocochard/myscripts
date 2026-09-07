@@ -1519,7 +1519,14 @@ def _dump_trace(agent, path):
         with open(path, "w") as fh:
             for i, st in enumerate(steps, 1):
                 fh.write(f"\n{'=' * 70}\nSTEP {i}\n{'=' * 70}\n")
-                for field in ("model_output", "code_action", "action_output",
+                # model_output_message before model_output: on a REJECTED
+                # step smolagents leaves model_output unset, so the reply that
+                # failed to parse was captured nowhere at all. That is exactly
+                # the evidence needed to tell "reasoned instead of acting"
+                # from "emitted the wrong format" — and its absence left 16
+                # no_toolcall turns unexplainable after the fact.
+                for field in ("model_output", "model_output_message",
+                              "code_action", "action_output",
                               "observations", "error", "task"):
                     val = getattr(st, field, None)
                     if val:
