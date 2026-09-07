@@ -900,9 +900,46 @@ class NoProgressDetector:
         # than to the task itself. See _count_error for why these are counted.
         self.parse_errors = 0
         self.no_toolcall = 0
+        # Steps handed back because they produced no action at all.
+        self.refunded = 0
         self.timeout_errors = 0
         self.sandbox_errors = 0
         self.step_errors = 0
+
+    def _refund_parse_failure(self, memory_step, agent):
+        """Give back a step consumed by a parse failure the loop RECOVERS from.
+
+        --max-steps is meant to bound how much WORK a model may do, as a cost
+        ceiling. A step that produced no action — because the reply carried no
+        tool call and smolagents raised before anything ran — did no work, and
+        charging for it makes the cap measure the model's output formatting
+        instead of its progress.
+
+        This is not hypothetical. On t6 Flash-Next lost 23 of 42 steps this
+        way, leaving ~19 productive steps against the 40 Opus needed, and then
+        hit the no-progress detector — not because it stalled, but because it
+        ran out of budget doing half-turns. Upstream smolagents already
+        RECOVERS from these (its _run_stream catches AgentError, records it,
+        and iterates; 11 of those 23 were followed immediately by a successful
+        call), so the loop is fine and only the accounting was wrong.
+
+        Implemented by decrementing agent.step_number, which _run_stream
+        re-reads at the top of every iteration — the same property that makes
+        agent.interrupt() work and that mutating agent.max_steps did NOT have.
+
+        Deliberately NOT refunded: an error the loop cannot recover from, and
+        a step whose tool ran and failed. Those consumed real work. Only a
+        no-action parse failure is free, and no_toolcall/parse_errors still
+        record how many there were, because a model needing 23 retries to
+        take 19 actions is genuinely worse than one needing none.
+        """
+        err = getattr(memory_step, "error", None)
+        if err is None or type(err).__name__ != "AgentParsingError":
+            return
+        n = getattr(agent, "step_number", None) if agent is not None else None
+        if isinstance(n, int) and n > 1:
+            agent.step_number = n - 1
+            self.refunded += 1
 
     def _signature(self):
         """(name, size, mtime) of every source-ish file the agent may write.
@@ -1023,6 +1060,7 @@ class NoProgressDetector:
     def __call__(self, memory_step, agent=None, **_kw):
         self.steps += 1
         self._count_error(memory_step)
+        self._refund_parse_failure(memory_step, agent)
         cur = self._signature()
         if cur != self.last_sig:
             self.last_sig = cur
@@ -1458,6 +1496,8 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
             # Also on the failure path: a run that died mid-flight is exactly
             # where knowing how many steps went to retries matters.
             rec["parse_errors"] = progress.parse_errors
+            rec["no_toolcall"] = progress.no_toolcall
+            rec["refunded_steps"] = progress.refunded
             rec["timeout_errors"] = progress.timeout_errors
             rec["sandbox_errors"] = progress.sandbox_errors
             rec["step_errors"] = progress.step_errors
@@ -1472,6 +1512,7 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     # compliance under this harness.
     rec["parse_errors"] = progress.parse_errors
     rec["no_toolcall"] = progress.no_toolcall
+    rec["refunded_steps"] = progress.refunded
     rec["timeout_errors"] = progress.timeout_errors
     rec["sandbox_errors"] = progress.sandbox_errors
     rec["step_errors"] = progress.step_errors
@@ -1686,8 +1727,10 @@ def summarise(records):
                   f"tool-call syntax; retried steps inflate iter/model_s)")
         if any((r.get("no_toolcall") or 0) for r in recs):
             n = sum((r.get("no_toolcall") or 0) for r in recs)
-            print(f"{'':<22} ({n} step(s) produced NO tool call at all — "
-                  f"the model reasoned instead of acting)")
+            print(f"{'':<22} ({n} step(s) produced NO tool call — the reply "
+                  f"had no action in it; smolagents recovers on the next "
+                  f"step and --max-steps is refunded, so these cost latency "
+                  f"and tokens but not budget)")
         if any((r.get("timeout_errors") or 0) for r in recs):
             n = sum((r.get("timeout_errors") or 0) for r in recs)
             print(f"{'':<22} ({n} step(s) hit the per-snippet time budget "
