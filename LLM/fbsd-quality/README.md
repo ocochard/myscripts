@@ -836,3 +836,81 @@ be inferred.
 Note `v13`'s row records `no_toolcall=None` because the run started before the
 rename landed; the 16 are in `step_errors`, and the figures above come from the
 log.
+
+#### Why some models produce `no_toolcall` turns and others never do
+
+The difference is **turn structure**, not capability. Worth knowing before
+reading a high `no_toolcall` count as a weak model.
+
+`claude-opus-4-5` reasons on 38 of its 40 t6 steps, and every one of those
+messages carries the reasoning *and* the action together:
+
+```
+Thought: The panic occurs in unionfs_lock at line 2257 ... Let me look at
+         the unionfs source.
+<code>
+result = grep_src("unionfs_lock", "sys/fs/unionfs")
+</code>
+```
+
+Its `reasoning_content` is empty on every step — the Anthropic proxy has no
+separate thinking field — so everything lands in `content`, where smolagents
+reads it. Reasoning and action are inseparable.
+
+A Qwen-family thinking model instead emits a `<think>` block that llama.cpp
+routes into `reasoning_content`, and treats it as a **separate turn phase**. On
+many turns it ends after the thinking, having stated an intention without
+carrying it out. All 22 captured failures ended on exactly that shape — *"Let
+me call test_kernel first."* — every one with `finish_reason='stop'`, so
+nothing was truncated and no budget was exhausted. It handed back to the caller
+the way a chat assistant would.
+
+Two things that follow:
+
+* **Promoting `reasoning_content` into `content` does not fix it.**
+  `parse_tool_calls()` wants a JSON blob and reasoning is prose, so the same
+  error is raised one layer later. Tried; the failure rate did not move.
+* **The rate scales with how much the model must decide**, not with context or
+  task length. Across Flash-Next runs: 0 % on t1/t2 (the prompt names the
+  facility and the exact marker), 3-6 % on t3/t4/t5, and 31 % on t6 — whose
+  prompt is the *shortest* of the six precisely because it withholds the
+  subsystem, the file and the symptom.
+
+Upstream smolagents already recovers from these (it records the error and
+iterates; 11 of 23 were followed immediately by a successful call), so they cost
+wall time and tokens. The step refund stops them also costing budget and
+patience.
+
+#### Flash-Next PASSES tier 6 once the harness stops charging it for turn structure
+
+`v18`, with all four harness defects fixed:
+
+| | Opus | Flash-Next (v18) |
+|---|---:|---:|
+| result | **PASS** | **PASS** |
+| productive steps | 40 | 96 |
+| no-action turns | 0 | 58 (all refunded) |
+| model_s | 330 | 4 310 |
+| tokens_out | 13 046 | 61 265 |
+| patch | `M sys/kern/vfs_lookup.c` | `M sys/kern/vfs_lookup.c` |
+
+It **independently reproduced the reference patch** — `crosslkflags |=
+LK_CANRECURSE` in `vfs_lookup_cross_mount()`, the same statement in the same
+file — and satisfied the hidden regression it never sees.
+
+**Every previous t6 failure for this model was a harness artifact.** Four
+separate defects, each of which alone produced a confident wrong verdict:
+
+| defect | what it did |
+|---|---|
+| `CodeAgent` hardcoded | asked a tool-call-trained model for Python in `<code>` tags |
+| steps charged for no-action turns | 58 refunded here; without it the model dies at ~40 |
+| detector counted them as stalls | v17 got its budget back and was killed by the patience check anyway |
+| prompt implied a planted bug | model hunted a non-existent injected diff (15 mentions, now 1) |
+
+The cost gap is the real result, and it is large: **13× the wall time, 4.7× the
+tokens, 2.4× the steps** for the same fix. But "cannot do it" and "needs 13×
+longer" are different findings, and the bench reported the first for four runs
+because of the harness rather than the model.
+
+Caveat: `--reps 1`. One sample, and with MTP on the same run can go either way.

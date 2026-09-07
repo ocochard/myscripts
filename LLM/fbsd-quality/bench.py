@@ -1044,6 +1044,54 @@ class NoProgressDetector:
             # from one that fails only under the agent class it was not
             # trained for, and that is the distinction worth having when a new
             # model is dropped in.
+            #
+            # WHY SOME MODELS DO THIS AND OTHERS NEVER DO — measured on t6,
+            # because it took several wrong diagnoses to establish and is the
+            # single most useful thing to know when a no_toolcall count is
+            # high.
+            #
+            # The difference is TURN STRUCTURE, not capability and not field
+            # routing. claude-opus-4-5 reasons on 38 of its 40 steps, and every
+            # one of those messages carries the reasoning AND the action
+            # together:
+            #
+            #     Thought: The panic occurs in unionfs_lock at line 2257 ...
+            #              Let me look at the unionfs source.
+            #     <code>
+            #     result = grep_src("unionfs_lock", "sys/fs/unionfs")
+            #     </code>
+            #
+            # Its reasoning_content is empty on every step (the Anthropic proxy
+            # has no separate thinking field), so everything lands in `content`
+            # where smolagents reads it. Reasoning and action are inseparable.
+            #
+            # A Qwen-family thinking model instead emits a <think> block that
+            # llama.cpp routes into reasoning_content, and treats it as a
+            # SEPARATE TURN PHASE. On many turns it ends after the thinking,
+            # having stated an intention and not carried it out — 22 of 22
+            # captured failures ended on exactly that shape ("Let me call
+            # test_kernel first."), all with finish_reason='stop', so nothing
+            # was truncated and no budget was exhausted. It simply handed back
+            # to the caller the way a chat assistant would.
+            #
+            # Two consequences worth remembering:
+            #
+            #   * Promoting reasoning_content into content does NOT fix it.
+            #     parse_tool_calls() needs a JSON blob and reasoning is prose,
+            #     so the same error is raised one layer later. Tried it; the
+            #     failure rate did not move.
+            #   * The rate scales with how much the model must DECIDE, not with
+            #     context or task length. Across Flash-Next runs: 0% on t1/t2
+            #     (prompt names the facility and the exact marker), 3-6% on
+            #     t3/t4/t5, and 31% on t6, whose prompt is the SHORTEST of the
+            #     six because it deliberately withholds the subsystem, the file
+            #     and the symptom. More deliberation per turn, more turns that
+            #     stop at the plan.
+            #
+            # Upstream smolagents already recovers (it records the error and
+            # iterates, and 11 of 23 such failures were followed immediately by
+            # a successful call), so this costs wall time and tokens. The
+            # refund below stops it also costing budget and patience.
             if "tool call" in msg.lower() or "json blob" in msg.lower():
                 self.no_toolcall += 1
             else:
