@@ -597,3 +597,38 @@ simply wrong — the 1.5 s pause it produced is kept because it is correct on it
 own terms, but labelled as not being the fix. The lesson worth carrying: on
 this tier a harness fault and a failed fix look identical from the outside, so
 every t6 verdict needs the console checked, not just the pass/fail.
+
+#### Local models on tier 6 (2026-09-07)
+
+| model | pass | iters | model_s | shell_s | src_patched | outcome |
+|-------|------|------:|--------:|--------:|---|---|
+| claude-opus-4-5 | **yes** | 40 | 330 | 110 | `M sys/kern/vfs_lookup.c` | fixed it |
+| Qwen3.8-27B Q8 MTP | no | 42 | 5 390 | 92 | none | `no_progress` at step 41 |
+| Flash-Next IQ3_XXS | no | 42 | 682 | 89 | none | `no_progress` at step 41 |
+
+**Neither local model wrote a single byte to the tree.** `write_file` was called
+zero times by either, and the harness blocked nothing — no `escapes the working
+directory`, no `refusing to run`, no errors. Both reproduced the panic once via
+`test_kernel` and then investigated until the no-progress detector stopped them.
+This is a capability result, not a harness artifact.
+
+The interesting part is that qwen38 **got there and did not act**: 11 mentions
+of `vfs_lookup_cross_mount` and 64 of `LK_CANRECURSE` in its trace — the right
+function and the right flag — with no patch. Diagnosis without commitment is a
+distinct failure from not knowing, and only the trace separates them.
+
+The two models also work very differently. Opus used 34 `grep_src` + 18
+`read_file` and **no** `run_shell`; qwen38 used **98 `run_shell`** (60 `grep`,
+26 `sed`) and never touched the source-reading tools. Flash-Next did least
+work of the three (14 `run_shell`, 8 `read_file`, 682 s) and reached the
+function only 6 times. So the gap here is not reading ability — qwen38 read
+plenty — but converting a diagnosis into an edit.
+
+So tier 6 discriminates sharply where tiers 1-3 saturated: reference passes,
+both local models fail, and the traces say why.
+
+Caveats: `--reps 1`, so a single sample per model; and the `no_progress`
+threshold (40 steps without a source change) is what ended both runs, so a
+model that would have patched at step 45 is scored the same as one that never
+would. Both figures are the defaults, unchanged from the Opus run that passed
+at 40 iterations.
