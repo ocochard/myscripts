@@ -344,7 +344,11 @@ and rebuilding. Every operation the script performs must still work afterwards
 — making the panic go away by disabling something does not count.
 
 Use the test_kernel tool to run it: that builds the kernel from the tree and
-runs the script on a disposable test machine, so crashing it is safe.""",
+runs the script on a disposable test machine, so crashing it is safe.
+
+The tree is unmodified upstream FreeBSD at a real commit. Nothing has been
+planted or injected for this exercise, so there is no diff-against-pristine
+shortcut — the bug is genuine and has to be found by reading the code.""",
 }
 
 
