@@ -730,6 +730,15 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
             # the fix is a sudoers rule scoping agent_user to the commands the
             # bench actually needs — not removing sudo. Until that exists,
             # treat every run as able to touch the host.
+            # `su -m` keeps the ENVIRONMENT, which is what we want for PATH
+            # and the build vars — but it also keeps HOME=/root while the uid
+            # becomes agent_user. Anything that reads a per-user config then
+            # tries to open root's copy and cannot:
+            #   warning: unable to access '/root/.config/git/ignore':
+            #            Permission denied
+            # Harmless (git carries on) but it appears in the model's tool
+            # output on every git call, which is noise the model has to read
+            # and reason past. Point HOME at the agent user's own directory.
             argv = ["su", "-m", agent_user, "-c", command]
             use_shell = False
         # ccache correctness, not speed: see build_env(). `su -m` preserves
@@ -737,6 +746,10 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
         # on a host without ccache, so nothing is exported there.
         shell_env = dict(os.environ)
         shell_env.update(build_env())
+        if agent_user:
+            home = os.path.expanduser(f"~{agent_user}")
+            if os.path.isdir(home):
+                shell_env["HOME"] = home
         try:
             p = subprocess.run(argv, shell=use_shell, cwd=workdir,
                                capture_output=True, text=True,

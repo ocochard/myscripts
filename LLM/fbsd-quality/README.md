@@ -914,3 +914,31 @@ longer" are different findings, and the bench reported the first for four runs
 because of the harness rather than the model.
 
 Caveat: `--reps 1`. One sample, and with MTP on the same run can go either way.
+
+#### Qwen3.8-27B also PASSES t6 — and needs the fewest steps of the two locals
+
+`v20`, `--agent-type code` (its original class, deliberately not `auto` — see
+the detector's known limitation: it complies with `CodeAgent` 99.35 % of the
+time, so switching it would confound the comparison).
+
+| | Opus | Qwen3.8-27B Q8 | Flash-Next IQ3_XXS |
+|---|---:|---:|---:|
+| result | PASS | **PASS** | PASS |
+| steps | 40 | **36** | 96 |
+| model_s | 330 | 3 224 | 4 310 |
+| tokens_out | 13 046 | 51 253 | 61 265 |
+| parse failures | 0 | **0** | 58 (refunded) |
+| patch | `vfs_lookup.c` | `vfs_lookup.c` | `vfs_lookup.c` |
+
+All three produced `crosslkflags |= LK_CANRECURSE` in
+`vfs_lookup_cross_mount()` — the reference patch, independently.
+
+qwen38 took **fewer steps than the reference model** (36 vs 40) at ~10x the
+wall time. Its earlier t6 failure was, like Flash-Next's, an artifact: it had
+reached `LK_CANRECURSE` in its trace and simply run out of budget under the
+60-step cap and the pre-refund accounting.
+
+**So tier 6 no longer discriminates on pass/fail either — 3/3.** What it now
+measures is cost: 10-13x the wall time and 4-4.7x the tokens for the same fix.
+That is a real and useful result, but the ladder needs a harder rung again if
+pass/fail is wanted.
