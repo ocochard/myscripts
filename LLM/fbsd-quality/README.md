@@ -968,13 +968,25 @@ PASS, which makes two independent models improving on the one fix. Still not
 proof — `--reps 1` and MTP sampling mean single runs move on their own — but it
 is the strongest signal available without a dedicated A/B.
 
-Final tier-6 standing, all on the same harness:
+Final tier-6 standing. 3/3 pass, all three producing
+`crosslkflags |= LK_CANRECURSE` in `vfs_lookup_cross_mount()`.
 
-| model | steps | model_s | tokens_out |
-|---|---:|---:|---:|
-| claude-opus-4-5 | 32 | 261 | 9 740 |
-| Qwen3.8-27B Q8 MTP | 36 | 3 224 | 51 253 |
-| Flash-Next IQ3_XXS | 96 | 4 310 | 61 265 |
+| model | agent class | tokens_out | model_s | steps |
+|---|---|---:|---:|---:|
+| claude-opus-4-5 | `code` | 9 740 | 261 | 32 |
+| Qwen3.8-27B Q8 MTP | `code` | 51 253 | 3 224 | 36 |
+| Flash-Next IQ3_XXS | `toolcalling` | 61 265 | 4 310 | 96 |
 
-3/3 pass, all three producing `crosslkflags |= LK_CANRECURSE`. The separation
-is entirely cost: **12x and 17x the wall time**, 5x and 6x the tokens.
+**Compare on tokens and wall time, not on steps.** The agent classes differ,
+and a "step" is not the same unit in each: a `ToolCallingAgent` step is exactly
+one tool call by construction, while a `CodeAgent` step is one Python block
+that may invoke several tools. Flash-Next's 96 and qwen38's 36 therefore count
+different things. Tokens and seconds are unit-independent, and on those the
+ordering is stable: **12x and 17x the wall time, 5x and 6x the tokens** for the
+same fix.
+
+Re-running Flash-Next under `code` would NOT make this comparable — it would
+just re-measure the harness mismatch, which is already known: 46 % action rate,
+13 parse failures, no patch. Asking a tool-call-trained model for Python in
+`<code>` tags is the unfair run, not the fair one. The class asymmetry is
+inherent to comparing these models honestly, not an artifact to be removed.
