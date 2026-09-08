@@ -138,6 +138,29 @@ def detect_agent_type(api_base, backend):
     Returns "toolcalling" or "code". Falls back to "code" whenever the
     template cannot be read (an Anthropic proxy exposes no /props, and Opus
     handles CodeAgent perfectly well), so this can only ever help.
+
+    KNOWN LIMITATION, and deliberately not fixed: this predicts what a model
+    CAN emit, not what it DOES emit. Both Qwen models here carry the same
+    tool-call tokens and are both classified "toolcalling", but their measured
+    behaviour under CodeAgent differs 7-fold:
+
+        Flash-Next IQ3_XXS   28 failures / 583 iterations = 4.8%
+        Qwen3.8-27B Q8_0      6 failures / 917 iterations = 0.65%
+
+    So for qwen38 this over-corrects: it complies with CodeAgent 99.35% of the
+    time and is moved off a harness that works. That costs little, because
+    ToolCallingAgent is not broken for it — merely unnecessary.
+
+    Two things NOT to do here. Do not add a model-name or family rule: that is
+    less evidence-based than the template check, and it is exactly the kind of
+    assumption-instead-of-measurement that put the hardcoded CodeAgent here in
+    the first place. And be wary of making this adaptive (switch mid-run once
+    an observed failure rate crosses a threshold) — more correct in principle,
+    but this harness has already produced several wrong verdicts from added
+    moving parts, and the over-correction is cheap.
+
+    Pass --agent-type explicitly to override, which is what a controlled
+    comparison should do anyway.
     """
     if backend != "openai":
         return "code"
