@@ -942,3 +942,39 @@ reached `LK_CANRECURSE` in its trace and simply run out of budget under the
 measures is cost: 10-13x the wall time and 4-4.7x the tokens for the same fix.
 That is a real and useful result, but the ladder needs a harder rung again if
 pass/fail is wanted.
+
+#### Control: Opus re-run on the fixed harness (no regression)
+
+Every t6 result above was produced on a harness that was being changed between
+runs. Opus is the one model that passed under the ORIGINAL harness, so
+re-running it checks whether the four fixes broke anything for a model that
+already worked.
+
+| | v8 (original harness) | v21 (current) |
+|---|---:|---:|
+| result | PASS | **PASS** |
+| steps | 40 | **32** |
+| model_s | 330 | 261 |
+| tokens_out | 13 046 | 9 740 |
+| patch | `vfs_lookup.c` | `vfs_lookup.c` |
+
+No regression, and it needed 8 fewer steps and 25 % fewer tokens. Since Opus
+had 0 parse failures and 0 refunds in both runs, the accounting fixes cannot
+explain the improvement — the only change that reaches it is the prompt now
+stating the bug is genuine upstream rather than planted.
+
+That is the same change that most plausibly explains qwen38's flip from FAIL to
+PASS, which makes two independent models improving on the one fix. Still not
+proof — `--reps 1` and MTP sampling mean single runs move on their own — but it
+is the strongest signal available without a dedicated A/B.
+
+Final tier-6 standing, all on the same harness:
+
+| model | steps | model_s | tokens_out |
+|---|---:|---:|---:|
+| claude-opus-4-5 | 32 | 261 | 9 740 |
+| Qwen3.8-27B Q8 MTP | 36 | 3 224 | 51 253 |
+| Flash-Next IQ3_XXS | 96 | 4 310 | 61 265 |
+
+3/3 pass, all three producing `crosslkflags |= LK_CANRECURSE`. The separation
+is entirely cost: **12x and 17x the wall time**, 5x and 6x the tokens.
