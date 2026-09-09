@@ -2000,8 +2000,18 @@ def main():
                          "modify the source tree or anything else on the host.")
     ap.add_argument("--tasks", default="",
                     help="comma-separated task ids (default: all tiers, ascending)")
-    ap.add_argument("--reps", type=int, default=1,
-                    help="repetitions per task; >1 recommended, results are noisy")
+    ap.add_argument("--reps", type=int, default=3,
+                    help="repetitions per task. Default 3, and 1 is a smoke "
+                         "test, not a result: MEASURED per-tier rates on this "
+                         "harness (v27, Qwen3.8-27B) were t1 1/3, t2 2/3, "
+                         "t3 1/3, t4 1/3, t5 0/3. The first rep alone scored "
+                         "0/5 -- reporting it would have said 'cannot do t1' "
+                         "about a tier the model passes a third of the time. "
+                         "Every extra rep costs a full agent run plus a guest "
+                         "boot (~10-45 min/tier for a local model), so a "
+                         "5-tier 3-rep sweep is hours; use --reps 1 knowingly "
+                         "for a plumbing check, never for a number you intend "
+                         "to publish.")
     ap.add_argument("--max-steps", type=int, default=100,
                     help="hard cost ceiling on agent loop turns. Default 100, "
                          "set from measurement: claude-opus-4-5 needed 40 "
@@ -2084,6 +2094,19 @@ def main():
     ap.add_argument("--stop-on-fail", action="store_true",
                     help="stop climbing tiers once one fails (saves time)")
     args = ap.parse_args()
+
+    # Warn BEFORE the run, not just in the summary table. The table already
+    # says a single rep is unreliable, but by then the hours are spent and the
+    # number is already written to results.jsonl, where nothing marks it as a
+    # smoke test. --reps 1 stays available on purpose: it is the right way to
+    # check plumbing after a harness change.
+    if args.reps < 3:
+        print(f"WARNING: --reps {args.reps} is a smoke test, not a result. "
+              f"Measured per-tier pass rates on this harness are as low as "
+              f"1/3 (v27), so a single rep cannot distinguish a model that "
+              f"fails a tier from one that passes it a third of the time. "
+              f"Do not publish per-tier verdicts from this run.",
+              file=sys.stderr)
 
     if not os.path.exists(args.disk):
         sys.exit(f"guest image not found: {args.disk}")
@@ -2191,6 +2214,12 @@ def main():
                                   args.temperature, args.snippet_timeout,
                                   src_baseline, args.agent_type)
                     rec["rep"] = rep + 1
+                    # Record the DENOMINATOR, not just which rep this was. A
+                    # row saying rep=1 is ambiguous forever after: it could be
+                    # the first of three or a lone smoke test. reps_total makes
+                    # a low-confidence row self-identifying when someone reads
+                    # results.jsonl months later with no memory of the argv.
+                    rec["reps_total"] = args.reps
                     rec["run_id"] = run_id
                     rec["api_base"] = args.api_base
                     rec["src_mode"] = args.src_mode
