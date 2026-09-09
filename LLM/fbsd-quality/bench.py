@@ -1522,8 +1522,24 @@ def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
     # to the guest — nothing to copy.
     post = None
     if task["id"] == "t1-eventhandler":
-        # Guarantee at least one process exit for the hook to observe.
-        post = "/usr/bin/true; /bin/sh -c 'exit 0'"
+        # Guarantee process exits for the hook to observe -- and guarantee
+        # SEVERAL, with distinct pids, because the behaviour check needs >=2.
+        #
+        # This used to be "/usr/bin/true; /bin/sh -c 'exit 0'". The guest's
+        # entire userland is /rescue (see mkimage.sh): ~150 binaries, but
+        # `true` is not among them (it is a shell builtin on a normal system,
+        # so /rescue never needed it) -- so the first command always died with
+        #     /rescue/sh: /usr/bin/true: not found
+        # and the "guarantee" never ran. t1 passed only because the shell's own
+        # children happened to exit; the tier's determinism was an accident for
+        # the whole history of the bench. Verified in every archived console.
+        #
+        # Each `sh -c` forks a real process that then exits, so process_exit
+        # (kern_exit.c:410, EVENTHANDLER_DIRECT_INVOKE per exiting proc) fires
+        # once per subshell with a fresh pid. Three of them leaves margin if
+        # the shell reuses or elides one.
+        post = ("/bin/sh -c 'exit 0'; /bin/sh -c 'exit 0'; "
+                "/bin/sh -c 'exit 0'")
 
     dump_dir = os.path.join(artifact_dir or workdir, "_dumps")
     runner = vmrunner.BhyveRunner(disk_img=disk, share_dir=share_dir,
