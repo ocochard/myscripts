@@ -61,14 +61,36 @@ working directory.""",
         # Round-trip proves real osd use: a model that fakes it with a global
         # cannot produce a slot number, and the value must survive set->get.
         #
-        # KNOWN LOOSENESS (observed with claude-opus-4-5, 2026-09-05): the
-        # marker cannot distinguish WHICH osd object type was used. That run
-        # passed using osd_thread_register()/osd_thread_set() — the OSD_THREAD
-        # wrappers in sys/sys/osd.h — where the prompt asks for the *process*
-        # type. The API use was genuine and the round-trip real, so it is a
-        # legitimate pass; but if the process type specifically matters,
-        # tighten this by having the module also print something only the
-        # process path can produce (e.g. the pid whose osd slot was set).
+        # THE TASK WAS IMPOSSIBLE UNTIL 2026-09-09. It asked for a slot on the
+        # "*process* object type". FreeBSD has no such type: sys/sys/osd.h
+        # defines exactly OSD_THREAD(0), OSD_JAIL(1), OSD_KHELP(2), with
+        # OSD_FIRST=OSD_THREAD and OSD_LAST=OSD_KHELP. There is no OSD_PROCESS
+        # and no osd_process_* wrapper anywhere in the tree.
+        #
+        # This scored backwards for 45+ runs and the failure is instructive:
+        #   * claude-opus-4-5 substituted osd_thread_register() and commented
+        #     it "the thread (process) object type" — PASS, because the marker
+        #     never checked which type was used.
+        #   * Qwen3.8-27B searched for the process type, reported correctly
+        #     that "the tree only defines THREAD/JAIL/KHELP", refused to fake
+        #     it, and burned 65 steps / 3.1 h / 105k tokens looking for a
+        #     premise that does not exist — FAIL(no_progress), no .c written.
+        # The bench rewarded ignoring the spec and punished reading the source,
+        # which inverts what this tier exists to measure.
+        #
+        # An earlier note here saw Opus's substitution, called it "a legitimate
+        # pass" and suggested printing a pid to tighten it. That rationalised
+        # the symptom without checking whether the requested type existed —
+        # the cheap check (grep OSD_ osd.h) would have settled it immediately.
+        #
+        # FIXED by naming the type FreeBSD actually has (thread). This is not
+        # retrofitting the spec to Opus's answer: the tier's purpose is reading
+        # osd.h for the wrapper names, argument order and slot lifecycle, and
+        # that is unchanged. The marker now also requires the pid whose slot
+        # was set, so the module has to touch the real object rather than print
+        # a constant. ALL PRE-2026-09-09 t2 ROWS ARE VOID — including Opus's
+        # passes; nobody keeps a score earned under the broken version.
+        #
         # `0x(?:0x)?` tolerates a doubled prefix from printf("...=0x%p", v):
         # %p sets sharpflag with no width (sys/kern/subr_prf.c:838) and that
         # prepends its own "0x" (line 937). SCORING CHANGE, 2026-09-06: the
@@ -77,7 +99,7 @@ working directory.""",
         # real; only the format string was off. Rejecting that measured printf
         # pedantry rather than kernel knowledge, so it is now accepted — which
         # means that one historical row would score differently today.
-        "marker_re": r"FBSDQ:osd:slot=\d+:roundtrip=0x(?:0x)?deadbeef",
+        "marker_re": r"FBSDQ:osd:slot=\d+:pid=\d+:roundtrip=0x(?:0x)?deadbeef",
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a facility called OSD ("object-specific data") that lets
@@ -85,14 +107,15 @@ code attach arbitrary per-object data to certain kernel objects at runtime,
 using dynamically allocated slots.
 
 Requirements, all performed when the module loads:
-- Register an OSD slot for the *process* object type.
+- Register an OSD slot for the *thread* object type.
 - Store the pointer value 0xdeadbeef into that slot for the currently running
-  process.
-- Read the value back out of the slot for the same process.
+  thread.
+- Read the value back out of the slot for the same thread.
 - Print exactly one line to the kernel message buffer, where <slot> is the slot
-  number you were allocated and the third field is the value you read back:
+  number you were allocated, <pid> is the process id owning the current thread,
+  and the last field is the value you read back:
 
-      FBSDQ:osd:slot=<slot>:roundtrip=0x<value in lowercase hex>
+      FBSDQ:osd:slot=<slot>:pid=<pid>:roundtrip=0x<value in lowercase hex>
 
 - Release the slot when the module unloads, so load/unload/reload does not
   panic the machine.
