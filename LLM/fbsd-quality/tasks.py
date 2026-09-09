@@ -74,9 +74,14 @@ def _t1_distinct_pids(regions, console):
     pids = set()
     for reg in regions:
         pids.update(re.findall(r"FBSDQ:exit:pid=(\d+)", reg))
+    # Sort NUMERICALLY (pids are captured as strings, so plain sorted() puts
+    # '100' before '29') and show them all: a message that says "8 distinct
+    # pids" and then lists 6 of them reads as a counting bug and costs a human
+    # a round of investigation to rule out.
+    shown = sorted(pids, key=int)
     if len(pids) >= 2:
-        return True, f"{len(pids)} distinct pids: {sorted(pids)[:6]}"
-    return False, (f"only {len(pids)} distinct pid(s) {sorted(pids)} across "
+        return True, f"{len(pids)} distinct pids: {shown}"
+    return False, (f"only {len(pids)} distinct pid(s) {shown} across "
                    f"{len(regions)} load(s) — a real process_exit handler sees "
                    f"a different pid per exiting process, so a single repeated "
                    f"value indicates a hardcoded line rather than a handler")
