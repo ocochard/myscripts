@@ -1528,7 +1528,14 @@ def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
     dump_dir = os.path.join(artifact_dir or workdir, "_dumps")
     runner = vmrunner.BhyveRunner(disk_img=disk, share_dir=share_dir,
                                   dump_dir=dump_dir)
-    res = runner.run_module(ko_name, post_load_cmd=post)
+    # Load twice whenever the tier has a behavioural check, so that check can
+    # ask whether the module RESPONDED to the second load. Every prompt already
+    # requires load/unload/reload not to panic, so this tests a stated
+    # requirement; it is also the only defence against a hardcoded marker
+    # (tasks.py, "Behavioural checks").
+    behaviour = task.get("behaviour")
+    res = runner.run_module(ko_name, post_load_cmd=post,
+                            reload_cycle=behaviour is not None)
 
     if res.panicked:
         # Optional debugging aid: pull the core out so debug_last_panic() can
@@ -1552,6 +1559,22 @@ def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
         return False, F_LOAD, res.console
     if not res.marker_found(task["marker_re"]):
         return False, F_WRONG, res.console
+    if behaviour is not None:
+        regions = res.live_regions()
+        if not regions:
+            # Never silently pass a check that could not run: a marker match
+            # with no parseable load region means the console did not look the
+            # way live_regions() expects, which is a harness fault and must not
+            # be scored as the model's success.
+            return False, F_HARNESS, (
+                "behaviour check could not run: no module-load region found in "
+                "the console, so the anti-hardcoding check was skipped. This "
+                "is a harness fault, not the model's.\n" + res.console[-2000:])
+        ok, detail = behaviour(regions, res.console)
+        print(f"    behaviour({task['id']}): {'ok' if ok else 'FAIL'} — "
+              f"{detail}", file=sys.stderr)
+        if not ok:
+            return False, F_WRONG, f"BEHAVIOUR: {detail}\n\n{res.console}"
     return True, None, res.console
 
 

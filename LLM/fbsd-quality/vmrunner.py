@@ -55,6 +55,31 @@ class VMResult:
     def marker_found(self, marker_re):
         return re.search(marker_re, self.console) is not None
 
+    def live_regions(self):
+        """The console split into one string per module load, dmesg EXCLUDED.
+
+        Counting markers over the whole console overcounts badly: the guest
+        script runs `dmesg` at the end, which replays every line the module
+        already printed. A t1 module that fired 3 times shows 6 matches in
+        self.console (3 live + 3 replayed), so any "how many times did this
+        happen" check must run on the live text only.
+
+        A region starts at each `kldload` of the module and ends at the next
+        FBSDQ-UNLOADED (or at the dmesg replay for the last one). With
+        reload=True there are two regions, which is what lets a caller ask
+        whether the SECOND load behaved like the first.
+        """
+        # Cut the dmesg replay off first: everything from the final `dmesg`
+        # command echo onwards is a repeat, not new output.
+        text = self.console
+        cut = text.rfind("\n# dmesg")
+        if cut != -1:
+            text = text[:cut]
+        parts = re.split(r"^#\s*kldload\s+\S*\.ko\s*$", text, flags=re.M)
+        # parts[0] is everything before the first module load (boot chatter and
+        # the p9fs mount) — never module output, so drop it.
+        return parts[1:] if len(parts) > 1 else []
+
 
 def _require_root():
     if os.geteuid() != 0:
@@ -244,7 +269,7 @@ class BhyveRunner:
         return found
 
 
-    def run_module(self, ko_name, post_load_cmd=None):
+    def run_module(self, ko_name, post_load_cmd=None, reload_cycle=False):
         """Boot, mount the share, kldload ko_name, run an optional command,
         dump dmesg, power off. Returns VMResult.
 
@@ -260,8 +285,8 @@ class BhyveRunner:
             return VMResult("", False, False, False,
                             reason=f"bootrom missing: {self.bootrom}")
 
-        return self._boot_and_drive(self._guest_script(ko_name,
-                                                       post_load_cmd))
+        return self._boot_and_drive(self._guest_script(ko_name, post_load_cmd,
+                                                       reload_cycle))
 
     def run_script(self, guest_path, disk_img=None):
         """Boot and run a script that is ALREADY INSIDE the guest image.
@@ -366,13 +391,23 @@ class BhyveRunner:
         return VMResult(console, panicked, timed_out, load_failed,
                         reason=drive_error, dump_disk=dump_path)
 
-    def _guest_script(self, ko_name, post_load_cmd):
+    def _guest_script(self, ko_name, post_load_cmd, reload_cycle=False):
         """Commands typed at the guest console once it is up.
 
         Kept to /rescue-safe basics so the guest image can be tiny. Markers
         bracket the interesting region so parsing does not depend on boot
         chatter.
+
+        reload_cycle adds a second load/unload after the first. Every task
+        prompt already REQUIRES load/unload/reload not to panic, so this only
+        exercises a documented requirement — but it is also the bench's one
+        defence against a hardcoded marker: real API use responds to a second
+        load (t1 sees new PIDs, t5 runs a second grace period), while a
+        `printf` of a fixed string reproduces byte-identically. The agent never
+        sees these commands: they are typed at the console at VERIFY time,
+        after the agent has stopped, and are not on the p9fs share.
         """
+        base = os.path.splitext(ko_name)[0]
         lines = [
             f"kldload p9fs || kldload virtio_p9fs",
             f"mkdir -p {GUEST_MNT}",
@@ -386,8 +421,21 @@ class BhyveRunner:
         lines += [
             # Unload too: a module that panics on unload is broken, and every
             # task explicitly requires clean unload.
-            f"kldunload {os.path.splitext(ko_name)[0]} || true",
+            f"kldunload {base} || true",
             "echo FBSDQ-UNLOADED",
+        ]
+        if reload_cycle:
+            lines += [
+                f"kldload {GUEST_MNT}/{ko_name}",
+                "echo FBSDQ-RELOADED",
+            ]
+            if post_load_cmd:
+                lines.append(post_load_cmd)
+            lines += [
+                f"kldunload {base} || true",
+                "echo FBSDQ-UNLOADED",
+            ]
+        lines += [
             "dmesg",
             "echo FBSDQ-DONE",
             "shutdown -p now",

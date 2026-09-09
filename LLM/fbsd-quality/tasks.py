@@ -16,6 +16,8 @@ Design rules for a tier:
   * The prompt names the facility and the observable, nothing else.
 """
 
+import re
+
 # Where the agent works. The harness creates this and shares it into the guest
 # over virtio-9p; the agent only ever sees a plain directory.
 WORK_SUBDIR = "work"
@@ -23,6 +25,99 @@ WORK_SUBDIR = "work"
 # Marker prefix. Tasks print "FBSDQ:<something>" so verification greps for a
 # string no unrelated kernel message will produce.
 MARKER_PREFIX = "FBSDQ"
+
+
+# ---------------------------------------------------------------------------
+# Behavioural checks (anti-hardcoding)
+#
+# Every marker_re below has FIXED expected values, and the prompt publishes the
+# exact format — so all of them are satisfied by a `printf` of a literal, with
+# no kernel API touched at all. The per-tier comments argue that faking is
+# unattractive (t3's reuse=1 defeats a ++counter, t4's type/id must come from
+# the callback), and those arguments are sound against a LAZY fake; none of
+# them stops a deliberate one.
+#
+# A "behaviour" entry adds a second, format-independent question: did the
+# module RESPOND to being loaded a second time? The harness loads, unloads and
+# loads again at verify time (see vmrunner._guest_script(reload_cycle=True)).
+# Real API use produces different output on the second load where the tier's
+# semantics say it must; a hardcoded string reproduces byte-identically.
+#
+# A behaviour callable gets (regions, console) where regions is the console
+# split per load with the dmesg replay removed, and returns (ok, detail).
+# Returning ok=False fails the task with F_WRONG and detail is recorded.
+#
+# HONEST LIMITS, so no one reads more assurance into this than it carries:
+#   * t3 is NOT defended. A fresh unrhdr legitimately returns 0,1,2,reuse=1 on
+#     every load, so "identical on reload" is the CORRECT behaviour and cannot
+#     distinguish a real allocator from a printf. Defending t3 needs a source
+#     or symbol check, which is not implemented.
+#   * t4 is only weakly defended (the marker must recur per load, which a
+#     hardcoded printf in the load handler also does).
+#   * t1 and t5 are genuinely defended: t1 by distinct PIDs, t5 because the
+#     deferred callback must fire again in the second grace period.
+# ---------------------------------------------------------------------------
+
+def _t1_distinct_pids(regions, console):
+    """t1: a real process_exit handler sees DIFFERENT pids over time.
+
+    The handler fires per process exit, so across two loads the harness's
+    post-load commands plus the shell's own children yield several distinct
+    PIDs. A hardcoded `printf("FBSDQ:exit:pid=28")` yields exactly one value no
+    matter how many processes exit or how often the module is loaded.
+
+    Threshold is 2 distinct PIDs across all loads, not per load: the guest is
+    /rescue-only and PID allocation there is sparse, so demanding a specific
+    count per region would be brittle. Observed on a real passing module: 3
+    distinct PIDs (28, 29, 30) in a single load.
+    """
+    pids = set()
+    for reg in regions:
+        pids.update(re.findall(r"FBSDQ:exit:pid=(\d+)", reg))
+    if len(pids) >= 2:
+        return True, f"{len(pids)} distinct pids: {sorted(pids)[:6]}"
+    return False, (f"only {len(pids)} distinct pid(s) {sorted(pids)} across "
+                   f"{len(regions)} load(s) — a real process_exit handler sees "
+                   f"a different pid per exiting process, so a single repeated "
+                   f"value indicates a hardcoded line rather than a handler")
+
+
+def _t5_reclaim_per_load(regions, console):
+    """t5: the deferred callback must fire on EVERY load.
+
+    epoch_call() defers to a grace period that elapses once per load, so a real
+    module prints inside=1 and reclaimed=1 in each region. This is the
+    strongest check available anywhere in the ladder, because the observable is
+    asynchronous: faking it means faking an ordering the module does not
+    control.
+    """
+    bad = [i for i, reg in enumerate(regions, 1)
+           if not re.search(r"FBSDQ:epoch:inside=1\b[\s\S]*"
+                             r"FBSDQ:epoch:reclaimed=1", reg)]
+    if not bad:
+        return True, f"inside+reclaimed in all {len(regions)} load(s)"
+    return False, (f"load(s) {bad} did not show inside=1 then reclaimed=1; a "
+                   f"real epoch_call fires its callback once per load")
+
+
+def _marker_each_load(marker_re):
+    """Weak check: the tier's marker must appear in every load region.
+
+    Used for t2/t4, whose observables are printed once at load with fixed
+    values. It catches a module that only works the first time (a real bug the
+    prompts all forbid) but does NOT catch a hardcoded printf, which recurs
+    just as happily. Kept because it is nearly free and closes the
+    load-once-only failure mode.
+    """
+
+    def _check(regions, console):
+        bad = [i for i, reg in enumerate(regions, 1)
+               if not re.search(marker_re, reg)]
+        if not bad:
+            return True, f"marker in all {len(regions)} load(s)"
+        return False, (f"marker missing from load(s) {bad} — the module must "
+                       f"work on reload, not only on first load")
+    return _check
 
 
 TASKS = [
@@ -33,6 +128,8 @@ TASKS = [
         # Deterministic: the module must observe a process exiting. The harness
         # spawns `/bin/true` in the guest after load, so at least one exit fires.
         "marker_re": r"FBSDQ:exit:pid=\d+",
+        # Anti-hardcoding: >=2 distinct PIDs. See _t1_distinct_pids.
+        "behaviour": _t1_distinct_pids,
         "prompt": """Write a loadable FreeBSD kernel module.
 
 Requirements:
@@ -100,6 +197,9 @@ working directory.""",
         # pedantry rather than kernel knowledge, so it is now accepted — which
         # means that one historical row would score differently today.
         "marker_re": r"FBSDQ:osd:slot=\d+:pid=\d+:roundtrip=0x(?:0x)?deadbeef",
+        # Weak (marker must recur per load) — see _marker_each_load's docstring.
+        "behaviour": _marker_each_load(
+            r"FBSDQ:osd:slot=\d+:pid=\d+:roundtrip=0x(?:0x)?deadbeef"),
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a facility called OSD ("object-specific data") that lets
@@ -142,6 +242,12 @@ working directory.""",
         # fakes the API with `static int counter++` prints reuse=3 and fails.
         # Only real allocator use reproduces the free-then-reuse behaviour.
         "marker_re": r"FBSDQ:unr:a=0:b=1:c=2:reuse=1",
+        # NO behaviour check, deliberately. A fresh unrhdr returns
+        # 0,1,2,reuse=1 on every load, so "identical output on reload" is the
+        # CORRECT result here and proves nothing about whether the allocator is
+        # real. t3 remains gameable by a hardcoded printf; closing it needs a
+        # source or symbol check, which does not exist yet. Do not add
+        # _marker_each_load here and call it defended.
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a unit-number allocator that hands out small integers
@@ -197,6 +303,9 @@ working directory.""",
         # happened — and this bench measures kernel knowledge, not printf
         # pedantry. A local model already lost t2 to exactly this.
         "marker_re": r"FBSDQ:hhook:type=2:id=42:udata=0x(?:0x)?feedface:ran=1",
+        # Weak (marker must recur per load) — see _marker_each_load's docstring.
+        "behaviour": _marker_each_load(
+            r"FBSDQ:hhook:type=2:id=42:udata=0x(?:0x)?feedface:ran=1"),
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a "helper hook" facility that lets one subsystem publish
@@ -248,6 +357,8 @@ working directory.""",
         # The two lines must appear in this order; the runner greps for the
         # second, which cannot be reached until the grace period elapses.
         "marker_re": r"FBSDQ:epoch:inside=1\b[\s\S]*FBSDQ:epoch:reclaimed=1",
+        # Strongest check in the ladder — see _t5_reclaim_per_load.
+        "behaviour": _t5_reclaim_per_load,
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has an epoch-based reclamation facility: readers enter a
