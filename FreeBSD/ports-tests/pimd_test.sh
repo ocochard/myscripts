@@ -39,11 +39,32 @@
 # forwards down the shared tree, and with spt-threshold set low the
 # routers then switch to the shortest path tree.
 #
+# Two scenarios share that topology, they differ only in which pimd.conf
+# each router gets and which assertions run:
+#
+#   rpt        R2 is BSR and RP, ED2 joins, traffic has to reach it over
+#              the shared tree.  Takes about 90s.
+#   keepalive  R1 is BSR and RP for its own directly connected source and
+#              nobody joins the group, which is the setup of
+#              https://github.com/troglobit/pimd/issues/251.  The (S,G)
+#              entries then have an empty outgoing interface list, and
+#              pimd used to restart the entry timer only for entries that
+#              had outgoing interfaces: every source was aged out a few
+#              seconds after a cache miss had recreated it, so sources
+#              kept appearing and disappearing while they were sending.
+#              Takes about 5 minutes, it has to outlive PIM_DATA_TIMEOUT
+#              (210s).
+#
+# The scenarios cannot run in parallel: they use the same jail names and
+# epairs, and net.inet.ip.mcast.loop is a host-global sysctl.
+#
 # Usage:
-#   ./pimd_test.sh start     build the lab, start pimd on R1/R2/R3
-#   ./pimd_test.sh check     run the assertions (start must have run)
-#   ./pimd_test.sh run       start + check + stop, exit 0 only if all pass
-#   ./pimd_test.sh stop      tear everything down
+#   ./pimd_test.sh start [scenario]   build the lab, start pimd on R1/R2/R3
+#   ./pimd_test.sh check [scenario]   run the assertions (start must have run)
+#   ./pimd_test.sh run   [scenario]   start + check + stop, exit 0 if all pass
+#   ./pimd_test.sh stop               tear everything down
+#
+# where scenario is "rpt" (default), "keepalive", or "all" for run.
 #
 # Requires: root (via sudo), VIMAGE kernel, ip_mroute.ko, and a built
 # pimd tree in $PIMD_SRC (./autogen.sh && ./configure && gmake).
@@ -54,6 +75,13 @@ SUDO=${SUDO:-sudo}
 PIMD_SRC=${PIMD_SRC:-$HOME/pimd}
 WORKDIR=${WORKDIR:-/tmp/pimd-test}
 GROUP=${GROUP:-225.1.2.3}
+SCENARIO=${SCENARIO:-rpt}
+
+# keepalive: groups the source blasts at, and how long the entries must
+# survive.  KEEP_SECONDS has to exceed PIM_DATA_TIMEOUT in src/pimd.h.
+KEEP_GROUP=${KEEP_GROUP:-239.1.1.5}
+KEEP_NUM=${KEEP_NUM:-3}
+KEEP_SECONDS=${KEEP_SECONDS:-240}
 
 # pimd debug flags, e.g. DEBUG="-l debug -d mrt,rpf" or "-l debug -d all"
 DEBUG=${DEBUG:-"-l debug -d mrt,rpf,pim_register,pim_bootstrap"}
@@ -61,6 +89,10 @@ DEBUG=${DEBUG:-"-l debug -d mrt,rpf,pim_register,pim_bootstrap"}
 PIMD="$PIMD_SRC/src/pimd"
 PIMCTL="$PIMD_SRC/src/pimctl"
 MPING="$WORKDIR/mping"
+# mping joins the group it sends to, which would give the (S,G) entries a
+# leaf and hide the bug the keepalive scenario is after.  That scenario
+# needs a source that only sends, so it gets its own little sender.
+MSEND="$WORKDIR/msend"
 
 BOXES="ed1 r1 r2 r3 ed2"
 ROUTERS="r1 r2 r3"
@@ -84,7 +116,14 @@ ok()   { printf "  \033[32mok\033[0m    %s\n" "$1"; }
 fail() { printf "  \033[31mFAIL\033[0m  %s\n" "$1"; FAILED=$((FAILED + 1)); }
 
 usage() {
-	echo "usage: $0 start|check|run|stop"
+	echo "usage: $0 start|check|run [rpt|keepalive] | run all | stop"
+}
+
+set_scenario() {
+	case ${1:-$SCENARIO} in
+	rpt|keepalive) SCENARIO=${1:-$SCENARIO} ;;
+	*) usage; exit 2 ;;
+	esac
 }
 
 # Interfaces each box owns, "a" and "b" ends of the epairs above
@@ -213,7 +252,26 @@ restore_mcast_loop() {
 # in the middle of the measured stream, and the traffic then stalls for
 # one Join/Prune period (~60s) before it recovers - real behaviour, but it
 # belongs in an SPT-specific test, not in this one.
+#
+# The keepalive scenario moves both candidacies to R1, so the router that
+# is DR for $SRC_ADDR is also the RP for the groups that source sends to.
+# It also asks for spt-threshold infinity, like the pimd.conf in issue
+# #251, to keep the RP on the shared tree.
 write_configs() {
+	if [ "$SCENARIO" = keepalive ]; then
+		cat <<-EOF > "$WORKDIR/r1.conf"
+		# R1: DR for $SRC_ADDR *and* RP for the groups it sends to
+		spt-threshold infinity
+		bsr-candidate epair101b priority 1 interval 10
+		rp-candidate epair101b priority 20 interval 10
+		group-prefix 224.0.0.0 masklen 4
+		EOF
+
+		: > "$WORKDIR/r2.conf"
+		: > "$WORKDIR/r3.conf"
+		return
+	fi
+
 	cat <<-EOF > "$WORKDIR/r1.conf"
 	# R1: first hop router for $SRC_ADDR, no BSR/RP role
 	EOF
@@ -229,6 +287,69 @@ write_configs() {
 	cat <<-EOF > "$WORKDIR/r3.conf"
 	# R3: last hop router for the receiver LAN
 	EOF
+}
+
+# A sender that never joins anything: sends $KEEP_NUM UDP streams to
+# consecutive groups starting at $KEEP_GROUP, five packets per second
+# each, until it is killed.
+build_msend() {
+	cat <<-'EOF' > "$WORKDIR/msend.c"
+	#include <arpa/inet.h>
+	#include <netinet/in.h>
+	#include <stdio.h>
+	#include <stdlib.h>
+	#include <string.h>
+	#include <sys/socket.h>
+	#include <time.h>
+
+	int main(int argc, char *argv[])
+	{
+		struct sockaddr_in sin;
+		struct in_addr ifa;
+		unsigned char ttl = 5;
+		char buf[64] = "msend";
+		uint32_t base;
+		int sd, i, num;
+
+		if (argc != 4) {
+			fprintf(stderr, "usage: %s <src-ip> <first-group> <num>\n", argv[0]);
+			return 1;
+		}
+
+		if (inet_pton(AF_INET, argv[1], &ifa) != 1)
+			return 1;
+		if (inet_pton(AF_INET, argv[2], &sin.sin_addr) != 1)
+			return 1;
+		base = ntohl(sin.sin_addr.s_addr);
+		num = atoi(argv[3]);
+
+		sd = socket(AF_INET, SOCK_DGRAM, 0);
+		if (sd < 0)
+			return 1;
+		if (setsockopt(sd, IPPROTO_IP, IP_MULTICAST_IF, &ifa, sizeof(ifa)))
+			return 1;
+		setsockopt(sd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_port = htons(4321);
+
+		while (1) {
+			struct timespec ts = { 0, 200000000L };
+
+			for (i = 0; i < num; i++) {
+				sin.sin_addr.s_addr = htonl(base + i);
+				sendto(sd, buf, sizeof(buf), 0,
+				       (struct sockaddr *)&sin, sizeof(sin));
+			}
+			nanosleep(&ts, NULL);
+		}
+
+		return 0;
+	}
+	EOF
+
+	cc -O2 -o "$MSEND" "$WORKDIR/msend.c" || die "failed building $WORKDIR/msend.c"
 }
 
 create_box() {
@@ -318,7 +439,14 @@ start() {
 			-u "$WORKDIR/$r.sock"
 	done
 
-	print "Lab is up.  Poke at it with:"
+	if [ "$SCENARIO" = keepalive ]; then
+		print "Starting the source on ED1, $KEEP_NUM groups from $KEEP_GROUP ..."
+		build_msend
+		${SUDO} daemon -f -p "$WORKDIR/msend.pid" -o "$WORKDIR/msend.log" \
+			jexec "$(jname ed1)" "$MSEND" "$SRC_ADDR" "$KEEP_GROUP" "$KEEP_NUM"
+	fi
+
+	print "Lab is up ($SCENARIO).  Poke at it with:"
 	echo "  ${SUDO} jexec $(jname r2) $PIMCTL -u $WORKDIR/r2.sock show pim detail"
 	echo "  ${SUDO} jexec $(jname r3) netstat -gn"
 	echo "  ${SUDO} jexec $(jname ed2) $MPING -r -i epair203b $GROUP"
@@ -332,8 +460,30 @@ has_rp()       { pimctl "$1" show rp 2>/dev/null | grep -q "$2"; }
 has_mrt()      { pimctl "$1" show mrt 2>/dev/null | grep -q "$2"; }
 has_mfc()      { jrun "$1" netstat -gn 2>/dev/null | grep -q "$2"; }
 
+# Every (S,G) the source is sending to, one per line, as pimctl shows them
+sources() { pimctl r1 show mrt 2>/dev/null | awk -v s="$SRC_ADDR" '$1 == s { print $2 }'; }
+all_sources_up() { [ "$(sources | wc -l)" -eq "$KEEP_NUM" ]; }
+
+# "<group> <entry timer>" per (S,G), read out of the detailed dump.  The
+# entry timer is the only reliable witness: an entry that is recreated by
+# the next cache miss 1.5s later looks exactly like one that was never
+# deleted if all you count is table rows, but a recreated entry always
+# comes back with its timer at 0.
+source_timers() {
+	pimctl r1 show mrt detail 2>/dev/null | awk -v s="$SRC_ADDR" '
+		$1 == s   { grp = $2; next }
+		grp == "" { next }
+		/TIMERS/  { want = 1; next }
+		want      { print grp, $1; grp = ""; want = 0 }
+	'
+}
+
 check() {
 	jls -j "$(jname r1)" jid >/dev/null 2>&1 || die "lab is not running, run '$0 start'"
+
+	case $SCENARIO in
+	keepalive) check_keepalive; return $? ;;
+	esac
 
 	print "1. pimd is alive on every router"
 	for r in $ROUTERS; do
@@ -432,6 +582,92 @@ check() {
 	return 1
 }
 
+# Issue #251: R1 is the DR for the directly connected source and the RP
+# for the groups it sends to, and nobody ever joins them, so the (S,G)
+# entries have an empty outgoing interface list and no kernel MFC entry.
+# Their only sign of life is the IGMPMSG_NOCACHE upcall the kernel raises
+# every UPCALL_EXPIRE (1.5s on FreeBSD), and process_cache_miss() has to
+# restart the entry timer from it.  When it does not, age_routes() deletes
+# each entry within one TIMER_INTERVAL of its creation and the table
+# content is different every time you look at it.
+check_keepalive() {
+	print "1. pimd is alive on R1"
+	if pimctl r1 show status >/dev/null 2>&1; then
+		ok "r1: pimd answers on its pimctl socket"
+	else
+		fail "r1: pimd not answering, see $WORKDIR/r1.log"
+		return 1
+	fi
+
+	print "2. R1 elected itself RP for the groups its source sends to"
+	if wait_for 90 has_rp r1 10.0.1.1; then
+		ok "r1 is the RP (10.0.1.1)"
+	else
+		fail "r1 never became RP, see $WORKDIR/r1.log"
+		return 1
+	fi
+
+	print "3. R1 learns all $KEEP_NUM sources"
+	if wait_for 60 all_sources_up; then
+		ok "r1 has (S,G) entries for $(sources | tr '\n' ' ')"
+	else
+		fail "r1 only has $(sources | wc -l | tr -d ' ')/$KEEP_NUM (S,G) entries"
+		return 1
+	fi
+
+	print "4. The sources stay put for ${KEEP_SECONDS}s while they keep sending"
+	deadline=$(($(date +%s) + KEEP_SECONDS))
+	samples=0
+	missing=0
+	dead=0
+	worst=$KEEP_NUM
+	while [ "$(date +%s)" -lt "$deadline" ]; do
+		timers=$(source_timers)
+		n=$(echo "$timers" | grep -c . || true)
+		samples=$((samples + 1))
+
+		if [ "$n" -ne "$KEEP_NUM" ]; then
+			missing=$((missing + 1))
+			[ "$n" -lt "$worst" ] && worst=$n
+		fi
+
+		# An entry whose keepalive timer is 0 is one age_routes()
+		# run away from being deleted, however fast the next cache
+		# miss brings it back
+		if echo "$timers" | awk '$2 == 0 { found = 1 } END { exit !found }'; then
+			dead=$((dead + 1))
+		fi
+
+		sleep 5
+	done
+
+	if [ "$missing" -eq 0 ]; then
+		ok "all $KEEP_NUM sources present in every one of $samples samples"
+	else
+		fail "sources vanished in $missing of $samples samples, down to $worst/$KEEP_NUM"
+	fi
+
+	if [ "$dead" -eq 0 ]; then
+		ok "every (S,G) kept a running entry timer in all $samples samples"
+	else
+		fail "(S,G) entry timer was 0, so the entry was being deleted and recreated, in $dead of $samples samples"
+	fi
+
+	if [ "$FAILED" -ne 0 ]; then
+		dprint "--- r1: pimctl show mrt detail ---"
+		pimctl r1 show mrt detail 2>&1 | tail -40 || true
+		dprint "--- cache misses logged on r1: $(${SUDO} grep -c "Cache miss" "$WORKDIR/r1.log" 2>/dev/null || echo 0) ---"
+	fi
+
+	echo
+	if [ "$FAILED" -eq 0 ]; then
+		print "RESULT: PASS"
+		return 0
+	fi
+	print "RESULT: FAIL ($FAILED assertion(s))"
+	return 1
+}
+
 stop() {
 	for r in $ROUTERS; do
 		[ -f "$WORKDIR/$r.pid" ] && \
@@ -439,6 +675,7 @@ stop() {
 	done
 	${SUDO} pkill -f "$PIMD -i" 2>/dev/null || true
 	${SUDO} pkill -f "$MPING" 2>/dev/null || true
+	${SUDO} pkill -f "$MSEND" 2>/dev/null || true
 
 	for box in $BOXES; do
 		destroy_box "$box"
@@ -457,18 +694,35 @@ stop() {
 	${SUDO} rm -rf "$WORKDIR"
 }
 
-run() {
+run_one() {
 	rc=0
 	start
 	check || rc=$?
 	if [ "$rc" -ne 0 ]; then
 		# stop() wipes the work directory, keep what failed
-		saved="$WORKDIR.failed"
+		saved="$WORKDIR.$SCENARIO.failed"
 		${SUDO} rm -rf "$saved"
 		${SUDO} cp -a "$WORKDIR" "$saved" 2>/dev/null || true
 		echo "pimd logs and traffic captures kept in $saved"
 	fi
 	stop
+	return $rc
+}
+
+run() {
+	rc=0
+
+	if [ "${1:-}" = all ]; then
+		for s in rpt keepalive; do
+			set_scenario "$s"
+			print "===== scenario: $s ====="
+			run_one || rc=$?
+		done
+		exit $rc
+	fi
+
+	set_scenario "${1:-}"
+	run_one || rc=$?
 	exit $rc
 }
 
@@ -477,7 +731,11 @@ if [ $# -eq 0 ]; then
 	exit 2
 fi
 
-case $1 in
-start|check|stop|run) $1 ;;
-*) usage; exit 2 ;;
+cmd=$1
+shift
+case $cmd in
+start|check) set_scenario "${1:-}"; $cmd ;;
+run)         run "${1:-}" ;;
+stop)        stop ;;
+*)           usage; exit 2 ;;
 esac
