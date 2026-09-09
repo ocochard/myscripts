@@ -273,6 +273,66 @@ failure weeks later:
 looked in the right header, misread a signature, or never searched at all.
 Disable archiving with `--artifacts none` if disk is tight.
 
+### Operational gotchas — each of these cost real time
+
+**Verify a PASS against the guest console, not the verdict.**
+
+```sh
+grep -a '^FBSDQ:' artifacts/<run>/<task>-rep1/console.log
+```
+
+An unexpectedly *cheap* PASS on a hard tier is the shape a harness bug takes.
+Three of the four defects listed under Results were found this way — by reading
+output that a green verdict said was fine. Marker counts per console are not 1:
+the guest script runs `dmesg` at the end, which replays every line the module
+already printed, so a module that fired 3 times shows 6 matches in the raw
+console. Count inside the live region, not over the whole file.
+
+**Run the bench with `sudo`.** `/tmp/fbsd-quality` is root-owned; without it
+every run dies instantly on `PermissionError` and a sweep "completes" in
+seconds.
+
+**Killing a run:** kill the sweep wrapper *first*, or it advances to the next
+model. Then `sudo kill -9` the bench — plain `kill` does not land. Then clean
+up: `zfs list | grep src-fbsdq` and destroy both the clone and its
+`zroot/usr/src@fbsdq-<pid>` snapshot.
+
+**Do not build a kernel module directly in `/tmp`.** A stale `/tmp/Makefile.inc`
+(unrelated to this project) is auto-included by BSD `make` from the parent
+directory and injects bhyve's `SRCS`, giving `make: don't know how to make
+atkbdc.c`. The bench itself is unaffected — its workdirs are one level deeper —
+but ad-hoc reference modules must be built under `/var/tmp`.
+
+**Anchor any monitor/grep filter you use to watch a run.** The agent echoes its
+own shell output into the log, so `grep -E "=== "` matches the agent's
+`echo '=== ... ==='` and fires false events; `not found` matches the model's
+prose as readily as a guest error. Use start-anchored patterns:
+
+```sh
+grep -E "^ *-> (PASS|FAIL)|^    behaviour\(|^=== (starting|finished)"
+```
+
+A pattern that also matches `tail` itself will kill the monitor.
+
+**Watch for leaked object trees.** Old t6 runs left 16
+`/usr/obj/usr/src-unionfs-fbsdq-<pid>` dirs, 23 GB, which made every tree-wide
+search in the agent's shell traverse 16 stale copies — `shell_s` 232 s against
+3-24 s once cleared. Check `ls -d /usr/obj/usr/src-*-fbsdq-*` before a sweep;
+they are safe to remove when no matching PID is alive and nothing is mounted.
+
+**Host load distorts two columns, not the verdicts.** `shell_s` and `wall_s`
+cover the agent's shell calls, `make`, and the guest boot, all on the build
+host; an unrelated buildworld inflates them. `model_s` is remote endpoint time
+and stays clean. Record the load if a sweep ran alongside other work — and note
+that a *badly* starved guest can trip `vmrunner`'s idle timeout and score
+`timed_out`, which is a harness artefact, not a model failure. Re-run that rep.
+
+**A second builder needs a matching tree.** ser6 was evaluated and rejected:
+its `/usr/src` is `__FreeBSD_version` 1600012 against bigone's 1600022, so
+modules would compile against different kernel internals and a failure could
+not be attributed to the model. It would need a tree sync plus its own
+`fbsdq.img`.
+
 ### Calibrating the ladder
 
 Worth doing before trusting a sweep: the stated risk is that tiers 1-3 prove
@@ -419,7 +479,47 @@ the prompt asks for the *process* type. The API use was genuine and the
 round-trip real, so it is a legitimate pass, but the marker cannot tell the two
 object types apart. Tighten it if that distinction matters.
 
-### Results (2026-09-06)
+### Results (2026-09-06) — SUPERSEDED, do not cite
+
+> **Every t1-t5 number below is void** (noted 2026-09-09). Three harness
+> defects and one impossible task were found afterwards, each of which
+> changed verdicts:
+>
+> 1. **`_writes_into_src` refused read-only commands** (fixed `25ea839`).
+>    The guard treated "a write-ish token appears" and "the tree path
+>    appears" as independent conditions, with bare `>` in the token list, so
+>    `grep -ri foo /usr/src-.../sys/conf/files 2>/dev/null` was refused as a
+>    write into the tree. Live for the whole history of the bench; refusals
+>    in **44 archived runs** across every model and tier. Models could not
+>    work around it because the stated reason was wrong, and it biased
+>    against models that explore before writing.
+> 2. **t2-osd was impossible** (fixed `9b8b41c`). It required an OSD slot on
+>    a "process object type"; `sys/sys/osd.h` defines only `OSD_THREAD`,
+>    `OSD_JAIL`, `OSD_KHELP`. All 15 t2 rows recorded before the fix are
+>    void — the
+>    tier scored *backwards*, passing a model that ignored the spec and
+>    failing one that read the source and correctly refused to fake it.
+> 3. **Markers were gameable** (fixed `206b173`). Verification was a single
+>    `re.search` over the console, so every tier was satisfiable by a
+>    `printf` of a literal. Demonstrated, not theorised: a module whose
+>    entire body is `printf("FBSDQ:exit:pid=28")` builds, loads, and PASSES
+>    t1 under the old check.
+> 4. **t1's guaranteed process exit never ran** (fixed `4e7723b`). The
+>    post-load command was `/usr/bin/true`, which does not exist in the
+>    guest's `/rescue`-only userland, so the exit the tier depended on was
+>    incidental for the tier's whole history.
+>
+> Additionally, ~23 GB of leaked `/usr/obj/usr/src-unionfs-fbsdq-*` object
+> trees from old t6 runs were present during the `v22-`/`v23-` rows. They
+> inflated agent shell time ~40× (`shell_s` 232 s vs 3-24 s once cleared) by
+> making every tree-wide search traverse 16 stale copies.
+>
+> A replacement sweep (`v27-*`, three reps for the local models) is in
+> progress. Until it completes, **t1-t5 results are unreported** rather than
+> restated: the earlier numbers measured the harness, not the models.
+>
+> The t6 (bug-fix tier) sections further down are **not** affected by
+> defects 2-4, which are t1-t5 specific.
 
 Every model here ran under one identical harness. Earlier runs exist in
 `results.jsonl` but were taken before the harness gained `ENV_NOTE` and the

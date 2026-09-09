@@ -1241,6 +1241,28 @@ class NoProgressDetector:
                 f"steps (stopped at step {self.steps})")
             agent.interrupt()
 
+# TODO(no-wall-clock-ceiling): the only bounds on a run are --max-steps and
+# this file-staleness detector, both counted in STEPS. Nothing bounds wall
+# time or tokens, and step refunds (parse failures are not charged) let a
+# failing run stretch a long way past any intended budget.
+#
+# Measured cost, v27 qwen38 rep1 -- five tiers, five failures, ~2.6 h:
+#   t5-epoch  3385.9 s (56 min), 157 shell calls, no .c file ever written
+#   t4-hhook  2652.6 s (44 min)
+#   t2-osd    1504.5 s, 261 shell calls, no file
+# and earlier, v23 qwen38 t2 ran 11256 s (3.1 h) / 105k tokens on one tier.
+# The staleness detector DID fire in each no_progress case -- it just fires at
+# 40 stale steps, and 40 steps of a slow model is over half an hour.
+#
+# A wall-clock or token ceiling per (task, rep), independent of step count,
+# would bound a sweep predictably. Suggested shape: --max-wall-s and
+# --max-output-tokens, enforced in the same place as the staleness check
+# (both need agent.interrupt() and a distinct stopped_reason so the verdict is
+# attributable -- reuse the F_TIMEOUT class or add F_BUDGET; do NOT let it look
+# like a model failure). Keep the default generous enough not to truncate a
+# genuinely slow PASS: t4 legitimately took 44 min on a rep that reached the
+# guest.
+
 
 def _build_model(model_id, api_base, api_key, backend, seed=None,
                  temperature=None):

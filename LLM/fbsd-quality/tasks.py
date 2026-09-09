@@ -250,9 +250,21 @@ working directory.""",
         # NO behaviour check, deliberately. A fresh unrhdr returns
         # 0,1,2,reuse=1 on every load, so "identical output on reload" is the
         # CORRECT result here and proves nothing about whether the allocator is
-        # real. t3 remains gameable by a hardcoded printf; closing it needs a
-        # source or symbol check, which does not exist yet. Do not add
-        # _marker_each_load here and call it defended.
+        # real. Do not add _marker_each_load here and call it defended.
+        #
+        # TODO(t3-gameable): t3 is the one tier a hardcoded printf still
+        # passes. Every value in its marker is fixed and published in the
+        # prompt, and the reload cycle cannot discriminate (see above). Closing
+        # it needs a check the console cannot fake, e.g.
+        #   * a symbol check on the built .ko: require an undefined reference
+        #     to new_unrhdr/alloc_unr/free_unr (nm -u), which a printf-only
+        #     module will not have. Cheap, host-side, no guest change. Weakness:
+        #     a module could reference them without using the results.
+        #   * or vary the demanded sequence per run so the answer is not
+        #     knowable from the prompt -- but the prompt must state the format,
+        #     so this means generating the prompt and the marker together.
+        # The symbol check is the smaller change and would also strengthen
+        # t2/t4, whose behaviour checks are only weak.
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a unit-number allocator that hands out small integers
