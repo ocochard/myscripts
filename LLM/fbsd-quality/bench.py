@@ -83,7 +83,8 @@ Notes on this environment (not hints about the task):
 """
 
 
-_SRC_WRITE_RE = None
+_SRC_REDIR_RE = None
+_SRC_VERB_RE = None
 
 
 def _writes_into_src(command, src_root):
@@ -95,19 +96,71 @@ def _writes_into_src(command, src_root):
     This only catches the careless cases — an agent that decides to build
     inside sys/modules, or redirect output into a header. check_src_clean()
     is the backstop that notices when something got through.
+
+    THE BUG THIS EXISTS TO NOT REPEAT. The first version tested two loose
+    conditions independently: "does a write-ish token appear anywhere" AND
+    "does the tree path appear anywhere". Bare `>` was in the token list, so
+
+        grep -ri foo /usr/src-fbsdq-N/sys/conf/files 2>/dev/null
+
+    was refused as a write — `2>/dev/null` supplied the `>`, the path supplied
+    the name, and neither had anything to do with the other. Suppressing
+    stderr while reading the tree is the most common idiom there is, so the
+    guard refused routine exploration and gave no usable reason. Models burned
+    whole runs probing it (one qwen38 t1 run: 36 shell calls, 0 files written,
+    scored FAIL) and one even diagnosed it correctly mid-run. It was live for
+    the entire history of the bench and contaminated 44 archived runs.
+
+    The fix is to require that a write's TARGET is inside the tree:
+      - redirects: only when the path directly after >/>> is under the tree,
+        which excludes /dev/null, &1, and workdir files;
+      - verbs: only when a tree path appears as a bare argument, not merely
+        somewhere in the line (so it survives being inside a grep pattern).
+    Reads are never refused regardless of how they redirect stderr.
     """
-    global _SRC_WRITE_RE
-    if _SRC_WRITE_RE is None:
-        _SRC_WRITE_RE = re.compile(
-            r"(?:>|>>|\btee\b|\bcp\b|\bmv\b|\brm\b|\bmkdir\b|\btouch\b|"
-            r"\bsed\s+-i|\binstall\b|\bchmod\b|\bchown\b|\bpatch\b|\bmake\b[^|;]*\b(?:install|depend)\b)"
+    global _SRC_REDIR_RE, _SRC_VERB_RE
+    if _SRC_REDIR_RE is None:
+        # A redirect whose target is a path (not &1, not /dev/null). Captures
+        # the target so it can be tested against the tree.
+        _SRC_REDIR_RE = re.compile(r"(?<![0-9])>>?\s*([^\s;|&<>]+)")
+        _SRC_VERB_RE = re.compile(
+            r"\b(?:tee|cp|mv|rm|mkdir|touch|install|chmod|chown|patch|ln)\b"
+            r"|\bsed\s+[^|;]*-i"
+            r"|\bmake\b[^|;]*\b(?:install|depend)\b"
         )
-    if not _SRC_WRITE_RE.search(command):
-        return False
-    # Only object if the tree is actually named. Building in the workdir with
-    # redirects is fine and common.
-    real = os.path.realpath(src_root)
-    return real in command or src_root in command
+
+    roots = {os.path.realpath(src_root), src_root.rstrip("/")}
+
+    def _under_tree(path):
+        p = path.strip("\"'")
+        if not p.startswith("/"):
+            return False
+        return any(p == r or p.startswith(r + "/") for r in roots)
+
+    # 1. Output redirect aimed into the tree.
+    for target in _SRC_REDIR_RE.findall(command):
+        if _under_tree(target):
+            return True
+
+    # 2. A mutating verb with a tree path as one of its arguments. Strip
+    #    quoted strings first: a tree path inside a grep pattern or an echo
+    #    argument is data, not a destination.
+    unquoted = re.sub(r"'[^']*'|\"[^\"]*\"", " ", command)
+    if _SRC_VERB_RE.search(unquoted):
+        toks = [t for t in re.split(r"[\s;|&]+", unquoted) if t]
+        for i, tok in enumerate(toks):
+            if not _under_tree(tok):
+                continue
+            # cp/mv/ln/install read their first operands and write the last.
+            # A tree path that is NOT the final operand is a source, i.e. a
+            # read out of the tree into the workdir, which is allowed.
+            verb = next((t for t in toks[:i]
+                         if t in ("cp", "mv", "ln", "install")), None)
+            if verb and tok != toks[-1]:
+                continue
+            return True
+
+    return False
 
 
 def detect_agent_type(api_base, backend):
