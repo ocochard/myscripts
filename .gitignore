@@ -2,6 +2,7 @@
 CWR-CE/perf-data/*.out.gz
 FreeBSD/ports-tests/db.data
 
-# UEFI/iPXE PoC scratch: fetched ISOs, cloned deps, qemu disks and NVRAM
+# UEFI/iPXE PoC scratch: fetched ISOs, cloned deps, qemu disks and NVRAM.
+# Everything here is re-fetched or rebuilt on demand; keep nothing precious in
+# it. The scripts that drive these runs are tracked one level up.
 FreeBSD/memdisk-poc/
-FreeBSD/ipxe-poc/

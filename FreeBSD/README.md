@@ -22,8 +22,14 @@ Test & benchmark orchestration:
 - [flamegraph.sh](flamegraph.sh) — generate flamegraphs from DTrace
 - [freebsd-memory.sh](freebsd-memory.sh) — memory introspection
 - [bhyve-GPU.sh](bhyve-GPU.sh) — bhyve GPU passthrough helper
-- [qemu-uefi-boot.sh](qemu-uefi-boot.sh) — QEMU UEFI boot testbed: iPXE/TFTP netboot, or `--mdroot` for a kernel with an embedded root filesystem (no network in the boot path) ([iPXE.md](iPXE.md) explains it)
 - [pf-big-table.sh](pf-big-table.sh) — pf large-table benchmark
+
+UEFI network boot ([iPXE.md](iPXE.md) explains the whole subject):
+- [qemu-uefi-inloader-poc.sh](qemu-uefi-inloader-poc.sh) — **the recommended way to iPXE-boot a FreeBSD disk image under UEFI.** A loader.efi from the D59415..D59421 stack speaks iPXE's download protocol itself: it fetches a stock memstick into RAM and boots it, with no memdisk payload, no `nvdimm.ko`, and nothing typed at the prompt
+- [qemu-uefi-memdisk-poc.sh](qemu-uefi-memdisk-poc.sh) — superseded route: iPXE → `memdisk_uefi.elf` → unmodified release ISO from RAM. Needs a memdisk_uefi built against a pre-2026 iPXE, and `nvdimm.ko` loaded at the loader prompt
+- [qemu-uefi-ipxe-poc.sh](qemu-uefi-ipxe-poc.sh) — superseded route: iPXE chainloads a third-party memdisk service over HTTPS
+- [qemu-uefi-boot.sh](qemu-uefi-boot.sh) — UEFI boot testbed: iPXE from a local ESP, or `--mdroot` for a kernel with the root filesystem embedded (no network in the boot path at all)
+- [ipxe-scripts/chain-bios.ipxe](ipxe-scripts/chain-bios.ipxe) — BIOS-era reference script; cannot work under UEFI, kept to show what the above had to replace
 
 Ports / packaging helpers:
 - [generate_GH_TUPLES.sh](generate_GH_TUPLES.sh) — generate `GH_TUPLE` lines for a port

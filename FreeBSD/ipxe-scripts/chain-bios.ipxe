@@ -2,7 +2,8 @@
 # LEGACY BIOS ONLY - this script cannot work under UEFI.
 # memdisk is a 16-bit bzImage that hooks INT 13h, an interface UEFI does not
 # have; there is no UEFI build. Chaining it gives "Exec format error".
-# For the UEFI equivalent see ../iPXE.md section 7c.
+# For the UEFI equivalent see ../iPXE.md section 7c, and for the recommended
+# UEFI route see ../qemu-uefi-inloader-poc.sh.
 #
 # initrd = download into RAM, run nothing (supplies the data)
 # chain  = download and transfer control     (supplies the code)
@@ -10,6 +11,9 @@
 # memdisk is what answers its INT 13h sector reads. Both lines are required,
 # in this order - memdisk serves the LAST-loaded image.
 # Full explanation: ../iPXE.md section 7b.
+#
+# Kept as the BIOS-era reference: this is the technique the UEFI work had to
+# replace, and section 7b explains why none of it carries over.
 
 # Static config: qemu SLIRP defaults, no DHCP needed
 set net0/ip 10.0.2.15

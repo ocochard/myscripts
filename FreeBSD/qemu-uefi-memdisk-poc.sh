@@ -5,7 +5,7 @@
 # No DHCP-supplied boot config, no local media, no changes to the image.
 #
 # Verified end to end on FreeBSD 16 host, qemu 11.1.0, guest FreeBSD 15.1-RELEASE.
-# Companion to qemu-uefi-ipxe-poc.sh; see ../iPXE.md sec.7d for the theory.
+# Companion to qemu-uefi-ipxe-poc.sh; see ./iPXE.md sec.7d for the theory.
 #
 # How it differs from qemu-uefi-ipxe-poc.sh: that one chainloads a payload,
 # this one hands the whole disk image to memdisk_uefi, which republishes it

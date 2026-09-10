@@ -2,7 +2,7 @@
 # UEFI netboot PoC: firmware -> iPXE (PE image) -> autoexec.ipxe -> FreeBSD
 #
 # Verified end to end on FreeBSD with qemu 11.1.0.
-# See ../iPXE.md for why each piece is needed.
+# See ./iPXE.md for why each piece is needed.
 #
 # The three non-obvious requirements:
 #   1. bootfile= must be a PE image (ipxe.efi), never a .ipxe script  (iPXE.md sec.2)
