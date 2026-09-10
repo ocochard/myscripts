@@ -807,6 +807,10 @@ in 917 (0.1 %), Opus 0 in 351 — while both serve near-identical Qwen templates
 containing the same `<function>`/`<parameter>` constructs, so the template does
 not explain it.
 
+This is a claim about **output format only**. Do not read it as a capability
+ranking: on the t1-t5 sweep the IQ3_XXS model outscored the Q8_0 one more than
+2:1 while parsing worse. See the v27 update below.
+
 **That hypothesis is not testable on this hardware, and is recorded as
 unproven.** The only heavier quant available, UD-IQ4_XS (93.7 GB), needs a
 raised GTT aperture, takes ~18 min to load, has *worse* draft acceptance
@@ -890,6 +894,42 @@ For contrast, IQ3_XXS reloads in **~43 seconds**.
 
 The question is also moot in practice: with the agent class detected correctly,
 the model is no longer asked for a format it was not trained to emit.
+
+**Update (v27, 2026-09-10) — the parse-rate gap is real and persistent, and it
+does not predict capability.** The t1-t5 sweep, three reps per tier, both local
+models on the fixed harness:
+
+| model | quant | parse errors | iters | rate | tiers passed |
+|---|---|---|---|---|---|
+| Qwen3.8-27B | Q8_0 (~8 bit) | 1 | 642 | 0.16 % | **5/15** |
+| Flash-Next | UD-IQ3_XXS (~3 bit) | 49 | 791 | 6.19 % | **12/14** |
+
+Two things follow, and they point in opposite directions:
+
+1. **Quantisation remains the best explanation for the parse gap.** It did not
+   narrow once the agent class was detected correctly — it widened, 4.8 % to
+   6.19 %, on a harness where the model is asked only for the format its own
+   template advertises. `no_toolcall` is 0 for both, so this is malformed
+   output, not the wrong dialect. Still not *proven*: IQ4_XS cannot be loaded
+   on this hardware (above), so the one controlled comparison stays untestable.
+2. **But it does not follow that the low-bit model is weaker at the task.** The
+   3-bit model outscored the 8-bit one more than 2:1, and cleared t5 — the
+   hardest tier, whose observable is asynchronous — which the 8-bit model
+   failed 0/3. Its per-tier record was 3/3 on t1, t2 and t3.
+
+So "moot in practice" was the wrong conclusion to draw, in a way worth naming:
+format compliance and kernel-API competence are separate axes here, and this
+bench measures the second. Flash-Next pays a steady tax in retried steps (the
+harness refunds them, so they cost wall time rather than verdicts) and still
+wins on verdicts. A reader who used the parse rate as a proxy for capability
+would have ranked these two models backwards.
+
+The 5/15-vs-12/14 comparison is a fair one — same harness, same tasks, same
+three reps, same `--agent-type code` — but note it is **13 of 15 vs 14 of 15
+runs** at time of writing (Flash-Next t5 rep3 and the Opus reference were still
+running), and neither model's failures are uniform: qwen38's are almost all
+`no_progress` (it explores and never commits to writing a file), while
+Flash-Next's two t4 failures are one guest panic and one `no_progress`.
 
 #### Auto-detection works; the model still fails, for a different reason
 
