@@ -873,10 +873,170 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
         return ToolCallingAgent(tools=_tools, model=model,
                                 max_steps=max_steps, add_base_tools=False,
                                 step_callbacks=([progress] if progress else None))
-    return CodeAgent(tools=_tools,
-                     model=model, max_steps=max_steps, add_base_tools=False,
-                     executor_kwargs={"timeout_seconds": snippet_timeout},
-                     step_callbacks=([progress] if progress else None))
+    agent = CodeAgent(tools=_tools,
+                      model=model, max_steps=max_steps, add_base_tools=False,
+                      executor_kwargs={"timeout_seconds": snippet_timeout},
+                      step_callbacks=([progress] if progress else None))
+    _install_tool_call_fallback(agent)
+    return agent
+
+
+# Names the model reaches for when it wraps a call in native syntax. Anything
+# that is really "run this python" collapses to the same thing: the payload IS
+# the snippet. Measured over 43 captured <tool_call> emissions in v27.
+_TC_PYTHON_WRAPPERS = ("python_interpreter", "python", "code", "run", "exec")
+
+
+def _translate_tool_call(text, tool_names):
+    """Turn a native <tool_call> emission into the <code> block it meant.
+
+    WHY THIS EXISTS. Flash-Next is post-trained on Qwen3-Coder tool-call
+    syntax, so under CodeAgent it periodically answers with
+
+        <tool_call>
+        <function=python_interpreter>
+        <parameter=code>
+        print(run_shell("make 2>&1 | tail -6"))
+        </parameter>
+        </function>
+        </tool_call></code>
+
+    smolagents' parse_code_blobs() looks for <code>(.*?)</code>, finds no
+    opening tag, and raises — so a turn carrying a complete, correct,
+    executable action is thrown away and refunded. That is the entire source
+    of the parse_errors in every `code`-mode run: 6 in 171 turns on t1, 49 in
+    876 across the v27 sweep.
+
+    Note the trailing `</code>` with no opener, present in ALL 43 captured
+    samples: the model is half-complying, reaching for the trained form while
+    remembering the requested one.
+
+    WHY NOT just widen code_block_tags to accept <tool_call> — which is the
+    obvious fix and was tried before (see the ToolCallingAgent comment above):
+    the payload inside is <function=>/<parameter=> XML, so it starts parsing
+    and then fails at execution instead. The content has to be TRANSLATED, not
+    re-tagged.
+
+    WHY NOT grammar-constrained decoding, which is the textbook root-cause fix
+    and is available on this llama.cpp build (verified: response_format
+    json_schema returns conforming JSON first try). Two reasons, both from the
+    literature rather than taste. A JSON-Schema grammar makes every token
+    sequence outside the grammar unreachable, XML tool-call tags included —
+    "Constraint Tax in Open-Weight LLMs" (arXiv 2606.25605) documents exactly
+    this tension for agent systems, so it would suppress the format this model
+    is best at rather than repair it. And grammar sampling in json_schema mode
+    is reported to hang past ~10k prompt tokens; these runs sit at 25-30k. A
+    GBNF grammar matching the native syntax would be the principled version,
+    but it needs llmsrv.sh changes plus a decode re-benchmark, and it would add
+    per-token overhead to one model and not the reference — distorting model_s,
+    the column the bench compares on. This translation changes no decoding at
+    all.
+
+    Returns the extracted python, or None when the text carries no tool call
+    (leave those to the normal error path — a turn with no action really is a
+    failed turn, and silently inventing one would hide it).
+    """
+    if "<tool_call>" not in text and "<function=" not in text:
+        return None
+
+    # Shape 1 (28/43): one or more <parameter=NAME> blocks. Capture the NAME
+    # too: a python wrapper's parameter holds a snippet, but a real tool's
+    # parameter is a scalar argument that has to be passed by keyword. Any
+    # parameter name is accepted, not a fixed list — read_file takes `path`,
+    # grep_src takes `pattern`, and a whitelist silently mistranslates those
+    # into a bare XML body (caught in end-to-end testing, not by reading).
+    params = re.findall(r"<parameter=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*"
+                        r"(?=</parameter>|</function>|</tool_call>|"
+                        r"<parameter=|</code>\s*$)", text, re.S)
+    params = [(k, v) for k, v in params if v.strip()]
+    if params:
+        fn = re.search(r"<function=([A-Za-z_][A-Za-z0-9_]*)", text)
+        name = fn.group(1) if fn else ""
+        if name in tool_names and name not in _TC_PYTHON_WRAPPERS:
+            kw = ", ".join(f"{k}={v.strip()!r}" for k, v in params)
+            return f"print({name}({kw}))"
+        # A python wrapper: the payload already IS the snippet.
+        return params[0][1].strip()
+
+    # Shape 2 (5/43): a JSON payload naming the real tool and its arguments.
+    m = re.search(r'\{\s*"(?:type|name)".*\}', text, re.S)
+    if m:
+        try:
+            blob = json.loads(m.group(0))
+        except ValueError:
+            blob = None
+        if isinstance(blob, dict):
+            name = blob.get("name") or blob.get("function")
+            args = blob.get("arguments")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = None
+            if isinstance(name, str) and name not in tool_names:
+                # e.g. {"type":"function_call","name":"run","arguments":...}
+                inner = args if isinstance(args, dict) else {}
+                name = inner.get("name") or name
+                if isinstance(inner.get("arguments"), str):
+                    try:
+                        args = json.loads(inner["arguments"])
+                    except ValueError:
+                        pass
+            if isinstance(name, str) and name in tool_names \
+                    and isinstance(args, dict) and args:
+                kw = ", ".join(f"{k}={v!r}" for k, v in args.items())
+                return f"print({name}({kw}))"
+
+    # Shape 3 (7/43): <function=name> with a bare body and no <parameter=>.
+    # </parameter> is in the terminator list because the model sometimes emits
+    # a CLOSING parameter tag it never opened — captured verbatim:
+    #     <function=code>\n print(run_shell(...))\n </parameter>\n</function>
+    # Without it the stray tag lands inside the body and the result does not
+    # parse. Found by replaying captured samples, not by reasoning.
+    m = re.search(r"<function=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*"
+                  r"(?:</parameter>|</function>|</tool_call>|</code>\s*$)",
+                  text, re.S)
+    if m and m.group(2).strip():
+        name, body = m.group(1), m.group(2).strip()
+        if name in tool_names and name not in _TC_PYTHON_WRAPPERS:
+            return f'print({name}({body!r}))'
+        return body
+    return None
+
+
+def _install_tool_call_fallback(agent):
+    """Make the agent recover native tool-call turns instead of refunding them.
+
+    Wraps the model callable rather than monkey-patching smolagents: the
+    translation happens on the message BEFORE parse_code_blobs() ever sees it,
+    so upstream parsing, error handling and step accounting stay untouched. If
+    the text carries no recognisable tool call it is passed through unchanged
+    and fails exactly as it did before.
+    """
+    inner = agent.model
+    tool_names = set(getattr(agent, "tools", {}) or {})
+
+    def _model(*a, **kw):
+        msg = inner(*a, **kw)
+        content = getattr(msg, "content", None)
+        if isinstance(content, str) and "<code>" not in content:
+            code = _translate_tool_call(content, tool_names)
+            if code:
+                thought = content.split("<tool_call>")[0].strip()
+                msg.content = (f"{thought}\n<code>\n{code}\n</code>"
+                               if thought else f"<code>\n{code}\n</code>")
+                _model.recovered += 1
+        return msg
+
+    _model.recovered = 0
+    for attr in ("model_id", "api_base", "generate", "generate_stream"):
+        if hasattr(inner, attr):
+            try:
+                setattr(_model, attr, getattr(inner, attr))
+            except (AttributeError, TypeError):
+                pass
+    agent.model = _model
+    return agent
 
 
 def endpoint_metrics(api_base):
