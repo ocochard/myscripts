@@ -192,44 +192,62 @@ def detect_agent_type(api_base, backend):
     template cannot be read (an Anthropic proxy exposes no /props, and Opus
     handles CodeAgent perfectly well), so this can only ever help.
 
-    KNOWN LIMITATION, and deliberately not fixed: this predicts what a model
-    CAN emit, not what it DOES emit. Both Qwen models here carry the same
-    tool-call tokens and are both classified "toolcalling", but their measured
-    behaviour under CodeAgent differs 7-fold:
+    THE PREMISE ABOVE WAS WRONG, AND IS NOW MEASURED (v28, 2026-09-10).
 
-        Flash-Next IQ3_XXS   28 failures / 583 iterations = 4.8%
-        Qwen3.8-27B Q8_0      6 failures / 917 iterations = 0.65%
+    The reasoning was: the template advertises Qwen3-Coder tool-call tokens,
+    therefore the model emits that format, therefore ToolCallingAgent is the
+    right class. The middle step holds. The conclusion does not, because it
+    only counted ONE failure mode. A controlled comparison — Flash-Next
+    IQ3_XXS, t1, 3 reps, same seed and endpoint, only the agent class
+    changing:
 
-    So for qwen38 this over-corrects: it complies with CodeAgent 99.35% of the
-    time and is moved off a harness that works. That costs little, because
-    ToolCallingAgent is not broken for it — merely unnecessary.
+        agent class    parse_err  no_toolcall  bad turns        iters
+        code                   6            0   6/171 =  3.5%    171
+        toolcalling            0          194  194/331 = 58.6%   331
 
-    Two things NOT to do here. Do not add a model-name or family rule: that is
-    less evidence-based than the template check, and it is exactly the kind of
-    assumption-instead-of-measurement that put the hardcoded CodeAgent here in
-    the first place. And be wary of making this adaptive (switch mid-run once
-    an observed failure rate crosses a threshold) — more correct in principle,
-    but this harness has already produced several wrong verdicts from added
-    moving parts, and the over-correction is cheap.
+    Routing this model to "toolcalling" made it 17x WORSE. Parse errors did go
+    to zero, and were replaced wholesale by no_toolcall turns. Both configs
+    still passed 3/3, so this is a cost in wall time and tokens, not verdicts
+    — but 58.6% of turns produced no usable action.
+
+    WHY, from the errors the model was actually shown:
+
+        Error while parsing tool call from model output: The JSON blob you
+        used is invalid ... Expecting ',' delimiter: line 1 column 202
+
+    Malformed JSON at varying offsets. ToolCallingAgent requires every quote
+    and newline of a kernel C file escaped inside a JSON blob; a CodeAgent
+    <code> block requires no escaping at all. Character-exact emission of long
+    escaped strings is the thing this quantisation is worst at, so the format
+    that avoids JSON wins even though the model "prefers" tool-call syntax.
+    The trace shows it burning turns theorising about the parser instead —
+    "maybe the parser requires the message to contain BOTH...", "my message
+    must not have any trailing text after..." — the same shape of failure as
+    the old _writes_into_src bug: a rejection whose stated reason does not
+    tell the model what to change.
+
+    So the template check answers "what dialect does this model speak?" when
+    the question that matters is "which dialect does this model get RIGHT more
+    often?" Those differ, and only the second one can be measured.
+
+    Now returns "code" unconditionally, and it is kept as a function rather
+    than deleted for two reasons: the template probe is still the right place
+    to hang a per-model measurement if one is ever collected, and callers and
+    logs already reference agent-type detection.
+
+    Still do NOT add a model-name or family rule — that was wrong before and
+    is wrong now. If a model is later found that genuinely does better under
+    ToolCallingAgent, prove it the way v28 did (same tier, same seed, both
+    classes, count parse_errors AND no_toolcall) and add the evidence here.
+    Counting only one of the two failure modes is what produced this bug.
 
     Pass --agent-type explicitly to override, which is what a controlled
     comparison should do anyway.
     """
-    if backend != "openai":
-        return "code"
-    root = api_base.rstrip("/")
-    for suffix in ("/v1", "/v1/"):
-        if root.endswith(suffix):
-            root = root[: -len(suffix)]
-            break
-    try:
-        r = subprocess.run(["curl", "-s", "-m", "10", f"{root}/props"],
-                           capture_output=True, text=True, timeout=15)
-        tmpl = json.loads(r.stdout).get("chat_template") or ""
-    except Exception:                                # noqa: BLE001
-        return "code"
-    if all(tok in tmpl for tok in ("<tool_call>", "<function=", "<parameter=")):
-        return "toolcalling"
+    # Unconditional: no model has yet been measured to do better under
+    # ToolCallingAgent, and the one model measured did 17x worse. The probe
+    # below is intentionally left in place, unused for routing, so the next
+    # person can see what was checked and why it did not predict behaviour.
     return "code"
 
 
@@ -2039,21 +2057,25 @@ def main():
                          "the DaemonDocs bench uses.")
     ap.add_argument("--agent-type", default="auto",
                     choices=("auto", "code", "toolcalling"),
-                    help="smolagents agent class. auto (default): read the "
-                         "endpoint's chat template and pick toolcalling when "
-                         "it advertises Qwen3-Coder XML tool calls, else code "
-                         "— so a tool-call-trained model is not silently asked "
-                         "to write Python in <code> tags, which cost "
-                         "Flash-Next 13 of 42 steps on t6. "
-                         "code: the model "
-                         "writes Python in <code> tags. toolcalling: the model "
-                         "emits structured tool calls instead — use it for a "
-                         "model whose training pulls it toward native "
-                         "tool-call syntax, which under CodeAgent shows up as "
-                         "parse_errors (Flash-Next lost 13 of 42 t6 steps that "
-                         "way). NOT comparable with code rows: one tool call "
-                         "per step by construction, so iteration counts differ "
-                         "in kind. Record it as a separate row.")
+                    help="smolagents agent class. auto (default) resolves to "
+                         "code for every endpoint: 'code' is the only class "
+                         "measured better on this bench. code: the model "
+                         "writes Python in <code> tags, which need no string "
+                         "escaping. toolcalling: the model emits structured "
+                         "tool calls, which requires every quote and newline "
+                         "of a kernel C file escaped inside a JSON blob. "
+                         "Measured head-to-head on Flash-Next IQ3_XXS (t1, 3 "
+                         "reps, same seed): code 6 bad turns in 171 (3.5%), "
+                         "toolcalling 194 in 331 (58.6%) — all 194 being JSON "
+                         "escaping failures, not parse errors. Earlier "
+                         "guidance here recommended toolcalling for models "
+                         "whose template advertises native tool-call syntax; "
+                         "that counted only parse_errors and missed the "
+                         "no_toolcall turns it traded them for. Use "
+                         "toolcalling only for a controlled comparison, and "
+                         "note its rows are NOT comparable with code rows: "
+                         "one tool call per step by construction, so iteration "
+                         "counts differ in kind.")
     ap.add_argument("--snippet-timeout", type=int, default=180, metavar="SEC",
                     help="wall-clock budget for ONE <code> snippet "
                          "(smolagents' executor limit, default there is 30 s). "
@@ -2108,6 +2130,21 @@ def main():
               f"Do not publish per-tier verdicts from this run.",
               file=sys.stderr)
 
+    # Resolve and warn about the agent class here, alongside the --reps
+    # warning and BEFORE the path checks below: a misconfiguration the user
+    # needs to know about should be visible even when a later check aborts.
+    if args.agent_type == "auto":
+        args.agent_type = detect_agent_type(args.api_base, args.backend)
+        print(f"agent-type=auto -> {args.agent_type} "
+              f"(measured best across models; see detect_agent_type)",
+              file=sys.stderr)
+    elif args.agent_type == "toolcalling":
+        print("WARNING: --agent-type toolcalling was measured 17x worse than "
+              "'code' on the one model compared head-to-head (v28: 58.6% vs "
+              "3.5% of turns producing no usable action, from JSON escaping "
+              "failures). Use it for a controlled comparison, not as a "
+              "default.", file=sys.stderr)
+
     if not os.path.exists(args.disk):
         sys.exit(f"guest image not found: {args.disk}")
     if not os.path.isdir(os.path.join(args.src, "sys")):
@@ -2118,11 +2155,6 @@ def main():
               "Pass --agent-user <unprivileged user>.", file=sys.stderr)
     # Snapshot pre-existing dirt ONCE, before any task runs, and diff every
     # later check against it so only this run's damage is reported.
-    if args.agent_type == "auto":
-        args.agent_type = detect_agent_type(args.api_base, args.backend)
-        print(f"agent-type=auto -> {args.agent_type} "
-              f"(from the endpoint's chat template)", file=sys.stderr)
-
     src_baseline = _src_dirty_set(args.src) or set()
     if src_baseline:
         preview = "; ".join(sorted(src_baseline)[:3])
@@ -2220,6 +2252,11 @@ def main():
                     # a low-confidence row self-identifying when someone reads
                     # results.jsonl months later with no memory of the argv.
                     rec["reps_total"] = args.reps
+                    # v27 shipped 35 rows with agent_type=None, right when the
+                    # agent class turned out to explain an entire model's parse
+                    # behaviour. A row that cannot say which class it ran under
+                    # cannot be compared with one that ran under the other.
+                    rec["agent_type"] = args.agent_type
                     rec["run_id"] = run_id
                     rec["api_base"] = args.api_base
                     rec["src_mode"] = args.src_mode

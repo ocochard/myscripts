@@ -501,9 +501,11 @@ tiers all three can pass.
 
 **The 3-bit model beat the 8-bit one, 13/15 to 5/15.** It also cleared t5 —
 the hardest tier, the only one whose observable is asynchronous — 3/3, where
-qwen38 went 0/3. And it did so while the harness was demanding an output
-format it is not post-trained to emit (see the quantisation section below):
-those 49 parse errors are refunded steps, so 13/15 is a **floor**.
+qwen38 went 0/3. Its 49 parse errors (5.59 % of turns) are refunded steps, so
+they cost wall time rather than verdicts. `--agent-type code` was later
+measured to be the *best* available class for this model by 17× (v28), so
+those 49 are not a harness misconfiguration to be recovered — see the
+reverted-detector note.
 
 **t4-hhook is the wall for both local models**, 1/3 each. The two rep1
 failures are the same bug, independently:
@@ -554,9 +556,9 @@ Caveats, stated rather than buried:
   while the host was doing an unrelated buildworld at load ~73. `model_s` is
   remote endpoint time and is clean throughout. The affected runs never
   reached build or boot, so no verdict is in question.
-- **`agent_type` is not recorded in `results.jsonl`** (the rows show `None`).
-  Given that the agent class turned out to explain Flash-Next's entire parse
-  gap, this is a real logging gap worth closing before the next sweep.
+- **`agent_type` was not recorded in `results.jsonl`** for v27 (the rows show
+  `None`), which is exactly the wrong column to be missing given what v28 then
+  measured. Fixed: every row now carries `agent_type`.
 - **t3 remains gameable in principle** — a hardcoded printf would pass it. Its
   passes were verified by reading the source, not by the harness. See
   `TODO(t3-gameable)` in `tasks.py`.
@@ -952,8 +954,54 @@ Anthropic proxy exposes no `/props`, and Opus handles `CodeAgent` fine), so it
 can only help. Verified live: Flash-Next -> `toolcalling`, Opus -> `code`,
 loading endpoint -> `code`, dead endpoint -> `code`.
 
+> **REVERTED (v28, 2026-09-10). "It can only help" was false, by 17×.**
+> The detector answered *"what dialect does this model speak?"* when the
+> question that decides the outcome is *"which dialect does it get RIGHT more
+> often?"* — and it only ever counted `parse_errors`, so it could not see the
+> failure mode it was trading them for. Controlled comparison, Flash-Next
+> IQ3_XXS on t1, 3 reps, same seed and endpoint, only the agent class changing:
+>
+> | agent class | parse_err | no_toolcall | bad turns | iters |
+> |---|---|---|---|---|
+> | `code` | 6 | 0 | **6/171 = 3.5 %** | 171 |
+> | `toolcalling` | 0 | 194 | **194/331 = 58.6 %** | 331 |
+>
+> Parse errors did go to zero — and were replaced wholesale. Both configs
+> still passed 3/3, so the cost is wall time and tokens, not verdicts, but
+> 58.6 % of turns produced no usable action. The errors the model was shown
+> say why:
+>
+> ```
+> Error while parsing tool call from model output: The JSON blob you used is
+> invalid ... Expecting ',' delimiter: line 1 column 202
+> ```
+>
+> Malformed JSON at varying offsets. `ToolCallingAgent` requires every quote
+> and newline of a kernel C file escaped inside a JSON blob; a `<code>` block
+> requires no escaping at all. Character-exact long escaped strings are what
+> this quantisation is worst at, so the format the model does *not* "prefer"
+> wins comfortably. The trace shows it spending turns trying to reverse-
+> engineer the parser instead — *"maybe the parser requires the message to
+> contain BOTH…"*, *"my message must not have any trailing text after…"* —
+> the same shape as the old `_writes_into_src` bug: a rejection whose stated
+> reason does not tell the model what to change.
+>
+> **The evidence was already in this file.** The `v13` row two sections down
+> records 16 `no_toolcall` and a 62 % failure rate under auto-selected
+> `toolcalling`. It was read as a property of t6's harder prompt rather than
+> as the agent class costing more than it saved.
+>
+> `detect_agent_type` now returns `code` unconditionally. It is kept as a
+> function, with its template probe intact but unused for routing, so the next
+> person can see what was checked and why it did not predict behaviour. If a
+> model is later found that genuinely does better under `ToolCallingAgent`,
+> prove it the way v28 did — same tier, same seed, both classes, counting
+> `parse_errors` **and** `no_toolcall` — and put the evidence in the docstring.
+> Counting one of two failure modes is what produced this bug.
+
 The `parse_errors` / `no_toolcall` split exists so this is visible on run
-one for the next model, instead of after a trace dive.
+one for the next model, instead of after a trace dive. v28 is the case for
+why both counters matter: either one alone points the wrong way.
 
 #### The quantisation hypothesis is unproven, and untestable here
 
@@ -1028,6 +1076,29 @@ Two things follow, and they point in opposite directions:
    re-examined here; the IQ4_XS control remains unloadable on this hardware, so
    nothing here proves quantisation is harmless either — it is simply not the
    explanation for these errors.
+
+   > **Corrected again (v28). The paragraph above overreached, and
+   > quantisation is back.** Reading one trace showed well-formed
+   > `<tool_call>` output under `code` mode and I generalised from it to "the
+   > harness caused the whole gap", without checking what the *other* mode's
+   > failures looked like. They look completely different: under
+   > `toolcalling` this model emits **malformed JSON** — `Expecting ','
+   > delimiter` at varying offsets — 194 times in 331 turns (58.6 %), against
+   > 6 in 171 (3.5 %) under `code`. See the reverted-detector note above for
+   > the full table.
+   >
+   > So the honest summary is: `code` mode is the *better* configuration for
+   > this model by 17×, not the wrong one; the v27 sweep's hardcoded
+   > `--agent-type code` was right, for a reason the sweep did not know; and
+   > the residual 5.59 % under `code` sits alongside a 58.6 % failure rate at
+   > character-exact JSON escaping, which is precisely the capability low-bit
+   > quantisation is expected to damage. That does not prove quantisation
+   > causes the `code`-mode errors — the IQ4_XS control still will not load —
+   > but it is no longer ruled out, and it is the leading hypothesis again.
+   >
+   > What generalises past this bench: I inspected 17 errors from one run of
+   > nine and treated them as representative of the model's format behaviour.
+   > They were representative of one mode only.
 2. **The low-bit model is not weaker at the task.** The
    3-bit model outscored the 8-bit one more than 2:1, and cleared t5 — the
    hardest tier, whose observable is asynchronous — which the 8-bit model
@@ -1040,11 +1111,12 @@ harness refunds them, so they cost wall time rather than verdicts) and still
 wins on verdicts. A reader who used the parse rate as a proxy for capability
 would have ranked these two models backwards.
 
-Flash-Next's 13/15 is therefore a **floor**, not a ceiling: it scored that
-while fighting the harness for output format. A follow-up runs t1 under
-`--agent-type toolcalling` to confirm the parse rate collapses; if it does, the
-v27 Flash-Next rows understate the model and the sweep should not have pinned
-the agent type per-sweep instead of per-model.
+Flash-Next's 13/15 stands as scored, with a 3.5 % turn-level tax under `code`.
+The follow-up that was pending here has run (v28): `--agent-type toolcalling`
+made things **17× worse**, not better, so the sweep's hardcoded `code` was the
+right configuration and the "floor, not ceiling" framing was wrong — there is
+no cheap format change that recovers those steps. See the reverted-detector
+note above.
 
 The 5/15-vs-13/15 comparison is a fair one — same harness, same tasks, same
 three reps, same `--agent-type code`, both sweeps complete — but neither
