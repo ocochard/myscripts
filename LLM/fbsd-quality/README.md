@@ -906,13 +906,47 @@ models on the fixed harness:
 
 Two things follow, and they point in opposite directions:
 
-1. **Quantisation remains the best explanation for the parse gap.** It did not
-   narrow once the agent class was detected correctly — it widened, 4.8 % to
-   6.19 %, on a harness where the model is asked only for the format its own
-   template advertises. `no_toolcall` is 0 for both, so this is malformed
-   output, not the wrong dialect. Still not *proven*: IQ4_XS cannot be loaded
-   on this hardware (above), so the one controlled comparison stays untestable.
-2. **But it does not follow that the low-bit model is weaker at the task.** The
+1. **The parse gap is NOT quantisation damage — it is a format tug-of-war, and
+   the harness caused it.** Inspecting the failures (rather than inferring from
+   the rate, which is how this was first written up) every one of the 17 errors
+   in `t5-epoch-rep1` is the same message — "the regex pattern `(.*?)</code>`
+   was not found" — and the output that triggered it is not corrupt at all:
+
+   ```
+   <tool_call>
+   <function=run_shell>
+   <parameter=command>
+   sed -n '420,520p' /usr/src/sys/conf/kmod.mk
+   </parameter>
+   </function>
+   </tool_call></code>
+   ```
+
+   Well-formed native tool-call syntax, valid tool name, sensible argument,
+   coherent reasoning behind it. It fails only because this sweep ran
+   `--agent-type code`, which requires a `<code>`…`</code>` Python block. Note
+   the trailing `</code>`: the model is trying to satisfy both formats at once,
+   and the next step's reasoning says *"Let me continue with proper format"* —
+   it knows. `no_toolcall` is 0 because it always emits a tool call, just in
+   the wrong wrapper.
+
+   This explains both things that did not fit the quantisation story: the
+   errors are **lumpy** (17, 16, then 1-5 per run) where per-token
+   quantisation noise would be roughly uniform, and the rate **rose** after
+   agent-class detection was fixed, because `code` is the format this model is
+   least inclined to emit. `detect_agent_type` exists to prevent exactly this,
+   and it gets this model right — recorded further up this file as *"Verified
+   live: Flash-Next -> `toolcalling`"*. v27 overrode that with a hardcoded
+   `--agent-type code`, justified by qwen38's pe=0: a per-sweep decision
+   applied to what is a per-model property. The detector was correct and the
+   sweep ignored it.
+
+   Quantisation is therefore **not** supported as the cause of the v27 gap. The
+   earlier 4.8 % figure was measured under a different harness and is not
+   re-examined here; the IQ4_XS control remains unloadable on this hardware, so
+   nothing here proves quantisation is harmless either — it is simply not the
+   explanation for these errors.
+2. **The low-bit model is not weaker at the task.** The
    3-bit model outscored the 8-bit one more than 2:1, and cleared t5 — the
    hardest tier, whose observable is asynchronous — which the 8-bit model
    failed 0/3. Its per-tier record was 3/3 on t1, t2 and t3.
@@ -923,6 +957,12 @@ bench measures the second. Flash-Next pays a steady tax in retried steps (the
 harness refunds them, so they cost wall time rather than verdicts) and still
 wins on verdicts. A reader who used the parse rate as a proxy for capability
 would have ranked these two models backwards.
+
+Flash-Next's 12/14 is therefore a **floor**, not a ceiling: it scored that
+while fighting the harness for output format. A follow-up runs t1 under
+`--agent-type toolcalling` to confirm the parse rate collapses; if it does, the
+v27 Flash-Next rows understate the model and the sweep should not have pinned
+the agent type per-sweep instead of per-model.
 
 The 5/15-vs-12/14 comparison is a fair one — same harness, same tasks, same
 three reps, same `--agent-type code` — but note it is **13 of 15 vs 14 of 15
