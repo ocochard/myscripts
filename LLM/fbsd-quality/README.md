@@ -479,6 +479,88 @@ the prompt asks for the *process* type. The API use was genuine and the
 round-trip real, so it is a legitimate pass, but the marker cannot tell the two
 object types apart. Tighten it if that distinction matters.
 
+### Results — t1-t5, v27 (2026-09-10)
+
+First valid t1-t5 sweep. Everything before it is void; see the superseded
+section below for what was wrong and why.
+
+Config, identical across all three: src `5b10c3c3e3d5`, `--src-mode auto`
+(per-tier ZFS clone), `--agent-type code`, `--max-steps 100`, `--seed 42`.
+Three reps for the local models, one for the reference. 35 runs, 18.2 h of
+model time.
+
+| model | quant | t1 | t2 | t3 | t4 | t5 | total | parse err | model time |
+|---|---|---|---|---|---|---|---|---|---|
+| claude-opus-4-5 | — | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | **5/5** | 0 / 120 | 0.1 h |
+| Qwen3.8-Flash-Next | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 1/3 | 3/3 | **13/15** | 49 / 876 | 10.6 h |
+| Qwen3.8-27B | Q8_0 | 1/3 | 2/3 | 1/3 | 1/3 | 0/3 | **5/15** | 1 / 642 | 7.5 h |
+
+Per-tier `model_s`, passing runs only, for the cost picture: Opus 88-129 s;
+Flash-Next 620-5836 s; qwen38 748-2729 s. The reference is 20-40× faster on
+tiers all three can pass.
+
+**The 3-bit model beat the 8-bit one, 13/15 to 5/15.** It also cleared t5 —
+the hardest tier, the only one whose observable is asynchronous — 3/3, where
+qwen38 went 0/3. And it did so while the harness was demanding an output
+format it is not post-trained to emit (see the quantisation section below):
+those 49 parse errors are refunded steps, so 13/15 is a **floor**.
+
+**t4-hhook is the wall for both local models**, 1/3 each. The two rep1
+failures are the same bug, independently:
+
+```c
+DECLARE_MODULE(fbsdq_hhook, fbsdq_modevent, SI_SUB_KLD, SI_ORDER_ANY);
+                            ^^^^^^^^^^^^^^ the event function, where a
+                                           moduledata_t belongs
+```
+
+Neither file declared a `moduledata_t` at all. `module_register()` then reads
+`moduledata_t.name`, gets the first bytes of the function's machine code, and
+`strcmp()` dereferences it — a general protection fault at `kldload`, with a
+byte-identical backtrace in both runs (`strcmp` → `module_register` →
+`linker_file_register_modules` → `kern_kldload`). Both builds were clean:
+`DECLARE_MODULE` casts internally, so the type error is invisible to the
+compiler and only ever surfaces as a kernel panic. Two independent models
+making the same mistake on the same tier is the single most reproducible
+finding in this sweep.
+
+This is also the clearest justification for booting a guest rather than
+trusting `make`: a compile-only check would have scored both of those runs as
+successes.
+
+**Failures are not uniform, and the classes matter more than the totals.**
+qwen38: 9 `no_progress` + 1 panic. Flash-Next: 1 `no_progress` + 1 panic.
+`no_progress` means the model explored the tree and never committed to writing
+a file — qwen38's t5 runs made 157-261 `run_shell` calls and produced no `.c`
+at all, three times. That is a different failure from writing code that is
+wrong, and reporting it as "failed t5" flattens the distinction.
+
+**Every PASS in this table was checked against the guest console, not the
+verdict**, and the source was read for the tiers where faking is possible:
+t3's passes use real `new_unrhdr`/`alloc_unr`/`free_unr` with the marker
+printed from variables; t5's use `epoch_alloc(name, 0)` (non-preemptible, which
+the tier requires), `in_epoch()` for the printed value, `epoch_call` with
+`__containerof` recovery in the callback; Opus's t2 uses real
+`osd_thread_register`/`set`/`get`/`deregister` with `pid` from
+`td->td_proc->p_pid`. No hardcoded markers were found.
+
+Caveats, stated rather than buried:
+
+- **Opus ran one rep.** Its 5/5 with zero parse errors and no instability is
+  consistent with low variance but does not measure it. The sweep script
+  records this as an assumption. Any future Opus failure needs 3 reps before
+  it means anything.
+- **`shell_s` and `wall_s` are contaminated** for qwen38's t1-t3, which ran
+  while the host was doing an unrelated buildworld at load ~73. `model_s` is
+  remote endpoint time and is clean throughout. The affected runs never
+  reached build or boot, so no verdict is in question.
+- **`agent_type` is not recorded in `results.jsonl`** (the rows show `None`).
+  Given that the agent class turned out to explain Flash-Next's entire parse
+  gap, this is a real logging gap worth closing before the next sweep.
+- **t3 remains gameable in principle** — a hardcoded printf would pass it. Its
+  passes were verified by reading the source, not by the harness. See
+  `TODO(t3-gameable)` in `tasks.py`.
+
 ### Results (2026-09-06) — SUPERSEDED, do not cite
 
 > **Every t1-t5 number below is void** (noted 2026-09-09). Three harness
@@ -902,7 +984,7 @@ models on the fixed harness:
 | model | quant | parse errors | iters | rate | tiers passed |
 |---|---|---|---|---|---|
 | Qwen3.8-27B | Q8_0 (~8 bit) | 1 | 642 | 0.16 % | **5/15** |
-| Flash-Next | UD-IQ3_XXS (~3 bit) | 49 | 791 | 6.19 % | **12/14** |
+| Flash-Next | UD-IQ3_XXS (~3 bit) | 49 | 876 | 5.59 % | **13/15** |
 
 Two things follow, and they point in opposite directions:
 
@@ -958,18 +1040,17 @@ harness refunds them, so they cost wall time rather than verdicts) and still
 wins on verdicts. A reader who used the parse rate as a proxy for capability
 would have ranked these two models backwards.
 
-Flash-Next's 12/14 is therefore a **floor**, not a ceiling: it scored that
+Flash-Next's 13/15 is therefore a **floor**, not a ceiling: it scored that
 while fighting the harness for output format. A follow-up runs t1 under
 `--agent-type toolcalling` to confirm the parse rate collapses; if it does, the
 v27 Flash-Next rows understate the model and the sweep should not have pinned
 the agent type per-sweep instead of per-model.
 
-The 5/15-vs-12/14 comparison is a fair one — same harness, same tasks, same
-three reps, same `--agent-type code` — but note it is **13 of 15 vs 14 of 15
-runs** at time of writing (Flash-Next t5 rep3 and the Opus reference were still
-running), and neither model's failures are uniform: qwen38's are almost all
-`no_progress` (it explores and never commits to writing a file), while
-Flash-Next's two t4 failures are one guest panic and one `no_progress`.
+The 5/15-vs-13/15 comparison is a fair one — same harness, same tasks, same
+three reps, same `--agent-type code`, both sweeps complete — but neither
+model's failures are uniform: qwen38's are 9 `no_progress` and 1 panic (it
+explores and never commits to writing a file), while Flash-Next's two are one
+guest panic and one `no_progress`, both on t4.
 
 #### Auto-detection works; the model still fails, for a different reason
 
