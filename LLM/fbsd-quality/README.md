@@ -574,6 +574,16 @@ Caveats, stated rather than buried:
   rescore the v27 rows above — they ran without the check — and it does not
   stop a *deliberate* fake, which could call the API and ignore the result.
   See `required_syms_check()` in `tasks.py`.
+- **t2 and t4 were gameable the same way**, despite having behaviour checks —
+  those only require the marker to recur on reload, which a printf in the load
+  handler does just as happily. Confirmed by building a printf-only module for
+  each: both satisfy the marker *and* the behaviour check, and only the symbol
+  check added on 2026-09-11 rejects them. t2 now requires `osd_register` +
+  `osd_set`, t4 `hhook_head_register` + `hhook_run_hooks`. Each list is the
+  intersection across legitimate API spellings — `osd_get_unlocked` is a valid
+  substitute for `osd_get`, and `hhook_add_hook_lookup` for `hhook_add_hook`,
+  so those names cannot be required without failing a correct module. As with
+  t3, this does not rescore any run above.
 - **`--seed` does not make these runs reproducible.** MTP speculative decoding
   is nondeterministic, and two runs of the *same* seed and tier (v27 vs v29,
   Flash-Next t1 rep2) differed by 79 vs 32 iterations, 2806 s vs 693 s, and 5

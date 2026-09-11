@@ -54,10 +54,15 @@ MARKER_PREFIX = "FBSDQ"
 #     every load, so "identical on reload" is the CORRECT behaviour and cannot
 #     distinguish a real allocator from a printf. Defending t3 needs a source
 #     or symbol check, which is not implemented.
-#   * t4 is only weakly defended (the marker must recur per load, which a
-#     hardcoded printf in the load handler also does).
-#   * t1 and t5 are genuinely defended: t1 by distinct PIDs, t5 because the
-#     deferred callback must fire again in the second grace period.
+#   * t2, t3 and t4 add a host-side SYMBOL check (required_syms, checked by
+#     required_syms_check before the VM boots): the built .ko must reference
+#     the facility's API. Their console checks alone do not discriminate — a
+#     printf-only module satisfies t2's and t4's marker AND their per-load
+#     behaviour check, and only the symbol check rejects it. Verified by
+#     building such a module for each tier (2026-09-11).
+#   * t1 and t5 are genuinely defended by the console alone: t1 by distinct
+#     PIDs, t5 because the deferred callback must fire again in the second
+#     grace period. Neither needs required_syms.
 # ---------------------------------------------------------------------------
 
 def _t1_distinct_pids(regions, console):
@@ -259,6 +264,17 @@ working directory.""",
         # Weak (marker must recur per load) — see _marker_each_load's docstring.
         "behaviour": _marker_each_load(
             r"FBSDQ:osd:slot=\d+:pid=\d+:roundtrip=0x(?:0x)?deadbeef"),
+        # The osd_thread_* names the prompt leads to are MACROS (sys/sys/osd.h
+        # :73-85) that expand to the generic osd_* functions, so those are the
+        # symbols that reach the object file — requiring the wrapper names
+        # would fail every correct module. Verified by building one.
+        #
+        # osd_get is deliberately absent: osd_get_unlocked is an equally valid
+        # read-back (osd.h:67) and a module using it emits only that symbol.
+        # Requiring both names is not possible with a plain all-of list, and
+        # requiring either alone would fail one correct variant. register+set
+        # is the intersection that every genuine solution must contain.
+        "required_syms": ["osd_register", "osd_set"],
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a facility called OSD ("object-specific data") that lets
@@ -379,6 +395,17 @@ working directory.""",
         # Weak (marker must recur per load) — see _marker_each_load's docstring.
         "behaviour": _marker_each_load(
             r"FBSDQ:hhook:type=2:id=42:udata=0x(?:0x)?feedface:ran=1"),
+        # Only the two calls with no alternative spelling. hhook_add_hook and
+        # hhook_remove_hook each have a _lookup twin (hhook.h:113,117) that a
+        # correct module may use instead — verified by building both variants,
+        # where the _lookup build emits hhook_add_hook_lookup and NOT
+        # hhook_add_hook. Requiring the plain names would fail that solution.
+        #
+        # hhook_run_hooks is safe to require despite the HHOOKS_RUN_IF and
+        # HHOOKS_RUN_LOOKUP_IF macros (hhook.h:138,150): both expand to a call
+        # to it, so the symbol is emitted either way. Confirmed in the variant
+        # build, which uses the macro and still shows U hhook_run_hooks.
+        "required_syms": ["hhook_head_register", "hhook_run_hooks"],
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a "helper hook" facility that lets one subsystem publish
