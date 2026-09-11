@@ -565,9 +565,15 @@ Caveats, stated rather than buried:
 - **`agent_type` was not recorded in `results.jsonl`** for v27 (the rows show
   `None`), which is exactly the wrong column to be missing given what v28 then
   measured. Fixed: every row now carries `agent_type`.
-- **t3 remains gameable in principle** — a hardcoded printf would pass it. Its
-  passes were verified by reading the source, not by the harness. See
-  `TODO(t3-gameable)` in `tasks.py`.
+- **t3 was gameable by a hardcoded printf** when these runs were scored; its
+  passes were verified by reading the source, not by the harness. Closed
+  afterwards (2026-09-11) by a host-side `nm -u` check requiring the built
+  `.ko` to carry undefined references to `new_unrhdr`/`alloc_unr`/`free_unr`.
+  Verified by building both cases: the real module shows all three, a
+  printf-only module that satisfies the marker shows none. This does not
+  rescore the v27 rows above — they ran without the check — and it does not
+  stop a *deliberate* fake, which could call the API and ignore the result.
+  See `required_syms_check()` in `tasks.py`.
 - **`--seed` does not make these runs reproducible.** MTP speculative decoding
   is nondeterministic, and two runs of the *same* seed and tier (v27 vs v29,
   Flash-Next t1 rep2) differed by 79 vs 32 iterations, 2806 s vs 693 s, and 5

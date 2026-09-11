@@ -1725,6 +1725,27 @@ def verify(task, workdir, disk, share_dir, ko_path, panic_state=None,
            src_root="/usr/src", artifact_dir=None):
     """Build already succeeded; now load in the VM and check the marker."""
     ko_name = os.path.basename(ko_path)
+
+    # Anti-hardcoding, host-side and BEFORE the VM: the module must reference
+    # the tier's API, not merely print its expected output (tasks.py,
+    # required_syms_check). Runs first because it costs milliseconds against a
+    # ~40 s boot, and a module that never calls the facility has nothing to
+    # demonstrate in a guest.
+    #
+    # ok is None for a toolchain failure — nm missing or erroring. That is a
+    # harness fault and must never be scored against the model, which is the
+    # same rule the behaviour check below follows for an unparseable console.
+    required_syms = task.get("required_syms")
+    if required_syms:
+        ok, detail = tasklib.required_syms_check(ko_path, required_syms)
+        print(f"    symbols({task['id']}): "
+              f"{'ok' if ok else 'HARNESS' if ok is None else 'FAIL'} — "
+              f"{detail}", file=sys.stderr)
+        if ok is None:
+            return False, F_HARNESS, f"SYMBOLS: {detail}"
+        if not ok:
+            return False, F_WRONG, f"SYMBOLS: {detail}"
+
     # The share IS the workdir, so the .ko the agent built is already visible
     # to the guest — nothing to copy.
     post = None

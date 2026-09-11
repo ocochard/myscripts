@@ -16,7 +16,9 @@ Design rules for a tier:
   * The prompt names the facility and the observable, nothing else.
 """
 
+import os
 import re
+import subprocess
 
 # Where the agent works. The harness creates this and shares it into the guest
 # over virtio-9p; the agent only ever sees a plain directory.
@@ -103,6 +105,58 @@ def _t5_reclaim_per_load(regions, console):
         return True, f"inside+reclaimed in all {len(regions)} load(s)"
     return False, (f"load(s) {bad} did not show inside=1 then reclaimed=1; a "
                    f"real epoch_call fires its callback once per load")
+
+
+def required_syms_check(ko_path, required):
+    """Host-side: does the built .ko actually REFERENCE the tier's API?
+
+    Complements the console-based behaviour checks, which can only see what the
+    module printed. A hardcoded printf reproduces any fixed marker byte for
+    byte; it cannot reproduce an undefined reference to a function it never
+    calls. `nm -u` lists exactly those: symbols the module needs the kernel to
+    resolve at load time.
+
+    Verified on this tree by building both cases (2026-09-11):
+      * real allocator module -> U alloc_unr, delete_unrhdr, free_unr,
+        new_unrhdr (plus module_register_init, printf)
+      * printf-only module passing t3's marker -> none of the four
+
+    WHAT THIS DOES NOT PROVE, stated plainly: a reference is not a use. A
+    module could call alloc_unr(), discard the result and print literals, and
+    this check would pass it. It raises the cost of faking from "one printf" to
+    "call the API and then deliberately ignore it", which is no longer a lazy
+    fake but a deliberate one. The ladder has no defence against a deliberate
+    fake and does not claim one.
+
+    Returns (ok, detail). ok=True when every required symbol is present.
+    """
+    try:
+        out = subprocess.run(["nm", "-u", ko_path], capture_output=True,
+                             text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as e:
+        # Never fail a model for a broken host toolchain — the caller maps
+        # this to a harness fault, not to wrong output.
+        return None, f"could not run nm on {os.path.basename(ko_path)}: {e}"
+    if out.returncode != 0:
+        return None, (f"nm -u {os.path.basename(ko_path)} exited "
+                      f"{out.returncode}: {out.stderr.strip()[:200]}")
+
+    # `nm -u` lines are "<spaces>U name" / "w name"; take the last field.
+    found = set()
+    for line in out.stdout.splitlines():
+        parts = line.split()
+        if parts:
+            found.add(parts[-1])
+    missing = sorted(s for s in required if s not in found)
+    if not missing:
+        return True, f"all {len(required)} required symbols referenced"
+    return False, (
+        f"the built module references none of: {missing} — a module that "
+        f"really used this facility would carry an undefined reference to "
+        f"each. Present undefined symbols: {sorted(found)}"
+        if len(missing) == len(required) else
+        f"missing undefined reference(s) to {missing}; the module must "
+        f"actually call the facility's API, not print the expected values")
 
 
 def _marker_each_load(marker_re):
@@ -252,19 +306,21 @@ working directory.""",
         # CORRECT result here and proves nothing about whether the allocator is
         # real. Do not add _marker_each_load here and call it defended.
         #
-        # TODO(t3-gameable): t3 is the one tier a hardcoded printf still
-        # passes. Every value in its marker is fixed and published in the
-        # prompt, and the reload cycle cannot discriminate (see above). Closing
-        # it needs a check the console cannot fake, e.g.
-        #   * a symbol check on the built .ko: require an undefined reference
-        #     to new_unrhdr/alloc_unr/free_unr (nm -u), which a printf-only
-        #     module will not have. Cheap, host-side, no guest change. Weakness:
-        #     a module could reference them without using the results.
-        #   * or vary the demanded sequence per run so the answer is not
-        #     knowable from the prompt -- but the prompt must state the format,
-        #     so this means generating the prompt and the marker together.
-        # The symbol check is the smaller change and would also strengthen
-        # t2/t4, whose behaviour checks are only weak.
+        # Defended instead by a HOST-SIDE SYMBOL CHECK (2026-09-11), which is
+        # what closes the console's blind spot: `nm -u` on the built .ko must
+        # show undefined references to the allocator API. A printf-only module
+        # carries none of them. See required_syms_check() for what this does
+        # and does not prove — a reference is not a use.
+        #
+        # The alternative considered was varying the demanded sequence per run
+        # so the answer is not knowable from the prompt. Rejected as the larger
+        # change: the prompt must state the marker format, so it means
+        # generating prompt and marker together for every tier.
+        #
+        # delete_unrhdr is deliberately NOT required: the prompt says "destroy
+        # the allocator", and clear_unrhdr/delete_unrhdr are both defensible
+        # readings. Requiring it would fail a correct module on a word choice.
+        "required_syms": ["new_unrhdr", "alloc_unr", "free_unr"],
         "prompt": """Write a loadable FreeBSD kernel module.
 
 The FreeBSD kernel has a unit-number allocator that hands out small integers
