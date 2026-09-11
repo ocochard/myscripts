@@ -570,9 +570,16 @@ Caveats, stated rather than buried:
   afterwards (2026-09-11) by a host-side `nm -u` check requiring the built
   `.ko` to carry undefined references to `new_unrhdr`/`alloc_unr`/`free_unr`.
   Verified by building both cases: the real module shows all three, a
-  printf-only module that satisfies the marker shows none. This does not
-  rescore the v27 rows above — they ran without the check — and it does not
-  stop a *deliberate* fake, which could call the API and ignore the result.
+  printf-only module that satisfies the marker shows none. **Confirmed live**
+  (v31, 2026-09-11): Qwen3.8-27B Q8 MTP passed t3 through the full harness
+  with `symbols(t3-unr): ok — all 3 required symbols referenced`, so the check
+  admits a genuine module rather than only rejecting fakes — the
+  false-positive case the hand-built modules could not test, since none of
+  them went through `verify()`. That run's source really does call
+  `new_unrhdr`/`alloc_unr`/`free_unr` and the guest printed
+  `FBSDQ:unr:a=0:b=1:c=2:reuse=1` on both load cycles. This does not rescore
+  the v27 rows above — they ran without the check — and it does not stop a
+  *deliberate* fake, which could call the API and ignore the result.
   See `required_syms_check()` in `tasks.py`.
 - **t2 and t4 were gameable the same way**, despite having behaviour checks —
   those only require the marker to recur on reload, which a printf in the load
@@ -583,7 +590,11 @@ Caveats, stated rather than buried:
   intersection across legitimate API spellings — `osd_get_unlocked` is a valid
   substitute for `osd_get`, and `hhook_add_hook_lookup` for `hhook_add_hook`,
   so those names cannot be required without failing a correct module. As with
-  t3, this does not rescore any run above.
+  t3, this does not rescore any run above. Unlike t3 these two have **not**
+  been through a live run yet: the rejection side is verified by hand-built
+  fakes, but no bench run has confirmed the check admits a real t2 or t4
+  module. The shared `required_syms_check()` is the same code path t3
+  exercised, so the risk is a wrong symbol list per tier, not broken wiring.
 - **`--seed` does not make these runs reproducible.** MTP speculative decoding
   is nondeterministic, and two runs of the *same* seed and tier (v27 vs v29,
   Flash-Next t1 rep2) differed by 79 vs 32 iterations, 2806 s vs 693 s, and 5
