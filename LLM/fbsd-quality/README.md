@@ -689,10 +689,11 @@ surfaced as footnotes under the summary table `bench.py` prints.
 **15/15 PASS** on tiers 1-3. Three things follow.
 
 **1. Tiers 1-3 no longer discriminate on pass/fail.** Every model passed every
-tier on both hosts. Earlier "0/3" and "2/3" scores were harness artifacts — the
-`CTX=32768` clamp and an over-tight step cap, both described below — not model
-limits. Flash-Next in particular went from 0/3 to 3/3 with no change to the
-model, only to its context size.
+tier on both hosts. Earlier "0/3" and "2/3" scores were harness artifacts — a
+since-removed context clamp and an over-tight step cap — not model limits.
+Flash-Next in particular went from 0/3 to 3/3 with no change to the model,
+only to its context size. (The clamp is gone: both endpoints serve
+`n_ctx=131072` today, per `/props`.)
 
 That is the most important finding here and it is a **limitation of the
 ladder**: as a quality gate these three tiers are now saturated, and only cost

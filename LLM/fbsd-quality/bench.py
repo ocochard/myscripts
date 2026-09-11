@@ -38,10 +38,12 @@ F_NOFILES = "no_files_written"
 F_HARNESS = "harness"
 # The endpoint ran out of context. NOT a harness bug and NOT bad kernel code:
 # this agent loop resends its whole history each step, so a small --ctx-size
-# ends the task regardless of how good the model is. Observed on the
-# Flash-Next slot, which pins CTX=32768 because IQ3_XXS cannot hold more
-# alongside its weights, while the dense-Q8 endpoint offers 131072 — a 4x
-# asymmetry that makes cross-endpoint comparison meaningless unless reported.
+# ends the task regardless of how good the model is. Historically this fired
+# on the Flash-Next slot, which pinned CTX=32768 while the dense-Q8 endpoint
+# offered 131072 — a 4x asymmetry that made cross-endpoint comparison
+# meaningless. That clamp is GONE: both endpoints report n_ctx=131072 (checked
+# via /props, 2026-09-11). Do not assume the asymmetry still holds — query the
+# endpoint rather than trusting this comment or the README.
 F_CONTEXT = "context_exhausted"
 # Stopped by the no-progress detector: the agent kept taking steps but stopped
 # creating or changing any source file. Distinct from no_files_written (which
