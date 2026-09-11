@@ -492,8 +492,14 @@ model time.
 | model | quant | t1 | t2 | t3 | t4 | t5 | total | parse err | model time |
 |---|---|---|---|---|---|---|---|---|---|
 | claude-opus-4-5 | — | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | **5/5** | 0 / 120 | 0.1 h |
-| Qwen3.8-Flash-Next | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 1/3 | 3/3 | **13/15** | 49 / 876 | 10.6 h |
+| Qwen3.8-Flash-Next | UD-IQ3_XXS | 3/3 ᵃ | 3/3 | 3/3 | 1/3 | 3/3 | **13/15** | 49 / 876 | 10.6 h |
 | Qwen3.8-27B | Q8_0 | 1/3 | 2/3 | 1/3 | 1/3 | 0/3 | **5/15** | 1 / 642 | 7.5 h |
+
+ᵃ **t1 is 5/6, not 3/3, over all clean-harness runs.** A later 3-rep re-run of
+this exact tier (v29) scored 2/3: one rep hit the `DECLARE_MODULE` panic
+described below, its third independent occurrence and first outside t4. The
+3/3 is what v27 measured and is left as measured; the pooled figure is the one
+to quote. Three reps resolve "never" from "sometimes" — they do not pin a rate.
 
 Per-tier `model_s`, passing runs only, for the cost picture: Opus 88-129 s;
 Flash-Next 620-5836 s; qwen38 748-2729 s. The reference is 20-40× faster on
@@ -569,10 +575,8 @@ Caveats, stated rather than buried:
   experiment here; only aggregate rates over several reps carry meaning. The
   seed is still passed because it costs nothing and removes one source of
   variance, not because it pins the outcome.
-- **Flash-Next's t1 is not the 3/3 the table implies.** A later 3-rep re-run
-  (v29) scored 2/3 on the same tier, one failure being the `DECLARE_MODULE`
-  panic described above — its **third** independent occurrence, and the first
-  outside t4. Six clean-harness samples put this tier nearer 5/6 than 3/3.
+- **Flash-Next's t1 pooled rate is 5/6**, not the 3/3 this sweep measured —
+  see note ᵃ on the table.
 
 ### Results (2026-09-06) — SUPERSEDED, do not cite
 
