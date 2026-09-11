@@ -60,6 +60,7 @@ lang/python
 lang/rust
 math/gnuplot
 misc/claude-code
+misc/codex
 multimedia/jellyfin
 multimedia/libva-utils
 multimedia/moonshine
