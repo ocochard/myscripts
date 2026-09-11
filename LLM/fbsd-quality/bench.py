@@ -230,24 +230,31 @@ def detect_agent_type(api_base, backend):
     the question that matters is "which dialect does this model get RIGHT more
     often?" Those differ, and only the second one can be measured.
 
-    Now returns "code" unconditionally, and it is kept as a function rather
-    than deleted for two reasons: the template probe is still the right place
-    to hang a per-model measurement if one is ever collected, and callers and
-    logs already reference agent-type detection.
+    The /props template probe this function used to perform is GONE, not
+    disabled — there is no detection left to re-enable, and the parameters are
+    accepted only so existing callers and logs keep working. What the probe
+    did is described above; the code is recoverable from git (c645693) if
+    anyone wants to re-run that experiment.
+
+    Since v29 the mismatch this was invented to solve is handled where it
+    belongs: _translate_tool_call() converts a native <tool_call> emission
+    into the <code> block it meant, so a model reaching for its trained format
+    no longer loses the turn. That removes the only reason to switch agent
+    class per model.
 
     Still do NOT add a model-name or family rule — that was wrong before and
     is wrong now. If a model is later found that genuinely does better under
-    ToolCallingAgent, prove it the way v28 did (same tier, same seed, both
-    classes, count parse_errors AND no_toolcall) and add the evidence here.
-    Counting only one of the two failure modes is what produced this bug.
+    ToolCallingAgent, prove it the way v28 did (same tier, several reps, both
+    classes, counting parse_errors AND no_toolcall) and add the evidence here.
+    Counting only one of the two failure modes is what produced this bug. Note
+    that a single seed-matched pair is NOT enough: MTP decoding is
+    nondeterministic, and two runs of the same seed differed 79 vs 32
+    iterations and 5 vs 0 parse errors (v27/v29 rep2).
 
     Pass --agent-type explicitly to override, which is what a controlled
     comparison should do anyway.
     """
-    # Unconditional: no model has yet been measured to do better under
-    # ToolCallingAgent, and the one model measured did 17x worse. The probe
-    # below is intentionally left in place, unused for routing, so the next
-    # person can see what was checked and why it did not predict behaviour.
+    del api_base, backend          # unused: detection was removed, see above
     return "code"
 
 

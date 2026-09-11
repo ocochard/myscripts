@@ -562,6 +562,17 @@ Caveats, stated rather than buried:
 - **t3 remains gameable in principle** — a hardcoded printf would pass it. Its
   passes were verified by reading the source, not by the harness. See
   `TODO(t3-gameable)` in `tasks.py`.
+- **`--seed` does not make these runs reproducible.** MTP speculative decoding
+  is nondeterministic, and two runs of the *same* seed and tier (v27 vs v29,
+  Flash-Next t1 rep2) differed by 79 vs 32 iterations, 2806 s vs 693 s, and 5
+  vs 0 parse errors. So a seed-matched pair of single runs is not a controlled
+  experiment here; only aggregate rates over several reps carry meaning. The
+  seed is still passed because it costs nothing and removes one source of
+  variance, not because it pins the outcome.
+- **Flash-Next's t1 is not the 3/3 the table implies.** A later 3-rep re-run
+  (v29) scored 2/3 on the same tier, one failure being the `DECLARE_MODULE`
+  panic described above — its **third** independent occurrence, and the first
+  outside t4. Six clean-harness samples put this tier nearer 5/6 than 3/3.
 
 ### Results (2026-09-06) — SUPERSEDED, do not cite
 
@@ -976,28 +987,91 @@ loading endpoint -> `code`, dead endpoint -> `code`.
 > invalid ... Expecting ',' delimiter: line 1 column 202
 > ```
 >
-> Malformed JSON at varying offsets. `ToolCallingAgent` requires every quote
-> and newline of a kernel C file escaped inside a JSON blob; a `<code>` block
-> requires no escaping at all. Character-exact long escaped strings are what
-> this quantisation is worst at, so the format the model does *not* "prefer"
-> wins comfortably. The trace shows it spending turns trying to reverse-
-> engineer the parser instead — *"maybe the parser requires the message to
-> contain BOTH…"*, *"my message must not have any trailing text after…"* —
-> the same shape as the old `_writes_into_src` bug: a rejection whose stated
-> reason does not tell the model what to change.
+> **What that error is NOT.** It is tempting to read it as "the model emits
+> malformed JSON", and an earlier version of this section said so. The raw
+> responses say otherwise. Across the three reps only **51 turns came back
+> `finish_reason='tool_calls'` against 277 `finish_reason='stop'`**, and only
+> 38 produced a JSON error at all:
+>
+> | rep | `tool_calls` | `stop` | `tool_calls=None` | JSON errors |
+> |---|---|---|---|---|
+> | 1 | 24 | 98 | 185 | 21 |
+> | 2 | 19 | 122 | 218 | 12 |
+> | 3 | 8 | 57 | 68 | 5 |
+>
+> So llama.cpp's own template parser — the same one that turns native
+> `<tool_call>` syntax into structured `tool_calls` server-side, and which
+> works on a short probe — **failed to recognise the model's output in about
+> 80 % of turns**, returning it as plain text with `tool_calls=None`.
+> smolagents then tried to JSON-parse the prose left in `content`, which is
+> where `Expecting ',' delimiter` comes from. The JSON error is a downstream
+> symptom, not the fault.
+>
+> Why the server's parser fails is not established here. The probe that works
+> carries a one-line shell command; the failing turns carry multi-line C
+> source. A plausible reading is that the payload complexity breaks the
+> template parser's expectations, but that is a hypothesis, not a measurement.
+>
+> What IS established: `ToolCallingAgent` loses ~59 % of turns for this model
+> and `CodeAgent` loses ~3.5 %, and the trace shows the model burning turns
+> trying to reverse-engineer the parser — *"maybe the parser requires the
+> message to contain BOTH…"*, *"my message must not have any trailing text
+> after…"* — the same shape as the old `_writes_into_src` bug: a rejection
+> whose stated reason does not tell the model what to change.
 >
 > **The evidence was already in this file.** The `v13` row two sections down
 > records 16 `no_toolcall` and a 62 % failure rate under auto-selected
 > `toolcalling`. It was read as a property of t6's harder prompt rather than
 > as the agent class costing more than it saved.
 >
-> `detect_agent_type` now returns `code` unconditionally. It is kept as a
-> function, with its template probe intact but unused for routing, so the next
-> person can see what was checked and why it did not predict behaviour. If a
-> model is later found that genuinely does better under `ToolCallingAgent`,
-> prove it the way v28 did — same tier, same seed, both classes, counting
-> `parse_errors` **and** `no_toolcall` — and put the evidence in the docstring.
-> Counting one of two failure modes is what produced this bug.
+> `detect_agent_type` now returns `code` unconditionally and its template
+> probe is removed (recoverable from `c645693`). If a model is later found
+> that genuinely does better under `ToolCallingAgent`, prove it the way v28
+> did — same tier, several reps, both classes, counting `parse_errors` **and**
+> `no_toolcall` — and put the evidence in the docstring. Counting one of two
+> failure modes is what produced this bug.
+>
+> **The real fix (v29): translate, don't refund.** The mismatch that made
+> agent-class switching look necessary is now handled directly.
+> `_translate_tool_call()` converts a native emission into the `<code>` block
+> it meant, so the turn executes instead of being thrown away:
+>
+> ```
+> <tool_call><function=python_interpreter><parameter=code>
+> print(run_shell("make 2>&1 | tail -6"))          ->   <code>
+> </parameter></function></tool_call></code>              print(run_shell(...))
+>                                                      </code>
+> ```
+>
+> Verified by replaying all 43 `<tool_call>` emissions captured from the v27
+> traces through the installed wrapper: 41 recovered, 39 valid Python
+> (`ast.parse`), 0 invalid, and the non-recovered ones are prose *about* tool
+> calls plus one empty `<function=print>` — which should fail, since a turn
+> with no action really is a failed turn.
+>
+> **Not yet observed working in production.** Across 3 live reps (v29) the
+> model emitted zero native tool calls, so the translator never fired. That is
+> expected — the 43 captures come from ~1 800 turns of the v27 sweep — but it
+> means the evidence is replay-based, not live.
+>
+> Widening `code_block_tags` to accept `<tool_call>` is the obvious
+> alternative and does not work: the payload inside is
+> `<function=>`/`<parameter=>` XML, so it parses and then fails at execution.
+> Tested before v29 and noted in the `ToolCallingAgent` branch.
+>
+> Grammar-constrained decoding was considered as the root-cause fix and
+> rejected. It is available on this build (`response_format` `json_schema`
+> returns conforming JSON first try), but a JSON-Schema grammar makes every
+> token sequence outside the grammar unreachable, XML tool-call tags included
+> — [Constraint Tax in Open-Weight LLMs](https://arxiv.org/pdf/2606.25605)
+> documents this exact tension for agent systems — so it would suppress the
+> format this model is best at rather than repair it. Grammar sampling in
+> `json_schema` mode is also
+> [reported to hang past ~10 k prompt tokens](https://arxiv.org/pdf/2604.18566)
+> where these runs sit at 25-30 k, and per-token overhead applied to one model
+> and not the reference would distort `model_s`, the column the bench compares
+> on. A GBNF grammar matching the native syntax would be the principled
+> version; it needs `llmsrv.sh` work plus a decode re-benchmark.
 
 The `parse_errors` / `no_toolcall` split exists so this is visible on run
 one for the next model, instead of after a trace dive. v28 is the case for
@@ -1088,13 +1162,24 @@ Two things follow, and they point in opposite directions:
    > the full table.
    >
    > So the honest summary is: `code` mode is the *better* configuration for
-   > this model by 17×, not the wrong one; the v27 sweep's hardcoded
-   > `--agent-type code` was right, for a reason the sweep did not know; and
-   > the residual 5.59 % under `code` sits alongside a 58.6 % failure rate at
-   > character-exact JSON escaping, which is precisely the capability low-bit
-   > quantisation is expected to damage. That does not prove quantisation
-   > causes the `code`-mode errors — the IQ4_XS control still will not load —
-   > but it is no longer ruled out, and it is the leading hypothesis again.
+   > this model by 17×, not the wrong one, and the v27 sweep's hardcoded
+   > `--agent-type code` was right for a reason the sweep did not know.
+   >
+   > On quantisation itself this leaves **less** than the paragraph above
+   > claimed. I attributed the `toolcalling` failures to the model botching
+   > character-exact JSON escaping — the thing low-bit quantisation would
+   > plausibly damage — and that turned out to be wrong: ~80 % of those turns
+   > were llama.cpp's parser not recognising the output, with the JSON error
+   > arising downstream in smolagents. So that 58.6 % is not evidence about
+   > the model's string accuracy, and cannot be used to support a
+   > quantisation hypothesis.
+   >
+   > Standing position: the residual ~3.5-5.6 % under `code` is now explained
+   > mechanically and without reference to quantisation — the model emits
+   > native `<tool_call>` syntax, which v29 handles by translating instead of
+   > refunding. Quantisation is neither supported nor excluded as a cause of
+   > anything measured here. The IQ4_XS control still will not load, so it
+   > stays untestable on this hardware.
    >
    > What generalises past this bench: I inspected 17 errors from one run of
    > nine and treated them as representative of the model's format behaviour.
