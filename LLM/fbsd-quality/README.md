@@ -590,11 +590,26 @@ Caveats, stated rather than buried:
   intersection across legitimate API spellings — `osd_get_unlocked` is a valid
   substitute for `osd_get`, and `hhook_add_hook_lookup` for `hhook_add_hook`,
   so those names cannot be required without failing a correct module. As with
-  t3, this does not rescore any run above. Unlike t3 these two have **not**
-  been through a live run yet: the rejection side is verified by hand-built
-  fakes, but no bench run has confirmed the check admits a real t2 or t4
-  module. The shared `required_syms_check()` is the same code path t3
-  exercised, so the risk is a wrong symbol list per tier, not broken wiring.
+  t3, this does not rescore any run above.
+
+  **t4 is confirmed live** (v33, 2026-09-11): Qwen3.8-27B Q8 MTP passed with
+  `symbols(t4-hhook): ok — all 2 required symbols referenced`, guest console
+  `FBSDQ:hhook:type=2:id=42:udata=0xfeedface:ran=1` on both load cycles. The
+  useful part is *how* it passed: that module reaches the hook through the
+  `HHOOKS_RUN_IF` macro rather than calling `hhook_run_hooks` directly, which
+  is exactly the case the list was chosen to survive. An independent
+  implementation taking the macro route is better evidence for that choice
+  than the hand-built module it was originally checked against.
+
+  **t2 has still not been through a live run.** Its rejection side is verified
+  by a hand-built fake, but nothing has yet confirmed the check admits a real
+  t2 module. One attempt (v32) failed at `no_progress` with no `.c` written —
+  upstream of `verify()`, so it exercised nothing; the trace shows the model
+  reached `osd.h`, `OSD_THREAD` and `osd_thread_register` but never committed
+  to writing a file, the behaviour already noted for this model on this tier.
+  Since `osd_thread_*` are macros over `osd_register`/`osd_set`, that trace is
+  consistent with the required list being right, but consistent is not
+  verified.
 - **`--seed` does not make these runs reproducible.** MTP speculative decoding
   is nondeterministic, and two runs of the *same* seed and tier (v27 vs v29,
   Flash-Next t1 rep2) differed by 79 vs 32 iterations, 2806 s vs 693 s, and 5

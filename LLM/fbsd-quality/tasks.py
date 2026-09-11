@@ -52,14 +52,21 @@ MARKER_PREFIX = "FBSDQ"
 # HONEST LIMITS, so no one reads more assurance into this than it carries:
 #   * t3 is NOT defended. A fresh unrhdr legitimately returns 0,1,2,reuse=1 on
 #     every load, so "identical on reload" is the CORRECT behaviour and cannot
-#     distinguish a real allocator from a printf. Defending t3 needs a source
-#     or symbol check, which is not implemented.
+#     distinguish a real allocator from a printf. Defending t3 therefore needs
+#     a source or symbol check — see the next point, which adds one.
 #   * t2, t3 and t4 add a host-side SYMBOL check (required_syms, checked by
 #     required_syms_check before the VM boots): the built .ko must reference
 #     the facility's API. Their console checks alone do not discriminate — a
 #     printf-only module satisfies t2's and t4's marker AND their per-load
 #     behaviour check, and only the symbol check rejects it. Verified by
 #     building such a module for each tier (2026-09-11).
+#
+#     Both directions are confirmed live for t3 (v31) and t4 (v33): a real
+#     module passes the check through the full harness, not just the fakes
+#     failing it. t4's live pass used the HHOOKS_RUN_IF macro rather than a
+#     direct hhook_run_hooks call, which is the case its list was chosen to
+#     survive. t2's admit-side is still unconfirmed — the one attempt (v32)
+#     never wrote a .c file, so verify() never ran.
 #   * t1 and t5 are genuinely defended by the console alone: t1 by distinct
 #     PIDs, t5 because the deferred callback must fire again in the second
 #     grace period. Neither needs required_syms.
