@@ -601,15 +601,24 @@ Caveats, stated rather than buried:
   implementation taking the macro route is better evidence for that choice
   than the hand-built module it was originally checked against.
 
-  **t2 has still not been through a live run.** Its rejection side is verified
-  by a hand-built fake, but nothing has yet confirmed the check admits a real
-  t2 module. One attempt (v32) failed at `no_progress` with no `.c` written —
-  upstream of `verify()`, so it exercised nothing; the trace shows the model
-  reached `osd.h`, `OSD_THREAD` and `osd_thread_register` but never committed
-  to writing a file, the behaviour already noted for this model on this tier.
-  Since `osd_thread_*` are macros over `osd_register`/`osd_set`, that trace is
-  consistent with the required list being right, but consistent is not
-  verified.
+  **t2 is confirmed live too** (v34, seed 7, 2026-09-12): passed with
+  `symbols(t2-osd): ok — all 2 required symbols referenced`, guest console
+  `FBSDQ:osd:slot=2:pid=28:roundtrip=0x0xdeadbeef` and the same at `pid=30` on
+  the second load — a different live thread each cycle, so the slot really was
+  set on the running object. As with t4, *how* it passed is the evidence that
+  counts: that module's source contains only the `osd_thread_*` wrappers and
+  never the strings `osd_register` or `osd_set`, which reach the object file
+  purely by macro expansion (`osd.h:73-85`). That was the part of the list
+  derived from reading headers rather than from a build, and an independent
+  implementation confirms it. It also vindicates leaving `osd_get` out: this
+  module used `osd_thread_get` (→ `osd_get`), but `osd_thread_get_unlocked`
+  (→ `osd_get_unlocked`) is equally correct and would have failed a required
+  `osd_get`. An earlier attempt at seed 42 (v32) failed at `no_progress` with
+  no `.c` written, upstream of `verify()`, so it exercised nothing.
+
+  All three symbol-checked tiers are therefore verified in both directions:
+  hand-built fakes are rejected, and a real module written by a model is
+  admitted through the full harness.
 - **`--seed` does not make these runs reproducible.** MTP speculative decoding
   is nondeterministic, and two runs of the *same* seed and tier (v27 vs v29,
   Flash-Next t1 rep2) differed by 79 vs 32 iterations, 2806 s vs 693 s, and 5

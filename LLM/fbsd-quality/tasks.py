@@ -61,12 +61,15 @@ MARKER_PREFIX = "FBSDQ"
 #     behaviour check, and only the symbol check rejects it. Verified by
 #     building such a module for each tier (2026-09-11).
 #
-#     Both directions are confirmed live for t3 (v31) and t4 (v33): a real
-#     module passes the check through the full harness, not just the fakes
-#     failing it. t4's live pass used the HHOOKS_RUN_IF macro rather than a
-#     direct hhook_run_hooks call, which is the case its list was chosen to
-#     survive. t2's admit-side is still unconfirmed — the one attempt (v32)
-#     never wrote a .c file, so verify() never ran.
+#     Both directions are confirmed live for all three: t2 (v34), t3 (v31),
+#     t4 (v33). A real model-written module passes the check through the full
+#     harness, not just the fakes failing it. The two macro cases are the
+#     ones worth knowing, because both lists were chosen by reading headers
+#     rather than by building that exact route:
+#       * t4's pass used HHOOKS_RUN_IF, not a direct hhook_run_hooks call.
+#       * t2's pass wrote ONLY osd_thread_* wrappers — the strings
+#         osd_register/osd_set appear nowhere in its source and reach the
+#         object file purely by macro expansion (osd.h:73-85).
 #   * t1 and t5 are genuinely defended by the console alone: t1 by distinct
 #     PIDs, t5 because the deferred callback must fire again in the second
 #     grace period. Neither needs required_syms.
