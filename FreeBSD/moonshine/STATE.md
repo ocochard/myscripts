@@ -3,7 +3,14 @@
 Snapshot for session handoff. Companion to `README.md` (the feasibility
 study + plan) and `../mesa-dri-video-codecs/` (the prerequisite Mesa fix).
 
-Date: 2026-07-22 (updated in-session after reaching end-to-end streaming on ser6).
+Date: 2026-09-14 (updated after the v0.16.0 upstream sync; see §21).
+
+> **Branch layout changed.** The live FreeBSD line is now one branch per
+> upstream release, tagged `vX.Y.Z-freebsd`, with the port pointing at the
+> tag. Current: **`freebsd-v0.16.0`**. The old `freebsd` branch is stale
+> (still based on v0.12.0) and is NOT what the port builds. Paths in the
+> "File map" section below that say `~/moonshine` on branch `freebsd`
+> should be read as `freebsd-v0.16.0`.
 
 ## What's done
 
@@ -956,37 +963,156 @@ video. Post-fix this window is gone in both debug and release.
 All PROBE instrumentation stripped before commit. All pushed to
 `ocochard/*`.
 
+### 21. 2026-09-14: upstream v0.16.0 sync — DONE, streaming re-verified
+
+Synced the fork to upstream v0.16.0 and rebased the FreeBSD work onto it.
+
+**Branch scheme** (one branch per upstream release, port builds the tag):
+
+| branch | base | state |
+|---|---|---|
+| `main` | — | fast-forwarded to `upstream/main` (`74d2262`) |
+| `freebsd` | v0.12.0 | **stale, dead line** — not what the port builds |
+| `freebsd-v0.15.0` | v0.15.0 | previous release line, tag `v0.15.0-freebsd` |
+| `freebsd-v0.16.0` | v0.16.0 | **current**, 18 commits |
+
+Rebased `freebsd-v0.15.0` `--onto v0.16.0`. 18 of 20 commits applied;
+**two dropped as genuinely obsolete**:
+
+- `7a33cc7` "Vendor patched socket-pktinfo" — upstream socket-pktinfo
+  **0.4.1 merged native FreeBSD support** (`IP_RECVDSTADDR` + `IP_RECVIF`,
+  same cmsg-space calc and accumulate-then-fold walk as the fork).
+  v0.16.0's `mdns-sd` resolves to it, so the fork and its
+  `[patch.crates-io]` entry are both gone. Only loss: dragonfly/netbsd/
+  openbsd gating (upstream gates on `target_os = "freebsd"` alone).
+- `1acf3d0` "re-vendor pixelforge v0.8.1 + fix socket-pktinfo patch
+  version" — superseded by the v0.9.1 re-vendor below; its own commit
+  message had already predicted the socket-pktinfo half would become moot.
+
+**Upstream dependency moves that forced a re-vendor:**
+
+- `pixelforge` tag `v0.8.1` → **`v0.9.1`**
+- `smithay` — **off the `hgaiser/smithay` fork onto mainline
+  `Smithay/smithay`** rev `0ff00983b6007257a7a161a4fe8b14a778e2ac8f`
+
+Re-vendored both (vendoring is required because the port pins distfile
+sha256 **and** compressed size, and GitHub codeload gzips
+nondeterministically). Re-applied the prune to the new smithay: dropped
+winit/x11-windowing/libinput/udev/libseat/pixman/glow/vulkan/tracy/libei
+plus their optional deps.
+
+**Prune trap:** `reis` looks prunable along with `backend_libei`, but
+`src/reexports.rs` re-exports it **unconditionally** — it must stay a
+required dep or the build breaks. Also carried forward
+`autoexamples = false` on pixelforge (v0.9.1 ships seven examples that
+need the stripped `[dev-dependencies]`; workspace `exclude` does not
+apply to path deps).
+
+Verified: `Cargo.lock` has **0 git sources**, and zero leakage of
+`winit`/`udev`/`libseat`/`libinput`/`pixman`/`glow`/`tracy-client`.
+
+**Conflicts resolved (5)** — each kept both sides' intent:
+- audio clock: upstream's new EAGAIN guard wrapped around our `drain()`
+  (the rename of `read()`).
+- `application.rs` split: upstream's new `START_JOB_TIMEOUT` stayed in
+  `backend_systemd.rs`; the shared `id()` non-negative masking and the
+  new gamescope-impersonation envs moved into our `application/mod.rs`.
+- `pulse_server`: kept upstream's new `MAX_OUTGOING_BUFFER`;
+  `CAPTURE_SAMPLE_RATE` stays in our `audio/frame.rs` (the OSS backend
+  needs it too) rather than moving back to `pulse_server`.
+- `make_envs`: gamescope block and the FreeBSD `/dev/dsp.loop` block are
+  independent; both kept.
+
+**Build (this host, release):** clean in 4m11s. Only the pre-existing
+cosmetic `dead_code` warnings on gamepad protocol structs (§6).
+
+**Runtime re-verified on ser6** (release, sha `4948999284da…`):
+
+ser6 had rebooted, wiping `/tmp` — test setup rebuilt from scratch
+(config, start script, runtime dir). Prerequisites confirmed still good:
+amdgpu + VCN firmware loaded, devfs rules for `uinput`/`input/*`
+persisted, virtual_oss running, `VK_KHR_video_encode_h264`/`_h265` both
+exposed (the merged Mesa fix).
+
+| gate | result |
+|---|---|
+| M2 pairs | PIN banner → `PIN registered` → cert in `state.toml` |
+| M3 compositor | EGL/GBM on **mainline smithay**, `AMD Radeon 680M (radeonsi, rembrandt, ACO, DRM 3.59, 16.0-CURRENT)`, Mesa 26.2.2, virtual output + XWayland ready in 159 ms |
+| M4 first frame | vkcube: H.265 IDR `submit frame 0` at **+225 ms** from `/launch`; CWR-CE (warm compositor): **+126 ms** |
+| M5 sustained | 9467 frames total, ~60.3 fps, **0 errors, 0 audio drops** |
+| audio | `OssCapture: 48000 Hz, 2 ch, chunk 480 samples @ 200 Hz`; Opus 96 kbps stereo; **game audio confirmed audible by the user** |
+
+The two changes most likely to have broken things did not:
+- **mainline smithay needed no FreeBSD work** — the fork→upstream
+  migration was transparent. EGL reports `has_import_dmabuf`,
+  `has_export_dmabuf`, native fences.
+- **the warm_up fix rebased correctly** — frame 0 at 225 ms, not 37 s.
+
+Zero-copy dmabuf intact: vkcube `client_fourcc=XB4H` (2 planes) →
+`render_fourcc=AB24`, `DMA-BUF import successful`.
+
+**CWR-CE audio goes through OpenAL Soft, not SDL3** (`Init OK: OpenAL
+Soft`, EFX available) and still lands on `/dev/dsp.loop` via the
+`AUDIODEV` env var `make_envs` sets. So §19's sdl3 `PULSEAUDIO=off`
+problem does not apply to OpenAL games at all.
+
+New cosmetic noise in v0.16.0, none blocking:
+- `Ignoring error setting IP_RECVTOS on socket: Invalid argument` — new
+  `quinn-udp` dep; FreeBSD rejects the sockopt and quinn ignores it by
+  design. Not on the streaming path.
+- `Failed to load xcursor theme` — no cursor theme installed on ser6.
+- `Failed to acquire lock display=0` between back-to-back sessions — the
+  previous session's X11 lock is still held, so the next session takes a
+  different display number. The start script cleans stale locks on
+  restart but not between sessions.
+
+**Session-only host tweak:** `net.inet6.ip6.v6only=0` was set with
+`sudo sysctl` for `address = "::"` dual-stack binding. **Not persisted**
+— add to `/etc/sysctl.conf` if it should survive a reboot.
+
 ## File map — where things are
 
 - Study + plan: `~/myscripts/FreeBSD/moonshine/README.md`
 - This state doc: `~/myscripts/FreeBSD/moonshine/STATE.md`
 - Mesa fix (merged, ports `84fd498712a6`, PR 296968):
   `~/myscripts/FreeBSD/mesa-dri-video-codecs/`
-- Moonshine fork (`freebsd` branch): `~/moonshine/`
-  - Uncommitted work: `Cargo.toml`, `Cargo.lock`,
-    `moonshine-core/Cargo.toml`,
-    `moonshine-core/src/session/stream/audio/pulse_server/mod.rs`,
-    `moonshine-core/src/session/stream/audio/pulse_server/audio_clock.rs` (new),
-    `moonshine-core/src/session/stream/control/input/gamepad/mod.rs`
-    (renamed from `gamepad.rs`),
-    `moonshine-core/src/session/stream/control/input/gamepad/backend_inputtino.rs` (new, linux),
-    `moonshine-core/src/session/stream/control/input/gamepad/backend_freebsd.rs` (new, freebsd),
-    `moonshine-core/src/session/stream/control/input/gamepad/backend_stub.rs` (new, other non-linux),
-    gamepad study: `~/myscripts/FreeBSD/moonshine/GAMEPAD-FREEBSD.md`,
-    `moonshine-core/src/session/application/mod.rs`
-    (renamed from `application.rs`),
-    `moonshine-core/src/session/application/backend_systemd.rs`
-    (verbatim lift of original; linux only),
-    `moonshine-core/src/session/application/backend_command.rs`
-    (new, non-linux, tokio::process::Command spawn),
-    `vendor/socket-pktinfo/` (subtree, `freebsd` branch, also uncommitted).
-- ser6 test setup:
-  - Binary: `/tmp/moonshine` (scp'd from build host)
-  - Config: `/tmp/moonshine-test/moonshine.toml`
-  - Runtime dir: `/tmp/moonshine-runtime` (XDG_RUNTIME_DIR)
+- Moonshine fork: `~/moonshine/`, branch **`freebsd-v0.16.0`** (all work
+  committed; see §21 for the branch scheme). The FreeBSD changes live in:
+  - `moonshine-core/src/session/stream/audio/pulse_server/audio_clock.rs`
+    (portable clock; kqueue-free pipe+thread on non-Linux)
+  - `moonshine-core/src/session/stream/audio/frame.rs`,
+    `.../audio/oss_capture.rs` (OSS-loopback capture via `/dev/dsp.loop`)
+  - `moonshine-core/src/session/stream/control/input/gamepad/`
+    — `mod.rs` (3-way cfg split), `backend_inputtino.rs` (linux),
+    `backend_freebsd.rs` (raw `/dev/uinput` ioctls),
+    `backend_stub.rs` (other non-linux).
+    Study: `~/myscripts/FreeBSD/moonshine/GAMEPAD-FREEBSD.md`
+  - `moonshine-core/src/session/application/`
+    — `mod.rs` (shared config + `make_envs`), `backend_systemd.rs`
+    (linux, verbatim lift), `backend_command.rs`
+    (non-linux, `tokio::process::Command`)
+  - `vendor/` — `ash`, `pixelforge` (v0.9.1), `smithay` (mainline rev
+    `0ff00983`), `inputtino`, plus `vendor/README.md` documenting the
+    re-vendor procedure and prune rationale.
+    (`vendor/socket-pktinfo/` is **gone** — upstream 0.4.1 has FreeBSD
+    support, see §21.)
+- Port: `~/freebsd-official/ports/multimedia/moonshine/` —
+  `USE_GITHUB` + `GH_ACCOUNT=ocochard`, builds
+  `DISTVERSIONPREFIX=v` + `DISTVERSIONSUFFIX=-freebsd`, i.e. the
+  `vX.Y.Z-freebsd` tag. Vendoring exists because this port pins both
+  distfile sha256 and compressed size.
+- ser6 test setup (**lives in `/tmp`, so a reboot wipes it** — rebuild
+  per §21):
+  - Binary: `/tmp/moonshine` (scp'd from build host, SHA-verified)
+  - Config: `/tmp/moonshine-test/moonshine.toml` (`address = "::"`,
+    apps: vkcube, glxgears, CWR-CE; no Steam scanner)
+  - Runtime dir: `/tmp/moonshine-runtime` (XDG_RUNTIME_DIR, mode 700)
   - Log: `/tmp/moonshine-test/out.log`
-  - Launch env:
-    `XDG_RUNTIME_DIR=/tmp/moonshine-runtime MOONSHINE_LOG='trace,mdns_sd=debug' /tmp/moonshine /tmp/moonshine-test/moonshine.toml`
+  - Restart script: `/tmp/moonshine-start.sh` (kills old instance,
+    clears stale `/tmp/.X*-lock`, sets the log filter)
+  - Host prereqs: `sudo sysctl net.inet6.ip6.v6only=0` (session-only,
+    needed for `address = "::"`); devfs rules for `uinput` + `input/*`
+    group `video`; virtual_oss running for `/dev/dsp.loop`
 - ser6 runtime target: `ssh ser6` (FreeBSD 16.0-CURRENT, AMD Radeon 680M).
 
 ## Global memory index (`~/.claude/projects/-usr-home-olivier-freebsd-official-ports/memory/MEMORY.md`)
