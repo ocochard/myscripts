@@ -28,7 +28,7 @@
 
 set -eu
 
-loader=https://people.freebsd.org/~olivier/iPXE/loader.D59415.efi
+loader=https://people.freebsd.org/~olivier/iPXE/loader.x64.efi
 
 # 15.1-RELEASE by default. Override with IMAGE= to try another memstick, e.g.
 # the 16.0 snapshot below (snapshots expire, so the date will need bumping):

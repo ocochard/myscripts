@@ -105,11 +105,44 @@ else pushed in the meantime.
 ## 4. Diff recipes
 
 ```
-git diff                          # unstaged
-git diff --staged                 # staged
+git diff                          # unstaged only
+git diff --staged                 # staged only
+git diff HEAD                     # staged + unstaged  <- use this one
 git diff HEAD^ HEAD               # last commit
 git diff <hash>^!                 # a specific commit
 git diff origin/main origin/feat  # between two branches
+```
+
+### Checking a patch is complete before sending it
+
+`git diff` alone shows only **tracked, unstaged** changes. It silently
+omits staged changes and never shows new files, so it can under-report
+what your patch really is. Two commands, always:
+
+```
+git diff HEAD                     # everything tracked, staged or not
+git status --short                # catch ?? files that belong in the patch
+```
+
+Reading `git status --short` — two columns, staged then unstaged:
+
+```
+ M path    # modified, nothing staged   (git diff shows it)
+M  path    # modified and staged        (git diff shows NOTHING)
+MM path    # staged, then modified again
+?? path    # untracked: git diff never shows this
+```
+
+So a repo with scratch files in its root can look clean to `git diff`
+while `arc diff` or `git format-patch` pick up something unintended.
+Keep junk out of the tree, or list it in `.git/info/exclude`
+(local-only, unlike `.gitignore`).
+
+Save a reviewable patch and prove it applies to a pristine tree:
+
+```
+git diff HEAD > /tmp/fix.diff
+git stash && git apply --check /tmp/fix.diff && git stash pop
 ```
 
 ---
