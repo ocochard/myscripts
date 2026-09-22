@@ -43,11 +43,12 @@ trap 'rm -rf "$workdir"' EXIT INT TERM
 
 # iPXE hardcodes "file:autoexec.ipxe", so this must keep that exact name.
 # memdisk= is for a disk image (a memstick); an ISO would use memcd=.
+# We could pass any custom variable (available from loader and kenv)
 cat > "$workdir/autoexec.ipxe" <<EOF
 #!ipxe
 dhcp
 echo === chainloading patched loader.efi ===
-chain $loader memdisk=$image
+chain $loader memdisk=$image customvar=working
 echo Boot failed, press a key
 prompt
 EOF
