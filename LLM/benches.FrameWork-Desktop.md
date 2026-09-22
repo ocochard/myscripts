@@ -446,6 +446,38 @@ on both models on b9925.
   `MODEL=agents-a1-mtp`. Recommend keeping N=5 — safer than N=4 which peaks
   on both hosts here but has a narrower plateau on other builds.
 
+**Swift-Qwen3.8-27B-Uncensored Q8_0 (dense, EMBEDDED MTP head)** —
+`frwk-linux`, 2026-09-22, b56381e407, Mesa 26.0.8, ctx 8192,
+`coding_prompt_real.txt` (4245 tok), `-t 256 -r 3`, greedy:
+
+| n_max | Total TPS (avg) | acceptance | mean accepted len |
+|------:|----------------:|-----------:|------------------:|
+| off   |             7.7 |          - |                 - |
+|     1 |            11.9 |      0.724 |              1.73 |
+|     2 |            13.7 |      0.593 |              2.18 |
+|     3 |            14.9 |      0.522 |              2.56 |
+|     4 |            14.9 |      0.437 |              2.73 |
+| **5** |        **15.1** |      0.405 |              3.01 |
+|     6 |            14.4 |      0.349 |              3.08 |
+|     8 |             6.3 |      0.313 |              3.47 |
+|    10 |             6.7 |      0.263 |              3.60 |
+
+- **N=5 is the peak, 1.96x over spec-off** (15.1 vs 7.7). Plateau is
+  N=3..6 (14.4-15.1); N=1 already buys 1.5x.
+- **The cliff is at N=8**, harder than on the other dense model: 14.4 to
+  6.3 is -56 %, and both N=8 and N=10 land BELOW the 7.7 spec-off
+  baseline. Drafting past the plateau is worse than not drafting.
+- Acceptance falls monotonically (0.72 to 0.26) while accepted length
+  rises (1.73 to 3.60). Throughput peaks where the product peaks, not
+  where either term does — same lesson as the other MTP rows here.
+- PP is unaffected by N (266 t/s at every setting): drafting touches
+  decode only.
+- No GPU fault in any of the 9 configs on Mesa 26.0.8 / Ubuntu, including
+  the MTP dispatch path that faults on FreeBSD/Mesa 26.
+- The head is **embedded in the single GGUF** (blk.64 `nextn.*`), so this
+  runs `--spec-type draft-mtp` with NO `--model-draft`. The repo file
+  list shows no `mtp-*.gguf` and reads as spec-off at a glance.
+
 ### Memory-bandwidth math
 
 Bandwidth ceiling: 256-bit LPDDR5x-8000 ≈ 256 GB/s.
