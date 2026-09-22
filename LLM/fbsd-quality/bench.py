@@ -79,6 +79,14 @@ Notes on this environment (not hints about the task):
   unicodedata. `import os`, `pathlib`, `glob` and `subprocess` will fail.
   To inspect or manipulate the filesystem use the run_shell tool (ls, find,
   grep, cat) or the read_file / write_file / grep_src tools.
+- Your code block is Python, so a shell pipe such as `grep_src(...) | head -50`
+  is a SYNTAX-level failure: `|` is bitwise-or and `head` is an undefined
+  name, and the whole line is discarded including the tool call. You do not
+  need to limit output anyway — grep_src truncates to max_results (default
+  200) and read_file to 200 000 bytes, both reporting what was cut. To read
+  part of a file pass read_file(path, start_line=N, max_lines=M); to shorten
+  a search pass grep_src(pattern, path_glob, max_results=N). To use real
+  shell syntax, put it inside run_shell("...").
 - One code block must finish within its time budget, so avoid piling several
   slow commands into a single block. A tree-wide grep of the kernel source is
   slow: scope it to a subdirectory, or run it as its own step.
@@ -644,30 +652,49 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
         return f"wrote {path} ({len(content)} bytes)"
 
     @tool
-    def read_file(path: str) -> str:
+    def read_file(path: str, start_line: int = 1, max_lines: int = 0) -> str:
         """Read a file. Absolute paths are allowed so the FreeBSD source tree
-        can be inspected.
+        can be inspected. Output is capped at 200 000 bytes regardless, so you
+        do NOT need to limit it yourself; shell pipes like `| head` are not
+        available here because this is Python, not a shell.
 
         Args:
             path: Absolute path, or a path relative to the working directory.
+            start_line: 1-based line to start from. Default 1 (start of file).
+            max_lines: Maximum number of lines to return. Default 0 = no
+                limit beyond the byte cap.
         """
         full = path if os.path.isabs(path) else os.path.join(workdir, path)
         try:
             with open(full, "r", errors="replace") as fh:
                 data = fh.read(200_000)
-            return data
         except OSError as e:
             return f"ERROR: {e}"
+        if start_line <= 1 and max_lines <= 0:
+            return data
+        lines = data.splitlines()
+        begin = max(0, start_line - 1)
+        chunk = lines[begin:begin + max_lines] if max_lines > 0 else lines[begin:]
+        out = "\n".join(chunk)
+        rest = len(lines) - (begin + len(chunk))
+        if rest > 0:
+            out += f"\n... ({rest} more lines)"
+        return out
 
     @tool
-    def grep_src(pattern: str, path_glob: str = "sys") -> str:
+    def grep_src(pattern: str, path_glob: str = "sys", max_results: int = 200) -> str:
         """Search the FreeBSD source tree for a regular expression. Use this to
-        locate kernel functions, macros and their declarations.
+        locate kernel functions, macros and their declarations. Results are
+        ALREADY truncated (default 200 matches) and the count of the remainder
+        is appended, so you do NOT need to limit the output yourself; shell
+        pipes like `| head` are not available here because this is Python,
+        not a shell.
 
         Args:
             pattern: Extended regular expression to search for.
             path_glob: Subdirectory of the source tree to search, e.g.
                 "sys/kern" or "sys/sys". Defaults to "sys".
+            max_results: Maximum matches to return. Defaults to 200.
         """
         target = os.path.realpath(os.path.join(src_root, path_glob))
         if not target.startswith(os.path.realpath(src_root)):
@@ -681,8 +708,9 @@ def make_agent(model_id, api_base, api_key, workdir, max_steps, src_root,
             if not out.strip():
                 return "(no matches)"
             lines = out.splitlines()
-            head = "\n".join(lines[:200])
-            more = f"\n... ({len(lines) - 200} more matches)" if len(lines) > 200 else ""
+            cap = max_results if max_results > 0 else 200
+            head = "\n".join(lines[:cap])
+            more = f"\n... ({len(lines) - cap} more matches)" if len(lines) > cap else ""
             return head + more
         except subprocess.TimeoutExpired:
             return "ERROR: grep timed out"
