@@ -479,6 +479,55 @@ the prompt asks for the *process* type. The API use was genuine and the
 round-trip real, so it is a legitimate pass, but the marker cannot tell the two
 object types apart. Tighten it if that distinction matters.
 
+### Results — abliterated model, v35 (2026-09-22)
+
+`Swift-Qwen3.8-27B-Uncensored` Q8_0 (mradermacher static quant of
+`ajgazin/Swift-Qwen3.8-27B-Uncensored-MTP`) — an **abliterated** finetune of
+the same Qwen3.8-27B dense base that already has a baseline here. So this
+isolates one variable: what abliteration costs on agentic engineering work.
+
+Config: `--agent-type auto` (resolved to `code`), `--src-mode auto`,
+`--max-steps 100`, no seed, 3 reps, endpoint at `n_ctx 131072`. 9 runs, 2.0 h.
+
+| task | Swift-Uncensored | Qwen3.8-27B Q8_0 (same `src_mode=auto`) |
+|---|---|---|
+| t1-eventhandler | **0/3** | 4/10 |
+| t2-osd | **0/3** | 3/7 |
+| t3-unr | **0/3** | 2/5 |
+| **total** | **0/9** | **9/22 (41 %)** |
+
+**It fails the three saturated tiers.** Tiers 1-3 are the ones this README
+calls "saturated — every model tested passes all three". This is the first
+model to score zero on them. A 41 % passer going 0/9 by chance is p=0.016,
+about 1 in 63, so the gap is not rep noise.
+
+**It is not failing for lack of effort.** Median iterations: 45 for
+Swift-Uncensored, 45 for the matched baseline. Identical. Eight of nine runs
+ended `wrong_output` and only one `stopped_early` — the agent worked a normal
+number of turns, decided it was done, and was wrong. The ninth was
+`no_progress`.
+
+**The C is not the problem.** Every module compiled to a valid ELF
+relocatable and loaded in the guest. The t1 source used the correct
+`exitlist_fn` signature (`void (*)(void *, struct proc *)`, matching in-tree
+`pfs_exit`) and the correct `FBSDQ:exit:pid=%d` format; the t2 source used a
+plausible `osd_thread_register`/`set`/`get`/`deregister` sequence. What never
+appeared in any guest console was the marker. The failure is specification
+adherence, not kernel knowledge or C.
+
+That matches a smoke test taken before the bench: asked for a FreeBSD rc.d
+script, the model answered with an invented Stack Overflow question
+containing bmake `.if`/`.endif` inside an sh script, while straight factual
+recall (what ZFS ARC is) was fine.
+
+**Reading**: the uncensored behaviour is bought with instruction-following.
+Do not use this model for agent work; `qwen38-mtp` / `qwen38-q8` remain the
+picks. Its throughput tuning is in
+`../benches.FrameWork-Desktop.md` (MTP head is embedded, N=5, 1.96x).
+
+Runs are under run-id `v35-swift-uncensored-t13` in `results.jsonl`, with
+per-run sources and guest consoles in `artifacts/v35-swift-uncensored-t13/`.
+
 ### Results — t1-t5, v27 (2026-09-10)
 
 First valid t1-t5 sweep. Everything before it is void; see the superseded
