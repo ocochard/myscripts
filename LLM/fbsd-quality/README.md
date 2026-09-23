@@ -479,6 +479,72 @@ the prompt asks for the *process* type. The API use was genuine and the
 round-trip real, so it is a legitimate pass, but the marker cannot tell the two
 object types apart. Tighten it if that distinction matters.
 
+### Results — Qwen3-Coder-Next, v36/v37 (2026-09-23)
+
+`Qwen3-Coder-Next` UD-Q4_K_XL (unsloth), the 80B-total / 3B-active
+`qwen3_next` MoE. Coding-specialised, non-thinking, 262144 native ctx.
+Run twice: **v36** on the tools as they were, **v37** after fixing them (see
+below). Same config as v35 otherwise: `--agent-type auto` (resolves to
+`code`), `--src-mode auto`, 3 reps, endpoint at `n_ctx 131072`.
+
+| | v36 (tools as-was) | v37 (tools fixed) | Qwen3.8-27B baseline |
+|---|---|---|---|
+| t1-eventhandler | 0/3 | 0/3 | 4/10 |
+| t2-osd | 0/3 | 0/3 | 3/7 |
+| t3-unr | 0/3 | 0/3 | 2/5 |
+| **total** | **0/9** | **0/9** | **9/22 (41 %)** |
+| sandbox_errors | 28 | 2 | 0 |
+| step_errors | 68 | 22 | — |
+| median iterations | 56 | 53 | 45 |
+| wall | 0.9 h | 0.7 h | 13.1 h |
+
+**v36's sandbox_errors were a harness defect, not a model defect.** 38 of
+its 40 failed code actions were *correct* tool calls destroyed by an output
+-limiting idiom the tools did not support: `grep_src(...) | head -50` (25x),
+an invented `read_file(start_line=...)` (9x), `start_offset` (2x), `| tail`
+(1x). In Python `|` is bitwise-or, so `head` is an undefined name and the
+WHOLE line is discarded — the tool call with it. Only 2 of 40 were the bare
+shell-in-Python confusion the `sandbox_errors` label suggests. Both tools
+already truncated (grep_src 200 matches, read_file 200 KB) but documented
+neither the cap nor any way to ask for less.
+
+Fixed in the same commit as this section: `read_file` gained
+`start_line`/`max_lines`, `grep_src` gained `max_results`, both docstrings
+now state the cap, and ENV_NOTE explains that a shell pipe is a syntax-level
+failure here. Defaults are unchanged, so earlier results stay comparable.
+The model adopted the new parameters immediately — `read_file(path, 160, 20)`,
+`grep_src(..., max_results=5)` — and sandbox errors fell 14x.
+
+**It changed nothing.** Still 0/9. The freed budget went into more
+exploration, not into passing: t3 rep1 ran to the 100-step cap. This is the
+cleanest available evidence that the tool contract was never what stood
+between this model and a pass, and it is why the fix is reported here rather
+than used to void v36.
+
+**What actually fails.** Three of nine v37 runs never wrote a file at all,
+stalling until the staleness detector stopped them at exactly 42 iterations
+(40 stale steps + the interrupt). `t2-osd` did this in 3 of its 4 attempts
+across both runs. The other six wrote modules that compiled, loaded, and
+printed no marker. One v36 run failed to compile at all:
+`MODULE_DEPEND(fbsdq, kernel, 1, 1, 1)` — invalid, because `DECLARE_MODULE`
+already emits that metadata, so the line redefines
+`_fbsdq_depend_on_kernel`. It burned 60 iterations without spotting a symbol
+the compiler named directly.
+
+**Speed is not the problem.** 477 t/s prefill and 46 t/s decode at ~4 k on
+framework2 (vs 267/15.1 for the v35 model with MTP), and the whole 9-run
+sweep took 0.7 h against the baseline's 13.1 h. 3B active parameters do what
+they promise; the ladder is unmoved by it.
+
+**Reading**: two models now fail all three "saturated" tiers, for different
+reasons — v35 by writing plausible modules that miss the spec, v36/v37 by
+that plus not committing a file at all. `qwen38-mtp` / `qwen38-q8` remain the
+picks for agent work. Coder-Next's failures are all in *autonomous* tool use;
+whether it is good at interactive coding with a human driving is not measured
+here.
+
+Runs are under run-ids `v36-coder-next-t13` and `v37-coder-next-toolfix`.
+
 ### Results — abliterated model, v35 (2026-09-22)
 
 `Swift-Qwen3.8-27B-Uncensored` Q8_0 (mradermacher static quant of
