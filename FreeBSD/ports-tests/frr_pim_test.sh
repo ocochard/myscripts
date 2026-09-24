@@ -54,10 +54,35 @@
 #   1 -- at least one assertion failed (check prints which, and its evidence)
 #   2 -- environment / setup failure
 #
-# Usage: sh frr_pim_test.sh start|check|stop|run
+# Usage: sh frr_pim_test.sh start|check|stop|run [scenario]
 #
 #   run = start, check, stop, propagating check's exit code.  start leaves
 #   the lab up for hand inspection; the hints it prints are what to type.
+#   "run all" walks every scenario in turn and fails if any of them does.
+#
+# Scenarios, and what each one is for:
+#
+#   rpt         (default) The five boxes in a line, as drawn above.  The last
+#               hop router reaches both the RP and the source through the same
+#               interface, which is the easy case and the one that shook out
+#               the four defects listed below.
+#
+#   rp-offpath  The same boxes, plus a direct r1-r3 link, and unicast routing
+#               arranged so that r3 reaches the *source* over that link while
+#               it reaches the *RP* through r2.  Traffic down the shared tree
+#               therefore arrives on an interface that is not the RPF
+#               interface towards the source -- ordinary PIM-SM, and the case
+#               the rpt scenario cannot produce because there the two
+#               coincide.  r3 additionally has spt-switchover set to
+#               infinity-and-beyond, so the shared tree is the only path and a
+#               router that quietly drops RPT traffic cannot be rescued by
+#               switching to the source tree a moment later.
+#
+#               This is the shape greptile flagged on FRR PR #23455: a
+#               NOCACHE upcall for a source whose RPF interface is not the one
+#               the packet came in on.  Whatever happens here is what happens
+#               to every real network where the RP is not on the shortest path
+#               to the sources.
 #
 # What this lab found on 16.0-CURRENT with frr 10.7.1.  PIM-SM did not work on
 # FreeBSD for four separate reasons, none of which a build or a "show" command
@@ -153,6 +178,16 @@ R3_LAN=10.60.3.1
 RCV_ADDR=10.60.3.10
 RP_ADDR=10.60.255.2
 
+# The direct r1-r3 link, which only the rp-offpath scenario builds.
+R1_DIRECT=10.60.13.1
+R3_DIRECT=10.60.13.3
+
+SCENARIOS="rpt rp-offpath"
+SCENARIO_FILE=${LABDIR}/scenario
+# Every epair any scenario can create, so stop can tear down whatever is
+# there without being told which scenario it is cleaning up after.
+ALL_EPAIRS="960 961 962 963 964"
+
 # PIM's default 30 s hello would make "start" a minute-long wait for an
 # adjacency; 5 s is the same protocol, sooner.  Everything else is left at
 # its default on purpose -- a lab that tunes the timers it depends on stops
@@ -174,7 +209,34 @@ DATA_MIN=4
 
 die() { echo "EXIT: $*" >&2; exit 2; }
 
-usage() { echo "Usage: $0 start|check|stop|run"; }
+usage() {
+	echo "Usage: $0 start|check|stop|run [${SCENARIOS# } | all]"
+	echo "       scenario defaults to rpt"
+}
+
+# What differs between scenarios, in one place: which links exist, which
+# interface the last hop router should see each tree on, and whether it is
+# allowed to leave the shared tree.
+scenario_vars() {
+	SCENARIO=$1
+	case "${SCENARIO}" in
+	rpt)
+		LAB_EPAIRS="960 961 962 963"
+		LHR_RPT_IIF=epair962b
+		LHR_SRC_IIF=epair962b
+		LHR_SPT_OFF=no
+		;;
+	rp-offpath)
+		LAB_EPAIRS="960 961 962 963 964"
+		LHR_RPT_IIF=epair962b
+		LHR_SRC_IIF=epair964b
+		LHR_SPT_OFF=yes
+		;;
+	*)
+		die "unknown scenario '${SCENARIO}' (have: ${SCENARIOS}, all)"
+		;;
+	esac
+}
 
 # vtysh in a router jail.  Every daemon logs its socket-buffer gripe to
 # stderr at connect time, which is noise here, not evidence.
@@ -285,13 +347,30 @@ start_hosts() {
 # routes go in before zebra starts so that zebra reads them from the kernel
 # at init and pimd's RPF lookups have an answer from its first hello.
 start_r1() {
-	mkjail r1 epair960b epair961a
+	if [ "${SCENARIO}" = rp-offpath ]; then
+		mkjail r1 epair960b epair961a epair964a
+	else
+		mkjail r1 epair960b epair961a
+	fi
 	${SUDO} jexec ${JPFX}r1 sysctl -q net.inet.ip.forwarding=1
 	${SUDO} jexec ${JPFX}r1 ifconfig epair960b inet ${R1_LAN}/24 up
 	${SUDO} jexec ${JPFX}r1 ifconfig epair961a inet ${R1_CORE}/24 up
 	${SUDO} jexec ${JPFX}r1 route -q add ${RP_ADDR}/32 ${R2_CORE}
 	${SUDO} jexec ${JPFX}r1 route -q add 10.60.23.0/24 ${R2_CORE}
-	${SUDO} jexec ${JPFX}r1 route -q add 10.60.3.0/24 ${R2_CORE}
+	_r1_extra=""
+	if [ "${SCENARIO}" = rp-offpath ]; then
+		# The receiver's subnet is reached directly, not through the
+		# RP: that is what puts the shared tree and the source tree on
+		# different interfaces at the other end.
+		${SUDO} jexec ${JPFX}r1 ifconfig epair964a inet ${R1_DIRECT}/24 up
+		${SUDO} jexec ${JPFX}r1 route -q add 10.60.3.0/24 ${R3_DIRECT}
+		_r1_extra="interface epair964a
+ ip pim
+ ip pim hello ${HELLO}
+!"
+	else
+		${SUDO} jexec ${JPFX}r1 route -q add 10.60.3.0/24 ${R2_CORE}
+	fi
 	frr_conf r1 <<EOF
 interface epair960b
  ip pim
@@ -302,6 +381,7 @@ interface epair961a
  ip pim
  ip pim hello ${HELLO}
 !
+${_r1_extra}
 router pim
  rp ${RP_ADDR} 239.0.0.0/8
 !
@@ -340,13 +420,35 @@ EOF
 }
 
 start_r3() {
-	mkjail r3 epair962b epair963a
+	if [ "${SCENARIO}" = rp-offpath ]; then
+		mkjail r3 epair962b epair963a epair964b
+	else
+		mkjail r3 epair962b epair963a
+	fi
 	${SUDO} jexec ${JPFX}r3 sysctl -q net.inet.ip.forwarding=1
 	${SUDO} jexec ${JPFX}r3 ifconfig epair962b inet ${R3_CORE}/24 up
 	${SUDO} jexec ${JPFX}r3 ifconfig epair963a inet ${R3_LAN}/24 up
+	# The RP is always reached through r2.  Where the *source* is reached
+	# is what the scenario changes.
 	${SUDO} jexec ${JPFX}r3 route -q add ${RP_ADDR}/32 ${R2_EDGE}
-	${SUDO} jexec ${JPFX}r3 route -q add 10.60.1.0/24 ${R2_EDGE}
 	${SUDO} jexec ${JPFX}r3 route -q add 10.60.12.0/24 ${R2_EDGE}
+	_r3_extra=""
+	_r3_spt=""
+	if [ "${SCENARIO}" = rp-offpath ]; then
+		${SUDO} jexec ${JPFX}r3 ifconfig epair964b inet ${R3_DIRECT}/24 up
+		${SUDO} jexec ${JPFX}r3 route -q add 10.60.1.0/24 ${R1_DIRECT}
+		_r3_extra="interface epair964b
+ ip pim
+ ip pim hello ${HELLO}
+!"
+		# Stay on the shared tree.  Without this the router would join
+		# the source tree on the first packet, the traffic would arrive
+		# on the source's RPF interface instead, and a router that drops
+		# RPT traffic would still look healthy a few seconds later.
+		_r3_spt=" spt-switchover infinity-and-beyond"
+	else
+		${SUDO} jexec ${JPFX}r3 route -q add 10.60.1.0/24 ${R2_EDGE}
+	fi
 	# The receiver LAN needs both: ip igmp to hear the membership report,
 	# ip pim for the interface to be a vif the kernel can forward out of.
 	frr_conf r3 <<EOF
@@ -360,8 +462,10 @@ interface epair963a
  ip igmp
  ip igmp version 3
 !
+${_r3_extra}
 router pim
  rp ${RP_ADDR} 239.0.0.0/8
+${_r3_spt}
 !
 EOF
 	frr_start r3
@@ -409,12 +513,13 @@ start_traffic() {
 start() {
 	check_req
 	write_helpers
+	echo "${SCENARIO}" > ${SCENARIO_FILE}
 
 	# Host state, saved before it is taken.  See the header.
 	sysctl -n net.inet.ip.mcast.loop > ${SAVED_LOOP}
 	${SUDO} sysctl -q net.inet.ip.mcast.loop=0
 
-	for _e in 960 961 962 963; do
+	for _e in ${LAB_EPAIRS}; do
 		${SUDO} ifconfig epair${_e} create group frrpim >/dev/null
 	done
 
@@ -428,7 +533,7 @@ start() {
 	# the Join it triggers are immediate.  Twice that, to leave room for
 	# the Register and the RP's answer on a busy host.
 	_wait=$((HELLO * 4))
-	echo "started: sender and receiver running, waiting ${_wait}s for PIM to converge"
+	echo "started [${SCENARIO}]: sender and receiver running, waiting ${_wait}s for PIM to converge"
 	sleep ${_wait}
 	echo
 	echo "next:  sh $0 check          (assertions, exit 0 = PIM-SM works)"
@@ -539,14 +644,20 @@ check() {
 	_nbr_r2=$(vt r2 "show ip pim neighbor")
 	_nbr_r3=$(vt r3 "show ip pim neighbor")
 	show r2 "show ip pim neighbor"
-	if echo "${_nbr_r1}" | grep -q "${R2_CORE}" &&
-	   echo "${_nbr_r2}" | grep -q "${R1_CORE}" &&
-	   echo "${_nbr_r2}" | grep -q "${R3_CORE}" &&
-	   echo "${_nbr_r3}" | grep -q "${R2_EDGE}"; then
-		pass a "PIM adjacency up on both links, seen from both ends"
+	_adj=yes
+	echo "${_nbr_r1}" | grep -q "${R2_CORE}" || _adj=no
+	echo "${_nbr_r2}" | grep -q "${R1_CORE}" || _adj=no
+	echo "${_nbr_r2}" | grep -q "${R3_CORE}" || _adj=no
+	echo "${_nbr_r3}" | grep -q "${R2_EDGE}" || _adj=no
+	if [ "${SCENARIO}" = rp-offpath ]; then
+		echo "${_nbr_r1}" | grep -q "${R3_DIRECT}" || _adj=no
+		echo "${_nbr_r3}" | grep -q "${R1_DIRECT}" || _adj=no
+	fi
+	if [ "${_adj}" = yes ]; then
+		pass a "PIM adjacency up on every link, seen from both ends"
 	else
-		fail a "missing PIM neighbor (r1:${R2_CORE} r2:${R1_CORE},${R3_CORE} r3:${R2_EDGE})"
-		echo "${_nbr_r1}"; echo "${_nbr_r3}"
+		fail a "missing PIM neighbor"
+		echo "${_nbr_r1}"; echo "${_nbr_r2}"; echo "${_nbr_r3}"
 	fi
 
 	# (b) The static RP, agreed on by all three, and claimed by exactly
@@ -582,8 +693,8 @@ check() {
 	_up_r3=$(vt r3 "show ip pim upstream")
 	show r3 "show ip pim upstream"
 	if echo "${_up_r3}" | grep -q "${GROUP}" &&
-	   echo "${_up_r3}" | grep "${GROUP}" | grep -q "epair962b"; then
-		pass d "r3 has (*,${GROUP}) upstream on epair962b towards the RP"
+	   echo "${_up_r3}" | grep "${GROUP}" | grep -q "${LHR_RPT_IIF}"; then
+		pass d "r3 has (*,${GROUP}) upstream on ${LHR_RPT_IIF} towards the RP"
 	else
 		fail d "r3 has no (*,${GROUP}) upstream, or it points the wrong way"
 	fi
@@ -659,6 +770,45 @@ check() {
 		fail h "r1 reports no packet count for (${SRC_ADDR},${GROUP}): SIOCGETSGCNT"
 	fi
 
+	# (i) rp-offpath only: the shared tree is the only path here, so the
+	#     last hop router has to forward traffic that arrives on the
+	#     RP-facing interface even though its RPF towards the source names
+	#     another one.  Ordinary PIM-SM; the rpt scenario cannot ask the
+	#     question, because there both trees arrive on the same interface.
+	#
+	#     Read from the kernel, not from pimd: pimd reports the (S,G) with
+	#     the right input interface in "show ip mroute" even when the entry
+	#     it installed has an empty outgoing list, so its own view cannot
+	#     tell a forwarding router from a black hole.  The mfc can:
+	#     packets arrive on the iif, and the Out-Vifs column says whether
+	#     any of them leave.
+	if [ "${SCENARIO}" = rp-offpath ]; then
+		show r3 "show ip mroute"
+		_k_r3=$(kmroute r3)
+		echo "------ ${JPFX}r3: netstat -g ------"
+		echo "${_k_r3}"
+		echo "-------------------------------------------------"
+		# The vif index of the RP-facing link, by its local address.
+		_rpt_vif=$(echo "${_k_r3}" |
+			awk -v a="${R3_CORE}" '$3 == a { print $1; exit }')
+		_sg_row=$(echo "${_k_r3}" |
+			awk -v s="${SRC_ADDR}" -v g="${GROUP}" '$1 == s && $2 == g { print; exit }')
+		_sg_iif=$(echo "${_sg_row}" | awk '{print $4}')
+		_sg_oif=$(echo "${_sg_row}" | awk '{ for (i = 5; i <= NF; i++) printf "%s ", $i }')
+		if [ -z "${_sg_row}" ]; then
+			fail i "r3 has no kernel (${SRC_ADDR},${GROUP}) entry: the RPT upcall was never resolved"
+		elif [ -z "${_sg_oif}" ]; then
+			fail i "r3 installed (${SRC_ADDR},${GROUP}) on vif ${_sg_iif} with an EMPTY outgoing list"
+			echo "  packets arrive on the shared tree and are dropped: the (*,G) olist"
+			echo "  was not inherited when the (S,G) was created for RPT traffic"
+			echo "  (r3's RPF towards ${SRC_ADDR} is ${LHR_SRC_IIF}, not the ${LHR_RPT_IIF} they came in on)"
+		elif [ "${_sg_iif}" != "${_rpt_vif}" ]; then
+			fail i "r3 forwards (${SRC_ADDR},${GROUP}) from vif ${_sg_iif}, expected the RP-facing vif ${_rpt_vif}"
+		else
+			pass i "r3 forwards (${SRC_ADDR},${GROUP}) off the shared tree, vif ${_sg_iif} ->${_sg_oif}"
+		fi
+	fi
+
 	echo
 	if [ ${rc} -ne 0 ]; then
 		echo "------ named causes ------"
@@ -683,7 +833,7 @@ stop() {
 		${SUDO} jail -R ${JPFX}${_n} 2>/dev/null || true
 	done
 	sleep 2
-	for _e in 960 961 962 963; do
+	for _e in ${ALL_EPAIRS}; do
 		for _s in a b; do
 			${SUDO} ifconfig epair${_e}${_s} destroy 2>/dev/null || true
 		done
@@ -698,8 +848,8 @@ stop() {
 		${SUDO} sysctl -q net.inet.ip.mcast.loop="$(cat ${SAVED_LOOP})"
 		rm -f ${SAVED_LOOP}
 	fi
-	rm -f ${SND_PID} ${RCV_PID}
-	echo "stopped"
+	rm -f ${SND_PID} ${RCV_PID} ${SCENARIO_FILE}
+	echo "stopped [${SCENARIO}]"
 }
 
 run() {
@@ -707,15 +857,50 @@ run() {
 	_rc=0
 	check || _rc=$?
 	stop
-	exit ${_rc}
+	return ${_rc}
+}
+
+run_all() {
+	_worst=0
+	for _s in ${SCENARIOS}; do
+		echo "=================== scenario: ${_s} ==================="
+		scenario_vars ${_s}
+		rc=0
+		run || _worst=1
+		echo
+	done
+	if [ ${_worst} -eq 0 ]; then
+		echo "ALL SCENARIOS PASS"
+	else
+		echo "AT LEAST ONE SCENARIO FAILED"
+	fi
+	exit ${_worst}
 }
 
 if [ $# -eq 0 ]; then
 	usage
 	exit 2
 fi
-case "$1" in
-start|stop|run)	"$1" ;;
+_action=$1
+_want=${2:-}
+
+case "${_action}" in
+start|run)
+	if [ "${_want}" = all ]; then
+		[ "${_action}" = run ] || die "only 'run' takes all"
+		run_all
+	fi
+	scenario_vars "${_want:-rpt}"
+	;;
+check|stop)
+	# Whatever start left running, unless told otherwise.
+	scenario_vars "${_want:-$(cat ${SCENARIO_FILE} 2>/dev/null || echo rpt)}"
+	;;
+esac
+
+case "${_action}" in
+start|stop)	"${_action}" ;;
+run)		run; exit $? ;;
 check)		check || exit $? ;;
 *)		usage; exit 2 ;;
 esac
