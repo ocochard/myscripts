@@ -516,7 +516,10 @@ start() {
 	echo "${SCENARIO}" > ${SCENARIO_FILE}
 
 	# Host state, saved before it is taken.  See the header.
-	sysctl -n net.inet.ip.mcast.loop > ${SAVED_LOOP}
+	# Save it once: a start that runs while an earlier lab is still up, or
+	# after a stop that did not finish, must not record the 0 this lab put
+	# there -- stop would then "restore" that and leave the host changed.
+	[ -f ${SAVED_LOOP} ] || sysctl -n net.inet.ip.mcast.loop > ${SAVED_LOOP}
 	${SUDO} sysctl -q net.inet.ip.mcast.loop=0
 
 	for _e in ${LAB_EPAIRS}; do
