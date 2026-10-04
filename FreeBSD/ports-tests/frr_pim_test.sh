@@ -160,6 +160,10 @@ PYTHON=${PYTHON:-/usr/local/bin/python3}
 JPFX=frrpim_
 ROUTERS="r1 r2 r3"
 FRRRUN=/var/run/frr
+# Daemons moved from ${PREFIX}/sbin to ${PREFIX}/lib/frr (matching the
+# Linux packages) so they no longer collide with net/pimd. Accept both.
+DAEMONDIR=/usr/local/lib/frr
+[ -x ${DAEMONDIR}/pimd ] || DAEMONDIR=/usr/local/sbin
 LABDIR=/tmp/frr_pim_test
 SAVED_LOOP=${LABDIR}/mcast.loop.saved
 
@@ -258,9 +262,10 @@ check_req() {
 	which vtysh >/dev/null 2>&1 || die "net/frr10 not installed"
 	# The whole point of the lab.  A stock net/frr10 package has no pimd:
 	# the port passed --disable-pimd until the PIM option was added.
-	[ -x /usr/local/sbin/pimd ] || die "no /usr/local/sbin/pimd -- net/frr10 was built without PIM.
+	[ -x ${DAEMONDIR}/pimd ] || \
+		die "no pimd in /usr/local/lib/frr or /usr/local/sbin -- net/frr10 was built without PIM.
     Rebuild it (PIM enabled in net/frr10) and install:
-      sudo pkg add -f /usr/local/poudriere/data/packages/builder-default/All/frr10-*.pkg"
+      sudo pkg install -fy /usr/local/poudriere/data/packages/builder-default/All/frr10-*.pkg"
 	[ -x "${PYTHON}" ] || die "${PYTHON} not found (set PYTHON=)"
 	[ "$(sysctl -n kern.features.vimage 2>/dev/null || echo 0)" = 1 ] || \
 		die "kernel has no VIMAGE: vnet jails unavailable"
@@ -486,7 +491,7 @@ frr_conf() {
 frr_start() {
 	_n=$1
 	for _d in mgmtd zebra pimd; do
-		${SUDO} jexec ${JPFX}${_n} ${_d} -d \
+		${SUDO} jexec ${JPFX}${_n} ${DAEMONDIR}/${_d} -d \
 			-i ${FRRRUN}/${JPFX}${_n}_${_d}.pid \
 			--vty_socket ${FRRRUN}/${JPFX}${_n}.sock || \
 			die "${_d} failed to start in ${JPFX}${_n}"

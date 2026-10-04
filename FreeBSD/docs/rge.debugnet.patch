@@ -105,7 +105,7 @@ index 8887e8d39ae4..a9f56f80329f 100644
 +	if (free < RGE_TX_NSEGS + 2)
 +		return (ENOBUFS);
 +
-+	used = rge_encap(sc, q, m, idx);
++	used = rge_encap(sc, q, &m, idx);
 +	if (used <= 0) {
 +		m_freem(m);
 +		return (ENOBUFS);

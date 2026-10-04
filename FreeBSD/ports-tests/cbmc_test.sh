@@ -58,9 +58,9 @@ trap cleanup EXIT INT TERM
 
 # 1. Install fresh package.  IGNORE_OSVERSION: the poudriere jail can be a
 #    newer __FreeBSD_version than the host userland, which otherwise makes
-#    pkg add stop and prompt interactively (seen with the cvc5 dependency).
+#    pkg stop and prompt interactively (seen with the cvc5 dependency).
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
-sudo env IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes pkg add -f "${PKG}"
+sudo env IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes pkg install -fy "${PKG}"
 
 # 2. Version smoke check
 /usr/local/bin/cbmc --version

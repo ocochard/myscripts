@@ -324,6 +324,61 @@ x86_64
 strings — the format markers iPXE recognizes — not a script. An actually
 embedded script shows your own command lines nearby.
 
+A real embed looks like this instead — the commands follow the magic string:
+
+```console
+$ strings -a ipxe.efi | grep -A3 '^#!ipxe'
+#!ipxe
+echo
+echo ========================================
+echo [1/6] EMBEDDED script running (built in)
+```
+
+#### Building it on FreeBSD — two traps
+
+Measured 2026-09-28 building upstream `013a4a93` (the commit
+`/usr/ports/net/ipxe` pins for `g20260310`) on FreeBSD 16.0-CURRENT.
+
+**1. LLVM `ld` cannot link iPXE: use GNU `ld.bfd`.** The base-system linker
+fails at the final link with a wrapped negative size:
+
+```
+ld: error: output file too large: 18446744073706471672 bytes
+```
+
+The port sets `USE_GCC=yes:build`, so `gcc` is expected — but the linker
+matters as much as the compiler. Install `devel/binutils` and name every
+binutils tool explicitly, because the build otherwise picks up the base
+LLVM ones:
+
+```console
+$ gmake bin-x86_64-efi/ipxe.efi EMBED=embed.ipxe \
+    CC=gcc14 HOST_CC=gcc14 \
+    LD=/usr/local/bin/ld.bfd \
+    OBJCOPY=/usr/local/bin/objcopy \
+    OBJDUMP=/usr/local/bin/objdump \
+    AR=/usr/local/bin/ar RANLIB=/usr/local/bin/ranlib NM=/usr/local/bin/nm
+```
+
+**2. `gmake clean` deletes `src/config/local/*.h` and breaks the next
+build.** Upstream ships that directory containing only a `.gitignore`; the
+headers are expected to exist as empty files, and `clean` removes them:
+
+```
+./config/general.h:311:10: fatal error: config/local/general.h: No such file or directory
+```
+
+Recreate the stubs before rebuilding (21 of them at this commit):
+
+```console
+$ for h in $(grep -rho 'config/local/[a-z0-9_]*\.h' config/ | sort -u | xargs -n1 basename); do
+    [ -f "config/local/$h" ] || : > "config/local/$h"
+  done
+```
+
+`mformat` (`filesystems/mtools`) is a build dependency only for the `.usb`
+targets; `bin-x86_64-efi/ipxe.efi` builds without it.
+
 ### (b) Chainloaded over the network — needs a smart DHCP server
 
 iPXE starts, runs `dhcp`, and is handed a filename pointing at the script:
@@ -453,6 +508,113 @@ better default for a self-contained image or a USB stick. (d) keeps the script
 on the server, so you can change it without touching the disk image — better
 when many machines share one boot policy.
 
+#### (e) DOES work for an iPXE chainloaded over TFTP
+
+Earlier revisions of this document claimed the opposite. That claim was wrong
+and is retracted; the paragraphs below record what the source and a hardware
+test actually show.
+
+`interface/efi/efi_autoexec.c` registers **two** loaders and uses the first
+one whose protocol is present:
+
+```c
+static struct efi_autoexec_loader efi_autoexec_loaders[] = {
+	{ .protocol = &efi_simple_file_system_protocol_guid,
+	  .load = efi_autoexec_filesystem, },
+	{ .protocol = &efi_managed_network_service_binding_protocol_guid,
+	  .load = efi_autoexec_network, },
+};
+```
+
+The second one builds a temporary network device and fetches the script over
+TFTP, relative to the current working URI and then from the server root:
+
+```
+autoexec.ipxe... Not found (https://ipxe.org/2d12618e)
+/autoexec.ipxe... Not found (https://ipxe.org/2d12618e)
+```
+
+So a network-loaded iPXE **does** honour `autoexec.ipxe`. Both messages are
+normal when the file is absent, and they appear *before* the banner in a
+completely healthy boot.
+
+**`autoexec.ipxe` and `EMBED=` are not mutually exclusive, and the EMBED wins.**
+This is the opposite of what you might expect, and it was measured, not
+inferred. The order is set by `core/main.c`:
+
+```c
+initialise();   /* INIT_FNS: embedded_init registers the embed */
+startup();      /* STARTUP_FNS: device probe -> efi_probe -> efi_autoexec_load() */
+ipxe ( NULL );  /* first_image() -> image_exec() */
+```
+
+`image/embedded.c` is `__init_fn ( INIT_LATE )`, so the embed registers during
+`initialise()`. `efi_autoexec_load()` runs later, from the root-bus probe in
+`interface/efi/efiprefix.c`. But `usr/autoboot.c` executes the **head** of the
+list, and `include/ipxe/image.h` defines that as the first entry registered:
+
+```c
+static inline struct image * first_image ( void ) {
+	return list_first_entry ( &images, struct image, list );
+}
+```
+
+So the embed, registered first, stays at the head and the later
+`autoexec.ipxe` queues behind it. **First registered wins, not last.**
+
+Measured 2026-09-28, Supermicro A1SRi-2758F, `snponly.efi` built with
+`EMBED=`, with a valid `autoexec.ipxe` also present in the TFTP root:
+
+```
+autoexec.ipxe... ok
+...
+[1/6] EMBEDDED script running (built in)
+```
+
+The file was fetched successfully (`... ok`, not `Not found`) and still did not
+run. The fetch is visible on the wire, so this is not a cached or faked `ok`:
+
+```
+01:11:01.035975 IP 192.168.100.180.1537 > nas.69: TFTP, RRQ "ipxe.efi\xff" octet blksize 1468
+01:11:01.241387 IP 192.168.100.180.14511 > nas.69: TFTP, RRQ "autoexec.ipxe" octet blksize 1432 tsize 0
+```
+
+The practical consequence: **an `EMBED=` build ignores `autoexec.ipxe`.**
+To use the server-side file, build the target *without* `EMBED=`. Keeping an
+embed as a "fallback" does not work — it is a permanent override.
+
+#### Debugging note: what "iPXE stops after autoexec.ipxe" actually means
+
+Both of these print the same two `Not found` lines, so the lines themselves
+tell you nothing:
+
+- a healthy boot, which continues to the banner and the script
+- a hang in device probe, which never reaches either
+
+Distinguish them **on the wire, not on the console**. The script's first
+network action (usually `dhcp`) is the marker:
+
+| Packets after the `autoexec.ipxe` attempts | Meaning |
+|---|---|
+| DHCP request from the client | script is running; any failure is later and network-side |
+| none at all | iPXE never reached `first_image()`; see §9 native-driver hang |
+
+Measured 2026-09-28, Supermicro A1SRi-2758F, native-driver `ipxe.efi`:
+
+```
+00:36:11.826  RRQ "autoexec.ipxe"   (second attempt)
+00:36:11.828  server ERROR "File not found"
+              <no further packets from this MAC, ever>
+```
+
+Zero packets afterwards means the embedded script never executed a line. The
+fault was in `efi_driver_connect_all()`, not in script delivery.
+
+**Before theorising about a build, boot the exact served bytes under qemu.**
+The binary above ran to completion under `-netdev user` with the same two
+`Not found` lines, which proved the image was fine and localised the fault to
+the hardware in one step.
+
 ---
 
 ## 6. Static addressing — no DHCP at all
@@ -518,6 +680,7 @@ distinguishes the methods below:
 | **memory-disk root** | kernel roots off a RAM image loaded alongside it | yes |
 | **iSCSI / AoE** (`sanboot`) | a real remote block device | yes |
 | **memdisk** | a *fake local disk* backed by RAM | yes, but see (b) |
+| **`loader.efi memdisk=`** | the loader downloads a disk image into RAM | yes — simplest for booting a memstick image verbatim (f) |
 
 All four are genuinely diskless — no physical disk anywhere. So NFS is not a
 retreat from diskless booting; it **is** the standard diskless mechanism, and
@@ -621,9 +784,12 @@ This was never the general netboot mechanism — it is the workaround for
 netbooting a **USB installer image unmodified** (see the opener to §7).
 Purpose-built diskless setups use an NFS or memory-disk root and have no use
 for it. Under UEFI, FreeBSD ships `loader.efi` as a standalone PE file, so you
-point `chain` straight at it, with no shim and no ramdisk.
+point `chain` straight at it with no shim. And if you do want that USB image
+booted verbatim, the loader fetches it itself via `memdisk=` (§7f), which needs
+no ramdisk shim either.
 
-**Use (a), (c) or (d) instead.** Measured on iPXE 2.21.1+ under
+**Use (a), (c), (d) or (f) instead** — (f) is the simplest, being built into
+the loader. Measured on iPXE 2.21.1+ under
 `edk2-x86_64-code.fd`; the memstick transferred fine (647 MiB, `ok`) and only
 the memdisk step failed.
 
@@ -775,8 +941,9 @@ This is the memdisk problem one layer up. Both approaches need the image's
 
 | approach | needs the image as | why it fails here |
 |---|---|---|
-| memdisk (§7b) | a RAM-backed disk | Syslinux memdisk has no UEFI build; use `memdisk_uefi` (§7d) |
+| memdisk (§7b) | a RAM-backed disk | Syslinux memdisk has no UEFI build; use `memdisk_uefi` (§7d) or `memdisk=` (§7f) |
 | `loader.efi` | files over NFS | SLIRP has no NFS server |
+| `loader.efi memdisk=` (§7f) | a URL it fetches itself | works, including HTTPS and `.xz` |
 
 So the fix is never "give it the .img" — it is "present the image's contents
 through an interface the guest can read." Three ways, cheapest first. In all
@@ -1448,6 +1615,87 @@ $ makefs -t cd9660 -o rockridge,label=cidata seed.iso seed
 
 Note the absence of `-boot n`: this boots from disk, not the network.
 
+### (f) `loader.efi memdisk=` — the loader fetches its own root
+
+This is the route this document's own setup uses, and the one to reach
+for first: no third-party binary, no ACPI table injection, and the image stays
+compressed all the way into RAM.
+
+`loader.efi` accepts a `memdisk=` argument naming a URL. iPXE chainloads the
+loader and passes it through; the loader then downloads the image itself,
+decompresses it if needed (`stand/efi/loader/decompress.c` handles xz, gzip
+and zstd), and roots off it. iPXE never sees the payload, so iPXE's lack of a
+decompressor, the first objection in (e), does not apply here.
+
+```
+#!ipxe
+dhcp
+chain --replace http://example/loader.x64.efi \
+    memdisk=https://download.freebsd.org/releases/amd64/amd64/ISO-IMAGES/15.1/FreeBSD-15.1-RELEASE-amd64-mini-memstick.img.xz
+```
+
+Two arguments on one line, and the published `.img.xz` is handed over as-is:
+do not `unxz` it first.
+
+**Two code paths, and which one you get is decided by firmware.** The loader
+prefers `EFI_RAM_DISK_PROTOCOL` (UEFI 2.6+), the same mechanism `memdisk_uefi`
+uses in (d). When the firmware does not publish it, the loader falls back to
+its own `md` driver:
+
+```
+No RamDisk protocol, falling back to md image
+Setting currdev to md0s2a:
+```
+
+The split matters for testing. qemu's edk2 and bhyve's have the protocol, so
+**a VM always takes the RamDisk path and never exercises the fallback**. Older
+firmware takes the fallback: measured here on a Supermicro A1SRi-2758F with
+AMI rev 5.09, EFI 2.31, which predates UEFI 2.6. A VM passing proves nothing
+about the fallback, and vice versa.
+
+#### The fallback needed four fixes (2026-09-28)
+
+On stock `main` the `md` path does not work. Four defects, all found on the
+hardware above, patches and write-ups in `FreeBSD/docs/bugreport_loader_*`:
+
+| defect | symptom |
+|---|---|
+| ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data` |
+| `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download |
+| `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back |
+| `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage |
+
+The first is the nastiest and is worth knowing about even if you never touch
+the others. `EfiLoaderData` becomes `EFI_MD_TYPE_DATA`, which
+`add_efi_map_entries()` adds to physmap; the kernel then hands those pages to
+the allocator and overwrites the ram disk **while it is the live root
+filesystem**. There is no panic. Commands start failing with errors that look
+like a corrupt download, and the give-away is that the image changes as you
+read it:
+
+```console
+# md5 /dev/md0
+MD5 (/dev/md0) = 6e1b0bbd...
+# md5 /dev/md0
+MD5 (/dev/md0) = aa24358b...
+```
+
+A stable checksum equal to the served image is the pass condition. Fix is one
+line: `EfiRuntimeServicesData`, which the kernel skips when building physmap
+while `pmap_map()` on amd64 still reaches it through the direct map.
+
+Do not diagnose this by re-reading a file you already read: UFS caches it,
+so a corrupt library can return the same wrong checksum twice and look stable.
+Read the raw device.
+
+#### Verified
+
+| | result | what it shows |
+|---|---|---|
+| Supermicro A1SRi-2758F | multi-user, `md5 /dev/md0` stable | the md fallback, the only real test |
+| qemu 11.1.0 + edk2 | installer prompt, no panic | RamDisk path undisturbed |
+| bhyve + patched edk2 (HTTP boot) | installer prompt, no panic | RamDisk path undisturbed |
+
 ---
 
 ## 8. Escape hatch: iPXE from a local ESP
@@ -1735,6 +1983,243 @@ command, and on this firmware it prints nothing *even though* the full stack
 is present, purely because no driver has bound. The same blog is right about
 the actual fix, `virtio-rng-pci`.
 
+### iPXE hangs right after the `autoexec.ipxe` probe: native drivers vs firmware SNP
+
+**Symptom.** iPXE loads, prints its probe lines, and stops dead:
+
+```
+iPXE initialising devices...
+autoexec.ipxe... Not found (https://ipxe.org/2d12618e)
+/autoexec.ipxe... Not found (https://ipxe.org/2d12618e)
+<nothing, ever>
+```
+
+No banner, no script, no packets. The two `Not found` lines are a red herring
+— they appear in a completely healthy boot too (see §5e).
+
+**Diagnose it on the wire, not the console.** The script's first network
+action is the marker:
+
+| Packets after the probe | Meaning |
+|---|---|
+| a DHCP request from the client | script is running; look for a later, network-side fault |
+| none at all | iPXE never reached `first_image()`; this entry |
+
+Measured 2026-09-28, Supermicro A1SRi-2758F (Atom C2758 Rangeley, 4x Intel
+i354), native-driver `ipxe.efi`:
+
+```
+00:36:11.826  RRQ "autoexec.ipxe"  (second attempt)
+00:36:11.828  server ERROR "File not found"
+              <no further packets from this MAC>
+```
+
+**Cause.** `ipxe.efi` bundles iPXE's own NIC drivers. On this platform they
+collide with the firmware's already-attached SNP driver, and
+`efi_driver_connect_all()` (`interface/efi/efiprefix.c`) never returns. The
+hang is between `efi_autoexec_load()` and `first_image()`, which is exactly
+the window that produces the symptom above.
+
+**Fix: use `snponly.efi`.** It keeps the firmware's SNP driver and replaces
+only the upper stack:
+
+```
+gmake bin-x86_64-efi/snponly.efi
+```
+
+Confirm you got the right target — the native build carries Intel driver
+strings and the SNP-only build carries none:
+
+```
+$ strings -a ipxe.efi    | grep -ci "intel\|igb\|e1000"
+4
+$ strings -a snponly.efi | grep -ci "intel\|igb\|e1000"
+0
+```
+
+It is also far smaller (measured 291328 vs 1157632 bytes).
+
+Caveat: `snponly.efi` binds only the NIC it was chainloaded from, so it needs
+to be loaded over the network. For iPXE on local media use `snp.efi`.
+
+**Before blaming your build, boot the exact served bytes under qemu:**
+
+```
+qemu-system-x86_64 -m 2G -boot n \
+  -drive if=pflash,unit=0,readonly=on,format=raw,file=/usr/local/share/qemu/edk2-x86_64-code.fd \
+  -drive if=pflash,unit=1,format=raw,file=./vars.fd \
+  -netdev user,id=net0,tftp=$PWD,bootfile=ipxe.efi \
+  -device virtio-net-pci,netdev=net0 -device virtio-rng-pci \
+  -display none -serial mon:stdio
+```
+
+Fetch the binary over TFTP first and check its md5 against what you serve, so
+you are testing delivered bytes rather than a build-tree artifact. A binary
+that runs to completion here but hangs on hardware localises the fault to the
+platform in one step, and saves a long detour through the build and the
+`EMBED=`/`autoexec.ipxe` machinery.
+
+### `MD not present` after a successful memdisk download
+
+**Symptom.** iPXE downloads the whole image, the loader starts, then gives up:
+
+```
+Downloaded 116377572 bytes, actual size 678842880 -- registering ramdisk
+No RamDisk protocol, falling back to md image
+...
+Setting currdev to md0:
+MD not present
+Setting currdev to net3:
+```
+
+The byte counts are exact, so the transfer, the image and available RAM are
+all fine. `Setting currdev to net3:` afterwards is not a second bug — the
+loader simply falls through to the next candidate device once `md0:` fails.
+
+**Cause: two conditions that only coincide on old hardware.**
+
+1. `stand/efi/loader/memdisk.c` prefers `EFI_RAM_DISK_PROTOCOL`, which asks
+   the firmware to publish the ramdisk as a real block device. That protocol
+   arrived in **UEFI 2.6**. Firmware older than that (measured: AMI rev 5.09,
+   **EFI version 2.31**, on a Supermicro A1SRi-2758F) does not have it, so
+   `LocateProtocol` returns NULL and the code takes the `md` fallback.
+2. Before commit **`85fb40bad584`** (2026-09-24, *"loader.efi: Use
+   EfiLoaderData memory type for ram disks"*) that fallback allocated the
+   decompressed image as `EfiReservedMemoryType`. The commit's own comment
+   states the consequence: *"The other type isn't necessarily in the pmap, so
+   the md driver fails."*
+
+`md_register()` still reports success, so there is no error message at the
+point of failure. The registration is fine; the memory behind it is not
+reachable, and `probe_md_currdev()` in `stand/efi/loader/main.c` then fails
+its `stat()` for `loader.conf`/kernel and prints `MD not present`.
+
+**Fix.** Serve a `loader.efi` built from `85fb40bad584` or later.
+
+**Why qemu and bhyve do not reproduce it.** Both use current edk2, which
+*does* implement `EFI_RAM_DISK_PROTOCOL`, so they take the working path and
+never execute the buggy fallback. An image verified under bhyve or qemu tells
+you nothing about this failure — the code path differs. Do not treat "it boots
+in a VM" as evidence the loader is good.
+
+**Two verification traps when building the replacement:**
+
+- The default EFI loader variant is `loader_lua`, so the artifact is
+  `stand/efi/loader_lua/loader_lua.efi`, not `stand/efi/loader/loader.efi`.
+- META_MODE may reuse the cached `vers.o`, leaving a **stale build date baked
+  into the binary** even when the code is current (see
+  `project_freebsd_stand_build_stale_object`). The banner is therefore not
+  proof of what you built. `mem_type` is a constant-folded `static`, so it has
+  no symbol to inspect either. To prove the value is really compiled in, flip
+  it, rebuild, and compare checksums:
+
+```
+EfiLoaderData build        md5 0199bb1c0eefecf1ab7d7dc9babf9401
+EfiReservedMemoryType build md5 21388886a8fbc4aa39080dc19a4d3128
+```
+
+Different checksums prove the constant reaches the binary. Restore the source
+afterwards and confirm `git diff` is clean.
+
+### PXE-E23 / `NBP filesize is 0 Bytes`: firmware appends 0xFF to option 67
+
+**Symptom.** DHCP succeeds and names the right server and file, yet TFTP
+fails instantly and the firmware falls through to the next boot option:
+
+```
+>>Start PXE over IPv4.
+  Station IP address is 192.168.100.181
+  Server IP address is 192.168.100.1
+  NBP filename is ipxe.efi.
+  NBP filesize is 0 Bytes
+  PXE-E23: Client received TFTP error from server.
+```
+
+**Cause.** The firmware includes the DHCP end-of-options byte in the
+filename. The RRQ on the wire asks for `ipxe.efi\xff`, and the server
+correctly answers "file not found". Measured 2026-09-28, Supermicro A1SRi:
+
+```
+RRQ "ipxe.efi." octet tsize 0 blksize 1468
+  0x0020:  7865 2e65 6669 ff00 6f63 7465 7400     xe.efi..octet.
+ERROR 1: "File not found"
+  0x0020:  4669 6c65 206e 6f74 2066 6f75 6e64 00  File.not.found.
+```
+
+**The DHCP server is not at fault** — check before changing it. Option 67 in
+the reply is well formed, the `0xFF` sitting after it is the legitimate END
+marker, and tcpdump parses the length correctly:
+
+```
+BF (67), length 8: "ipxe.efi"
+  0x0140:  4308 6970 7865 2e65      C.ipxe.e
+  0x0150:  6669 ff00 0000 0000      fi......
+           ^^^^ value  ^^ END + padding
+```
+
+`43 08` is option 67 with length 8 — exactly `ipxe.efi`, no stray byte.
+
+**Workaround.** Serve the filename the firmware actually asks for, as a
+hardlink so there is one copy of the bytes:
+
+```console
+# cd /tftpboot
+# ln ipxe.efi "$(printf 'ipxe.efi\377')"
+```
+
+It shows up in `ls | cat -v` as `ipxe.efiM-^?`. Only the DHCP-supplied
+filename is affected: files iPXE fetches itself (a script, or anything over
+HTTP) use its own TFTP client and carry clean names, so one hardlink is
+enough.
+
+**Replacing the binary later: repoint both names.** The hardlink leaves two
+directory entries on one inode, and `mv` over one of them only rebinds that
+name. The other keeps pointing at the old bytes, so the machine boots
+whichever name its firmware happens to ask for and the swap looks like it
+silently did nothing. Move both aside, then link both:
+
+```console
+# cd /tftpboot
+# mv ipxe.efi ipxe.efi.embed-backup
+# mv ipxe.efi$(printf '\377') ipxe.efi-ff.embed-backup
+# ln snponly_noembed.efi ipxe.efi
+# ln snponly_noembed.efi ipxe.efi$(printf '\377')
+```
+
+Verify by inode and checksum, never by name alone. The two boot names must
+share one inode, and its link count must include the source file:
+
+```console
+# ls -lib /tftpboot
+828739 -rw-r--r--  3 root wheel  290304 ipxe.efi
+828739 -rw-r--r--  3 root wheel  290304 ipxe.efi\377
+828739 -rw-r--r--  3 root wheel  290304 snponly_noembed.efi
+# md5 /tftpboot/ipxe.efi /tftpboot/ipxe.efi$(printf '\377')
+```
+
+Same inode on all three, link count 3, identical md5. A differing md5 between
+the two boot names is the bug this note exists to catch.
+
+Quoting the name in a shell is its own small trap. `$(printf '\377')` works
+everywhere; bash and zsh also accept `$'ipxe.efi\377'`, but `sh` does not.
+Over ssh the quoting is nested twice and is easy to get wrong, so prefer
+`sudo sh -c '...'` with the `printf` form and read the `ls -lib` back.
+
+**Do not read "zero packets captured" as "the client sent nothing" unless the
+filter is known good.** A successful TFTP transfer uses port 69 only for the
+RRQ, then moves to an ephemeral port pair, so `-w file 'port 69'` records
+almost nothing even for transfers that work. Filter on the client's MAC
+(`ether host <mac>`), which also survives the lease changing IP between
+attempts:
+
+```console
+# tcpdump -i ixl0 -n -U -s0 -w /tmp/pxe.pcap \
+    'ether host 0c:c4:7a:ab:29:34 or port 67 or port 68 or port 69'
+```
+
+`-U` matters too: without it the capture file stays buffered and looks empty
+while you are reading it.
+
 ### Proving which drivers are in a firmware image
 
 **`strings` on the raw `.fd` cannot answer this.** The DXE firmware volume is
@@ -1874,11 +2359,18 @@ pflash.
 |---|---|
 | `-boot n` sends no DHCP, no `UEFI PXEv4` boot option, `ifconfig -l` empty, falls to EFI Shell | missing entropy source — add `-device virtio-rng-pci` (see above). Not a firmware-build problem |
 | firmware downloads the file then errors immediately | not a PE image — check for `MZ`; you probably pointed option 67 at a `.ipxe` script |
+| `NBP filesize is 0 Bytes` / `PXE-E23` although option 67 names the right file | firmware appended the DHCP END byte to the filename and asked for `<name>\xff`. Check the RRQ hex before blaming the DHCP server, whose reply is usually well formed; hardlink the 0xFF name (§9) |
+| replaced `ipxe.efi` but the machine still boots the old binary | the 0xFF hardlink is a second name on the same inode; `mv` over one name leaves the other on the old bytes. Repoint both, verify by inode and md5 (§9) |
 | "unsupported" / image-load failure | wrong architecture in the PE machine field (i386 binary on x86_64 firmware, or vice versa) |
 | iPXE loads iPXE in a loop | DHCP returns the same filename to both firmware and iPXE; needs option-77 matching (§5b), impossible under SLIRP — boot iPXE from an ESP instead (§5d) |
 | iPXE starts but ignores your script | no embedded script (the packaged binary has none, §5a), no `bootfile=` for iPXE's own DHCP (§5d), and no `autoexec.ipxe` on the boot filesystem (§5e) |
+| `autoexec.ipxe... ok` but an embedded script runs instead | an `EMBED=` build always wins: `first_image()` returns the list head, and the embed registers before autoexec (§5e). Rebuild the target without `EMBED=` to use the server-side file |
+| two `autoexec.ipxe... Not found` lines, then nothing at all | normal lines, abnormal silence. If no DHCP follows on the wire, iPXE hung in `efi_driver_connect_all()`: native drivers colliding with the firmware SNP. Use `snponly.efi` (§9) |
+| `MD not present` after a byte-exact memdisk download | firmware older than UEFI 2.6 has no `EFI_RAM_DISK_PROTOCOL`, so the loader takes the `md` fallback, which is broken before commit `85fb40bad584` (2026-09-24). Serve a newer `loader.efi`; a VM will not reproduce it (§9) |
 | `file:autoexec.ipxe... Not found` then `file:/autoexec.ipxe... ok` | normal, not an error — iPXE probes next to the binary first, then the volume root (§5e) |
-| `Could not boot: Exec format error` chaining memdisk | Syslinux memdisk is a 16-bit BIOS bzImage; there is no UEFI build of it (§7b). The UEFI equivalent is `memdisk_uefi` (§7d) |
+| `Could not boot: Exec format error` chaining memdisk | Syslinux memdisk is a 16-bit BIOS bzImage; there is no UEFI build of it (§7b). Use `loader.efi memdisk=` (§7f), or `memdisk_uefi` (§7d) |
+| `MD not present` right after a memdisk= download whose byte count was correct | the image downloaded fine; `md_open()` never probed its partition table, so only offset 0 was reachable. One of the four §7f fixes |
+| memdisk= boots, then userland decays: `invalid file format`, `file` reports `data` for ELF libraries | the kernel reclaimed the ram disk's pages. Confirm with `md5 /dev/md0` twice — an unstable checksum is the tell. Ram disk must not be `EfiLoaderData` (§7f) |
 | `Could not boot: Error 0x7f0482xx` after a successful `chain` | "Could not start image" (`efi_image.c:405`) — the PE transferred and loaded, but `StartImage()` returned an error. The low byte is the wrapped EFI status, so the same message covers several causes. Note this is also what you see when a payload **ran fine and then gave up**: FreeBSD's `loader.efi` prints its banner, fails to find an NFS root, and returns to iPXE with `0x7f04828e`. Read the lines *above* the error, not the code |
 | loader.efi runs, then `recvrpc: reject` / `Failed to find bootable partition` | netbooted `loader.efi` defaults to an NFS root; SLIRP has no NFS server (§7c) |
 | memdisk_uefi: kernel boots, then `Mounting from cd9660:... failed with error 19` and a `mountroot>` prompt | `nvdimm.ko` is not in the running kernel, so there is no `spa0` and no label to mount — the autodetect line is correct, do **not** set `vfs.root.mountfrom`. Scroll up: if you see `OK 3load boot/kernel/kernel` / `unknown command`, the menu keypress was concatenated with your command and the kernel was never loaded; send a bare newline after the menu key (§7d) |
@@ -1953,10 +2445,17 @@ flowchart TD
 
     Q2 -.->|"option 17 also<br/>reaches iPXE"| X6[/iPXE switches to<br/>SAN mode - tag it<br/>by user-class/]
 
+    LOADER ==>|"memdisk=URL<br/>loader fetches it<br/>HTTPS, stays .xz"| MD{"Firmware has<br/>EFI_RAM_DISK_PROTOCOL?<br/>UEFI 2.6+"}
+    MD -->|"yes: VMs, modern edk2"| OK5([VirtualDisk root - boots])
+    MD -->|"no: older firmware<br/>falls back to md"| MDFB["md driver<br/>needs the 4 fixes<br/>of 7f"]
+    MDFB --> OK6([md0s2a root - boots])
+
     style OK1 fill:#d4edda,stroke:#28a745,color:#000
     style OK2 fill:#d4edda,stroke:#28a745,color:#000
     style OK3 fill:#d4edda,stroke:#28a745,color:#000
     style OK4 fill:#c3e6cb,stroke:#1e7e34,stroke-width:3px,color:#000
+    style OK5 fill:#d4edda,stroke:#28a745,color:#000
+    style OK6 fill:#d4edda,stroke:#28a745,color:#000
     style X0 fill:#f8d7da,stroke:#dc3545,color:#000
     style X1 fill:#f8d7da,stroke:#dc3545,color:#000
     style X2 fill:#f8d7da,stroke:#dc3545,color:#000
@@ -1970,6 +2469,11 @@ The one structural lesson: **HTTP is available on the left half and forbidden
 on the right.** iPXE will happily fetch over HTTPS, but the instant control
 passes to `loader.efi` the protocol set narrows to TFTP and NFS, and stays
 narrow until userland `fetch(1)` runs in stage 2.
+
+With one exception, and it is the useful one: `memdisk=` (§7f). That URL is
+fetched by the loader's own downloader rather than by `dev_net.c`, so it does
+speak HTTPS, and it accepts the image still compressed. It is the only way
+shown here to get a root filesystem over HTTPS without a second stage.
 
 The thick path is the way out of that: put `loader.efi` and an `MD_ROOT`
 kernel on the ESP (or an OpenBMC virtual flash disk) and no network protocol

@@ -167,6 +167,7 @@ x11/kitty
 x11/nvidia-driver
 x11/nvidia-settings
 x11/nvidia-xconfig
+x11/nvidia-kmod
 x11/slim
 x11/virtualgl
 x11/xfce4-goodies

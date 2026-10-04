@@ -42,9 +42,9 @@ trap cleanup EXIT INT TERM
 #    being pinned to a version+flavour -- that is what lets this install
 #    against whichever ImageMagick the host already runs (x11 or nox11).
 #    IGNORE_OSVERSION: the jail can be a newer __FreeBSD_version than the host
-#    userland, which otherwise makes pkg add stop and prompt interactively.
+#    userland, which otherwise makes pkg stop and prompt interactively.
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
-sudo env IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes pkg add -f "${PKG}"
+sudo env IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes pkg install -fy "${PKG}"
 
 # 2. Version smoke check -- must report the port's version, not upstream's
 #    stale hardcoded one.

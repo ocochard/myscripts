@@ -49,7 +49,7 @@ fi
 
 # 1. Install fresh package
 echo "Installing ${PKG}"
-sudo pkg add -f "${PKG}"
+sudo pkg install -fy "${PKG}"
 
 # 2. Verify python import + version.  exa_py doesn't expose __version__,
 #    so read it from package metadata via importlib.

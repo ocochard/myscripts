@@ -35,7 +35,7 @@ trap cleanup EXIT INT TERM
 
 # 1. Install fresh package (binary lands at ${PREFIX}/bin = /usr/local/bin).
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
-sudo pkg add -f "${PKG}"
+sudo pkg install -fy "${PKG}"
 "${BIN}" --version >/dev/null
 
 # 2. Seed the throwaway HOME so `install` has agent configs to write into.

@@ -117,7 +117,7 @@ if [ "${SKIP_INSTALL:-0}" != "1" ]; then
 		[ -n "${PKG:-}" ] || fail "no ${PORT_NAME}-*.pkg in ${SCRIPT_DIR} (set PKG=)"
 	fi
 	echo "installing ${PKG}"
-	pkg add -f "${PKG}" >/dev/null || fail "pkg add failed"
+	pkg install -fy "${PKG}" >/dev/null || fail "pkg install failed"
 fi
 
 VER=$(pkg query %v ${PORT_NAME} 2>/dev/null) || fail "${PORT_NAME} not installed"

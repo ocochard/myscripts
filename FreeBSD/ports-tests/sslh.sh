@@ -29,7 +29,7 @@ trap cleanup EXIT INT TERM
 # 1. Install the freshly-built package
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
 echo "Installing ${PKG}"
-sudo pkg add -f "${PKG}"
+sudo pkg install -fy "${PKG}"
 
 # 2. Verify the binary version matches the package version
 PKG_VER=$(pkg query '%v' ${PORT_NAME})

@@ -22,7 +22,7 @@ trap cleanup EXIT INT TERM
 
 # 1. Install fresh package
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
-sudo pkg add -f "${PKG}"
+sudo pkg install -fy "${PKG}"
 
 # 2. Version smoke checks — both binaries
 /usr/local/bin/moon --version | grep -q "^moon "

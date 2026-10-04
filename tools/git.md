@@ -291,7 +291,71 @@ git clone repo.bundle <newrepo>
 
 ---
 
-## 12. Fork a repo (GitHub-style)
+## 12. Commit a patch written by someone else
+
+Git records two identities per commit:
+
+- **Author** — who wrote the change.
+- **Committer** — who applied it. Always you, taken from `user.name` /
+  `user.email`.
+
+`git log` prints only the author. Use `git log --format=fuller` to see both.
+
+### Plain diff (patch file, pasted hunk, email body)
+
+```
+git apply patch.diff        # or: patch -p1 < patch.diff
+git add -A
+git commit --author="Jane Doe <jane@example.org>" -m "msg"
+```
+
+If the author is already in the repo history, a search term is enough — git
+resolves it against existing commits:
+
+```
+git commit --author="jane" -m "msg"
+```
+
+### Patch made with `git format-patch`
+
+Prefer `git am`: it takes the author, date, and commit message from the mail
+headers, so no `--author` flag is needed.
+
+```
+git am patch.mbox
+git am --3way patch.mbox    # fall back to 3-way merge if it does not apply
+```
+
+### Fix the author after committing
+
+```
+git commit --amend --author="Jane Doe <jane@example.org>" --no-edit
+```
+
+### Reset the author date too
+
+`--author` sets the name and email only. The author date stays "now". To take
+the original date as well:
+
+```
+git commit --author="Jane Doe <jane@example.org>" \
+           --date="2026-09-14T10:32:00+02:00" -m "msg"
+```
+
+### Co-author instead
+
+For a shared change, keep yourself as author and add a trailer. GitHub and
+GitLab render it as a second contributor.
+
+```
+git commit -m "msg
+
+Co-authored-by: Jane Doe <jane@example.org>"
+```
+
+---
+
+## 13. Fork a repo (GitHub-style)
 
 Real example — forking both FreeBSD ports and src. Fork each via the
 GitHub web UI first, then:

@@ -56,7 +56,8 @@ usage() { echo "Usage: $0 start|check|stop|run"; }
 
 check_req() {
 	which vtysh >/dev/null 2>&1 || die "net/frr10 not installed: vtysh not found"
-	[ -x ${PREFIX}/sbin/watchfrr ] || die "net/frr10 not installed: watchfrr missing"
+	[ -x ${PREFIX}/lib/frr/watchfrr ] || [ -x ${PREFIX}/sbin/watchfrr ] || \
+		die "net/frr10 not installed: watchfrr missing"
 	[ -x /usr/local/etc/rc.d/frr ] || die "rc.d/frr not installed (USE_RC_SUBR)"
 	id frr >/dev/null 2>&1 || die "frr user missing (package not fully installed)"
 }

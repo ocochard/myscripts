@@ -59,11 +59,16 @@ fi
 
 # 1. Install fresh package
 echo "Installing ${PKG}"
-sudo pkg add -f "${PKG}"
+sudo pkg install -fy "${PKG}"
 
 # 2. Verify python import + version
+#
+# python3 -s is mandatory: without it, a pip --user install under
+# ~/.local/lib/pythonX.Y/site-packages shadows the port's module and the
+# test reports that version instead.  Same reason for every python3 below
+# that imports anthropic.
 PKG_VER=$(pkg query '%v' ${PKG_NAME})
-PY_VER=$(python3 -c 'import anthropic; print(anthropic.__version__)')
+PY_VER=$(python3 -s -c 'import anthropic; print(anthropic.__version__)')
 echo "Package version: ${PKG_VER}   anthropic.__version__: ${PY_VER}"
 [ "${PKG_VER%_*}" = "${PY_VER}" ] || {
 	echo "FAIL  version mismatch (pkg=${PKG_VER} module=${PY_VER})"
@@ -80,7 +85,7 @@ echo "Package version: ${PKG_VER}   anthropic.__version__: ${PY_VER}"
 #     honest about which major we are on.
 #   * The HTTP layer moved from httpx to httpx2 (RUN_DEPENDS www/py-httpx2).
 #   * The `distro` dependency was dropped entirely.
-python3 - <<'PY'
+python3 -s - <<'PY'
 import importlib, sys
 import anthropic
 from anthropic import Anthropic, AsyncAnthropic
@@ -172,7 +177,7 @@ else
 	# environment problem, not a packaging regression.
 	set +e
 	timeout 90 env ANTHROPIC_BASE_URL="${BASE_URL}" ANTHROPIC_API_KEY="${API_KEY}" \
-		python3 - <<'PY'
+		python3 -s - <<'PY'
 import os, sys
 from anthropic import Anthropic
 
@@ -183,7 +188,32 @@ models = [m.id for m in client.models.list()]
 assert models, "GET /v1/models returned no models"
 print(f"PASS  models.list() -> {len(models)} model(s), e.g. {models[0]}")
 
-model = os.environ.get("ANTHROPIC_MODEL") or models[0]
+# /v1/models advertises everything the gateway knows about, including
+# models this project is not entitled to call (403 ModelAccessControl).
+# Pick the first model that actually answers; a 403 is an entitlement fact
+# about the endpoint, not a packaging regression.
+def pick_model(client, candidates):
+    from anthropic import PermissionDeniedError, NotFoundError
+    for m in candidates:
+        try:
+            client.messages.create(
+                model=m, max_tokens=16,
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            return m
+        except (PermissionDeniedError, NotFoundError):
+            continue
+    return None
+
+forced = os.environ.get("ANTHROPIC_MODEL")
+if forced:
+    model = forced
+else:
+    model = pick_model(client, models)
+    if model is None:
+        print("SKIP  no model in /v1/models is accessible to this project")
+        sys.exit(0)
+    print(f"PASS  selected accessible model: {model}")
 
 # max_tokens is generous because thinking models spend budget before any
 # text; a small cap yields stop_reason=max_tokens and no text at all.

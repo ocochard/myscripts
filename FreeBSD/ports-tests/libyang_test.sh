@@ -76,7 +76,7 @@ fi
 
 # 1. Install the freshly built package.
 PKG=$(ls -t ${PKGDIR}/${PKG_NAME}-*.pkg | head -1)
-sudo pkg add -f "${PKG}"
+sudo pkg install -fy "${PKG}"
 
 # 2. Files landed — including the .so.<major> SONAME symlink (what a consumer
 # such as net/frr9 links against) and the concrete versioned object.

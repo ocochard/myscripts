@@ -452,6 +452,18 @@ tail -f /var/db/jellyfin/log/log_$(date +%Y%m%d).log | grep --line-buffered -E '
 
 ---
 
+## Symptom: HDR films look washed out (no tone mapping)
+
+Transcoded HDR content comes out grey and low contrast because Jellyfin emits
+`setparams=...bt709` without a tone map filter, relabelling PQ data as SDR
+instead of converting it. Client independent.
+
+**Solved 2026-09-25.** Jellyfin's VAAPI filter chain has an early-exit guard
+that requires a full OpenCL stack and the jellyfin-only `alphasrc` filter
+before it will even reach the AMD libplacebo tone map branch. Fix needs
+jellyfin-ffmpeg + OpenCL (mesa-devel/rusticl) + `RUSTICL_ENABLE=radeonsi`.
+Full recipe in [hdr-tonemap-not-applied.md](hdr-tonemap-not-applied.md).
+
 ## Symptom: FFmpeg exits with code 234 — hardware upload failure
 
 In the Jellyfin main log (`log_YYYYMMDD.log`):

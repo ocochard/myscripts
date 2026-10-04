@@ -6,6 +6,11 @@ set -eu
 
 SUDO=${SUDO:-sudo}
 
+# Daemons moved from ${PREFIX}/sbin to ${PREFIX}/lib/frr (matching the
+# Linux packages) so they no longer collide with net/pimd. Accept both.
+DAEMONDIR=/usr/local/lib/frr
+[ -x ${DAEMONDIR}/zebra ] || DAEMONDIR=/usr/local/sbin
+
 cat > /tmp/topo.txt <<EOF
 ******************************************************************************
 *                 net/frr regression lab using vnet jails                    *
@@ -449,7 +454,7 @@ create_jail () {
 			${SUDO} jexec frr${id} setkey -vf /var/run/frr/frr${id}/ipsec.conf
 		fi
 		for daemon in \$frr${id}_daemons; do
-			${SUDO} jexec frr${id} \$daemon -d -i /var/run/frr/frr${id}_\$daemon.pid --vty_socket /var/run/frr/frr${id}.sock
+			${SUDO} jexec frr${id} ${DAEMONDIR}/\$daemon -d -i /var/run/frr/frr${id}_\$daemon.pid --vty_socket /var/run/frr/frr${id}.sock
 		done
 		${SUDO} jexec frr${id} vtysh -b --config_dir /var/run/frr/frr${id}/ --vty_socket /var/run/frr/frr${id}.sock || true
 		"

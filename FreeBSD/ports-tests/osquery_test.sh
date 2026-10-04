@@ -148,7 +148,7 @@ for bin in "${OSQUERYI}" "${OSQUERYD}"; do
 		red "Missing: ${bin}"
 		case "${OS}" in
 			FreeBSD)
-				red "Install:  sudo pkg add /usr/local/poudriere/data/packages/builder-official/.latest/All/osquery-5.23.0.pkg" ;;
+				red "Install:  sudo pkg install /usr/local/poudriere/data/packages/builder-official/.latest/All/osquery-5.23.0.pkg" ;;
 			Linux)
 				red "Install:  sudo apt install osquery   (or download from https://osquery.io/downloads)" ;;
 		esac

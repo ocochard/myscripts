@@ -94,7 +94,7 @@ install_pkg () {
 	PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg 2>/dev/null | head -1)
 	[ -n "${PKG}" ] || die "no mlvpn .pkg in ${PKGDIR}"
 	echo "Installing ${PKG}"
-	${SUDO} pkg add -f "${PKG}"
+	${SUDO} pkg install -fy "${PKG}"
 }
 
 uninstall_pkg () {

@@ -57,6 +57,11 @@ set -eu
 
 SUDO=${SUDO:-sudo}
 
+# Daemons moved from ${PREFIX}/sbin to ${PREFIX}/lib/frr (matching the
+# Linux packages) so they no longer collide with net/pimd. Accept both.
+DAEMONDIR=/usr/local/lib/frr
+[ -x ${DAEMONDIR}/zebra ] || DAEMONDIR=/usr/local/sbin
+
 FRR_RUN=/var/run/frr/frr1
 BIRD_RUN=/var/run/bird-brd2
 BIRD_CTL=${BIRD_RUN}/bird.ctl
@@ -85,7 +90,7 @@ usage () {
 
 check_req () {
 	which vtysh >/dev/null 2>&1 || die "net/frr10 not installed"
-	which zebra >/dev/null 2>&1 || die "net/frr10 not installed"
+	[ -x ${DAEMONDIR}/zebra ] || die "net/frr10 not installed"
 	which bird  >/dev/null 2>&1 || die "net/bird3 not installed"
 	which birdc >/dev/null 2>&1 || die "net/bird3 not installed"
 }
@@ -132,7 +137,7 @@ router ospf
 EOF
 	${SUDO} touch ${FRR_RUN}/vtysh.conf
 	for d in mgmtd zebra ospfd; do
-		${SUDO} jexec frr1 $d -d \
+		${SUDO} jexec frr1 ${DAEMONDIR}/$d -d \
 			-i /var/run/frr/frr1_$d.pid \
 			--vty_socket /var/run/frr/frr1.sock
 	done

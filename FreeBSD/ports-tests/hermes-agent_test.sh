@@ -40,7 +40,7 @@
 #         ANTHROPIC_BASE_URL=http://127.0.0.1:20000/proxy/<name>/ \
 #             sh hermes-agent_test.sh
 #
-# Runs as normal user; the script sudo's for pkg add/delete + rc.d.
+# Runs as normal user; the script sudo's for pkg install/delete + rc.d.
 # Cleans up (pkg delete, sysrc -x, /etc/rc.conf revert) on any exit.
 
 set -eu
@@ -107,7 +107,7 @@ fail() { printf 'FAIL  %s\n' "$1"; exit 1; }
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg 2>/dev/null | head -1)
 [ -n "${PKG}" ] || fail "no ${PORT_NAME}-*.pkg in ${PKGDIR}"
 printf 'Installing %s\n' "${PKG}"
-sudo pkg add -f "${PKG}" >/dev/null
+sudo pkg install -fy "${PKG}" >/dev/null
 
 PKG_VER=$(pkg query '%v' ${PORT_NAME})
 printf 'Installed version: %s\n' "${PKG_VER}"

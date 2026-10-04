@@ -62,7 +62,7 @@ if pkg info "${PORT_NAME}" >/dev/null 2>&1; then
 fi
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
 echo "==> installing ${PKG}"
-sudo pkg add -f "${PKG}"
+sudo pkg install -fy "${PKG}"
 
 # ---------------------------------------------------------------------------
 # 2. version / wrapper
