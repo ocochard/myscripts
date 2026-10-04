@@ -1,0 +1,47 @@
+# radeonsi VA-API deadlock - gdb backtrace evidence
+#
+# Host:    nas, FreeBSD 16.0-CURRENT, Ryzen 7 PRO 8845HS / Radeon 780M (gfx1103, VCN 4.0.2)
+# Stack:   ffmpeg 8.1.2_1,1 / mesa-dri 26.1.5_1 / libva 2.24.1
+# Captured: 2026-08-24, PID 61856, wedged ~4min at 99% CPU, zero frames encoded
+# dmesg:   completely silent - no amdgpu ring timeout, no GPU reset
+#
+# THE DEADLOCK: threads 27 and 28 block on the SAME mutex (0x3e98a8c97e08)
+# while thread 26 spins inside radeonsi holding it.
+
+Thread 28 (LWP 545670 of process 61856 "dec0:0:h264"):
+#0  _umtx_op_err () at /usr/src/lib/libsys/amd64/_umtx_op_err.S:38
+#1  0x0000000829dd57c0 in __thr_umutex_lock (mtx=0x3e98a8c97e08, id=545670) at /usr/src/lib/libthr/thread/thr_umtx.c:70
+#2  0x0000000829dcef3f in mutex_lock_sleep (curthread=curthread@entry=0x3e98a8ca7810, m=m@entry=0x3e98a8c97e08, abstime=abstime@entry=0x0) at /usr/src/lib/libthr/thread/thr_mutex.c:700
+#3  0x0000000829dccf92 in mutex_lock_common (m=0x3e98a8c97e08, abstime=0x0, cvattach=false, rb_onlist=false) at /usr/src/lib/libthr/thread/thr_mutex.c:734
+#4  __Tthr_mutex_lock (mutex=<optimized out>) at /usr/src/lib/libthr/thread/thr_mutex.c:753
+#5  0x00000008642d2709 in ??? () at /usr/local/lib/dri/radeonsi_drv_video.so
+#6  0x0000000863db4abf in ??? () at /usr/local/lib/dri/radeonsi_drv_video.so
+#7  0x0000000831986443 in vaSyncSurface () at /usr/local/lib/libva.so.2
+#8  0x00000008284da1d4 in ??? () at /usr/local/lib/libavutil.so.60
+#9  0x00000008284d8d9e in ??? () at /usr/local/lib/libavutil.so.60
+
+Thread 27 (LWP 545669 of process 61856 "vf#0:0"):
+#0  _umtx_op_err () at /usr/src/lib/libsys/amd64/_umtx_op_err.S:38
+#1  0x0000000829dd57c0 in __thr_umutex_lock (mtx=0x3e98a8c97e08, id=545669) at /usr/src/lib/libthr/thread/thr_umtx.c:70
+#2  0x0000000829dcef3f in mutex_lock_sleep (curthread=curthread@entry=0x3e98a8ca7010, m=m@entry=0x3e98a8c97e08, abstime=abstime@entry=0x0) at /usr/src/lib/libthr/thread/thr_mutex.c:700
+#3  0x0000000829dccf92 in mutex_lock_common (m=0x3e98a8c97e08, abstime=0x0, cvattach=false, rb_onlist=false) at /usr/src/lib/libthr/thread/thr_mutex.c:734
+#4  __Tthr_mutex_lock (mutex=<optimized out>) at /usr/src/lib/libthr/thread/thr_mutex.c:753
+#5  0x00000008642d2709 in ??? () at /usr/local/lib/dri/radeonsi_drv_video.so
+#6  0x0000000863daffcf in ??? () at /usr/local/lib/dri/radeonsi_drv_video.so
+#7  0x0000000831985c3e in vaUnmapBuffer () at /usr/local/lib/libva.so.2
+#8  0x00000008284da5ee in ??? () at /usr/local/lib/libavutil.so.60
+#9  0x00000008284d29e5 in ??? () at /usr/local/lib/libavutil.so.60
+
+Thread 26 (LWP 545668 of process 61856 "enc0:0:h264_vaa"):
+#0  0x0000000863dcee87 in ??? () at /usr/local/lib/dri/radeonsi_drv_video.so
+#1  0x0000000863dcddd0 in ??? () at /usr/local/lib/dri/radeonsi_drv_video.so
+#2  0x0000000863db2b1b in ??? () at /usr/local/lib/dri/radeonsi_drv_video.so
+#3  0x00000008319861f4 in vaRenderPicture () at /usr/local/lib/libva.so.2
+#4  0x0000000826b6c668 in ??? () at /usr/local/lib/libavcodec.so.62
+#5  0x000000082681ded7 in ??? () at /usr/local/lib/libavcodec.so.62
+#6  0x000000082654e038 in ??? () at /usr/local/lib/libavcodec.so.62
+#7  0x000000082654de0c in avcodec_send_frame () at /usr/local/lib/libavcodec.so.62
+#8  0x000000000022adf8 in ??? ()
+#9  0x000000000022a6d1 in ??? ()
+
+Thread 25 (LWP 545667 of process 61856 "av:h264:df15"):
