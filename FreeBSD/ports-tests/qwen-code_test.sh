@@ -8,8 +8,10 @@
 #      the ${PREFIX}/bin/node shebang rewrite, and cli-entry.js all work).
 #   2. The bundled node_modules tree survived the dynamic-plist install
 #      (a representative chunk file and the web-shell bundle are present).
-#   3. Auto-update was neutralised at install time: no chunk still carries
-#      the live `enableAutoUpdate !== false` guard.
+#   3. Auto-update was neutralised at install time: every chunk
+#      `enableAutoUpdate!==false` guard is followed by the port's `&&false`
+#      (spacing-agnostic; at least one guard must exist, so an upstream
+#      rename fails instead of passing vacuously).
 #   4. A real non-interactive prompt against an OpenAI-compatible backend
 #      (a local llama.cpp server) returns a well-formed chat completion.
 #      This proves the OpenAI provider path wires up from the env vars
@@ -87,17 +89,25 @@ ls "${QWEN_LIB}/chunks"/*.js >/dev/null
 test -f "${QWEN_LIB}/web-shell/index.html"
 # bundled ripgrep must be gone (we use textproc/ripgrep)
 test ! -d "${QWEN_LIB}/vendor/ripgrep"
-echo "    cli-entry.js, chunks/, web-shell/ ok; vendored ripgrep removed"
+# Linux-only Landlock runner (ELF) must be gone too (NO_ARCH package)
+test ! -d "${QWEN_LIB}/vendor/landlock-run"
+echo "    cli-entry.js, chunks/, web-shell/ ok; vendored ripgrep + landlock-run removed"
 
 # ---------------------------------------------------------------------------
 # 4. auto-update neutralised
 # ---------------------------------------------------------------------------
 echo "==> auto-update disabled"
-if grep -rq 'enableAutoUpdate !== false' "${QWEN_LIB}/chunks"/ 2>/dev/null; then
-	echo "FAIL  a chunk still carries the live enableAutoUpdate guard"
+GUARDS=$(($(cat "${QWEN_LIB}"/chunks/*.js | grep -oE 'enableAutoUpdate ?!== ?false' | wc -l)))
+NEUTRAL=$(($(cat "${QWEN_LIB}"/chunks/*.js | grep -oE 'enableAutoUpdate ?!== ?false ?&& ?false' | wc -l)))
+if [ "${GUARDS}" -eq 0 ]; then
+	echo "FAIL  no enableAutoUpdate guard found in chunks (upstream changed it?)"
 	exit 1
 fi
-echo "    no live enableAutoUpdate guard remains"
+if [ "${GUARDS}" -ne "${NEUTRAL}" ]; then
+	echo "FAIL  $((GUARDS - NEUTRAL)) of ${GUARDS} enableAutoUpdate guards still live"
+	exit 1
+fi
+echo "    all ${GUARDS} enableAutoUpdate guards neutralised"
 
 # ---------------------------------------------------------------------------
 # 5. real prompt against the OpenAI-compatible backend

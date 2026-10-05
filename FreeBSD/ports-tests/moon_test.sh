@@ -24,9 +24,10 @@ trap cleanup EXIT INT TERM
 PKG=$(ls -t ${PKGDIR}/${PORT_NAME}-*.pkg | head -1)
 sudo pkg install -fy "${PKG}"
 
-# 2. Version smoke checks — both binaries
-/usr/local/bin/moon --version | grep -q "^moon "
-/usr/local/bin/moonx --version | grep -q "^moon-exec "
+# 2. Version smoke checks — both binaries report the packaged version
+PKG_VER=$(pkg query '%v' "${PORT_NAME}")
+/usr/local/bin/moon --version | grep -qx "moon ${PKG_VER%_*}"
+/usr/local/bin/moonx --version | grep -qx "moon-exec ${PKG_VER%_*}"
 
 # 3. Shell completion generation — offline, no workspace needed.
 #    Proves the CLI dispatcher and clap wiring are intact.

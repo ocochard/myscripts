@@ -1681,8 +1681,14 @@ MD5 (/dev/md0) = aa24358b...
 ```
 
 A stable checksum equal to the served image is the pass condition. Fix is one
-line: `EfiRuntimeServicesData`, which the kernel skips when building physmap
-while `pmap_map()` on amd64 still reaches it through the direct map.
+line: `EfiRuntimeServicesData`, which the kernel skips when building physmap.
+`pmap_map()` on amd64 reaches it through the direct map, but that only covers
+pages below `dmaplimit` (Maxmem rounded up to 1 GB). A buffer the firmware
+places above that is unmapped and md faults. It works on the Supermicro, but
+the buffer's placement there has not been checked against `phys_avail` yet,
+so treat the fix as incomplete.
+Patch: `FreeBSD/docs/loader_memdisk_memtype.patch`, write-up:
+`FreeBSD/docs/bugreport_loader_memdisk_memtype.txt`.
 
 Do not diagnose this by re-reading a file you already read: UFS caches it,
 so a corrupt library can return the same wrong checksum twice and look stable.
@@ -2094,7 +2100,9 @@ point of failure. The registration is fine; the memory behind it is not
 reachable, and `probe_md_currdev()` in `stand/efi/loader/main.c` then fails
 its `stat()` for `loader.conf`/kernel and prints `MD not present`.
 
-**Fix.** Serve a `loader.efi` built from `85fb40bad584` or later.
+**Fix.** Serve a `loader.efi` built from `85fb40bad584` or later, plus
+`FreeBSD/docs/loader_memdisk_memtype.patch`: `EfiLoaderData` gets past `MD not
+present` but lets the kernel reclaim the ram disk at runtime (§7f).
 
 **Why qemu and bhyve do not reproduce it.** Both use current edk2, which
 *does* implement `EFI_RAM_DISK_PROTOCOL`, so they take the working path and

@@ -203,6 +203,16 @@ if ! service ${WATCHDOG_RC} onestatus >/dev/null 2>&1; then
 fi
 info "watchdog auto-started ($(cat ${WATCHDOG_PID} 2>/dev/null || echo 'pid unknown'))"
 
+# The watchdog must recognise the live efs-proxy. If its process-name lookup
+# breaks (3.3.2 read /proc/<pid>/stat, absent on FreeBSD), it treats the proxy
+# as dead and restarts it every poll, so the pid changes.
+PROXY_PID=$(pgrep -f '[e]fs-proxy' | tr '\n' ' ')
+sleep 15
+PROXY_PID_LATER=$(pgrep -f '[e]fs-proxy' | tr '\n' ' ')
+[ "${PROXY_PID}" = "${PROXY_PID_LATER}" ] \
+	|| fail "watchdog restarted efs-proxy (pid ${PROXY_PID}-> ${PROXY_PID_LATER})"
+info "efs-proxy pid stable across 15 watchdog polls"
+
 # ------------------------------------------------------ 5. WRITE then READ BACK
 TESTFILE="${MP}/.efs-regress-$$-$(hostname -s)"
 CONTENT="efs-utils ${VER} regression $(date -u +%Y-%m-%dT%H:%M:%SZ) pid=$$"
