@@ -1,0 +1,53 @@
+State of ~/myscripts/FreeBSD/frr-topotest-vm/ as of 2026-10-05. Nothing is running.
+
+1. rn_match panic: DONE, in upstream review.
+   Read BUG-rtsock-rn_match-panic.md. Rtentry use-after-free in the multipath append path of
+   add_route_flags() (sys/net/route/route_ctl.c), regression from c24a8f19c5d5 (2022).
+   - Fix: route_ctl-mpath-uaf.patch (against main a52c50b4b7c2, git apply -p0). The user opened
+     a review; its URL is not recorded yet -- add it to the bug file when known.
+   - Reproducer: hammer-rt-mpath-race.c (-a 8 -r 4 -g 2): stock kernel panics in ~5 s (2/2),
+     patched kernel survived 300 s. Field: 2 panics in 12 stock topotest runs, 0 in 25 patched.
+   - Only remaining work is review feedback. If the patch changes, rebuild the guest test kernel:
+     shared clone ~/src-rtfix (branch rtfix-mpath-uaf, guest commit a2fbd988638e), then
+     config -d ~/obj-rtfix/GENERIC-NODEBUG GENERIC-NODEBUG && make -j16 NO_MODULES=yes there,
+     copy the kernel to /zroot/vm/share/kernel-rtfix/ and into the guest's /boot/kernel.rtfix/.
+
+2. epoch_drain_callbacks wedge: PARKED, unreproduced.
+   Read BUG-epair-vnet-epoch-hang.md, "Status after the 2026-10-05 loop" and recipe C.
+   Seen once (~5 min into run 1); no recurrence in ~37 full-suite runs since, stock or patched.
+   Every hammer (bind, idle-vCPU bind, drain, vnet move, epoch callback churn) came back clean.
+   Unproven hypothesis: it was a side effect of the rtentry use-after-free (that bug's reproducer
+   showed freed memory reused while still queued on the epoch callback list).
+   Only resume if it shows up again. The capture tooling is ready: ddb-on-wedge.sh (DUMP=1 takes
+   a dump after the DDB capture; vCPU snapshots from bhyvectl), epoch/vCPU samplers, and dumps
+   are saved to the host share. A repeat-run driver lived in the old session's scratchpad;
+   rewrite it if needed (reboot guest, run pytest -n 30, stop on new "panic:" in the console log
+   or a new /zroot/vm/share/ddb-wedge-*.txt).
+
+Loose ends for the user to decide:
+- /usr/src and /usr/obj on the host are unmounted from the read-only NFS (bigone:/usr/src,
+  bigone:/usr/obj), exposing the local zroot datasets. /usr/src is at main a52c50b4b7c2 with the
+  patch applied, uncommitted. Remount the NFS when done.
+- The guest boots kernel.rtfix by default (kernel="kernel.rtfix" in its /boot/loader.conf);
+  the stock kernel is still in /boot/kernel. Remove that line to go back.
+- Dumps in /zroot/vm/share/crash/frrtopo/: vmcore.0 (topotest rn_match), vmcore.1 and vmcore.2
+  (reproducer on stock), plus decompressed copies of 0 and 1 (~20 GB). Delete when not needed.
+
+Guest ops (unchanged): frrtopo, 192.168.100.78, key ~/.ssh/id_ed25519_frrvm, serial console
+/dev/nmdm-frrtopo-B (root/topotest), console log /zroot/vm/frrtopo-console.log. Start with
+sudo ./runvm.sh (now cold-starts unattended and keeps the console raw across guest reboots).
+
+Gotchas learned this time:
+- Guest dumps go to the host share, not /var/crash: savecore_enable=NO, /etc/rc.local saves to
+  /mnt/host/crash/frrtopo once the late 9p mount is up. A crash can damage the guest root (one
+  panic was followed by a UFS panic that lost the saved vmcore); fsck it offline from the host
+  after several panics: mdconfig -a -t vnode -f /zroot/vm/frr-topotest.img, fsck_ffs -fy
+  /dev/gpt/frrvm-root until fsck_ffs -fn is clean, mdconfig -d.
+- A file written in the guest just before a panic may be lost (no sync on panic): a repro binary
+  came back 0 bytes and a "survived" run was void. sync after building anything you will crash.
+- kgdb in the guest: commands on stdin (no -batch/-x), no curthread symbol
+  (use cpuid_to_pcpu[N]->pc_curthread), symbols at /mnt/host/kernel.debug (stock) or
+  /mnt/host/kernel-rtfix/kernel.debug (patched).
+- Each panic leaves two "panic:" lines in the console log (panic + savecore). clear_tmp_enable=NO
+  keeps /tmp/topotests, so the test behind a crash can be found; FreeBSD pids get reused fast.
+- Never run a hammer or the reproducer on the workstation.
