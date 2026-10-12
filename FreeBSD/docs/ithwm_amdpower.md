@@ -78,12 +78,30 @@ dev.ithwm.0.temp0: 35.0C
 |---|---|---|
 | `temp0..2` | decikelvin (`IK`, prints as °C) | registers 0x29-0x2b; a sensor reading -128 at attach is not exposed |
 | `fan1..4` | RPM | 16-bit counter, `RPM = 1350000 / (count * 2)`; 0 = stalled/absent. No `fan0`: the chip has no FAN1 input |
-| `vin0,1,2,4,5,7` | mV | 11 mV per ADC step; no `vin3`/`vin6` (not bonded out) |
+| `vin0,1,2,4,5` | mV | voltage **at the VIN pin**, 11 mV per ADC step; which rail it watches is board-specific; no `vin3`/`vin6` (not bonded out) |
 | `vin7` | mV | VSB, internally halved: 22 mV per step |
 | `vbat` | mV | CMOS battery, internally halved: 22 mV per step |
 
-The board's own resistor dividers on the 5 V and 12 V rails are not
-applied. `vinN` is the voltage at the chip pin, not the rail voltage.
+VIN0 to VIN5 are general-purpose ADC inputs (0 to about 3 V). The
+board vendor decides which rail each pin watches, and higher rails
+(5 V, 12 V) reach the pin through a resistor divider. So `vinN` is the
+pin voltage, not the rail voltage. `sysctl -d` says so:
+`Voltage at VIN0 pin in millivolts (rail is board-specific)`.
+
+The board in nas is a TianBei "WTR MAX" (AOOSTAR WTR MAX, from `kenv
+smbios.planar.*`). There is no published VIN mapping for it. Guesses
+from how the values behave (unconfirmed):
+
+| sysctl | Observed | Likely |
+|---|---|---|
+| `vin0`, `vin1` | 308 to 1364 mV, changes with load | CPU core/SoC rails, read without a divider |
+| `vin2`, `vin4` | 1947 mV, constant | a fixed rail (12 V or 5 V?) through a divider |
+| `vin5` | 2288 mV, constant | a fixed rail, unknown |
+
+To label them, compare with the BIOS hardware-monitor page; each
+multiplier is the BIOS value divided by the `vinN` value. The
+[shauno8/it87](https://github.com/shauno8/it87) fork ships an IT8613E
+register map (CSV/PDF), the closest thing to a datasheet found so far.
 
 ### Register facts and where they come from
 
