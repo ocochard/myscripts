@@ -58,6 +58,7 @@ at `iobase+5` / `iobase+6` of the HWM I/O window.
 
 ```
 $ sysctl dev.ithwm.0
+dev.ithwm.0.avcc3: 3300
 dev.ithwm.0.vbat: 3146
 dev.ithwm.0.vin7: 2200
 dev.ithwm.0.vin5: 2288
@@ -79,8 +80,9 @@ dev.ithwm.0.temp0: 35.0C
 | `temp0..2` | decikelvin (`IK`, prints as °C) | registers 0x29-0x2b; a sensor reading -128 at attach is not exposed |
 | `fan1..4` | RPM | 16-bit counter, `RPM = 1350000 / (count * 2)`; 0 = stalled/absent. No `fan0`: the chip has no FAN1 input |
 | `vin0,1,2,4,5` | mV | voltage **at the VIN pin**, 11 mV per ADC step; which rail it watches is board-specific; no `vin3`/`vin6` (not bonded out) |
-| `vin7` | mV | VSB, internally halved: 22 mV per step |
+| `vin7` | mV | VSB, internally halved: 22 mV per step; reads 2.2 V on the WTR MAX (see below) |
 | `vbat` | mV | CMOS battery, internally halved: 22 mV per step |
+| `avcc3` | mV | register 0x2f, the chip's own 3.3 V supply, internally halved: 22 mV per step; a built-in check of the scaling |
 
 VIN0 to VIN5 are general-purpose ADC inputs (0 to about 3 V). The
 board vendor decides which rail each pin watches, and higher rails
@@ -118,7 +120,30 @@ All from the Linux drivers, since the datasheet was not at hand:
   - The `it8613` branch of `it87_find()` sets: "No fan1", "No VIN3",
     "No VIN6".
   - `in_scaled` doubles the LSB for in7 (VSB) and in8 (Vbat) on chips
-    where `has_scaling()` is true, which covers 11 mV ADCs.
+    where `has_scaling()` is true, which covers 11 mV ADCs. AVCC3
+    (in9, register 0x2f) is doubled the same way.
+- [shauno8/it87](https://github.com/shauno8/it87), another IT8613E
+  fork: its `ITE_Register_map.csv` lists no VIN registers, only
+  `ADC res. 11 mV` for this chip. Its `it87.c` doubles in7 exactly as
+  above, and the IT8613E board in its README reads
+  `3VSB: 3.28 V` and `+3.3V: 3.30 V`.
+
+### Why vin7 reads 2.2 V
+
+A raw dump of registers 0x20-0x2f on nas (read-only, through
+`/dev/io`, same index/data ports as the driver):
+
+```
+0x27 (VIN7)  raw=100  x22=2200 mV
+0x28 (VBAT)  raw=143  x22=3146 mV
+0x2f (AVCC3) raw=149  x22=3278 mV
+```
+
+AVCC3 goes through the same internal divider and reads a correct
+3.3 V with the doubling. So the scaling is right on this chip, and
+the VIN7 pin itself sits at half of 2.2 V. The shauno8 README board
+has raw 149 on its 3VSB, not 100. Why the WTR MAX differs is unknown,
+which is why the sysctl description says "VIN7 (VSB)" and not "3VSB".
 
 ## `amdpower`: AMD RAPL power sensors
 
@@ -256,10 +281,9 @@ natural companion check.
 
 ## Open questions
 
-- **vin7 (VSB) reads 2200 mV** with the doubled step. A 3.3 V
-  standby rail would read about 3300 mV. Either this board feeds the
-  pin differently, or the Linux scaling doesn't fit this input. Needs
-  the datasheet or a BIOS hardware-monitor reading.
+- **vin7 (VSB) reads 2200 mV.** The scaling is ruled out: `avcc3`
+  reads 3300 mV through the same divider. What the WTR MAX feeds into
+  VIN7 is unknown. A BIOS hardware-monitor reading may name it.
 - **Fan RPM**: the new values are half of what the April driver
   showed (e.g. 1113 vs 2102). Linux's formula supports the new
   numbers. A BIOS reading would confirm it.
