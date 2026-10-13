@@ -241,10 +241,21 @@ ssh nas 'sudo install -m 555 /tmp/ithwm.ko /tmp/amdpower.ko /boot/modules/ \
   was removed on 2026-10-13. To get it back, rebuild from
   `9b1e10b93bea` in `~/freebsd-official/src`.
 
-A monit CPU-temperature check for this host is in
-[../monit/monit_temp.sh](../monit/monit_temp.sh). It reads
-`dev.amdtemp.0.core0.sensor0`. Fan speeds from `ithwm` would make a
-natural companion check.
+Two monit checks on this host use the sensors:
+
+- [../monit/monit_temp.sh](../monit/monit_temp.sh): CPU temperature
+  from `dev.amdtemp.0.core0.sensor0`, alerts above 85 °C.
+- [../monit/monit_fans.sh](../monit/monit_fans.sh): `fan1`, `fan2` and
+  `fan4` from `ithwm`, alerts when one drops below 300 RPM or the
+  driver isn't attached. fan3 is skipped because nothing is connected
+  to it. Installed as `/usr/local/bin/monit_fans.sh`, with this in
+  `/usr/local/etc/monitrc` (previous file saved as
+  `monitrc.bak-20261013`):
+
+  ```
+  check program fans with path /usr/local/bin/monit_fans.sh
+      if status != 0 for 2 cycles then alert
+  ```
 
 ## History
 
