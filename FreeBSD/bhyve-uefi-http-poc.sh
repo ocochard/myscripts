@@ -114,13 +114,18 @@ HTTPPORT=${HTTPPORT:-8080}
 MODE=${MODE:-http}
 ATTACH=${ATTACH:-0}
 CONSOLE=${CONSOLE:-stdio}
+# Guest MAC, so nflx.net.mac can name it (bhyve picks one when empty)
+MAC=${MAC:-}
+# Extra name=value kernel env passed on the loader command line by iPXE,
+# e.g. the nflx.* network config consumed by the OCA loader_network script
+KENV=${KENV:-}
 KEEP=0
 
 usage() {
     cat <<EOF
 Usage: $0 [-i image] [-f firmware.fd] [-l loader_url] [-n vmname]
           [-c cpus] [-m mem] [-b bridge] [-t tap] [-p httpport]
-          [-C cachedir] [-T] [-a] [-N] [-k]
+          [-C cachedir] [-M mac] [-e name=value]... [-T] [-a] [-N] [-k]
 
   -i  memstick URL or local file  (default: the official 15.1 mini-memstick)
   -f  bhyve UEFI firmware         (default: $FIRMWARE)
@@ -133,6 +138,9 @@ Usage: $0 [-i image] [-f firmware.fd] [-l loader_url] [-n vmname]
   -t  tap device                  (default: auto-allocate)
   -p  HTTP port on the host       (default: $HTTPPORT)
   -C  download cache directory    (default: $CACHE)
+  -M  guest NIC MAC address       (default: chosen by bhyve)
+  -e  kenv name=value passed to the loader (repeatable), e.g.
+      -e nflx.net.mac=\$MAC -e nflx.inet.addr=10.99.0.50
   -T  TFTP/PXE instead of HTTP    (works with stock edk2, no HttpDxe needed)
   -a  attach the image as a local virtio-blk disk too (debug aid; needs an
       uncompressed, 512-aligned local image -- not the published .img.xz)
@@ -146,7 +154,7 @@ EOF
     exit 1
 }
 
-while getopts "i:f:l:n:c:m:b:t:p:C:TaNkh" opt; do
+while getopts "i:f:l:n:c:m:b:t:p:C:M:e:TaNkh" opt; do
     case "$opt" in
         i) IMAGE=$OPTARG ;;
         f) FIRMWARE=$OPTARG ;;
@@ -158,6 +166,8 @@ while getopts "i:f:l:n:c:m:b:t:p:C:TaNkh" opt; do
         t) TAP=$OPTARG ;;
         p) HTTPPORT=$OPTARG ;;
         C) CACHE=$OPTARG ;;
+        M) MAC=$OPTARG ;;
+        e) KENV="${KENV:+$KENV }$OPTARG" ;;
         T) MODE=tftp ;;
         a) ATTACH=1 ;;
         N) CONSOLE=nmdm ;;
@@ -332,7 +342,7 @@ cat > "$served/autoexec.ipxe" <<EOF
 #!ipxe
 dhcp
 echo === chainloading patched loader.efi ===
-chain $loaderurl memdisk=$imgurl
+chain $loaderurl memdisk=$imgurl${KENV:+ $KENV}
 echo Boot failed, press a key
 prompt
 EOF
@@ -512,7 +522,7 @@ bhyve -c "$CPUS" -m "$MEM" -A -H -P -u -w \
     $bootrom \
     -s 0:0,hostbridge \
     -s 1:0,lpc \
-    -s 2:0,virtio-net,"$TAP" \
+    -s 2:0,virtio-net,"$TAP"${MAC:+,mac=$MAC} \
     $diskarg \
     $conarg \
     "$VM"
