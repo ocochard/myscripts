@@ -237,8 +237,9 @@ ssh nas 'sudo install -m 555 /tmp/ithwm.ko /tmp/amdpower.ko /boot/modules/ \
   `loader.conf`: neither module is needed to boot, and a failing
   `kld_list` entry doesn't stop the boot. The previous rc.conf is saved
   as `/etc/rc.conf.bak-20261012`.
-- The original April 2026 module is kept as
-  `/boot/modules/ithwm.ko.20260413`.
+- The original April 2026 module (md5 `faa2d6344f72970121119780caf23154`)
+  was removed on 2026-10-13. To get it back, rebuild from
+  `9b1e10b93bea` in `~/freebsd-official/src`.
 
 A monit CPU-temperature check for this host is in
 [../monit/monit_temp.sh](../monit/monit_temp.sh). It reads
