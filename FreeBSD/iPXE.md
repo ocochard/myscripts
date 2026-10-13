@@ -796,7 +796,9 @@ the memdisk step failed.
 ### (c) Working UEFI PoC — verified end to end
 
 Two runnable scripts accompany this document, both verified end to end:
-`FreeBSD/qemu-uefi-ipxe-poc.sh` for the chainload path described here, and
+`FreeBSD/qemu-uefi-ipxe-poc.sh` for the chainload path described here (now
+removed, merged into `qemu-uefi-inloader-poc.sh` on route (f); the version
+described here is in git history up to commit 8286189), and
 `FreeBSD/qemu-uefi-memdisk-poc.sh` for the RAM-disk path of §7d.
 
 This is the configuration that actually boots on a FreeBSD host without

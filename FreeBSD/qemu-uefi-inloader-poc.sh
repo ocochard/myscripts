@@ -11,14 +11,16 @@
 #
 # THIS IS THE RECOMMENDED WAY to iPXE-boot a FreeBSD disk image under UEFI.
 #
-# The other two scripts here are the routes this one supersedes: both need an
-# external memdisk payload to republish the image to the kernel, and each has
-# a catch -- qemu-uefi-ipxe-poc.sh chainloads a third-party memdisk service,
-# qemu-uefi-memdisk-poc.sh needs memdisk_uefi.elf built against a pre-2026
-# iPXE plus nvdimm.ko loaded by hand at the prompt.  Here the loader speaks
-# iPXE's download protocol natively, so there is no payload to build, no
-# module to load, and nothing to type.  Keep them for the comparison and for
-# the case where you cannot replace the loader; prefer this one otherwise.
+# qemu-uefi-memdisk-poc.sh is the route this one supersedes: it needs an
+# external memdisk payload to republish the image to the kernel, built as
+# memdisk_uefi.elf against a pre-2026 iPXE, plus nvdimm.ko loaded by hand at
+# the prompt.  Here the loader speaks iPXE's download protocol natively, so
+# there is no payload to build, no module to load, and nothing to type.  Keep
+# it for the comparison and for the case where you cannot replace the loader;
+# prefer this one otherwise.
+#
+# Set DISK=<path> to attach a virtio target disk for a real install (created
+# as an empty 4G sparse file if missing, kept across runs).
 #
 # See ./iPXE.md sec.7d for the memdisk_uefi route it replaces.
 
@@ -39,6 +41,7 @@ image=${IMAGE:-https://download.freebsd.org/releases/amd64/amd64/ISO-IMAGES/15.1
 arch=x86_64
 mem=8G                  # the image lives in RAM; 726MB plus headroom
 workdir=$(mktemp -d /tmp/d59415.XXXXXX)
+disk=${DISK:-}
 trap 'rm -rf "$workdir"' EXIT INT TERM
 
 # iPXE hardcodes "file:autoexec.ipxe", so this must keep that exact name.
@@ -63,13 +66,20 @@ for v in /usr/local/share/qemu/edk2-i386-vars.fd \
 do [ -f "$v" ] && { varstpl=$v; break; }; done
 cp "$varstpl" "$workdir/vars.fd"; chmod u+w "$workdir/vars.fd"
 
+qdisk=""
+if [ -n "$disk" ]; then
+  [ -f "$disk" ] || truncate -s 4G "$disk"
+  qdisk="-drive if=virtio,file=$disk,format=raw,media=disk"
+fi
+
 # -device virtio-rng-pci is REQUIRED: the TLS-enabled EDK2 network stack
 # blocks on entropy and never sends DHCP without it.  SLIRP gives the guest
 # working outbound NAT, which is what reaches people.freebsd.org.
-exec qemu-system-${arch} -m $mem -boot n \
+qemu-system-${arch} -m $mem -boot n \
   -drive if=pflash,unit=0,readonly=on,format=raw,file="$efi" \
   -drive if=pflash,unit=1,format=raw,file="$workdir/vars.fd" \
   -netdev user,id=net0,tftp="$workdir",bootfile=ipxe.efi \
   -device virtio-net-pci,netdev=net0 \
   -device virtio-rng-pci \
+  $qdisk \
   -display none -serial mon:stdio

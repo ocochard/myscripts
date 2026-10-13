@@ -24,11 +24,15 @@ Test & benchmark orchestration:
 - [bhyve-GPU.sh](bhyve-GPU.sh) — bhyve GPU passthrough helper
 - [pf-big-table.sh](pf-big-table.sh) — pf large-table benchmark
 
-UEFI network boot ([iPXE.md](iPXE.md) explains the whole subject):
-- [qemu-uefi-inloader-poc.sh](qemu-uefi-inloader-poc.sh) — **the recommended way to iPXE-boot a FreeBSD disk image under UEFI.** A loader.efi from the D59415..D59421 stack speaks iPXE's download protocol itself: it fetches a stock memstick into RAM and boots it, with no memdisk payload, no `nvdimm.ko`, and nothing typed at the prompt
-- [qemu-uefi-memdisk-poc.sh](qemu-uefi-memdisk-poc.sh) — superseded route: iPXE → `memdisk_uefi.elf` → unmodified release ISO from RAM. Needs a memdisk_uefi built against a pre-2026 iPXE, and `nvdimm.ko` loaded at the loader prompt
-- [qemu-uefi-ipxe-poc.sh](qemu-uefi-ipxe-poc.sh) — superseded route: iPXE chainloads a third-party memdisk service over HTTPS
-- [qemu-uefi-boot.sh](qemu-uefi-boot.sh) — UEFI boot testbed: iPXE from a local ESP, or `--mdroot` for a kernel with the root filesystem embedded (no network in the boot path at all)
+UEFI network boot ([iPXE.md](iPXE.md) explains the whole subject; § numbers below are its sections):
+
+| Script | VM | How iPXE starts | What iPXE chains | Root filesystem | Special needs | Use it for |
+|---|---|---|---|---|---|---|
+| [qemu-uefi-inloader-poc.sh](qemu-uefi-inloader-poc.sh) | qemu | firmware PXE, SLIRP TFTP | patched `loader.efi memdisk=` (§7f) | stock `.img.xz` memstick, fetched by the loader into RAM | patched loader (D59415..D59421) | **recommended**; `DISK=path` adds a persistent target disk for a real install |
+| [bhyve-uefi-http-poc.sh](bhyve-uefi-http-poc.sh) | bhyve | firmware **UEFI HTTP boot** (`-T`: PXE/TFTP) | patched `loader.efi memdisk=` (§7f) | same memstick, staged and served from this host | root, dnsmasq, tap+bridge; patched bhyve edk2 for HTTP (PR 298499) | the same route on bhyve, and firmware HTTP boot with no TFTP |
+| [qemu-uefi-memdisk-poc.sh](qemu-uefi-memdisk-poc.sh) | qemu | firmware PXE, SLIRP TFTP | `memdisk_uefi.elf` + image (§7d) | stock release ISO, republished as RAM disk + ACPI NVDIMM | memdisk_uefi built against pre-2026 iPXE, `nvdimm.ko` typed at the loader prompt (`-a`: expect) | stock, unpatched loader |
+| [qemu-uefi-boot.sh](qemu-uefi-boot.sh) | qemu | `ipxe.efi` on a local ESP, no firmware netboot (§8) | any PE payload, default `netboot.xyz.efi` | whatever the payload boots | `--mdroot`: /usr/src, root, buildkernel | testbed: iPXE without firmware netboot, or `--mdroot` (MD_ROOT kernel, no network in boot path) |
+
 - [ipxe-scripts/chain-bios.ipxe](ipxe-scripts/chain-bios.ipxe) — BIOS-era reference script; cannot work under UEFI, kept to show what the above had to replace
 
 Ports / packaging helpers:
