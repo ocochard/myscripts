@@ -28,10 +28,12 @@ UEFI network boot ([iPXE.md](iPXE.md) explains the whole subject; § numbers bel
 
 | Script | VM | How iPXE starts | What iPXE chains | Root filesystem | Special needs | Use it for |
 |---|---|---|---|---|---|---|
-| [qemu-uefi-inloader-poc.sh](qemu-uefi-inloader-poc.sh) | qemu | firmware PXE, SLIRP TFTP | patched `loader.efi memdisk=` (§7f) | stock `.img.xz` memstick, fetched by the loader into RAM | patched loader (D59415..D59421) | **recommended**; `DISK=path` adds a persistent target disk for a real install |
-| [bhyve-uefi-http-poc.sh](bhyve-uefi-http-poc.sh) | bhyve | firmware **UEFI HTTP boot** (`-T`: PXE/TFTP) | patched `loader.efi memdisk=` (§7f) | same memstick, staged and served from this host | root, dnsmasq, tap+bridge; patched bhyve edk2 for HTTP (PR 298499) | the same route on bhyve, and firmware HTTP boot with no TFTP |
-| [qemu-uefi-memdisk-poc.sh](qemu-uefi-memdisk-poc.sh) | qemu | firmware PXE, SLIRP TFTP | `memdisk_uefi.elf` + image (§7d) | stock release ISO, republished as RAM disk + ACPI NVDIMM | memdisk_uefi built against pre-2026 iPXE, `nvdimm.ko` typed at the loader prompt (`-a`: expect) | stock, unpatched loader |
+| [qemu-uefi-inloader-poc.sh](qemu-uefi-inloader-poc.sh) | qemu | firmware PXE, SLIRP TFTP | main `loader.efi memdisk=` (§7f) | stock `.img.xz` memstick, fetched by the loader into RAM | `loader.efi` from main (16.0-CURRENT); not in stable/15 | **recommended**; `DISK=path` adds a persistent target disk for a real install |
+| [bhyve-uefi-http-poc.sh](bhyve-uefi-http-poc.sh) | bhyve | firmware **UEFI HTTP boot** (`-T`: PXE/TFTP) | main `loader.efi memdisk=` (§7f) | same memstick, staged and served from this host | root, dnsmasq, tap+bridge; patched bhyve edk2 for HTTP (PR 298499) | the same route on bhyve, and firmware HTTP boot with no TFTP |
+| [qemu-uefi-memdisk-poc.sh](qemu-uefi-memdisk-poc.sh) | qemu | firmware PXE, SLIRP TFTP | `memdisk_uefi.elf` + image (§7d) | stock release ISO, republished as RAM disk + ACPI NVDIMM | memdisk_uefi built against pre-2026 iPXE, `nvdimm.ko` typed at the loader prompt (`-a`: expect) | a loader without `memdisk=` (15.x release) |
 | [qemu-uefi-boot.sh](qemu-uefi-boot.sh) | qemu | `ipxe.efi` on a local ESP, no firmware netboot (§8) | any PE payload, default `netboot.xyz.efi` | whatever the payload boots | `--mdroot`: /usr/src, root, buildkernel | testbed: iPXE without firmware netboot, or `--mdroot` (MD_ROOT kernel, no network in boot path) |
+
+The default loader URL, `people.freebsd.org/~olivier/iPXE/loader.x64.efi`, is a main build (2026-09-24) plus the loader fixes in [docs/](docs/) (`loader_*.patch`), not yet upstream. Stock main still allocates the image as `EfiLoaderData`, which corrupts the root filesystem at runtime on firmware without `EFI_RAM_DISK_PROTOCOL` (`docs/bugreport_loader_memdisk_memtype.txt`). The VM boots here used the fixed build; stock main is untested in them.
 
 - [ipxe-scripts/chain-bios.ipxe](ipxe-scripts/chain-bios.ipxe) — BIOS-era reference script; cannot work under UEFI, kept to show what the above had to replace
 

@@ -750,16 +750,18 @@ EOF
 
 # Why iPXE boots from a local ESP and not over the network:
 #
-#  1. FreeBSD's packaged edk2 has no usable UEFI network stack, so "-boot n"
-#     is a silent no-op that falls through to the EFI Shell. (Not detectable
-#     by grepping the .fd - the DXE volume is LZMA-compressed. Verify by
-#     running "ifconfig -l" in the EFI Shell: it prints nothing.)
-#  2. Even with a working stack, SLIRP's single unconditional bootfile= would
-#     hand iPXE back to iPXE forever - it cannot match DHCP option 77.
+#  1. Firmware netboot is not needed, so this testbed also covers firmware
+#     whose netboot is missing or broken. qemu's bundled edk2 CAN netboot:
+#     "-boot n" works once -device virtio-rng-pci is added (without it the
+#     TLS-enabled stack never binds and BDS falls through to the EFI Shell);
+#     qemu-uefi-inloader-poc.sh boots that way.
+#  2. SLIRP's single unconditional bootfile= cannot match DHCP option 77, so
+#     a firmware-netbooted iPXE asking for its script gets ipxe.efi again.
+#     The netboot scripts avoid that with autoexec.ipxe next to ipxe.efi.
 #
-# Booting ipxe.efi from an ESP solves both. iPXE then runs its OWN DHCP,
-# picks up bootfile=boot.ipxe, and needs no EMBED= rebuild.
-# See ~/myscripts/FreeBSD/iPXE.md sections 5d, 8 and 9.
+# From an ESP, iPXE runs its OWN DHCP, picks up bootfile=boot.ipxe, and
+# needs no EMBED= rebuild.
+# See ~/myscripts/FreeBSD/iPXE.md sections 5d, 5e, 8 and 9.
 ipxe_efi="/usr/local/share/ipxe/ipxe.efi-${arch}"
 if ! [ -f "${ipxe_efi}" ]; then
   echo "missing ${ipxe_efi} - install the ipxe package: pkg install ipxe" >&2
