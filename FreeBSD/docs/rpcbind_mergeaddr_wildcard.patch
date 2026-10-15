@@ -1,0 +1,60 @@
+diff --git a/usr.sbin/rpcbind/check_bound.c b/usr.sbin/rpcbind/check_bound.c
+index 820f76d37346..4a6e6c366a6c 100644
+--- a/usr.sbin/rpcbind/check_bound.c
++++ b/usr.sbin/rpcbind/check_bound.c
+@@ -43,10 +43,13 @@
+ #include <sys/types.h>
+ #include <sys/socket.h>
+ 
++#include <netinet/in.h>
++
+ #include <rpc/rpc.h>
+ #include <rpc/svc_dg.h>
+ 
+ #include <netconfig.h>
++#include <stdbool.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -146,6 +149,32 @@ is_bound(const char *netid, const char *uaddr)
+ 	return (check_bound(fdl, uaddr));
+ }
+ 
++/*
++ * A datagram transport bound to the wildcard address reports that address as
++ * its local one, which says nothing about where a request arrived.
++ */
++static bool
++is_anyaddr(const struct netbuf *nb)
++{
++	const struct sockaddr_in *sin;
++#ifdef INET6
++	const struct sockaddr_in6 *sin6;
++#endif
++
++	switch (((const struct sockaddr *)nb->buf)->sa_family) {
++	case AF_INET:
++		sin = nb->buf;
++		return (sin->sin_addr.s_addr == htonl(INADDR_ANY));
++#ifdef INET6
++	case AF_INET6:
++		sin6 = nb->buf;
++		return (IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr));
++#endif
++	default:
++		return (false);
++	}
++}
++
+ /*
+  * Returns NULL if there was some system error.
+  * Returns "" if the address was not bound, i.e the server crashed.
+@@ -177,7 +206,7 @@ mergeaddr(SVCXPRT *xprt, char *netid, char *uaddr, char *saddr)
+ 	 * otherwise use the info from the SVCXPRT.
+ 	 */
+ 	callee = svc_getrpccallee(xprt);
+-	if (callee != NULL && callee->buf != NULL) {
++	if (callee != NULL && callee->buf != NULL && !is_anyaddr(callee)) {
+ 		c_uaddr = taddr2uaddr(fdl->nconf, callee);
+ 		allocated_uaddr = c_uaddr;
+ 	} else if (saddr != NULL) {

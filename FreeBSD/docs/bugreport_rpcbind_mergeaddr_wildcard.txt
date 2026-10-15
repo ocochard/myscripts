@@ -1,0 +1,104 @@
+Category: base
+Component: bin
+Version: 16.0-CURRENT
+
+Summary: rpcbind: GETADDR returns the address of an unrelated interface to
+IPv6 clients, so NFS mounts over IPv6 time out
+
+
+HOW TO REPEAT
+
+Run rpcbind with no -h option (the default) on a host with global IPv6
+addresses on more than one interface.  From an IPv6 client on the subnet of
+an interface that is not the first one getifaddrs() returns:
+
+    # mount -t nfs [2001:db8:1::1]:/usr/src /usr/src
+    [tcp6] [2001:db8:1::1]:/usr/src: nfsd: RPCPROG_NFS: RPC: Remote system
+    error - Operation timed out
+
+ping6 works, and so does a TCP connect to 2049.  A capture on the client
+shows the rpcbind lookup answered, and then SYNs to the server's address on
+another interface (here the first one, a lab network the client cannot
+reach):
+
+    2001:db8:1::2.55955 > 2001:db8:1::1.111: UDP, length 104
+    2001:db8:1::1.111 > 2001:db8:1::2.55955: UDP, length 148
+    2001:db8:1::2.17368 > 2001:db8:bad::1.2049: Flags [S]  (retransmitted)
+
+The attached script reproduces it without NFS.  It runs rpcbind in a vnet
+jail with two interfaces, the wrong one first, and asks for rpcbind's own
+address over udp6:
+
+    # sh rpcbind_getaddr_wildcard_repro.sh
+    GETADDR(rpcbind) over udp6 from 2001:db8:1::2 to 2001:db8:1::1:
+    2001:db8:bad::1.0.111
+
+
+CAUSE
+
+mergeaddr() in usr.sbin/rpcbind/check_bound.c takes the "contact" hint for
+addrmerge() from svc_getrpccallee(xprt), which is &xprt->xp_ltaddr.  For a
+datagram transport that is the address the socket is bound to.  Without -h,
+rpcbind binds its udp and udp6 sockets to the wildcard address, so the hint
+is always 0.0.0.0 or ::.
+
+addrmerge() then cannot match it.  The wildcard equals no interface address,
+and the subnet test compares the hint, not the caller, against each
+interface's netmask.  It falls through to the "any non-loopback, non-p2p
+address" rule and returns whichever such address getifaddrs() lists first.
+
+This is a regression from 9f48eea36607 ("rpcbind: get contact addr from
+xprt members").  Before it, the hint came from svc_dg_data's su_srcaddr,
+which is only allocated for IPv4 wildcard sockets and is filled from
+IP_RECVDSTADDR with the real destination.  IPv6 left it NULL and fell
+through to the address the client put in the request (saddr), which is
+correct.  xp_ltaddr is always set, so that fallback is now never reached.
+
+IPv4 is affected in the same way in principle, but the FreeBSD client asks
+IPv4 servers with portmap v2 GETPORT, which returns only a port.  A capture
+of rpcinfo -T udp shows a 56 byte request and a 28 byte reply.  IPv6 clients
+use rpcbind v3/v4 GETADDR, which returns the merged universal address.
+
+Connection-oriented transports are not affected: svc_vc sets xp_ltaddr from
+getsockname() on the accepted socket, which is a specific address.
+
+
+FIX
+
+Ignore a wildcard callee address in mergeaddr(), so the existing saddr and
+caller fallbacks are used.  Patch attached (rpcbind_mergeaddr_wildcard.patch).
+
+Suggested commit message:
+
+    rpcbind: Ignore a wildcard callee address in mergeaddr()
+
+    A datagram transport bound to the wildcard address reports it as
+    xp_ltaddr, so since 9f48eea36607 addrmerge() gets 0.0.0.0 or :: as its
+    hint, matches no interface and returns the first usable one.  IPv6
+    GETADDR clients on any other interface get an unreachable address and
+    NFS mounts over IPv6 time out.
+
+    Fall back to the client supplied or caller address in that case, as
+    before 9f48eea36607.
+
+    Fixes:		9f48eea36607 ("rpcbind: get contact addr from xprt members")
+    MFC after:	1 week
+
+
+TESTED
+
+Built with WARNS=6, with and without INET6, no new warnings.  The repro
+script with the patched binary:
+
+    # sh rpcbind_getaddr_wildcard_repro.sh /path/to/patched/rpcbind
+    GETADDR(rpcbind) over udp6 from 2001:db8:1::2 to 2001:db8:1::1:
+    program 100000 version 4 ready and waiting
+    2001:db8:1::1.0.111
+
+Stock rpcbind returns 2001:db8:bad::1.0.111 and rpcinfo times out.  The
+IPv4 check in the same script answers on both binaries, through portmap v2.
+
+With the patched rpcbind on the real server, the NFSv3 mount over IPv6
+from the first example now succeeds (nfsv3,tcp, connection on tcp6 2049).
+
+Base: main at f84cdc258430 (2026-10-14).
