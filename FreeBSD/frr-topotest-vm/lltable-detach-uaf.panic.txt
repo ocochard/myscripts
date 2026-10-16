@@ -1,0 +1,52 @@
+Panic from lltable-detach-uaf.c on an UNPATCHED GENERIC-NODEBUG kernel
+(FreeBSD 16.0-CURRENT, bhyve guest, 4 vCPU). Reproduced in 3 seconds.
+Two CPUs fault at once (the race): rts_send() handles an RTF_LLDATA
+RTM_DELETE via lla_rt_output() (inlined) and locks a freed lltable in
+lltable_delete_addr(). Fault VA 0x488 is the mutex inside the freed table.
+
+starting reproducer (30s budget)
+hammering RTF_LLDATA deletes vs lo clone/destroy for 30s (expect panic)...
+Fatal trap 12: page fault while in kernel mode
+cpuid = 0; apic id = 00
+fault virtual address	= 0x488
+fault code		= supervisor read data, page not present
+instruction pointer	= 0x20:0xffffffff80c02b59
+stack pointer	        = 0x28:0xfffffe0067a33940
+frame pointer	        = 0x28:0xfffffe0067a339d0
+processor eflags	= 
+Fatal trap 12: page fault while in kernel mode
+cpuid = 1; apic id = 01
+fault virtual address	= 0x488
+fault code		= supervisor read data, page not present
+instruction pointer	= 0x20:0xffffffff80c02b59
+stack pointer	        = 0x28:0xfffffe006792f940
+frame pointer	        = 0x28:0xfffffe006792f9d0
+processor eflags	= interrupt enabled, resume, IOPL = 0
+current thread		= 929/100115 (lltable-detach-uaf/lltable-detach-uaf)
+rdi: fffff80001b6d840 rsi: 0000000000000004 rdx: 0000000000000000
+rcx: fffff80001b6d828  r8: ffffffffffffffff  r9: ffffffffffffffff
+rax: 0000000000000000 rbx: fffff8013f73b780 rbp: fffffe006792f9d0
+r10: 0000000000000000 r11: fffff8013f73bcd0 r12: 0000000000000000
+r13: fffff8013f73b780 r14: fffffe006792f990 r15: fffff80001b6d840
+panic: page fault
+cpuid = 1
+time = 1792182218
+KDB: stack backtrace:
+db_trace_self_wrapper() at db_trace_self_wrapper+0x36/frame 0xfffffe006792f680
+vpanic() at vpanic+0x149/frame 0xfffffe006792f7b0
+panic() at panic+0x43/frame 0xfffffe006792f810
+trap_pfault() at trap_pfault+0x3a8/frame 0xfffffe006792f870
+calltrap() at calltrap+0x8/frame 0xfffffe006792f870
+--- trap 0xc, rip = 0xffffffff80c02b59, rsp = 0xfffffe006792f940, rbp = 0xfffffe006792f9d0 ---
+__mtx_lock_sleep() at __mtx_lock_sleep+0xd9/frame 0xfffffe006792f9d0
+lltable_delete_addr() at lltable_delete_addr+0x145/frame 0xfffffe006792fa00
+rts_send() at rts_send+0x8b5/frame 0xfffffe006792fbe0
+sosend_generic_locked() at sosend_generic_locked+0x5ff/frame 0xfffffe006792fc90
+sosend_generic() at sosend_generic+0x61/frame 0xfffffe006792fce0
+sousrsend() at sousrsend+0x5f/frame 0xfffffe006792fd40
+dofilewrite() at dofilewrite+0x82/frame 0xfffffe006792fd90
+sys_write() at sys_write+0x132/frame 0xfffffe006792fe00
+amd64_syscall() at amd64_syscall+0x136/frame 0xfffffe006792ff30
+fast_syscall_common() at fast_syscall_common+0xf8/frame 0xfffffe006792ff30
+--- syscall (4, FreeBSD ELF64, write), rip = 0x2536ba, rsp = 0x824627d58, rbp = 0x824627d80 ---
+Uptime: 3s

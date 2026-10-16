@@ -13,7 +13,9 @@
  *
  * This program is the whole race, no FRR involved: hammer threads blast
  * RTF_LLDATA deletes (one IPv4, one IPv6) at a victim interface index while
- * the main thread creates and destroys that interface in a loop.
+ * the main thread clones and destroys a loopback interface (loN) in a loop.
+ * Any cloned interface gets an IPv4/IPv6 lltable from in_ifattach() at
+ * arrival; lo is used because it is the simplest cloner (no VIMAGE needed).
  *
  * On an unpatched FreeBSD 16-CURRENT GENERIC kernel (VIMAGE + INVARIANTS)
  * this panics within seconds, typically a page fault in LLTABLE_LOCK() under
@@ -119,21 +121,21 @@ hammer(void *arg __attribute__((unused)))
 	return (NULL);
 }
 
-/* ifconfig epair create / destroy via ioctl, returns ifindex of epairNa. */
+/* Clone a loopback interface; the kernel fills ifr_name with e.g. "lo1". */
 static unsigned int
-epair_create(int s, char name[IFNAMSIZ])
+clone_create(int s, char name[IFNAMSIZ])
 {
 	struct ifreq ifr;
 	memset(&ifr, 0, sizeof(ifr));
-	strlcpy(ifr.ifr_name, "epair", sizeof(ifr.ifr_name));
-	if (ioctl(s, SIOCIFCREATE2, &ifr) < 0)
-		err(1, "SIOCIFCREATE2 epair");
-	strlcpy(name, ifr.ifr_name, IFNAMSIZ);	/* kernel fills epairNa */
+	strlcpy(ifr.ifr_name, "lo", sizeof(ifr.ifr_name));
+	if (ioctl(s, SIOCIFCREATE, &ifr) < 0)
+		err(1, "SIOCIFCREATE lo");
+	strlcpy(name, ifr.ifr_name, IFNAMSIZ);
 	return (if_nametoindex(name));
 }
 
 static void
-epair_destroy(int s, const char *name)
+clone_destroy(int s, const char *name)
 {
 	struct ifreq ifr;
 	memset(&ifr, 0, sizeof(ifr));
@@ -158,7 +160,7 @@ main(int argc, char **argv)
 		if (pthread_create(&th[i], NULL, hammer, NULL) != 0)
 			errx(1, "pthread_create");
 
-	printf("hammering RTF_LLDATA deletes vs epair destroy for %ds "
+	printf("hammering RTF_LLDATA deletes vs lo clone/destroy for %ds "
 	    "(expect panic)...\n", seconds);
 	fflush(stdout);
 
@@ -166,9 +168,9 @@ main(int argc, char **argv)
 	unsigned long iters = 0;
 	while (time(NULL) < end) {
 		char name[IFNAMSIZ];
-		unsigned int idx = epair_create(ctl, name);
+		unsigned int idx = clone_create(ctl, name);
 		victim_idx = idx;		/* open the window */
-		epair_destroy(ctl, name);	/* free the lltable under us */
+		clone_destroy(ctl, name);	/* free the lltable under us */
 		victim_idx = 0;
 		iters++;
 	}
