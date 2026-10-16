@@ -1,0 +1,98 @@
+diff --git sys/netinet/in.c sys/netinet/in.c
+index 7ebcdf993d26..c65eb964f580 100644
+--- sys/netinet/in.c
++++ sys/netinet/in.c
+@@ -1405,6 +1405,16 @@ in_ifdetach(void *arg __unused, struct ifnet *ifp)
+ 	}
+ 
+ 	igmp_domifdetach(ifp);
++
++	/*
++	 * The ifnet is still reachable by index, and threads in the network
++	 * epoch, e.g. a routing socket RTM_DELETE of an RTF_LLINFO entry,
++	 * dereference if_inet and its lltable without a reference.  Hide
++	 * if_inet from new readers and wait out the current ones before
++	 * freeing.
++	 */
++	atomic_store_ptr(&ifp->if_inet, NULL);
++	NET_EPOCH_WAIT();
+ 	lltable_free(ii->ii_llt);
+ 	free(ii, M_IFADDR);
+ }
+@@ -1923,9 +1933,12 @@ in_lltattach(struct ifnet *ifp)
+ struct lltable *
+ in_lltable_get(struct ifnet *ifp)
+ {
+-	/* XXXGL: ??? */
+-	if (ifp->if_inet == NULL)
++	struct in_ifinfo *ii;
++
++	/* NULL once in_ifdetach() has started tearing the interface down. */
++	ii = atomic_load_ptr(&ifp->if_inet);
++	if (ii == NULL)
+ 		return (NULL);
+ 
+-	return (((struct in_ifinfo *)ifp->if_inet)->ii_llt);
++	return (ii->ii_llt);
+ }
+diff --git sys/netinet6/in6.c sys/netinet6/in6.c
+index cb0c25ec78d2..f492576b9c33 100644
+--- sys/netinet6/in6.c
++++ sys/netinet6/in6.c
+@@ -2591,10 +2591,14 @@ in6_lltattach(struct ifnet *ifp)
+ struct lltable *
+ in6_lltable_get(struct ifnet *ifp)
+ {
+-	if (ifp->if_inet6 == NULL)
++	struct in6_ifextra *ext;
++
++	ext = atomic_load_ptr(&ifp->if_inet6);
++	if (ext == NULL)
+ 		return (NULL);
+ 
+-	return (ifp->if_inet6->lltable);
++	/* NULL once in6_ifdeparture() has started tearing the table down. */
++	return (atomic_load_ptr(&ext->lltable));
+ }
+ 
+ void
+diff --git sys/netinet6/in6_ifattach.c sys/netinet6/in6_ifattach.c
+index 6c81d351fb23..4d302f8ee43f 100644
+--- sys/netinet6/in6_ifattach.c
++++ sys/netinet6/in6_ifattach.c
+@@ -912,6 +912,7 @@ static void
+ in6_ifdeparture(void *arg __unused, struct ifnet *ifp)
+ {
+ 	struct in6_ifextra *ext = ifp->if_inet6;
++	struct lltable *llt;
+ 
+ 	/* XXXGL: can this happen after IFT_PFSYNC is gone? */
+ 	if (ifp->if_inet6 == NULL)
+@@ -925,15 +926,20 @@ in6_ifdeparture(void *arg __unused, struct ifnet *ifp)
+ 	if (!VNET_IS_SHUTTING_DOWN(ifp->if_vnet))
+ #endif
+ 		_in6_ifdetach(ifp, 1);
+-	/*
+-	 * XXXGL: mld and nd bits are left in a consistent state after
+-	 * destructors, but I'm not sure if it safe to call lltable_free() here.
+-	 * Individual lle entries are epoch(9) protected, but the table itself
+-	 * isn't.
+-	 */
+ 	mld_domifdetach(ifp);
+ 	nd6_ifdetach(ifp);
+-	lltable_free(ext->lltable);
++	/*
++	 * Individual lle entries are epoch(9) protected, but the table itself
++	 * isn't, and the ifnet is still reachable by index: threads in the
++	 * network epoch, e.g. a routing socket RTM_DELETE of an RTF_LLDATA
++	 * entry, can still reach it through in6_lltable_get().  Hide the
++	 * table from new readers and wait out the current ones before freeing.
++	 * The rest of in6_ifextra stays valid until in6_ifextra_free().
++	 */
++	llt = ext->lltable;
++	atomic_store_ptr(&ext->lltable, NULL);
++	NET_EPOCH_WAIT();
++	lltable_free(llt);
+ 	NET_EPOCH_CALL(in6_ifextra_free, &ext->epoch_ctx);
+ }
+ EVENTHANDLER_DEFINE(ifnet_departure_event, in6_ifdeparture, NULL,

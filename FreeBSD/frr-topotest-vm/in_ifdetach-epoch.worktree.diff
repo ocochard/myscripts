@@ -1,0 +1,37 @@
+diff --git sys/netinet/in.c sys/netinet/in.c
+index 7ebcdf993d26..c65eb964f580 100644
+--- sys/netinet/in.c
++++ sys/netinet/in.c
+@@ -1405,6 +1405,16 @@ in_ifdetach(void *arg __unused, struct ifnet *ifp)
+ 	}
+ 
+ 	igmp_domifdetach(ifp);
++
++	/*
++	 * The ifnet is still reachable by index, and threads in the network
++	 * epoch, e.g. a routing socket RTM_DELETE of an RTF_LLINFO entry,
++	 * dereference if_inet and its lltable without a reference.  Hide
++	 * if_inet from new readers and wait out the current ones before
++	 * freeing.
++	 */
++	atomic_store_ptr(&ifp->if_inet, NULL);
++	NET_EPOCH_WAIT();
+ 	lltable_free(ii->ii_llt);
+ 	free(ii, M_IFADDR);
+ }
+@@ -1923,9 +1933,12 @@ in_lltattach(struct ifnet *ifp)
+ struct lltable *
+ in_lltable_get(struct ifnet *ifp)
+ {
+-	/* XXXGL: ??? */
+-	if (ifp->if_inet == NULL)
++	struct in_ifinfo *ii;
++
++	/* NULL once in_ifdetach() has started tearing the interface down. */
++	ii = atomic_load_ptr(&ifp->if_inet);
++	if (ii == NULL)
+ 		return (NULL);
+ 
+-	return (((struct in_ifinfo *)ifp->if_inet)->ii_llt);
++	return (ii->ii_llt);
+ }

@@ -1,0 +1,9 @@
+netinet: wait for the net epoch before freeing if_inet
+
+in_ifdetach() freed if_inet and its lltable while the ifnet was still
+reachable by index, so an RTF_LLDATA RTM_DELETE racing with interface
+destruction used freed memory.  Clear if_inet, NET_EPOCH_WAIT(), then
+free, as before 0d469d23715d.
+
+PR:		<bugzilla number>
+Fixes:		0d469d23715d ("net: attach IPv4 and IPv6 stacks to an interface with EVENTHANDLER(9)")
