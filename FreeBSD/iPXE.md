@@ -406,6 +406,87 @@ unconditional filename with no matching logic. So *this* variant — where the
 firmware also netboots — loops under plain qemu user networking. Method (d)
 below sidesteps the loop by not netbooting iPXE itself.
 
+#### No option-77 matching on the DHCP server: embed a chain script
+
+Some DHCP servers cannot match on user-class at all. A Freebox (the home LAN
+gateway here) sets option 66 (next-server) and 67 (filename) once, for every
+client. Measured 2026-10-16 on a ThinkPad T420, with the request carrying
+user-class `iPXE` and the reply still naming the binary:
+
+```
+User-Class (77), length 4:      0x0140:  6950 5845   iPXE
+192.168.100.254.67 > 255.255.255.255.68: BOOTP/DHCP, Reply
+  TFTP (66), length 13: "192.168.100.1"
+  BF (67), length 8: "ipxe.efi"
+192.168.100.78.58938 > 192.168.100.1.69: TFTP, RRQ "ipxe.efi" octet blksize 1432 tsize 0
+```
+
+Every RRQ in that capture was `ipxe.efi`; `autoexec.ipxe` was never
+requested. The loop also does not need firmware netboot. Here the T420 booted
+iPXE from its own ESP (no `autoexec.ipxe` there), autobooted, and chained
+`ipxe.efi` from the DHCP filename. The chained copy then printed only
+`file:/autoexec.ipxe... Not found` and autobooted again.
+
+That last line is why `autoexec.ipxe` on the TFTP server cannot break this
+loop. `efi_autoexec_load()` uses the first loader whose protocol is present
+(§5e), and an iPXE loaded by iPXE finds a filesystem protocol on its device,
+so it tries `file:` only and never TFTP. That iPXE provides this filesystem
+to the images it starts is inferred from the `file:` lines below; I have not
+read it in the source.
+
+The fix needs no DHCP change: build the served binary with an `EMBED=`
+script that never uses the DHCP filename. The embed runs before autoboot,
+and it wins over any `autoexec.ipxe` (§5e), so the chained copy runs it too:
+
+```
+#!ipxe
+dhcp || goto fail
+isset ${next-server} || goto fail
+echo [embed] iPXE ${version}: chain tftp://${next-server}/autoexec.ipxe
+chain tftp://${next-server}/autoexec.ipxe || goto fail
+:fail
+echo [embed] FAILED, dropping to shell
+shell
+```
+
+Full file: [ipxe-scripts/embed-chain-autoexec.ipxe](ipxe-scripts/embed-chain-autoexec.ipxe).
+The real boot policy stays in the server's `autoexec.ipxe`, editable without
+a rebuild. Every failure path ends in `shell`: falling back to autoboot
+would restart the loop.
+
+Build it as in §5a, `snponly.efi` for the reasons in §9:
+
+```console
+$ gmake bin-x86_64-efi/snponly.efi EMBED=embed-chain-autoexec.ipxe \
+    CC=gcc14 HOST_CC=gcc14 LD=/usr/local/bin/ld.bfd \
+    OBJCOPY=/usr/local/bin/objcopy OBJDUMP=/usr/local/bin/objdump \
+    AR=/usr/local/bin/ar RANLIB=/usr/local/bin/ranlib NM=/usr/local/bin/nm
+$ strings -a bin-x86_64-efi/snponly.efi | grep '\[embed\]'
+```
+
+Verified in qemu with edk2 and SLIRP `bootfile=ipxe.efi`: a single
+unconditional filename, so the same condition as the Freebox. Both entry
+paths reach the server script:
+
+```
+# firmware PXE -> embedded ipxe.efi
+>>Start PXE over IPv4.
+[embed] iPXE 2.0.0+: chain tftp://10.0.2.2/autoexec.ipxe
+tftp://10.0.2.2/autoexec.ipxe... ok
+
+# stock ipxe.efi on the ESP -> autoboot -> DHCP filename -> embedded ipxe.efi
+file:/autoexec.ipxe... Not found (https://ipxe.org/7f4de18e)
+[embed] iPXE 2.0.0+: chain tftp://10.0.2.2/autoexec.ipxe
+tftp://10.0.2.2/autoexec.ipxe... ok
+```
+
+On hardware, the T420 booted the stock ESP iPXE, then the embedded binary from
+nas, then the server script, then `loader.efi memdisk=` and the memstick.
+
+When deploying, replace the binary with a new file and `mv`, not `cp`. A
+`cp` writes into the existing inode and so changes every hardlink of it too.
+Then repoint the `ipxe.efi\377` name (§9).
+
 ### (c) Typed by hand at the `iPXE>` prompt
 
 Interactive. Fine for experimentation, useless for automation.
@@ -534,7 +615,9 @@ autoexec.ipxe... Not found (https://ipxe.org/2d12618e)
 /autoexec.ipxe... Not found (https://ipxe.org/2d12618e)
 ```
 
-So a network-loaded iPXE **does** honour `autoexec.ipxe`. Both messages are
+So a network-loaded iPXE **does** honour `autoexec.ipxe`, when the firmware
+loaded it. An iPXE loaded by another iPXE finds a filesystem first and tries
+`file:` only (§5b, embed a chain script). Both messages are
 normal when the file is absent, and they appear *before* the banner in a
 completely healthy boot.
 
@@ -2372,7 +2455,8 @@ pflash.
 | `NBP filesize is 0 Bytes` / `PXE-E23` although option 67 names the right file | firmware appended the DHCP END byte to the filename and asked for `<name>\xff`. Check the RRQ hex before blaming the DHCP server, whose reply is usually well formed; hardlink the 0xFF name (§9) |
 | replaced `ipxe.efi` but the machine still boots the old binary | the 0xFF hardlink is a second name on the same inode; `mv` over one name leaves the other on the old bytes. Repoint both, verify by inode and md5 (§9) |
 | "unsupported" / image-load failure | wrong architecture in the PE machine field (i386 binary on x86_64 firmware, or vice versa) |
-| iPXE loads iPXE in a loop | DHCP returns the same filename to both firmware and iPXE; needs option-77 matching (§5b), impossible under SLIRP — boot iPXE from an ESP instead (§5d) |
+| iPXE loads iPXE in a loop | DHCP returns the same filename to both firmware and iPXE; needs option-77 matching (§5b). Without it (SLIRP, Freebox), serve an `EMBED=` build that chains `autoexec.ipxe` itself (§5b) |
+| chained iPXE prints `file:/autoexec.ipxe... Not found` and never tries TFTP | an iPXE started by another iPXE finds a filesystem first and only tries `file:`; a server-side `autoexec.ipxe` cannot reach it. Use the `EMBED=` chain script (§5b) |
 | iPXE starts but ignores your script | no embedded script (the packaged binary has none, §5a), no `bootfile=` for iPXE's own DHCP (§5d), and no `autoexec.ipxe` on the boot filesystem (§5e) |
 | `autoexec.ipxe... ok` but an embedded script runs instead | an `EMBED=` build always wins: `first_image()` returns the list head, and the embed registers before autoexec (§5e). Rebuild the target without `EMBED=` to use the server-side file |
 | two `autoexec.ipxe... Not found` lines, then nothing at all | normal lines, abnormal silence. If no DHCP follows on the wire, iPXE hung in `efi_driver_connect_all()`: native drivers colliding with the firmware SNP. Use `snponly.efi` (§9) |

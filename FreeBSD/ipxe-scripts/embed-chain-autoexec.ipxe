@@ -1,0 +1,19 @@
+#!ipxe
+# EMBED script: breaks the "iPXE loads iPXE" loop when the DHCP server hands
+# the same filename (ipxe.efi) to the firmware and to iPXE, and cannot match
+# user-class "iPXE" (option 77) to tell them apart, e.g. a Freebox.
+#
+# An embedded script runs before autoboot, so this iPXE never uses the DHCP
+# filename: it always fetches the real script, autoexec.ipxe, from the TFTP
+# server DHCP named. Every failure stops at the shell, never back in autoboot.
+#
+# Build (GNU ld.bfd, see ../iPXE.md section 5a):
+#   gmake bin-x86_64-efi/snponly.efi EMBED=/path/to/embed-chain-autoexec.ipxe ...
+# Full explanation: ../iPXE.md section 5b.
+dhcp || goto fail
+isset ${next-server} || goto fail
+echo [embed] iPXE ${version}: chain tftp://${next-server}/autoexec.ipxe
+chain tftp://${next-server}/autoexec.ipxe || goto fail
+:fail
+echo [embed] FAILED, dropping to shell
+shell
