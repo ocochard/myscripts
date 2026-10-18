@@ -219,6 +219,67 @@ $ df -h | grep ubuntu
 Use gparted from the Ubuntu LiveCD:
 Able to move and resize the / partition.
 
+## Mount a Freebox (Delta) RAID1 disk
+
+The Freebox Delta builds its disk mirror as a Linux md RAID1 with a v1.1
+superblock (stored at sector 0, so no partition table) and an ext4 filesystem
+directly on the array. A single disk taken from the mirror, plugged over USB,
+shows up with no partition and no filesystem type in `lsblk`:
+
+```
+$ lsblk -o NAME,SIZE,FSTYPE /dev/sda
+NAME   SIZE FSTYPE
+sda  298.1G
+```
+
+`fdisk` can also find a stale GPT header at LBA 1 left over from the disk's
+previous life (here a Windows Storage Spaces pool). Ignore it: the md
+superblock replaced the protective MBR, and the GPT does not describe the
+current layout.
+
+Confirm it is an md member:
+
+```
+$ sudo mdadm --examine /dev/sda
+        Version : 1.1
+     Array UUID : d9d4ccff:1e2bb8ce:b44eab29:eeb42521
+           Name : Freebox
+     Raid Level : raid1
+   Raid Devices : 2
+    Data Offset : 256 sectors
+   Super Offset : 0 sectors
+```
+
+Assemble the array degraded (one disk out of two) and **read-only**, so
+nothing is written to the disk, not even the md superblock event counter. The
+disk can then go back into the Freebox without triggering a resync:
+
+```
+sudo mdadm --assemble --readonly --run /dev/md/freebox /dev/sda
+$ cat /proc/mdstat
+md127 : active (read-only) raid1 sda[1]
+      312538456 blocks super 1.1 [2/1] [_U]
+```
+
+Mount the ext4 read-only. `noload` skips the journal replay, which would
+otherwise fail on a read-only device (the Freebox does not cleanly unmount
+when unplugged):
+
+```
+sudo mkdir -p /mnt/freebox
+sudo mount -t ext4 -o ro,noload /dev/md/freebox /mnt/freebox
+```
+
+Files belong to uid/gid 4242 (Freebox user): read them with sudo, or copy
+them out with `sudo cp -a` / `rsync`.
+
+Unmount and stop the array before unplugging:
+
+```
+sudo umount /mnt/freebox
+sudo mdadm --stop /dev/md/freebox
+```
+
 ## Network
 
 ### Setup
