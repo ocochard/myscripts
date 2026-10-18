@@ -280,6 +280,51 @@ sudo umount /mnt/freebox
 sudo mdadm --stop /dev/md/freebox
 ```
 
+## Mount a qcow2 disk image
+
+Attach the image as a block device with `qemu-nbd` (package `qemu-utils`), in
+read-only mode so the image is left untouched. `max_part` makes the kernel
+create one device per partition:
+
+```
+sudo apt install qemu-utils
+sudo modprobe nbd max_part=16
+sudo qemu-nbd --read-only --connect=/dev/nbd0 image.qcow2
+lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTLABEL /dev/nbd0
+```
+
+Example with a Home Assistant OS (HAOS) VM image: user data, including the
+backups, lives on the `hassos-data` ext4 partition:
+
+```
+$ lsblk -o NAME,SIZE,FSTYPE,LABEL /dev/nbd0
+nbd0       120G
+├─nbd0p1    32M vfat     hassos-boot
+├─nbd0p2    24M squashfs
+├─nbd0p3   256M erofs
+├─nbd0p4    24M squashfs
+├─nbd0p5   256M erofs
+├─nbd0p6     8M
+├─nbd0p7    96M ext4     hassos-overlay
+└─nbd0p8 119.3G ext4     hassos-data
+sudo mkdir -p /mnt/haos
+sudo mount -t ext4 -o ro,noload /dev/nbd0p8 /mnt/haos
+```
+
+HAOS paths on that partition:
+- `supervisor/backup/*.tar`: backups. Each tar holds a `backup.json` with its
+  type (`full` or `partial`), name, date and content:
+  `sudo tar -xOf supervisor/backup/XXXX.tar ./backup.json`
+- `supervisor/homeassistant/`: live Home Assistant configuration
+- `supervisor/addons/data/`: add-ons data
+
+Unmount and detach:
+
+```
+sudo umount /mnt/haos
+sudo qemu-nbd --disconnect /dev/nbd0
+```
+
 ## Network
 
 ### Setup
