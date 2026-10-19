@@ -1,0 +1,56 @@
+loader.efi memdisk=: free the unused tail of the decompression buffer once the
+image is complete, instead of keeping 4x the compressed size until the kernel.
+
+Bug report: FreeBSD/docs/bugreport_loader_memdisk_memtype.md (section 3)
+Companions: FreeBSD/docs/loader_memdisk_memtype.patch,
+            FreeBSD/docs/md_preload_mapdev.patch
+Base: main at bdcfeac3e1cb (2026-10-17); applies with or without the memtype patch.
+
+diff --git a/stand/efi/loader/decompress.c b/stand/efi/loader/decompress.c
+index fbf800f87862..d91786ea6872 100644
+--- a/stand/efi/loader/decompress.c
++++ b/stand/efi/loader/decompress.c
+@@ -128,6 +128,32 @@ free_buffer(decomp_state *dctx)
+ 	dctx->buf = 0;
+ }
+ 
++/*
++ * The output size is only a guess when the buffer is allocated (4x the
++ * compressed size for most formats), so once the image is complete, give the
++ * pages past its end back to the firmware.  Otherwise they stay allocated
++ * until the kernel runs, and with a memory type the kernel does not reclaim,
++ * forever.  If the firmware refuses to free part of an allocation, keep the
++ * whole buffer.
++ */
++static void
++trim_buffer(decomp_state *dctx)
++{
++	size_t used = roundup2((uintptr_t)dctx->buf_cur - (uintptr_t)dctx->buf,
++	    EFI_PAGE_SIZE);
++	size_t pages = used / EFI_PAGE_SIZE;
++
++	if (dctx->buf == 0 || pages == 0 || pages >= dctx->pages)
++		return;
++	if (EFI_ERROR(BS->FreePages(dctx->buf + used, dctx->pages - pages)))
++		return;
++	printf("Freed %llu unused bytes of the decompression buffer\n",
++	    ULL(dctx->alloc_size - used));
++	dctx->pages = pages;
++	dctx->alloc_size = used;
++	dctx->buf_end = (uint8_t *)(uintptr_t)dctx->buf + used;
++}
++
+ /*
+  * zlib supprot
+  */
+@@ -503,7 +529,9 @@ decomp_step(decomp_state *dctx, uint8_t *buf, size_t len, size_t offset)
+ void
+ decomp_fini(decomp_state *dctx, bool flush)
+ {
+-	return (dctx->fini(dctx, flush));
++	dctx->fini(dctx, flush);
++	if (!flush)
++		trim_buffer(dctx);
+ }
+ 
+ EFI_PHYSICAL_ADDRESS

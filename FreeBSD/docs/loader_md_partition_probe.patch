@@ -1,0 +1,120 @@
+diff --git a/stand/common/bootstrap.h b/stand/common/bootstrap.h
+index 7dab530a368a..fc1b1fce03fb 100644
+--- a/stand/common/bootstrap.h
++++ b/stand/common/bootstrap.h
+@@ -387,5 +387,9 @@ void set_currdev(const char *devname);
+ extern struct devsw md_dev;
+ int md_register(void *image, size_t size, unsigned int flags);
+ void md_export_to_kernel(uint64_t start, uint64_t len);
++int md_get_size(int unit, uint64_t *size);
++
++/* Sector size md(4) images are addressed in. */
++#define	MD_SECTOR_SIZE	512
+ 
+ #endif /* !_BOOTSTRAP_H_ */
+diff --git a/stand/common/md.c b/stand/common/md.c
+index c8692a8948fb..13a7011b640e 100644
+--- a/stand/common/md.c
++++ b/stand/common/md.c
+@@ -31,6 +31,7 @@
+ #include <sys/stdarg.h>
+ 
+ #include "bootstrap.h"
++#include "disk.h"
+ 
+ #define	MD_BLOCK_SIZE	512
+ #define	MD_FLAG_MASK	MD_FLAG_KERNEL
+@@ -62,6 +63,8 @@ struct devsw md_dev = {
+ 	.dv_ioctl = noioctl,
+ 	.dv_print = md_print,
+ 	.dv_cleanup = nullsys,
++	.dv_fmtdev = disk_fmtdev,
++	.dv_parsedev = disk_parsedev,
+ };
+ 
+ /*
+@@ -95,6 +98,22 @@ md_get_info(int unit)
+ 	return (NULL);
+ }
+ 
++/*
++ * Report a registered md's size, so probe_md_currdev() can hand it to
++ * disk_open() without reaching into the private struct md_info.
++ */
++int
++md_get_size(int unit, uint64_t *size)
++{
++	struct md_info *md;
++
++	md = md_get_info(unit);
++	if (md == NULL)
++		return (ENXIO);
++	*size = md->md_size;
++	return (0);
++}
++
+ int
+ md_register(void *image, size_t size, unsigned int flags)
+ {
+@@ -157,14 +176,16 @@ static int
+ md_strategy(void *devdata, int rw, daddr_t blk, size_t size,
+     char *buf, size_t *rsize)
+ {
+-	struct devdesc *dev = (struct devdesc *)devdata;
++	struct disk_devdesc *dev = (struct disk_devdesc *)devdata;
+ 	struct md_info *md;
+ 	size_t ofs;
+ 
+-	md = md_get_info(dev->d_unit);
++	md = md_get_info(dev->dd.d_unit);
+ 	if (md == NULL)
+ 		return (ENXIO);
+ 
++	blk += dev->d_offset;
++
+ 	if (blk < 0 || (uintmax_t)blk >= md->md_size / MD_BLOCK_SIZE)
+ 		return (EIO);
+ 
+@@ -194,25 +215,35 @@ static int
+ md_open(struct open_file *f, ...)
+ {
+ 	va_list ap;
+-	struct devdesc *dev;
++	struct disk_devdesc *dev;
++	struct md_info *md;
+ 
+ 	va_start(ap, f);
+-	dev = va_arg(ap, struct devdesc *);
++	dev = va_arg(ap, struct disk_devdesc *);
+ 	va_end(ap);
+ 
+-	if (md_get_info(dev->d_unit) == NULL)
++	md = md_get_info(dev->dd.d_unit);
++	if (md == NULL)
+ 		return (ENXIO);
+ 
+-	return (0);
++	/*
++	 * The image may be partitioned, as the memstick images used with
++	 * memdisk= are. Without this only offset 0 is reachable, where
++	 * there is no filesystem.
++	 */
++	return (disk_open(dev, md->md_size, MD_BLOCK_SIZE));
+ }
+ 
+ static int
+ md_close(struct open_file *f)
+ {
+-	struct devdesc *dev;
++	struct disk_devdesc *dev;
+ 
+-	dev = (struct devdesc *)(f->f_devdata);
+-	return (md_get_info(dev->d_unit) == NULL ? ENXIO : 0);
++	dev = (struct disk_devdesc *)(f->f_devdata);
++	if (md_get_info(dev->dd.d_unit) == NULL)
++		return (ENXIO);
++
++	return (disk_close(dev));
+ }
+ 
+ static int

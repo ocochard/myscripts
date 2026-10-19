@@ -1736,19 +1736,31 @@ The split matters for testing. qemu's edk2 and bhyve's have the protocol, so
 **a VM always takes the RamDisk path and never exercises the fallback**. Older
 firmware takes the fallback: measured here on a Supermicro A1SRi-2758F with
 AMI rev 5.09, EFI 2.31, which predates UEFI 2.6. A VM passing proves nothing
-about the fallback, and vice versa.
+about the loader's fallback, and vice versa. The kernel side is shared,
+though: `efiblk_memdisk_preload()` (`stand/efi/libefi/efipart.c`) hands a
+RamDisk to the kernel through the same `hint.md.N.physaddr` as the fallback,
+so a VM does exercise everything from `md(4)` on (measured 2026-10-19, see
+below).
 
 #### The fallback needed four fixes (2026-09-28)
 
 On stock `main` the `md` path does not work. Four defects, all found on the
-hardware above, patches and write-ups in `FreeBSD/docs/bugreport_loader_*`:
+hardware above, plus two found on 2026-10-19 booting the 15.1 disc1 ISO under
+bhyve. Patches and write-ups are in `FreeBSD/docs/`:
 
-| defect | symptom |
-|---|---|
-| ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data` |
-| `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download |
-| `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back |
-| `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage |
+| # | patch | component | defect | symptom without it | write-up | in hosted `loader.x64.efi` | upstream |
+|---|---|---|---|---|---|---|---|
+| 1 | `loader_memdisk_memtype.patch` | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | `bugreport_loader_memdisk_memtype.md` | yes | no |
+| 2 | `loader_md_partition_probe.patch` | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | `bugreport_loader_md_no_partition_probe.md` | yes | no |
+| 3 | `loader_disk_parsedev.patch` | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | `bugreport_loader_disk_parsedev_names.md` | yes | no |
+| 4 | `loader_set_currdev_disk_devdesc.patch` | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | `bugreport_loader_set_currdev_devsw_undersized.md` | yes | no |
+| 5 | `loader_memdisk_trim.patch` | loader | 4x-guessed decompression buffer never trimmed | 2 GiB lost to the kernel for the disc1 ISO; with #1 the ram disk can end up above the direct map and #6 fires | `loader_memdisk_trim.md` | no (built 2026-10-19, not uploaded) | no |
+| 6 | `md_preload_mapdev.patch` | kernel (`md(4)`) | `pmap_map()` assumes the hint range is in the direct map | with #1, `Fatal trap 12` in `mdstart_preload` when the ram disk sits above `dmaplimit` | `bugreport_loader_memdisk_memtype.md`, section 3 | n/a: must be in the booted kernel | no |
+
+Upstream status checked against `freebsd/main` at `f2bba0192166`: all six
+still apply. #1 to #5 make up the loader; #6 only helps once a kernel built
+with it is the one being booted, so a stock release image still depends on
+#5 to avoid the panic.
 
 The first is the nastiest and is worth knowing about even if you never touch
 the others. `EfiLoaderData` becomes `EFI_MD_TYPE_DATA`, which
@@ -1769,11 +1781,13 @@ A stable checksum equal to the served image is the pass condition. Fix is one
 line: `EfiRuntimeServicesData`, which the kernel skips when building physmap.
 `pmap_map()` on amd64 reaches it through the direct map, but that only covers
 pages below `dmaplimit` (Maxmem rounded up to 1 GB). A buffer the firmware
-places above that is unmapped and md faults. It works on the Supermicro, but
-the buffer's placement there has not been checked against `phys_avail` yet,
-so treat the fix as incomplete.
+places above that is unmapped and md faults: measured with the disc1 ISO,
+whose 3.6 GB buffer landed at the top of an 8 GB bhyve guest. #6 makes md map
+the range wherever it lies, and #5 frees the unused tail so the kernel owns
+the memory above the ram disk again; either one avoids the panic there, and
+only #6 covers an image allocated at its exact size.
 Patch: `FreeBSD/docs/loader_memdisk_memtype.patch`, write-up:
-`FreeBSD/docs/bugreport_loader_memdisk_memtype.txt`.
+`FreeBSD/docs/bugreport_loader_memdisk_memtype.md`.
 
 Do not diagnose this by re-reading a file you already read: UFS caches it,
 so a corrupt library can return the same wrong checksum twice and look stable.
@@ -1783,9 +1797,13 @@ Read the raw device.
 
 | | result | what it shows |
 |---|---|---|
-| Supermicro A1SRi-2758F | multi-user, `md5 /dev/md0` stable | the md fallback, the only real test |
-| qemu 11.1.0 + edk2 | installer prompt, no panic | RamDisk path undisturbed |
-| bhyve + patched edk2 (HTTP boot) | installer prompt, no panic | RamDisk path undisturbed |
+| Supermicro A1SRi-2758F, mini-memstick, #1-#4 | multi-user, `md5 /dev/md0` stable | the md fallback, the only test of the loader's fallback path |
+| qemu 11.1.0 + edk2, mini-memstick, #1-#4 | installer prompt, no panic | RamDisk path undisturbed |
+| bhyve + patched edk2 (HTTP boot), mini-memstick, #1-#4 | installer prompt, no panic | RamDisk path undisturbed |
+| bhyve, disc1 ISO, stock `main` loader (no #1) | no panic, userland SIGSEGVs | #1's corruption also happens on the RamDisk path |
+| bhyve, disc1 ISO, #1-#4 | `Fatal trap 12` in `mdstart_preload` | why #5/#6 exist |
+| bhyve, disc1 ISO, #1-#4, kernel with #6 | installer prompt; `/dev/md0` matches the image except 2 backup-GPT sectors edk2 writes | #6 fixes the panic |
+| bhyve, disc1 ISO, #1-#5, stock 15.1 kernel | installer prompt, same integrity result, 4587 -> 6633 MB usable | #5 avoids the panic on its own here |
 
 ---
 

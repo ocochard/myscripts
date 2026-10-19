@@ -1,0 +1,36 @@
+Ram disk memory type for the loader.efi md fallback: EfiLoaderData ->
+EfiRuntimeServicesData, so the kernel does not reclaim a memdisk= root.
+
+Bug report: FreeBSD/docs/bugreport_loader_memdisk_memtype.md
+Investigation: FreeBSD/iPXE.md, section 7(f) "The fallback needed four fixes"
+
+diff --git a/stand/efi/loader/decompress.c b/stand/efi/loader/decompress.c
+index fbf800f87862..c2bcc5ad96e0 100644
+--- a/stand/efi/loader/decompress.c
++++ b/stand/efi/loader/decompress.c
+@@ -20,13 +20,19 @@
+ #define ULL(x) ((unsigned long long)(x))
+ 
+ /*
+- * While memdisk_uefi.efi used EfiReservedMemoryType, we need to use
+- * EfiLoaderData instead, the standard memory type the loader uses to pass
+- * memory to the kernel. This is also safe if we're chain booting to another efi
+- * progarm since the memory will be available to that program. The other type
+- * isn't necessarily in the pmap, so the md driver fails.
++ * A ram disk has to outlive the loader: it stays the live root filesystem for
++ * as long as the kernel runs. EfiLoaderData does not, because the kernel adds
++ * EFI_MD_TYPE_DATA ranges to physmap (see add_efi_map_entries()) and hands
++ * those pages to the allocator, which then overwrites the image underneath the
++ * md driver.
++ *
++ * EfiRuntimeServicesData is skipped when the kernel builds physmap, so the
++ * pages are never reused. md reaches them through pmap_map(), which on amd64
++ * is the direct map and so only covers pages below dmaplimit (Maxmem rounded
++ * up to 1GB). A buffer the firmware places above that is not mapped; the same
++ * limit applies to EfiReservedMemoryType.
+  */
+-static EFI_MEMORY_TYPE mem_type = EfiLoaderData;
++static EFI_MEMORY_TYPE mem_type = EfiRuntimeServicesData;
+ 
+ struct decomp_state
+ {
