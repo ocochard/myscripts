@@ -1598,7 +1598,7 @@ other byte identical, boots it to `bsdinstall` through memdisk_uefi:
 ### PASS: installer reached
 ```
 
-Full write-up and patch: `FreeBSD/docs/bugreport_mkimg_size_offset.txt`.
+Full write-up and patch (fixed upstream in `61c27edf3e00`): [`FreeBSD/docs/bugreport_mkimg_size_offset.md`](docs/bugreport_mkimg_size_offset.md).
 
 #### No DHCP required
 
@@ -1750,12 +1750,12 @@ bhyve. Patches and write-ups are in `FreeBSD/docs/`:
 
 | # | patch | component | defect | symptom without it | write-up | in hosted `loader.x64.efi` | upstream |
 |---|---|---|---|---|---|---|---|
-| 1 | `loader_memdisk_memtype.patch` | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | `bugreport_loader_memdisk_memtype.md` | yes | no |
-| 2 | `loader_md_partition_probe.patch` | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | `bugreport_loader_md_no_partition_probe.md` | yes | no |
-| 3 | `loader_disk_parsedev.patch` | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | `bugreport_loader_disk_parsedev_names.md` | yes | no |
-| 4 | `loader_set_currdev_disk_devdesc.patch` | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | `bugreport_loader_set_currdev_devsw_undersized.md` | yes | no |
-| 5 | `loader_memdisk_trim.patch` | loader | 4x-guessed decompression buffer never trimmed | 2 GiB lost to the kernel for the disc1 ISO; with #1 the ram disk can end up above the direct map and #6 fires | `loader_memdisk_trim.md` | no (built 2026-10-19, not uploaded) | no |
-| 6 | `md_preload_mapdev.patch` | kernel (`md(4)`) | `pmap_map()` assumes the hint range is in the direct map | with #1, `Fatal trap 12` in `mdstart_preload` when the ram disk sits above `dmaplimit` | `bugreport_loader_memdisk_memtype.md`, section 3 | n/a: must be in the booted kernel | no |
+| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes | no |
+| 2 | [`loader_md_partition_probe.patch`](docs/loader_md_partition_probe.patch) | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md) | yes | no |
+| 3 | [`loader_disk_parsedev.patch`](docs/loader_disk_parsedev.patch) | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | [`bugreport_loader_disk_parsedev_names.md`](docs/bugreport_loader_disk_parsedev_names.md) | yes | no |
+| 4 | [`loader_set_currdev_disk_devdesc.patch`](docs/loader_set_currdev_disk_devdesc.patch) | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | [`bugreport_loader_set_currdev_devsw_undersized.md`](docs/bugreport_loader_set_currdev_devsw_undersized.md) | yes | no |
+| 5 | [`loader_memdisk_trim.patch`](docs/loader_memdisk_trim.patch) | loader | 4x-guessed decompression buffer never trimmed | 2 GiB lost to the kernel for the disc1 ISO; with #1 the ram disk can end up above the direct map and #6 fires | [`loader_memdisk_trim.md`](docs/loader_memdisk_trim.md) | yes (since 2026-10-19) | no |
+| 6 | [`md_preload_mapdev.patch`](docs/md_preload_mapdev.patch) | kernel (`md(4)`) | `pmap_map()` assumes the hint range is in the direct map | with #1, `Fatal trap 12` in `mdstart_preload` when the ram disk sits above `dmaplimit` | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md), section 3 | n/a: must be in the booted kernel | no |
 
 Upstream status checked against `freebsd/main` at `f2bba0192166`: all six
 still apply. #1 to #5 make up the loader; #6 only helps once a kernel built
@@ -1786,8 +1786,8 @@ whose 3.6 GB buffer landed at the top of an 8 GB bhyve guest. #6 makes md map
 the range wherever it lies, and #5 frees the unused tail so the kernel owns
 the memory above the ram disk again; either one avoids the panic there, and
 only #6 covers an image allocated at its exact size.
-Patch: `FreeBSD/docs/loader_memdisk_memtype.patch`, write-up:
-`FreeBSD/docs/bugreport_loader_memdisk_memtype.md`.
+Patch: [`FreeBSD/docs/loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch), write-up:
+[`FreeBSD/docs/bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md).
 
 Do not diagnose this by re-reading a file you already read: UFS caches it,
 so a corrupt library can return the same wrong checksum twice and look stable.
@@ -2204,7 +2204,7 @@ reachable, and `probe_md_currdev()` in `stand/efi/loader/main.c` then fails
 its `stat()` for `loader.conf`/kernel and prints `MD not present`.
 
 **Fix.** Serve a `loader.efi` built from `85fb40bad584` or later, plus
-`FreeBSD/docs/loader_memdisk_memtype.patch`: `EfiLoaderData` gets past `MD not
+[`FreeBSD/docs/loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch): `EfiLoaderData` gets past `MD not
 present` but lets the kernel reclaim the ram disk at runtime (§7f).
 
 **Why qemu and bhyve do not reproduce it.** Both use current edk2, which
