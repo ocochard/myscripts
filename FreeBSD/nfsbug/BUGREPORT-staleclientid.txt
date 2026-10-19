@@ -1,0 +1,62 @@
+Summary: nfscl: 45s NFSv4.1 outage when CREATE_SESSION returns NFS4ERR_STALE_CLIENTID within one nfsc_renew
+
+Product: Base System   Component: kern   Version: 16.0-CURRENT (main a2fbd988638e)
+Related: PR 297252 (5ab48fb9f7ac)
+
+Description:
+
+After NFS4ERR_BADSESSION, recovery first tries CREATE_SESSION with the
+extant ClientID. If that returns NFS4ERR_STALE_CLIENTID and a full recovery
+already ran within the last nfsc_renew (lease/2, ~45s), nfsrpc_setclient()
+returns NFSERR_IO instead of falling back to EXCHANGE_ID (the retok path,
+recover_done_time gate in nfscl_renewthread()). The mount then does no I/O
+until the window expires. Under load, 5ab48fb9f7ac re-arms recovery on every
+BADSESSION, so this also becomes a CREATE_SESSION storm (+78 CREATE_SESSION,
++2 EXCHANGE_ID in one minute observed).
+
+RFC 8881 says a failed CREATE_SESSION with the extant ClientID is followed by
+EXCHANGE_ID. STALE_CLIENTID is definitive; waiting does not help.
+
+Trigger: Amazon EFS drops session and ClientID whenever it resets a client
+TCP connection (seen 30 times in one hour on one mount target). Linux 6.19
+on the same mount target recovers in 8 ms (pcap: SEQUENCE 10052,
+DESTROY_SESSION 10052, CREATE_SESSION 10022, EXCHANGE_ID, CREATE_SESSION 0).
+
+DTrace (fbt on nfsrpc_setclient/createsession/exchangeid; retok=1 is the
+CreateSession-only path):
+
+  18:30:41 setclient start /mnt/efs-soak retok=0
+  18:30:41 createsession ret=10022
+  18:30:41 exchangeid ret=0
+  18:30:41 createsession ret=0                <- recovered
+  18:30:59 setclient start /mnt/efs-soak retok=1   <- 2nd reset, 18s later
+  18:30:59 createsession ret=10022
+  18:30:59 setclient ret=5 retok_out=1        <- EIO, no EXCHANGE_ID
+  18:31:41 setclient start /mnt/efs-soak retok=0   <- 42s later
+  18:31:41 createsession ret=10022
+  18:31:41 exchangeid ret=0
+  18:31:41 createsession ret=0
+
+4 of 17 recoveries in 2.5h took this path: outages of 42, 46, 46 and 45s.
+
+Reproduce without EFS (one bhyve VM, local nfsd): efs-reset-proxy.py sits
+between the client and nfsd and mimics an EFS reset: it RSTs the client
+connection, then answers SEQUENCE on the old session with BADSESSION and
+CREATE_SESSION with the old ClientID with STALE_CLIENTID (EXCHANGE_ID passes
+through). Two resets 15s apart, every 120s; a 1s cat(1) probe on the mount.
+
+  sysctl vfs.nfsd.server_max_minorversion4=2 vfs.nfsd.nfs_privport=0
+  python3 efs-reset-proxy.py --listen 127.0.0.1:2050 --server 127.0.0.1:2049 &
+  mount_nfs -o nfsv4,minorversion=1,hard,oneopenown,port=2050 127.0.0.1:/ /mnt/t
+
+200s, 4 resets, same VM:            stock      patched
+  probe stalls                      45s, 47s   none
+  CREATE_SESSION -> STALE_CLIENTID  96         4
+  CreateSess / ExchangeId           101 / 5    9 / 5
+
+Fix (attached): in nfsrpc_setclient(), on NFSERR_STALECLIENTID from the
+extant-ClientID CREATE_SESSION, clear *retokp and continue to EXCHANGE_ID,
+so nfscl_recover() also reclaims opens and delegations. Other errors keep
+the current behaviour. Trade-off: a server that keeps dropping the ClientID
+now gets a full recovery per BADSESSION instead of one per nfsc_renew; the
+RECVRINPROG/RECOVER flags still serialize recoveries.

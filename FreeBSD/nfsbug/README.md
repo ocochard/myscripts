@@ -30,6 +30,28 @@ references below describe the pre-fix code (they match the diff in `badsession.p
   - `capture-setup.sh` — arm the trace+pcap capture and mount EFS (run on the instance, sudo).
   - `watch-wedge.sh` — poll for the wedge; distinguishes transient (self-heals) vs permanent.
   - `decode-trace.sh` — summarize an `nfsdbg.log` into the proving timeline.
+  - `efs-reset-proxy.py` — mimics an EFS connection reset (RST, then BADSESSION / STALE_CLIENTID
+    for the old session and ClientID); drives the two follow-up bugs below.
+  - `repro.sh` — runs the proxy, `nfsrecov.d` and a 1 s probe in the bhyve VM.
+  - `nfsrecov.d` — DTrace of every SetClient / CreateSession / ExchangeID and TCP resets.
+  - `nfs41-pcap-ops.py` — lists NFSv4.1 ops per RPC from a plaintext (loopback) pcap.
+
+### Follow-up bugs (found by the 72 h efs-utils soak, 2026-10)
+
+The wedge fix is upstream (5ab48fb9f7ac, PR 297252). Two more client bugs, both reproduced
+without EFS in a bhyve VM and fixed; not filed yet:
+
+- `BUGREPORT-staleclientid.txt` + `staleclientid.patch` — a second BADSESSION within one
+  `nfsc_renew` fails on STALE_CLIENTID instead of falling back to EXCHANGE_ID: 45 s outage and
+  a CREATE_SESSION storm.
+- `BUGREPORT-session-leak.txt` + `session-leak.patch` — one `struct nfsclds` leaked per recovery
+  until unmount; refcount + retired-session reaper.
+- `vm-results/` — raw logs of the stock vs patched runs.
+
+The root cause of the frequent resets is on the EFS side (mount target resets connections and
+drops session + ClientID; a Linux client on the same mount target sees the same resets but
+recovers in 8 ms). See the efs-utils port notes for the efs-proxy connection-leak fix
+(aws/efs-utils#380).
 
 ## Root cause (one paragraph)
 

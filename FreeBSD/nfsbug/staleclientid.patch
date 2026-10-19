@@ -1,0 +1,25 @@
+--- a/sys/fs/nfsclient/nfs_clrpcops.c	2026-10-07 06:28:11.841177000 +0200
++++ b/sys/fs/nfsclient/nfs_clrpcops.c	2026-10-07 06:28:24.426822000 +0200
+@@ -1069,12 +1069,19 @@
+ 				nfscl_freenfsclds(dsp);
+ 				dsp = NULL;
+ 				/*
+-				 * If *retokp is true, return any error other
+-				 * than NFSERR_STALECLIENTID,
++				 * NFSERR_STALECLIENTID means the server has
++				 * discarded the ClientID, so only a full
++				 * recovery (ExchangeID) can succeed.  Do it
++				 * now, as RFC 8881 requires, instead of
++				 * failing until the next nfsc_renew window.
++				 * Otherwise, if *retokp is true, return any
++				 * error other than NFSERR_STALECLIENTID,
+ 				 * NFSERR_BADSESSION or NFSERR_STALEDONTRECOVER
+ 				 * so that nfscl_recover() will not loop.
+ 				 */
+-				if (*retokp)
++				if (error == NFSERR_STALECLIENTID)
++					*retokp = false;
++				else if (*retokp)
+ 					return (NFSERR_IO);
+ 			} else
+ 				*retokp = true;

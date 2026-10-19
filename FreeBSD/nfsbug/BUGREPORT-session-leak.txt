@@ -1,0 +1,66 @@
+Summary: nfscl: one NFSv4.1 session (struct nfsclds) leaked per recovery until unmount
+
+Product: Base System   Component: kern   Version: 16.0-CURRENT (main a2fbd988638e)
+
+Description:
+
+On a successful recovery, nfsrpc_setclient() inserts the new session at the
+head of nm_sess and only marks the old one defunct ("The old sessions cannot
+be safely free'd here, since they may still be used by in-progress RPCs").
+Nothing frees defunct sessions later: nfscl_freenfsclds() is only called for
+them at unmount (nfs_clvfsops.c, nfs_unmount paths). The renew thread skips
+defunct entries but keeps walking them.
+
+So a long-lived mount whose server forces frequent recoveries grows nm_sess
+and M_NFSCLDS without bound.
+
+Observed (3 mounts on Amazon EFS, which drops sessions on every connection
+reset; 2.5 days uptime):
+
+  $ vmstat -m | grep NFSCL
+     NFSCL client    3 24576 13960 8192
+    NFSCL session  256 262144  834 1024
+  $ nfsstat -c -E
+     ExchangeId   CreateSess  DestroySess  DestroyClId
+            374          834          114          114
+
+  NFSCL session in use: 37 -> 64 (8h) -> 256 (+19h), still 3 mounts.
+  1 KB per recovery here; the list walks grow with it.
+
+Reproduces without EFS with efs-reset-proxy.py (see the STALE_CLIENTID
+report): 4 resets on one mount take NFSCL session from 1 to 5.
+
+Freeing on a timer or when nfsess_slots == 0 is not enough:
+nfsv4_setsequence() drops NFSLOCKMNT before nfsv4_sequencelookup() takes
+sep->nfsess_mtx, and threads waiting for a slot mtx_sleep() on
+&sep->nfsess_slots inside the session itself. The slot bitmap is not a
+usage indicator either: when recovery replaces the session during an RPC,
+the reply's session ID no longer matches and the old slot is never freed.
+
+Fix (attached, session-leak.patch, against main a2fbd988638e):
+- nfscl_reqstart() takes a reference (nfsess_refcnt, NFSLOCKMNT) on the MDS
+  session it hands to nfsv4_setsequence() and sets ND_HOLDSESS; slot waiters
+  therefore hold it. A flag, not nd_sep alone, because nfsrv_getuser()
+  builds its nd on the stack without nfscl_reqstart().
+- newnfs_request() becomes a wrapper around the old body (now
+  newnfs_dorequest()) that drops the reference on every return path; the
+  "Badsession looping" retry moves it to the new session.
+- nfsrpc_setclient() stamps nfsess_retired when a recovery replaces the
+  session. nfscl_freeretiredsess(), called from nfscl_renewthread(), frees
+  retired sessions with no reference after 2 * nfsc_renew. The live MDS
+  session and DS sessions are never freed there.
+
+Caveat: about 20 places read the MDS session without a reference
+(nfsmnt_mdssession() then a clientid, maxcache or session ID copy). The
+grace period, not the refcount, covers them; each read is immediate.
+
+Tested in a bhyve VM with the EFS-free reproducer (efs-reset-proxy.py,
+reset pairs 15s apart every 120s), together with the STALE_CLIENTID fix:
+
+  420s, 8 resets            stock       patched     patched, GENERIC
+                                        NODEBUG     (INVARIANTS+WITNESS)
+  NFSCL session in use      1 -> 9 *    <= 3        <= 3
+  LOR / KASSERT / panic     -           -           none
+  (* 1 per reset, measured as 1 -> 5 for 4 resets)
+
+Not tested: pNFS (DS sessions) and Kerberos mounts.
