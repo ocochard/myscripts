@@ -4,6 +4,8 @@ To do: Convert my [Desktop install webpage tips](https://olivier.cochard.me/bido
 
 ## Index of notes and scripts in this directory
 
+Development notes and tutorials: [docs/README.md](docs/README.md) (kernel patches, loader bug reports, debugging walkthroughs)
+
 Hardware / platform notes:
 - [Framework Desktop (Strix Halo) setup notes](Framework-desktop.md) — see also the cross-OS llama.cpp results in [../LLM/benches.FrameWork-Desktop.md](../LLM/benches.FrameWork-Desktop.md)
 - [Drivers notes](drivers.md)
@@ -56,6 +58,7 @@ Misc utilities:
 
 Subdirectories:
 - [TP/](TP/) — practical-work prep scripts (preparation-master/server, tunnels)
+- [async-hid/](async-hid/): FreeBSD hidraw(4) backend for the Rust async-hid crate (design note, skeleton, hardware checks)
 - [jail/](jail/) — jail management scripts (bridge/nullfs/FRR examples, jail_lib, tests)
 - [benches/tcp/](benches/tcp/) — TCP stack and CCA benchmarks
 - [benches/nfs/](benches/nfs/) — NFS benchmarks
