@@ -34,3 +34,4 @@
 - [Sentry PDU control](sentry-pdu.sh)
 - [Shelly device control](shelly.sh)
 - [ascii2utf8 converter](ascii2utf8)
+- [Unity asset bundle list/extract](unity-bundle.py)
