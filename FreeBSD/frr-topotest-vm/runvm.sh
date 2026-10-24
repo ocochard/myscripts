@@ -125,9 +125,15 @@ if [ "$LOGGER" = 1 ]; then
 	# held the guest's output until a newline and echoed it back as
 	# input; the console stalled and a `shutdown -r` hung halfway, sshd
 	# already gone. Both opens wait in ttydcd until bhyve has the A side.
+	#
+	# stty and cat must share ONE open of the B side. A tty with no opener
+	# resets its termios to the defaults on the next open (ttydev_open(),
+	# !tty_opened()), so `stty -f B raw -echo; cat B` leaves cat on an
+	# icanon/echo tty whenever nothing else held B in between -- and the
+	# guest then floods the uart with a getty echo storm.
 	( while :; do
-		stty -f "/dev/nmdm-$VM-B" raw -echo 2>/dev/null
-		cat "/dev/nmdm-$VM-B" >> "$LOG" || true
+		( stty raw -echo 2>/dev/null; exec cat ) \
+		    < "/dev/nmdm-$VM-B" >> "$LOG" || true
 		sleep 1
 	done ) &
 	LOGPID=$!

@@ -201,9 +201,13 @@ RCCONF
 # debugger_on_panic=0: nobody watches the console during an unattended test
 # run, so a panic must dump and reboot on its own rather than sit at db>. DDB
 # is still compiled in when you do want to drive it by hand.
+# maxsockbuf: FRR requests 16 MB socket buffers; at the 8 MB default every
+# vtysh call prints SO_RCVBUF warnings on stderr, and tests that parse
+# `vtysh ... | wc -l` output (zebra_nhg_check) read garbage and fail.
 cat > "$MNT/etc/sysctl.conf" <<SYSCTL
 debug.debugger_on_panic=0
 kern.panic_reboot_wait_time=5
+kern.ipc.maxsockbuf=33554432
 SYSCTL
 
 # kernels="kernel": defaults/loader.conf lists "kernel kernel.old", and after

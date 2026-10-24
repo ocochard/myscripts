@@ -80,6 +80,46 @@ on the epoch callback list -- so the single wedge may have been a side effect
 of that bug rather than a scheduler or epoch defect. The kernel the wedge was
 seen on had that bug; nothing here proves the link.
 
+## Recurrence on 2026-10-15 (serial zebra_nhg_check loop, kernel.invrobot)
+
+Seen again, serially, ~2 minutes into the first iteration after a guest
+restart. Kernel: unpatched GENERIC (INVARIANTS+WITNESS) at 84f790e5b6cc, which
+predates fe90f180047b ("epoch: Queue drain callbacks from each CPU's callback
+task"). That commit removes the `sched_bind()` walk from
+`epoch_drain_callbacks()`, so this exact path no longer exists on newer main.
+The 153-iteration invstock loop, built at c30a321a61ce (which has
+fe90f180047b), never wedged.
+
+Dump taken via `sysctl debug.kdb.enter=1` (no panic message), then `dump` in
+DDB: /zroot/vm/share/crash/frrtopo/vmcore.3(.zst), symbols
+/zroot/vm/share/kinv/kernel.invrobot.debug (kgdb only exists in the guest).
+
+```
+tid 100234 ifconfig: sched_ule_bind(cpu=6) <- epoch_drain_callbacks
+    <- if_detach_internal <- if_vmove <- if_vmove_loan("epair0b")
+    td_state = TDS_RUNQ, td_lastcpu = 4
+CPU 6 curthread: tid 100134 "swi0: uart uart++", td_priority 6
+    uart_tty_intr -> ns8250_bus_transmit -> (uart_intr nested, spinning
+    on the uart hw mutex) when the NMI stopped it
+```
+
+The console nmdm B side was found in `icanon echo` mode (not raw) during this
+run: the echo feedback loop described in README.md was active, and once the
+tty was set raw the buffered console flushed a `login: login: ...` /
+`Login incorrect` storm. So CPU 6 was doing real tty transmit work, not
+printing a panic message, and a priority-6 swi that never goes idle
+starves a priority-141 thread that is bound to that CPU.
+
+What this does NOT show: that the storm ran for the whole 28 minutes before
+DDB entry, or that it was what made the 2026-10-04 wedge happen. That earlier
+"refutation" measured console output in the log, but in icanon mode the logger
+only receives complete lines, and the storm flushed here was one newline-less
+`login: login: ...` run that the log never showed until the tty went raw. If
+the 2026-10-04 tty was non-raw too, that 12,937-byte measurement proves
+nothing either; whether it was is not known.
+
+Cause of the non-raw tty (found 2026-10-15): ttydev_open() resets termios on the first open of a tty with no opener, so runvm.sh's `stty -f B raw -echo; cat B` lost the setting whenever nothing else held B in between (not daemon-specific; a cold-start race). Fixed in runvm.sh: stty and cat share one open.
+
 ## Analysis
 
 From the dump (`kgdb`, frame 3 of the holder):

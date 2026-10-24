@@ -1,0 +1,130 @@
+State of ~/myscripts/FreeBSD/frr-topotest-vm/ for the zebra_nhg_check panic, as of 2026-10-15 07:45.
+
+Bug: IPv4 if_inet use-after-free (GPF in lltable_delete_addr <- lla_rt_output <- rts_send,
+zebra of r2 doing RTM_DELETE of an RTF_LLINFO entry). Report: ~/core.txt.9 (robot,
+main-n290121-84f790e5b6cc GENERIC). Cause: in_ifdetach() frees if_inet and its lltable with no
+epoch wait and without clearing ifp->if_inet; regression from 0d469d23715d, which dropped the
+"clear if_afdata + NET_EPOCH_WAIT" of b5c46895fddd.
+
+1. Fix: in_ifdetach-epoch.patch (applied, uncommitted, in /usr/src at c30a321a61ce).
+   Sets if_inet = NULL, NET_EPOCH_WAIT(), then lltable_free + free; in_lltable_get() checks NULL.
+   This restores pre-regression semantics. The other if_inet readers (igmp.c query input,
+   LLTABLE() users in if_ether.c ARP input/resolve, in.c:697/817/1174, in_mcast.c:502) do not
+   check NULL, but they did not check if_afdata[AF_INET] before the regression either, so they
+   were left alone. ifindex lookup stays valid until if_free(), after if_detach_internal.
+   Still open: IPv6 in6_ifdetach also lltable_free()s immediately (same crash via ND entries).
+
+2. Test kernels (GENERIC = INVARIANTS + WITNESS), built from /usr/src c30a321a61ce with
+   MAKEOBJDIRPREFIX=~/obj-inv, staged in /zroot/vm/share/kinv/boot/, installed in guest /boot:
+   - kernel.invstock: unpatched (in_ifdetach has no epoch_wait_preempt call)
+   - kernel.invfix:   patched
+   Check a kernel before trusting it as a baseline:
+     objdump -dr in.o | awk '/<in_ifdetach>:/{p=1} p&&/^$/{exit} p' | grep epoch_wait_preempt
+   DO NOT USE kernel.stockdbg / kernel.infixdbg (~/obj-rtfix): both are patched, stockdbg's in.o
+   was rebuilt after in.c was edited. Results from them prove nothing.
+
+3. zebra_nhg_check did not exercise the crash path at all until these guest fixes:
+   a. FRR built without sharpd => "Failed to launch sharpd (127)", rc=1 at setup.
+      guest-build-frr.sh now passes --enable-sharpd.
+   b. Re-running configure in the existing tree left lib/route_types.h stale (its rule depends
+      only on route_types.txt/.pl, not on the configure daemon list) => "% Unknown command:
+      redistribute sharp", BGP advertised nothing. Fixed by deleting lib/route_types.h and
+      rebuilding. Upstream issue drafted, NOT FILED (gh token lacks createIssue on
+      FRRouting/frr): frr-issue-route_types-stale.md in this directory; file it with
+      gh issue create --repo FRRouting/frr --web --body-file frr-issue-route_types-stale.md \
+        --title "build: lib/route_types.h not regenerated when the enabled daemon set changes"
+      Record the URL here when known.
+   c. kern.ipc.maxsockbuf=8 MB => vtysh prints SO_RCVBUF warnings on stderr, the test's
+      `vtysh ... | wc -l` parse fails and reads 0 ("got 0, expected 2000" while r2 had all 2000).
+      Guest: kern.ipc.maxsockbuf=33554432 live + /etc/sysctl.conf; mkvm.sh sysctl.conf heredoc
+      updated. The host is still at 8 MB.
+   d. --enable-multipath=64 => "Expected 128 nexthop group members but found 64".
+      guest-build-frr.sh now uses --enable-multipath=128 (kernel caps ECMP at 64 via
+      RIB_MAX_MPATH_WIDTH; the test only counts zebra's NHG, so it passes).
+   Result: 3 of 4 tests pass and every run reaches the link-shutdown step ("Current failed
+   peers: 20"). The last test still fails ("Route updates skipped did not increase after
+   shutdowns"): an FRR dplane counter, after the kernel work; not investigated.
+   Note: the guest's FRR in /root/frr was rebuilt in place, not from a fresh guest-build-frr.sh run.
+
+4. Result on kernel.invstock: NOT REPRODUCED. Loop of zebra_nhg_check, 153 iterations
+   (2026-10-15 00:24 -> 07:34, ~2m50s each), no panic; every iteration reached the
+   link-shutdown step. Logs: guest /root/old/loop-history.invstock, /root/old/loop-logs.invstock/.
+   The guest (bhyve, 12 vCPUs) may not hit the robot's timing. Only vmcore in the guest is the
+   unrelated one from 2026-10-04.
+
+5. Current state: loop stopped, guest booted on kernel.invfix (loader.conf kernel="kernel.invfix";
+   verified kern.bootfile=/boot/kernel.invfix/kernel, maxsockbuf 33554432). Nothing running.
+   A clean invfix run would only show the patch causes no regression, not that it fixes the bug.
+   Loop command if wanted:
+     daemon -f -o /root/loop-daemon.log sh /mnt/host/guest-loop-test.sh zebra_nhg_check 500
+   (one log per iteration in /root/loop-logs/<n>.txt; progress in /root/loop-iter, /root/loop-history)
+
+6. Reproducer: none. Claude's attempts to write one were stopped by a safety classifier (twice,
+   2026-10-15) and Claude will not regenerate it. hammer-llinfo-delete.c in this directory is a
+   partial (69 lines, header + declarations) and does not compile; finish it by hand or delete it.
+   Claude can run and analyse a user-written reproducer.
+
+Next steps (user to choose):
+- Get evidence on the robot, where the panic happened: run the unpatched INVARIANTS kernel there,
+  then the patched one.
+- Or run a user-written reproducer in the guest on kernel.invstock, then kernel.invfix.
+- On any panic: savecore in the guest, copy the vmcore to /mnt/host/crash/, kgdb on the host.
+  ~/obj-inv/usr/src/amd64.amd64/sys/GENERIC/kernel.debug is now the kernel.invrobot build
+  (84f790e5b6cc, see 7.), NOT invstock. Confirm lltable_delete_addr <- lla_rt_output.
+- Open: IPv6 side, in6_ifdetach also lltable_free()s without an epoch wait.
+
+Loose ends:
+- /usr/src (c30a321a61ce) has the patch applied, uncommitted. The previous NEXT-SESSION-PROMPT.txt
+  says /usr/src and /usr/obj are the local zroot datasets because the bigone NFS mounts were
+  unmounted; remount when done.
+- ~/obj-inv holds a full kernel-toolchain + GENERIC build (several GB on the shared 18 GB pool).
+
+7. 2026-10-15 08:47: kernel.invrobot = unpatched GENERIC at the robot's exact revision
+   84f790e5b6cc (n290121). Only kernel delta vs invstock: fe90f180047b (epoch drain callbacks
+   per-CPU) and a tcp/rack fix. Built incrementally in ~/obj-inv (/usr/src checked out detached,
+   then put back on main + patch reapplied with git apply -p0 in_ifdetach-epoch.worktree.diff).
+   Staged /zroot/vm/share/kinv/boot/kernel.invrobot, guest loader.conf kernel="kernel.invrobot".
+   Previous guest loop files moved to /root/old/*.pre-invrobot. Guest IP is now 192.168.100.80.
+   Loop: zebra_nhg_check x500, results in guest /root/loop-history.
+8. invrobot loop runs (all "1 failed, 3 passed", all reached link shutdown, no if_inet panic):
+   run1 55 iters (bhyve OOM-killed 12:03 by a host cbmc at 49 GB), run2 11 iters (guest killed
+   ~12:53:43 from outside, cause unknown), run3 wedged in iteration 1 at 13:14 on the
+   epoch_drain_callbacks sched_bind hang => see BUG-epair-vnet-epoch-hang.md "Recurrence on
+   2026-10-15" (vmcore.3). Logs: guest /root/old/*.invrobot-run1, *.invrobot-run2,
+   /root/old/wedge-20261015/. Run4 started 13:56.
+   After any runvm.sh restart, check: sudo stty -f /dev/nmdm-frrtopo-B -a | grep -- -icanon
+9. 2026-10-15 21:30 WHY WE NEVER REPRODUCE (reporter: "crash every time"):
+   - The crashing RTM_DELETE (core.txt.9, rts_send frame) has rtm_flags 0xC04 =
+     RTF_HOST|RTF_LLDATA|RTF_STATIC (arp(8)-style, no RTF_UP), AF_INET, sent by pid 6733 "zebra".
+   - Our FRR (and upstream FRRouting master, and PR 23475) cannot emit that: zebra's only
+     routing-socket writer is rtm_write() (zebra/kernel_socket.c:1190), which always sets
+     RTF_UP|RTF_PROTO1, and BSD kernel_neigh_update_ctx() (zebra/rt_socket.c:362) is a no-op stub.
+     => the reporter's zebra has local/unpushed code that programs IPv4 neighbors (likely the
+     RFC 5549 169.254.0.1 entries, if_nbr_ipv6ll_to_ipv4ll_neigh_del_all() on if down/delete).
+   - Teardown race window is identical in both setups: topotest listDaemons() uses
+     `test -d /proc/<pid>` (no procfs on FreeBSD) => stopRouter never signals daemons; munet then
+     destroys all epairs in parallel while zebra/bgpd are alive (guest sampler: zebra=2 during
+     86 concurrent ifconfig destroys). Reporter's ps shows the same (30+ ifconfig in ifnet_de).
+   => Need the reporter's FRR commit/patch, or implement BSD kernel_neigh_update_ctx ourselves.
+10. 2026-10-16 06:45: FRR PR 23475 head afe9d6bcb3 (donaldsharp topotest_fixups_for_making_generic),
+    built from git archive in the guest, on kernel.invrobot: 162 iterations, no panic, all
+    "1 failed, 3 passed". Loop stopped; logs in guest /root/old/prhead-run5/. Guest /root/frr is
+    now afe9d6bcb3 (no .git); re-sync from ~/frr for the pim-freebsd tree.
+    Totals on unpatched kernels: 153 invstock + 197 invrobot (old tree) + 162 invrobot (PR head)
+    = 512 runs, 0 if_inet panics. Next: get the reporter's FRR tree/diff (zebra must send
+    RTF_LLDATA RTM_DELETE), or implement BSD kernel_neigh_update_ctx to trigger it ourselves.
+11. 2026-10-16 08:25: REPRODUCED. FRR afe9d6bcb3 + frr-bsd-kernel-neigh-update.patch (this dir;
+    branch bsd-kernel-neigh in worktree ~/frr-neigh) makes BSD kernel_neigh_update() send
+    arp(8)-style RTM_ADD/RTM_DELETE with RTF_HOST|RTF_STATIC|RTF_LLDATA. zebra calls it with
+    delete for 169.254.0.1 on every interface down/delete (if_nbr_ipv6ll_to_ipv4ll_neigh_del_all),
+    even though this test uses IPv4 nexthops and never adds such an entry.
+    - invstock: panic in iteration 1 teardown, zebra: GPF __mtx_lock_flags <- lltable_delete_addr
+      <- rts_send, rax=deadc0dedeadc0de. vmcore.4 on the share (no kernel.debug for invstock left;
+      ~/obj-inv now holds invrobot).
+    - invfix: 30/30 iterations, no panic (08:22-09:50). Logs: guest /root/old/neigh-invfix/.
+12. 2026-10-16 15:10: reporter's actual FRR patch (~/diff.1: BSD kernel_neigh_update via
+    RTF_LLDATA, rtm_read ignores LLDATA; worktree ~/frr-ds = afe9d6bcb3 + diff.1). Same delete
+    message (0xC04) from the same callers as ours.
+    - invstock: panic in iteration 1 (uptime 2m13s), zebra, GPF lltable_delete_addr <- rts_send,
+      rax=deadc0de. vmcore.5.zst (good). Logs guest /root/old/ds-invstock/.
+    - invfix: 30/30 iterations, no panic (15:12-16:55). Logs guest /root/old/ds-invfix/.

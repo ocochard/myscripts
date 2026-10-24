@@ -1,0 +1,6 @@
+vtblank
+vtblank.full
+vtblank.debug
+*.o
+*.pieo
+.depend*

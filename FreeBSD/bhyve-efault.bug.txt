@@ -1,0 +1,142 @@
+Summary: guest write to the vmgenid page (gpa 0xff000000) kills bhyve with
+         "vm_run error -1, errno 14"
+
+Component: bhyve         Version: 16.0-CURRENT         Hardware: amd64
+
+
+A guest write to the read-only page bhyve maps for the VM Generation Counter
+makes VM_RUN return EFAULT.  bhyve's vm_loop() treats that as fatal and
+exits, destroying the guest.  Reads of the same page are fine; only writes.
+
+vmgenc is initialised whenever ACPI tables are on, and acpi_tables defaults
+to true on amd64, so every amd64 guest has this page.  Any guest with root
+(anything that can mmap /dev/mem) can kill its VM instantly.  Not an escape,
+not a host panic: a DoS of the bhyve process, plus it breaks legitimate
+guests.
+
+Found with an unmodified Arista vEOS-lab 4.36.1F guest, which runs
+"flashrom -Q" from its initrd on every boot.  flashrom probes for a 16 MB
+parallel flash part, maps [0xff000000, 0x100000000) and issues the JEDEC
+unlock write to base+0x555.  Dead VM, no diagnostic beyond errno 14.
+
+
+Reproduce
+=========
+
+Attached bhyve-efault-repro.c.  No guest OS, no disk image, no bhyve(8): it
+recreates the mapping vmgenc_init() makes and runs a vCPU against it.  A
+read-only control case runs first so the test validates itself.
+
+    # cc -o bhyve-efault-repro bhyve-efault-repro.c -lvmmapi
+    # ./bhyve-efault-repro
+    control  PASS: reached the hlt at rip 0x1006, exitcode 14
+    test     FAIL: vm_run() failed: Bad address (this is what kills bhyve(8))
+
+Exit 1 = bug present, 0 = fixed, 2 = control failed (test itself broken).
+
+
+What happens
+============
+
+1. bhyve maps a read-only page at 0xff000000 for the VM generation counter:
+   init_bootrom() reserves [highmem - BOOTROM_SIZE, highmem) and
+   vmgenc_init() calls bootrom_alloc(PAGE_SIZE, PROT_READ, 0, ...).
+   This happens even with no bootrom in use, and is not visible in
+   "bhyvectl --get-all", which lists only the sysmem segments.
+
+2. Guest writes there.  SVM nested page fault, exitinfo2 = 0xff000555,
+   exitinfo1 = 0x100000006 (write, user, GPA).
+
+3. svm.c VMCB_EXIT_NPF: vm_mem_allocated() returns true, because it matches
+   any mem_map, sysmem or devmem, and ignores mm->prot.  So the exit becomes
+   VM_EXITCODE_PAGING instead of going to instruction emulation.
+
+4. vm_handle_paging() calls vm_fault(..., VM_PROT_WRITE) on a read-only
+   mapping, gets KERN_PROTECTION_FAILURE, and returns EFAULT.
+
+5. EFAULT leaves the VM_RUN ioctl.  bhyve's vm_loop() breaks out of its loop
+   and the process exits.
+
+vmx.c has the same classification in the EPT_VIOLATION case, so Intel is
+probably affected too.  Not verified, no Intel host here.
+
+
+Is this intentional?
+====================
+
+No.  bhyve already has the opposite policy, and this path bypasses it.
+
+amd64/mem_x86.c registers a catch-all range over the whole address space
+whose handler ignores writes and returns all-ones for reads:
+
+    /*
+     * x86 hardware ignores writes without receiver, and returns all 1's
+     * from reads without response to transaction.
+     */
+
+(d8c4c2ce68ee, "bhyve x86: when accessing non-backed gpa, emulate hw").
+That handler lives in userspace and is reached through the instruction
+emulation exit.  Because the kernel classifies this fault as PAGING first,
+it is never consulted.  The policy is right and unreachable.
+
+bootrom_loadrom() shows the same understanding: the UEFI varstore, the one
+bootrom region a guest is meant to write, is deliberately *not* mapped as a
+memseg.  Its gpa range is reserved by moving gpa_alloctop and it is served
+by register_mem() with MEM_F_RW.  vmgenc did not get that treatment.
+
+Returning EFAULT from vm_handle_paging() is reasonable for what it was
+written for, demand-faulting guest RAM, where a vm_fault() failure really is
+a host-side problem.  It was never meant to see a write to a read-only
+devmem mapping, so a guest-caused, recoverable condition now lands on an
+error path reserved for host-caused ones and is reported with an errno
+indistinguishable from "userspace passed a bad pointer".
+
+This is not limited to vmgenid.  The ROM part of a real UEFI bootrom is
+mapped the same way, PROT_READ|PROT_EXEC, so a UEFI guest that writes into
+the firmware region rather than the varstore hits the same crash.
+
+
+Suggested fix
+=============
+
+Any of, roughly in order of preference:
+
+ - Make vm_mem_allocated(), or its callers in svm.c/vmx.c, consider
+   mm->prot, so a write to a read-only mapping is routed to instruction
+   emulation and lands on the existing mem_x86.c catch-all.
+
+ - Do not turn a vm_fault() failure in vm_handle_paging() into a fatal
+   error; discard the write or report a distinct exit code to userspace.
+
+ - At minimum, make this consistent with the knobs that already exist for
+   every other "guest touched something that is not there" case, and log
+   enough to diagnose it.
+
+   x86.strictio defaults to false: unhandled port I/O drops writes and reads
+   all-ones, and -e opts *into* aborting.  x86.strictmsr defaults to true,
+   but even strict only injects #GP into the guest, and -w silences it.
+   Unassigned MMIO is lenient unconditionally (d8c4c2ce68ee).  A write to a
+   read-only mapping is the only one of these that is fatal, always, with no
+   way to turn it off.
+
+   The logging is worse too.  vmexit_inout() prints the port and rip,
+   vmexit_rdmsr() prints the register and vcpu; this prints only
+   "vm_run error -1, errno 14" with no vcpu, exitcode or gpa.
+
+
+Environment
+===========
+
+FreeBSD 16.0-CURRENT #4 main-n288456-240d81169286, amd64
+AMD Ryzen 7 7735HS (SVM), 64 GB
+Guest loaded with grub2-bhyve-0.40_12:
+
+    bhyve -c 2 -m 4096M -A -H -P -u -w -s 0:0,hostbridge -s 1:0,lpc \
+        -s 2:0,virtio-blk,disk.raw -s 3:0,virtio-net,tap100 -l com1,stdio vm
+
+No bootrom, no framebuffer, no PCI passthrough.
+
+Workarounds: none usable.  "-A" is not one, acpi_tables defaults to true.
+"-o acpi_tables=false" does avoid it but disabling ACPI breaks most guests.
+
+Full dtrace evidence for each step above available on request.

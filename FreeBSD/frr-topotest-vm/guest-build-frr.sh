@@ -11,7 +11,8 @@ export MAKE=gmake LDFLAGS=-L/usr/local/lib CPPFLAGS=-I/usr/local/include
     --prefix=/usr/local \
     --sysconfdir=/usr/local/etc \
     --localstatedir=/var \
-    --enable-multipath=64 \
+    --enable-multipath=128 \
+    --enable-sharpd \
     --enable-user=frr \
     --enable-group=frr \
     --enable-vty-group=frrvty

@@ -1,0 +1,146 @@
+version=11;
+class Mission
+{
+	randomSeed=3469315;
+	class Intel
+	{
+	};
+	class Groups
+	{
+		items=2;
+		class Item0
+		{
+			side="EAST";
+			class Vehicles
+			{
+				items=2;
+				class Item0
+				{
+					position[]={8402.129883,8.973681,9870.812500};
+					azimut=180.000000;
+					special="NONE";
+					id=1;
+					side="EAST";
+					vehicle="M2StaticMGE";
+					leader=1;
+					lock="UNLOCKED";
+					rank="SERGEANT";
+					skill=0.600000;
+				};
+				class Item1
+				{
+					position[]={8195.236328,25.562824,9874.840820};
+					azimut=175.000000;
+					special="NONE";
+					id=2;
+					side="EAST";
+					vehicle="M2StaticMGE";
+					lock="UNLOCKED";
+					rank="SERGEANT";
+					skill=0.600000;
+				};
+			};
+			class Waypoints
+			{
+				items=1;
+				class Item0
+				{
+					position[]={8326.208008,23.292830,9627.696289};
+					type="SAD";
+					class Effects
+					{
+					};
+					showWP="NEVER";
+				};
+			};
+		};
+		class Item1
+		{
+			side="WEST";
+			class Vehicles
+			{
+				items=4;
+				class Item0
+				{
+					position[]={8300.000000,23.000000,9660.000000};
+					azimut=0.000000;
+					special="NONE";
+					id=3;
+					side="WEST";
+					vehicle="OfficerW";
+					player="PLAYER COMMANDER";
+					leader=1;
+					rank="LIEUTENANT";
+					skill=0.600000;
+				};
+				class Item1
+				{
+					position[]={8310.000000,23.000000,9660.000000};
+					azimut=0.000000;
+					special="NONE";
+					id=4;
+					side="WEST";
+					vehicle="SoldierWB";
+					rank="PRIVATE";
+					skill=0.500000;
+				};
+				class Item2
+				{
+					position[]={8320.000000,23.000000,9660.000000};
+					azimut=0.000000;
+					special="NONE";
+					id=5;
+					side="WEST";
+					vehicle="SoldierWB";
+					rank="PRIVATE";
+					skill=0.500000;
+				};
+				class Item3
+				{
+					position[]={8330.000000,23.000000,9660.000000};
+					azimut=0.000000;
+					special="NONE";
+					id=6;
+					side="WEST";
+					vehicle="SoldierWMG";
+					rank="PRIVATE";
+					skill=0.500000;
+				};
+			};
+			class Waypoints
+			{
+				items=1;
+				class Item0
+				{
+					position[]={8300.000000,20.000000,9820.000000};
+					type="SAD";
+					class Effects
+					{
+					};
+					showWP="NEVER";
+				};
+			};
+		};
+	};
+};
+class Intro
+{
+	randomSeed=1234567;
+	class Intel
+	{
+	};
+};
+class OutroWin
+{
+	randomSeed=1234567;
+	class Intel
+	{
+	};
+};
+class OutroLoose
+{
+	randomSeed=1234567;
+	class Intel
+	{
+	};
+};

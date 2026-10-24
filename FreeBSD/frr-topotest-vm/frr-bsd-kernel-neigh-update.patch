@@ -1,0 +1,93 @@
+diff --git zebra/rt_socket.c zebra/rt_socket.c
+index c91f3d07b9..a12eb88608 100644
+--- zebra/rt_socket.c
++++ zebra/rt_socket.c
+@@ -10,6 +10,9 @@
+ 
+ #ifndef HAVE_NETLINK
+ 
++#include <net/if_dl.h>
++#include <net/if_types.h>
++
+ #ifdef __OpenBSD__
+ #include <netmpls/mpls.h>
+ #endif
+@@ -30,6 +33,7 @@
+ #include "zebra/zebra_errors.h"
+ 
+ extern struct zebra_privs_t zserv_privs;
++extern int routing_sock;
+ 
+ #ifdef __OpenBSD__
+ static int kernel_rtm_add_labels(struct mpls_label_stack *nh_label,
+@@ -351,10 +355,69 @@ int kernel_neigh_register(vrf_id_t vrf_id, struct zserv *client, bool reg)
+ 	return 0;
+ }
+ 
++/*
++ * Install or remove a static IPv4 neighbor (ARP) entry, the way arp(8)
++ * does: an RTF_LLDATA message on the routing socket, the destination as
++ * RTA_DST and the interface and link-layer address as an AF_LINK
++ * RTA_GATEWAY. Used for the RFC 5549 169.254.0.1 entries.
++ */
+ int kernel_neigh_update(int add, int ifindex, void *addr, char *lla, int llalen,
+ 			ns_id_t ns_id, uint8_t family, bool permanent)
+ {
+-	/* TODO */
++	struct {
++		struct rt_msghdr rtm;
++		char buf[512];
++	} msg;
++	struct sockaddr_in sin = {};
++	struct sockaddr_dl sdl = {};
++	static int seq;
++	char *pnt;
++	int ret;
++
++	if (family != AF_INET)
++		return 0;
++	if (llalen < 0 || llalen > (int)sizeof(sdl.sdl_data))
++		return -1;
++
++	sin.sin_len = sizeof(sin);
++	sin.sin_family = AF_INET;
++	memcpy(&sin.sin_addr, addr, sizeof(sin.sin_addr));
++
++	sdl.sdl_len = sizeof(sdl);
++	sdl.sdl_family = AF_LINK;
++	sdl.sdl_index = ifindex;
++	sdl.sdl_type = IFT_ETHER;
++	sdl.sdl_alen = llalen;
++	if (lla && llalen)
++		memcpy(LLADDR(&sdl), lla, llalen);
++
++	memset(&msg, 0, sizeof(msg));
++	msg.rtm.rtm_version = RTM_VERSION;
++	msg.rtm.rtm_type = add ? RTM_ADD : RTM_DELETE;
++	msg.rtm.rtm_seq = ++seq;
++	msg.rtm.rtm_addrs = RTA_DST | RTA_GATEWAY;
++	msg.rtm.rtm_flags = RTF_HOST | RTF_STATIC | RTF_LLDATA;
++
++	pnt = msg.buf;
++	memcpy(pnt, &sin, sizeof(sin));
++	pnt += SA_SIZE(&sin);
++	memcpy(pnt, &sdl, sizeof(sdl));
++	pnt += SA_SIZE(&sdl);
++	msg.rtm.rtm_msglen = pnt - (char *)&msg;
++
++	frr_with_privs (&zserv_privs) {
++		ret = write(routing_sock, &msg, msg.rtm.rtm_msglen);
++	}
++	if (ret != msg.rtm.rtm_msglen) {
++		/* Deleting an entry that is already gone is not an error. */
++		if (!add && errno == ESRCH)
++			return 0;
++		if (IS_ZEBRA_DEBUG_KERNEL)
++			zlog_debug("%s: %s %pI4 ifindex %d: %s", __func__,
++				   add ? "add" : "delete", &sin.sin_addr,
++				   ifindex, safe_strerror(errno));
++		return -1;
++	}
+ 	return 0;
+ }
+ 
