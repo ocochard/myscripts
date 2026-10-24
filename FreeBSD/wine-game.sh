@@ -1,5 +1,5 @@
 #!/bin/sh
-# Prepare a Wine prefix for Electron/Chromium based Windows games and launch one.
+# Prepare a Wine prefix for Windows games (Electron/Chromium, Unreal Engine) and launch one.
 #
 # Fixes applied (all idempotent):
 #  - Tahoma registered in the prefix: without it Wine's DirectWrite cannot
@@ -11,21 +11,28 @@
 #  - US keyboard layout while the game runs: Wine cannot map exotic layouts
 #    (e.g. bepo) to scancodes, so games reading KeyboardEvent.code (WASD) get
 #    wrong keys. The previous layout is restored on exit.
+#  - Unreal Engine games: DXVK + vkd3d-proton (winetricks dxvk vkd3d). Wine's
+#    builtin wined3d/vkd3d fail to build UE5 pipelines => "LowLevelFatalError
+#    PipelineStateCache.cpp: Shader compilation failures are Fatal". Installed
+#    in a separate prefix (~/.wine-ue) to leave the Electron prefix untouched.
 
 set -eu
 
 usage() {
-	echo "Usage: $(basename "$0") [-k] [-s] /path/to/game.exe [game args...]"
+	echo "Usage: $(basename "$0") [-d] [-k] [-s] /path/to/game.exe [game args...]"
+	echo "  -d  install DXVK + vkd3d-proton (automatic for Unreal Engine games)"
 	echo "  -k  keep the current keyboard layout (no switch to us)"
 	echo "  -s  setup the prefix only, do not launch"
-	echo "Env: WINEPREFIX (default ~/.wine), WINEDIR (default /usr/local/wine-proton)"
+	echo "Env: WINEPREFIX (default ~/.wine, ~/.wine-ue for -d), WINEDIR (default /usr/local/wine-proton)"
 	exit 1
 }
 
+dxvk=false
 keep_layout=false
 setup_only=false
-while getopts "ksh" opt; do
+while getopts "dksh" opt; do
 	case ${opt} in
+	d) dxvk=true ;;
 	k) keep_layout=true ;;
 	s) setup_only=true ;;
 	*) usage ;;
@@ -33,8 +40,15 @@ while getopts "ksh" opt; do
 done
 shift $((OPTIND - 1))
 
+# Unreal Engine packaged game: Engine/ directory next to the launcher
+[ $# -ge 1 ] && [ -d "$(dirname "$1")/Engine" ] && dxvk=true
+
 WINEDIR=${WINEDIR:-/usr/local/wine-proton}
-export WINEPREFIX=${WINEPREFIX:-${HOME}/.wine}
+if ${dxvk}; then
+	export WINEPREFIX=${WINEPREFIX:-${HOME}/.wine-ue}
+else
+	export WINEPREFIX=${WINEPREFIX:-${HOME}/.wine}
+fi
 export PATH=${WINEDIR}/bin:${PATH}
 export WINEDEBUG=${WINEDEBUG:--all}
 fonts=${WINEPREFIX}/drive_c/windows/Fonts
@@ -51,6 +65,10 @@ setup_prefix() {
 	if [ ! -f "${fonts}/arial.ttf" ] || [ ! -f "${fonts}/times.ttf" ]; then
 		echo "Installing MS core fonts into ${WINEPREFIX}"
 		winetricks --optout -q corefonts
+	fi
+	if ${dxvk} && ! grep -q '^"\*d3d12"="native"' "${WINEPREFIX}/user.reg"; then
+		echo "Installing DXVK + vkd3d-proton into ${WINEPREFIX}"
+		winetricks --optout -q dxvk vkd3d
 	fi
 }
 
