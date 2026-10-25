@@ -378,3 +378,60 @@ After this, each clone has two remotes:
 - `upstream` → the official FreeBSD repo (fetch-only in practice)
 
 Keep either fork current — see section 3.
+
+---
+
+## 14. Worktrees (several branches checked out at once)
+
+A worktree is an extra working directory attached to the same repository.
+Each one has its own checkout, `HEAD` and index. All of them share the object
+store, branches, tags, remotes, stash, config and hooks. No second clone, no
+second fetch.
+
+### When to use one
+
+- You are mid-change and must review, test or fix another branch. No stash,
+  no rebuild of the tree you were working in.
+- A long build or test (buildworld, poudriere, a benchmark) runs from one
+  branch while you keep editing another.
+- You compare two versions side by side: run old and new binaries, or `diff -r`
+  two trees.
+- You bisect or try a throwaway experiment without touching your main checkout.
+
+### When not to
+
+- A quick look at another branch: `git switch` or `git show <ref>:<path>` is
+  cheaper.
+- You need a different remote or an isolated config: make a real clone.
+- The repo uses submodules heavily: each worktree needs its own submodule
+  checkout, and `remove` needs `--force`.
+
+### Commands
+
+```
+git worktree add ../src-review <branch>      # existing branch
+git worktree add -b fix-foo ../src-fix main  # new branch from main
+git worktree add -d ../src-try               # detached HEAD, throwaway
+git worktree list                            # where everything is
+git worktree remove ../src-review            # refuses if dirty; -f to force
+git worktree prune                           # after an rm -rf by hand
+```
+
+Put worktrees next to the main checkout (`../repo-topic`), never inside it.
+A nested worktree shows up as an untracked directory in the parent.
+
+### Rules to know
+
+- One branch, one worktree. `add` refuses a branch that is checked out
+  elsewhere. Use `-d` for a second copy of the same commit.
+- Commits, new branches and `git fetch` are visible from every worktree at
+  once. Stash is shared too: `git stash pop` in worktree B can pop what you
+  stashed in A.
+- Bisect state is per worktree, so two bisects can run in parallel.
+- Delete with `git worktree remove`, not `rm -rf`. If you already did,
+  run `git worktree prune`. After moving the main repo, run
+  `git worktree repair`.
+- Build output is not shared. On FreeBSD the default obj dir is
+  `/usr/obj/<src path>`, so each worktree of freebsd-src gets its own obj tree.
+  This is correct, but the first build in a new worktree is a full build and
+  costs disk space.
