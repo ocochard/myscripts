@@ -22,17 +22,18 @@ sudo apt install python3-venv
 ```
 git clone https://github.com/Comfy-Org/ComfyUI.git
 cd ComfyUI
-[ -d venv ] && python3 -m venv venv
+[ -d venv ] || python3 -m venv venv
 source venv/bin/activate
 # --upgrade
-# For AMD ROCM:
-pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm7.2
+# For AMD ROCM (wheel bundles ROCm userspace, no system ROCm needed; ComfyUI doesn't use torchaudio, not built for rocm7.14):
+# Check torch.__version__ ends in +rocm7.14 after requirements.txt: a +cu130 torch means PyPI CUDA build replaced it
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/rocm7.14
 # For Apple:
 pip3 install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 pip3 install -r requirements.txt
 pip3 install insightface
 # Testing pytorch install
-python -c "import torch" 2>nul && echo Success || echo Failure
+python -c "import torch" 2>/dev/null && echo Success || echo Failure
 # testing if CUDA available (Linux/AMD/NVidia)
 python -c "import torch; print(torch.cuda.is_available())"
 python -c "import torch; print(f'device name [0]:', torch.cuda.get_device_name(0))"
@@ -42,11 +43,12 @@ python -c "import torch; print(f'MPS available: {torch.backends.mps.is_available
 cd custom_nodes
 git clone https://github.com/ltdrdata/ComfyUI-Manager.git
 cd ..
-# AMD Strix Halo tuning:
-# --disable-smart-memory: Don’t try to optimize between RAM and VRAM
-# --highvram: Kept everything in VRAM
+# AMD Strix Halo: no memory flags needed, ComfyUI detects the integrated GPU
+# (log: "DynamicVRAM support detected and enabled", pinned memory off, pytorch attention on).
+# Avoid --highvram: it disables DynamicVRAM. Avoid --disable-smart-memory: offloads to the same physical RAM.
+# expandable_segments: kept from old setup, not benchmarked against DynamicVRAM
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-python main.py --listen 0.0.0.0 --disable-smart-memory --highvram --front-end-version Comfy-Org/ComfyUI_frontend@latest
+python main.py --listen 0.0.0.0 --front-end-version Comfy-Org/ComfyUI_frontend@latest
 
 ```
 
