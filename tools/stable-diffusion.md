@@ -62,3 +62,21 @@ cd ../vae
 wget https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors
 cd ../text_encoders
 wget https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors
+
+The "Download" button in the missing-models dialog saves to the browser's machine, not the ComfyUI server: run the downloads on the server.
+Use `/resolve/` URLs: a `/blob/` URL saves the HuggingFace HTML page (check with `file`, it must say `data`, not `HTML document`).
+
+Qwen-Image 2.1 (templates image_qwen_image_2_1_t2i and image_qwen_image_2_1_turbo_t2i, ~34GB for both):
+```
+cd ComfyUI/models
+base=https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main
+for f in \
+  diffusion_models/qwen_image_2.1_int8_convrot.safetensors \
+  diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors \
+  text_encoders/qwen3vl_8b_int8_convrot.safetensors \
+  text_encoders/qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors \
+  vae/qwen_image_2.1_vae_bf16.safetensors; do
+  wget -c -O "$f" "$base/$f"
+done
+file */qwen*.safetensors
+```
