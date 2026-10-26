@@ -46,7 +46,7 @@ uncompressed images, are allocated at their exact size.
 The buffer is allocated from the UEFI firmware with `AllocatePages()`.  When
 the kernel starts, it reads the firmware's memory map and decides which
 ranges it may use.  With the memory-type fix (`loader_memdisk_memtype.patch`)
-the buffer is marked `EfiRuntimeServicesData`, which the kernel never takes,
+the buffer is marked `EfiReservedMemoryType`, which the kernel never takes,
 so that the root filesystem cannot be overwritten.  The flip side is that
 **every page of the buffer is lost to the kernel, including the unused
 tail**.

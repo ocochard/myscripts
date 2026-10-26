@@ -1750,7 +1750,7 @@ bhyve. Patches and write-ups are in `FreeBSD/docs/`:
 
 | # | patch | component | defect | symptom without it | write-up | in hosted `loader.x64.efi` | upstream |
 |---|---|---|---|---|---|---|---|
-| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes | no |
+| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (`EfiReservedMemoryType` since 2026-10-26) | no |
 | 2 | [`loader_md_partition_probe.patch`](docs/loader_md_partition_probe.patch) | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md) | yes | no |
 | 3 | [`loader_disk_parsedev.patch`](docs/loader_disk_parsedev.patch) | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | [`bugreport_loader_disk_parsedev_names.md`](docs/bugreport_loader_disk_parsedev_names.md) | yes | no |
 | 4 | [`loader_set_currdev_disk_devdesc.patch`](docs/loader_set_currdev_disk_devdesc.patch) | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | [`bugreport_loader_set_currdev_devsw_undersized.md`](docs/bugreport_loader_set_currdev_devsw_undersized.md) | yes | no |
@@ -1778,7 +1778,10 @@ MD5 (/dev/md0) = aa24358b...
 ```
 
 A stable checksum equal to the served image is the pass condition. Fix is one
-line: `EfiRuntimeServicesData`, which the kernel skips when building physmap.
+line: `EfiReservedMemoryType`, which the kernel skips when building physmap.
+(An earlier version used `EfiRuntimeServicesData`; edk2 marks that type
+`EFI_MEMORY_RUNTIME`, which pulls the whole ram disk into the kernel's EFI
+runtime map.)
 `pmap_map()` on amd64 reaches it through the direct map, but that only covers
 pages below `dmaplimit` (Maxmem rounded up to 1 GB). A buffer the firmware
 places above that is unmapped and md faults: measured with the disc1 ISO,
@@ -2197,6 +2200,18 @@ loader simply falls through to the next candidate device once `md0:` fails.
    decompressed image as `EfiReservedMemoryType`. The commit's own comment
    states the consequence: *"The other type isn't necessarily in the pmap, so
    the md driver fails."*
+
+   Later correction (2026-10-25): this second point is probably wrong.
+   That comment refers to the kernel's md(4) driver (bug #6), and the
+   loader reads Reserved memory without trouble through the firmware's
+   identity map. The loader-side `MD not present` matches bug #2:
+   `md_open()` never calls `disk_open()`, so a partitioned image has no
+   filesystem at offset 0. See
+   [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md).
+   With the md.c patch (#6), Reserved boots the disc1 ISO with an intact
+   ram disk, and patch #1 now uses it. Measured 2026-10-25, see
+   [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md),
+   sections 2 and 4.
 
 `md_register()` still reports success, so there is no error message at the
 point of failure. The registration is fine; the memory behind it is not

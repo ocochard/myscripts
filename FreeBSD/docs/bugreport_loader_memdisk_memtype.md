@@ -140,7 +140,7 @@ flowchart TD
     B -->|EfiLoaderData<br/>current main| C[kernel adds it to physmap]
     C --> D[allocator hands its pages out]
     D --> E[root filesystem overwritten<br/>while running:<br/>SILENT CORRUPTION]
-    B -->|EfiRuntimeServicesData<br/>loader patch| F[kernel skips it:<br/>pages are kept]
+    B -->|EfiReservedMemoryType<br/>loader patch| F[kernel skips it:<br/>pages are kept]
     F --> G{buffer below dmaplimit?}
     G -->|yes| H[md reads it through the DMAP:<br/>boots fine]
     G -->|no| I[pmap_map returns an unmapped address:<br/>PANIC in mdstart_preload]
@@ -223,15 +223,47 @@ corruption of the root filesystem is the worse of the two.
 
 ### Fix (loader): `loader_memdisk_memtype.patch`
 
-Allocate the buffer as `EfiRuntimeServicesData`.  It is not in the list in
+Allocate the buffer as `EfiReservedMemoryType`.  It is not in the list in
 section 1.2, so the kernel skips it and never reuses those pages
 (requirement 1).  This fixes the corruption.  It does **not** guarantee
-requirement 2, which is bug 2.
+requirement 2: that needs the md.c fix from section 3.  Measured
+2026-10-25, results in section 4.
 
-Caveat: `EfiRuntimeServicesData` nominally means memory the firmware needs at
-runtime, so using it for a ram disk is a mild abuse of the type.
-`EfiReservedMemoryType` would serve equally well once bug 2 is fixed; both
-are kept out of physmap.
+This is the type the fallback used before `85fb40bad584`.  That commit left
+Reserved because "the md driver fails", and that failure is bug 2: with a
+stock kernel, Reserved panics in `mdstart_preload` when the buffer crosses
+`dmaplimit`.  The md.c patch removes it.  `pmap_mapdev_attr()` never looks
+at the EFI type, only at the physical address: inside the DMAP it returns
+the DMAP address, otherwise it maps the range with `kva_alloc()`
+(`pmap.c:9445`).
+
+### Why not `EfiRuntimeServicesData`
+
+The first version of this patch used `EfiRuntimeServicesData`.  The kernel
+skips it too, and it fixes the corruption the same way (section 4, Supermicro
+row).  But edk2 marks every `EfiRuntimeServicesData` range
+`EFI_MEMORY_RUNTIME` and never a Reserved one (`mMemoryTypeStatistics` in
+`MdeModulePkg/Core/Dxe/Mem/Page.c`: `Runtime` is `TRUE` for RT_DATA, `FALSE`
+for Reserved).  `efi_create_1t1_map()` (`sys/amd64/amd64/efirt_machdep.c:218`)
+maps every `EFI_MEMORY_RUNTIME` descriptor into the EFI runtime page table
+and registers it with `vm_phys_fictitious_reg_range()`.  `sysctl
+machdep.efi_map` in the guest shows the result: with RT_DATA the whole
+decompression buffer is a runtime region, with Reserved it is not one.
+
+```
+RT_DATA:  RuntimeServicesData 00016a8e0000 00016a8e0000 000d5720 UC WC WT WB RUNTIME
+Reserved: (no RUNTIME entry for 0x16a8e0000)
+```
+
+That is 875296 pages (3.6 GB) of ram disk that the kernel maps for firmware
+runtime calls.  The cost in page tables was not measured.  RT_DATA also
+nominally means memory the firmware needs at runtime, so a ram disk abuses
+the type.
+
+Limit: Reserved was tested only on amd64 under bhyve's edk2.  The
+Supermicro md fallback run predates the switch and used RT_DATA.  arm64 and
+riscv build physmap and the DMAP their own way, and other firmware may set
+attributes differently.
 
 ---
 
@@ -371,6 +403,8 @@ the top of RAM.
 | `EfiRuntimeServicesData` | 15.1 | disc1.iso | bhyve, VirtualDisk | **panic in `mdstart_preload`** (section 3) |
 | `EfiRuntimeServicesData` | 15.1 + md.c patch | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic; image intact except the backup GPT edk2 writes** (below) |
 | `EfiRuntimeServicesData` + tail trim | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact, +2046 MB usable** (below) |
+| `EfiReservedMemoryType` | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **panic in `mdstart_preload`**, same fault address as RT_DATA (below) |
+| `EfiReservedMemoryType` | 15.1 + md.c patch | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact except the backup GPT** (below) |
 
 With the md.c patch, same VM, same loader, same image rebuilt around the
 patched kernel (895026656 bytes compressed, so the decompression buffer is the
@@ -451,6 +485,45 @@ reads agree.  This does not replace the md.c patch: an image allocated at
 its exact size (uncompressed, or zstd with a frame size) has no tail to free
 and can still land at the top of RAM.
 
+`EfiReservedMemoryType` instead of `EfiRuntimeServicesData`, measured
+2026-10-25.  Loader: main at `06abe08de45d` with patches #1 to #4 of
+`FreeBSD/iPXE.md` 7(f) and `mem_type` set to `EfiReservedMemoryType`, no
+tail trim, so the 3.6 GB buffer lands where the panic run put it.  Building
+the same tree with `EfiRuntimeServicesData` gives a different checksum
+(Reserved `88e0bdc3...`, RT_DATA `bb05ca81...`), so the constant reaches
+the binary.
+
+With the stock 15.1 kernel it panics exactly like RT_DATA:
+
+```
+Installed RAM disk as VirtualDisk(0x16A9EB000,0x1BB3877FF,0)
+FreeBSD 15.1-RELEASE releng/15.1-n283562-96841ea08dcf GENERIC amd64
+0x0000000100000000 - 0x000000016a9d0fff, 1788678144 bytes (436689 pages)
+md0: Preloaded image <preload0 0x000000016a9eb000> 1352255488 bytes at 0xfffff8016a9eb000
+Fatal trap 12: page fault while in kernel mode
+fault virtual address	= 0xfffff801bb387600
+#5 0xffffffff806e5819 at mdstart_preload+0x49
+```
+
+With the md.c patch in the ISO's kernel it boots to the installer, with the
+ram disk again crossing `dmaplimit`:
+
+```
+Installed RAM disk as VirtualDisk(0x16A8E0000,0x1BB26EFFF,0)
+0x0000000100000000 - 0x000000016a8c5fff, 1787584512 bytes (436422 pages)
+md0: Preloaded image <preload0 0x000000016a8e0000> 1352200192 bytes at 0xfffffe006e000000
+Welcome to FreeBSD!
+# md5 /dev/md0; md5 /dev/md0
+MD5 (/dev/md0) = 8b42ba1cf043883672a3e59b528dadb3
+MD5 (/dev/md0) = 8b42ba1cf043883672a3e59b528dadb3
+```
+
+The two reads agree.  The image has 2641016 sectors and its backup GPT
+sits at T-33 and T-1, where edk2 writes.  Every other sector matches the
+served ISO: in the guest and on the host, `dd` of sectors 0 to 2640982
+gives `17c1e701435dd5ac3f52e9a73cd02254`, and of sectors 2640984 to
+2641014 gives `51596dda30fc38f0df3556d6f115256d`.
+
 Base: main at `c14281f6bb46` (2026-09-24) for the loader patch.  The md.c
 patch applies to main as shown; on releng/15.1 the line has an extra
 `(char *)` cast before `pmap_map`.
@@ -473,6 +546,10 @@ optional but recommended).
   2026-10-13 from main, which still has `EfiLoaderData`).  That this binary
   lacks the loader patch is inferred from the source and the symptoms, not
   checked in the binary.
+* Reserved test (2026-10-25): loader worktree `/tmp/src-ldr-res`, kernel
+  worktree `/tmp/src151-mdres` (built `WERROR=` `NO_MODULES=yes`: host clang
+  21 rejects 15.1 netmap/if_ovpn), ISO in `/var/tmp/disc1-mdres`, drivers
+  and console logs in `/tmp/mdres-run`.
 * md.c test (passed 2026-10-19) kernel: releng/15.1 at `96841ea08dcf` (the ISO's own commit) in
   worktree `/tmp/src151-md`, swapped into the extracted ISO and rebuilt with
   `release/amd64/mkisoimages.sh -b 15_1_RELEASE_AMD64_CD`.
