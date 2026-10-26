@@ -25,9 +25,13 @@ cd ComfyUI
 [ -d venv ] || python3 -m venv venv
 source venv/bin/activate
 # --upgrade
-# For AMD ROCM (wheel bundles ROCm userspace, no system ROCm needed; ComfyUI doesn't use torchaudio, not built for rocm7.14):
+# For AMD ROCM (wheel bundles ROCm userspace, no system ROCm needed):
 # Check torch.__version__ ends in +rocm7.14 after requirements.txt: a +cu130 torch means PyPI CUDA build replaced it
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/rocm7.14
+# torchaudio has no rocm7.14 build for Python 3.14. ComfyUI-Manager needs it anyway: without it logs
+# "PyTorch is not installed" and skips restoring torch after a custom node replaces it.
+# --no-deps keeps pip from swapping torch; abi3 extension loads fine with torch 2.14.
+pip3 install --no-deps torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 # For Apple:
 pip3 install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 pip3 install -r requirements.txt
