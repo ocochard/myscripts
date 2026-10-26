@@ -560,7 +560,6 @@ optional but recommended).
     leaves it 700), install the kernel as `boot/kernel/kernel`, rebuild with
     `release/amd64/mkisoimages.sh -b 15_1_RELEASE_AMD64_CD`, `xz` it.
   * Boot: `FreeBSD/bhyve-uefi-http-poc.sh -N -k -l <loader> -e
-    boot_verbose=YES -i <iso.xz>`.  The tmux/cu drivers and console logs
-    are in `/tmp/mdres-run` (not kept long-term).
+    boot_verbose=YES -i <iso.xz>`.
 * md.c test (passed 2026-10-19): same kernel and ISO recipe as above, in a
   worktree that no longer exists.
