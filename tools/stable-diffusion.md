@@ -88,3 +88,20 @@ for f in \
 done
 file */qwen*.safetensors
 ```
+
+### Generate an image (Qwen-Image 2.1)
+
+1. Open `http://<server>:8188/` in a browser.
+2. Load a template: "Templates" in the left sidebar (or Workflow menu > Browse Templates, label depends on frontend version), search "Qwen Image 2.1":
+   - Text to Image (`image_qwen_image_2_1_t2i`): best quality, 25 steps, ~61s per 1024x1024 on Strix Halo.
+   - Turbo Text to Image (`image_qwen_image_2_1_turbo_t2i`): fewer steps (fixed inside the subgraph), faster; not timed.
+3. Edit the "Text to Image (Qwen Image 2.1)" subgraph node:
+   - `prompt`: long, specific descriptions work best.
+   - `negative_prompt`: no effect while `cfg` is 1 (default).
+   - `refine_prompt` + `thinking`: prompt enhancer (Qwen 3.5 9B rewrites the prompt first); turn both on together, richer result, slower.
+   - `seed`: change for another image from the same prompt.
+   - Size: on the `ResolutionSelector` node; 1 MP = 1024x1024, 4 MP = native 2048x2048 (~4x slower).
+   - `steps` (standard template only): 25 by default, official pipeline uses 40-50.
+4. Run (Ctrl+Enter). First run is slower: models load from disk (~66s vs ~61s).
+5. Result: shown in the save node (right-click to save to the browser's machine), stored on the server in `ComfyUI/output/Qwen_image_2.1_*.png`.
+   The PNG embeds the workflow: drag it back into ComfyUI to restore the exact settings.
