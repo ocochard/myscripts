@@ -546,10 +546,21 @@ optional but recommended).
   2026-10-13 from main, which still has `EfiLoaderData`).  That this binary
   lacks the loader patch is inferred from the source and the symptoms, not
   checked in the binary.
-* Reserved test (2026-10-25): loader worktree `/tmp/src-ldr-res`, kernel
-  worktree `/tmp/src151-mdres` (built `WERROR=` `NO_MODULES=yes`: host clang
-  21 rejects 15.1 netmap/if_ovpn), ISO in `/var/tmp/disc1-mdres`, drivers
-  and console logs in `/tmp/mdres-run`.
-* md.c test (passed 2026-10-19) kernel: releng/15.1 at `96841ea08dcf` (the ISO's own commit) in
-  worktree `/tmp/src151-md`, swapped into the extracted ISO and rebuilt with
-  `release/amd64/mkisoimages.sh -b 15_1_RELEASE_AMD64_CD`.
+* Reserved test (2026-10-25), build trees deleted 2026-10-26.  To redo it:
+  * Loader: worktree of main (`06abe08de45d`), apply patches #1 to #4 of
+    `FreeBSD/iPXE.md` 7(f) (add #5 for the hosted build), then
+    `make -C stand obj all` with `WITHOUT_CCACHE_BUILD=yes
+    WITHOUT_META_MODE=yes` and a fresh `MAKEOBJDIRPREFIX`.  The artifact is
+    `stand/efi/loader_lua/loader_lua.efi`.
+  * Kernel: worktree of releng/15.1 at `96841ea08dcf` (the ISO's own
+    commit) plus `md_preload_mapdev.patch`, `make buildkernel
+    KERNCONF=GENERIC WERROR= NO_MODULES=yes`.  Host clang 21 rejects 15.1
+    netmap and if_ovpn with `-Werror`.
+  * ISO: extract disc1 with `tar`, `chmod 755` the extracted root (tar
+    leaves it 700), install the kernel as `boot/kernel/kernel`, rebuild with
+    `release/amd64/mkisoimages.sh -b 15_1_RELEASE_AMD64_CD`, `xz` it.
+  * Boot: `FreeBSD/bhyve-uefi-http-poc.sh -N -k -l <loader> -e
+    boot_verbose=YES -i <iso.xz>`.  The tmux/cu drivers and console logs
+    are in `/tmp/mdres-run` (not kept long-term).
+* md.c test (passed 2026-10-19): same kernel and ISO recipe as above, in a
+  worktree that no longer exists.
