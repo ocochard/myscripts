@@ -46,7 +46,11 @@ cd ..
 # AMD Strix Halo: no memory flags needed, ComfyUI detects the integrated GPU
 # (log: "DynamicVRAM support detected and enabled", pinned memory off, pytorch attention on).
 # Avoid --highvram: it disables DynamicVRAM. Avoid --disable-smart-memory: offloads to the same physical RAM.
-# expandable_segments: kept from old setup, not benchmarked against DynamicVRAM
+# Measured 2026-10-26 on framework2 (Qwen-Image 2.1 t2i, 1024x1024, 25 steps euler, enhancer off, torch 2.14.1+rocm7.14):
+#   no flags:                          cold 66.4s, warm 60.9s, 2.13-2.35 s/it, GPU mem peak 17.8GiB
+#   --highvram --disable-smart-memory: cold 74.7s, warm 64.7s, 2.39-2.51 s/it, GPU mem peak 11.7GiB
+#   old flags reload diffusion model + VAE every image; they only save ~5GiB of GPU memory.
+# expandable_segments: set in both runs above, its own effect not measured
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 python main.py --listen 0.0.0.0 --front-end-version Comfy-Org/ComfyUI_frontend@latest
 
