@@ -35,3 +35,4 @@
 - [Shelly device control](shelly.sh)
 - [ascii2utf8 converter](ascii2utf8)
 - [Unity asset bundle list/extract](unity-bundle.py)
+- [Audio bursts: YouTube/media audio, split on silences, extract to .wav](audio-bursts.sh)
