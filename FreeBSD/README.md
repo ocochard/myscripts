@@ -146,6 +146,47 @@ sudo LD_PRELOAD="/usr/obj/usr/src/amd64.amd64/lib/libmd/libmd.so.7 \
 tools/build/beinstall.sh
 ```
 
+#### beinstall.sh fails with `etcupdate (pre-world) failed!`
+
+beinstall.sh hides the etcupdate output. The pre-world step runs
+`etcupdate -p -s /usr/src -D <BE mountpoint> -BF`, then `etcupdate resolve`.
+The new BE is a clone of the running system, so the same failure
+reproduces on `/`. Run a dry run (`-n`) to see the real error:
+```
+sudo sh /usr/src/usr.sbin/etcupdate/etcupdate.sh -p -n -s /usr/src -D / -BF
+Conflicts remain from previous update, aborting.
+```
+
+A previous etcupdate run left unresolved conflicts. List them (`C` = conflict):
+```
+sudo etcupdate status
+  C /etc/login.conf
+```
+
+The conflicted copy is under /var/db/etcupdate/conflicts/, with diff3 markers
+(`yours` = local file, `original` = old default, `new` = new default):
+```
+sudo diff -u /etc/login.conf /var/db/etcupdate/conflicts/etc/login.conf
++<<<<<<< yours
+ 	:memorylocked=unlimited:\
++||||||| original
++	:memorylocked=64K:\
++=======
++	:memorylocked=256K:\
++>>>>>>> new
+```
+
+Resolve it with `sudo etcupdate resolve`. At the prompt, enter `mf` to keep
+your file, `tf` to take the new file, or `e` to edit and merge by hand.
+Non-interactive version that keeps the local file:
+```
+printf 'mf\n' | sudo etcupdate resolve
+sudo etcupdate status      # empty output = no conflict left
+```
+
+If you take the new login.conf, run `cap_mkdb /etc/login.conf` after.
+Then rerun beinstall.sh.
+
 ### Build from MacOS (ARM M3 pro)
 
 Great [user guide](https://docs.freebsd.org/en/books/handbook/cutting-edge/#building-on-non-freebsd-hosts).
