@@ -39,13 +39,13 @@ references below describe the pre-fix code (they match the diff in `badsession.p
 ### Follow-up bugs (found by the 72 h efs-utils soak, 2026-10)
 
 The wedge fix is upstream (5ab48fb9f7ac, PR 297252). Two more client bugs, both reproduced
-without EFS in a bhyve VM and fixed; not filed yet:
+without EFS in a bhyve VM and fixed:
 
 - `BUGREPORT-staleclientid.txt` + `staleclientid.patch` — a second BADSESSION within one
   `nfsc_renew` fails on STALE_CLIENTID instead of falling back to EXCHANGE_ID: 45 s outage and
-  a CREATE_SESSION storm.
+  a CREATE_SESSION storm. Committed to main as 7a0021a0988f (PR 299221); not MFC'd.
 - `BUGREPORT-session-leak.txt` + `session-leak.patch` — one `struct nfsclds` leaked per recovery
-  until unmount; refcount + retired-session reaper.
+  until unmount; refcount + retired-session reaper. Not filed yet.
 - `vm-results/` — raw logs of the stock vs patched runs.
 
 The root cause of the frequent resets is on the EFS side (mount target resets connections and
