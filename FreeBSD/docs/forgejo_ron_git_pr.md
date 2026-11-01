@@ -196,7 +196,7 @@ The tool derives the API address from the remote URL:
 ## Open a pull request
 
 ```
-git checkout -b mydevbranch review/main
+git switch -c mydevbranch review/main
 # work, commit, work, commit
 git pr main
 ```
@@ -259,7 +259,7 @@ twice duplicates the line):
 ```
 git config --get-all remote.review.fetch
 git fetch review
-git checkout review/pr/3     # pull request #3
+git switch --detach review/pr/3     # pull request #3
 ```
 
 ## Merge rule: never merge on Forgejo
@@ -283,7 +283,7 @@ Do these steps in order, once the reviewers approve the pull request.
 
    ```
    git fetch freebsd
-   git checkout mydevbranch
+   git switch mydevbranch
    git rebase freebsd/main
    ```
 
@@ -329,7 +329,7 @@ Do these steps in order, once the reviewers approve the pull request.
    merged. Delete the local branch:
 
    ```
-   git checkout main
+   git switch main
    git pull --ff-only freebsd main
    git branch -d mydevbranch
    ```
@@ -340,7 +340,7 @@ The flow is the same, from a local branch on top of the pull request:
 
 ```
 git fetch review
-git checkout -b pr3 review/pr/3
+git switch -c pr3 review/pr/3
 ```
 
 Then run steps 1 to 6, except step 4. Topics are per user: `git pr --list`
@@ -380,6 +380,6 @@ behind git.freebsd.org, so run `git fetch freebsd` and check that
 | Dry run | `git pr main -n` |
 | Pull request of the current branch | `git pr --status` |
 | All open pull requests | `git pr --list` |
-| Check out pull request #N | `git checkout review/pr/N` |
+| Check out pull request #N | `git switch --detach review/pr/N` |
 | Commit after review | rebase, reword, `git pr main -f`, `git push freebsd mydevbranch:main` |
 | Commit final pull request #N as is | `git pr --merge N`, then `git push freebsd main` |
