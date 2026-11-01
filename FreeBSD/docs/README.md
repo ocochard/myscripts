@@ -50,6 +50,10 @@ The six loader/md(4) memdisk fixes are summarized in a table in
 - [TPM_IRQ.md](TPM_IRQ.md): TPM TIS "Failed to switch to ready state" on ST33 chips
 - `vnet_jail_deadlock_*.txt`: raw evidence (dmesg, kgdb session, procstat, netstat, vmstat) for a VNET jail deadlock, no write-up yet
 
+## Developer workflow
+
+- [forgejo_ron_git_pr.md](forgejo_ron_git_pr.md): opening and updating pull requests on the ron-dev.freebsd.org Forgejo test instance with git-pr(1) (`devel/freebsd-git-pr`)
+
 ## Host operations
 
 - [ser6fbsd_reclaim_ubuntu.md](ser6fbsd_reclaim_ubuntu.md): removing the Ubuntu partition on ser6 and growing the FreeBSD ZFS pool
