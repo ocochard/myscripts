@@ -196,10 +196,15 @@ The tool derives the API address from the remote URL:
 ## Open a pull request
 
 ```
+git fetch review
 git switch -c mydevbranch review/main
 # work, commit, work, commit
 git pr main
 ```
+
+Fetch first. `review/main` is your local copy of the server's `main` as of
+the last fetch, and `git switch` does not contact the server. Without the
+fetch, the branch starts from an old `main`.
 
 `git pr` opens your editor with a template:
 
