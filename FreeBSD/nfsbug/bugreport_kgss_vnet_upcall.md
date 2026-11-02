@@ -1,84 +1,72 @@
-# kgssapi: one gssd in one vnet makes nfsd hang in every other vnet
+# #5: one jail's Kerberos daemon makes NFS servers in other jails hang
 
-Summary: kgssapi: once gssd answers in one vnet, upcalls from vnets without
-gssd wait for minutes, so nfsd in such a jail does not serve.
+Patch: [`kgss_vnet.patch`](kgss_vnet.patch), against main 7868958f5c79.
+Branch `kgss-vnet` in `~/freebsd-src-kgssvnet`. Not filed or committed.
 
-Product: Base System. Component: kern. Version: 16.0-CURRENT (main
-584f44221f45).
-
-Patch: `kgss_vnet.patch`, against main 7868958f5c79.
+Summary for Bugzilla: kgssapi: once gssd answers in one vnet, upcalls from
+vnets without gssd wait for minutes, so nfsd in such a jail does not serve.
 
 ## 1. Background
 
-**gssd upcalls.** The kernel's GSS-API code (`sys/kgssapi`) does not do
-Kerberos itself. It sends RPCs to the userland daemon gssd(8). The
-transport is netlink, and a call reaches the gssd listening in the *current
-vnet*: `clnt_nl_call()` asserts `curvnet` and builds the request with
-`.cr_vnet = curvnet` (`sys/rpc/clnt_nl.c:271-278`). So each vnet jail has
-its own gssd, or none. The handle `kgss_gssd_handle` is one global since
-4602d45eb3b1 ("kgss: de-virtualize kgss_gssd_handle").
+**Kerberos in the kernel.** NFS can use Kerberos to authenticate users and
+encrypt traffic. The kernel does not do the Kerberos work itself: it sends
+each request to a userland daemon, `gssd(8)`, and waits for the answer. That
+kernel-to-daemon message is called an *upcall*. The code is in
+`sys/kgssapi`.
 
-**Two timeouts.** `kgss_gssd_client()` (`sys/kgssapi/gss_impl.c:241`) works
-in two phases:
+**One gssd per jail.** The upcall travels over netlink, a kernel messaging
+channel, and reaches the gssd of the *calling jail's* network stack
+(`sys/rpc/clnt_nl.c:271-278`). Each vnet jail runs its own gssd, or none.
+The kernel object that sends the upcalls, `kgss_gssd_handle`, is shared by
+all jails (4602d45eb3b1).
 
-1. Until gssd has answered once, every call is preceded by a Null RPC with a
-   200 ms timeout. A failure returns NULL at once, and the next try is held
-   off for 5 s. The caller sees "no gssd" quickly.
-2. After the first successful Null RPC, the handle timeout becomes 300 s
-   with 30 retries, and the Null RPC is no longer sent. The point is to
-   ride out a gssd restart.
+**Not waiting for a gssd that does not exist.** Many machines load the
+Kerberos module but run no gssd. Since 455c354dd4db, the kernel first checks
+whether gssd is there with an empty "ping" upcall that times out after
+200 ms. If the ping fails, it gives up at once and tries again 5 s later.
+Once gssd has answered one ping, it stops pinging and allows each upcall up
+to 300 s, with 30 retries, to ride out a gssd restart.
 
-Both timeouts are set on the handle with `CLSET_TIMEOUT`, because a netlink
-handle ignores the timeout of each call. `client_nl_create()` gives every
-handle `nl_timo = 60 * hz` (`sys/rpc/clnt_nl.c:202`), and `clnt_nl_call()`
-uses the per-call timeout only when `nl_timo` is 0
-(`sys/rpc/clnt_nl.c:335-337`). So the timeout of the shared handle applies
-to every vnet.
-
-The switch is recorded in two function-local statics:
-
-```c
-static time_t nextrpc = 0;
-static bool done_upcall = false;
-```
-
-**nfsd and gssd.** When nfsd starts, `nfsrvd_nfsd()` registers its Kerberos
-name with `rpc_gss_set_svc_name_call()` three times, for NFSv2, 3 and 4
-(`sys/fs/nfsserver/nfs_nfsdkrpc.c:667-678`). It does this whenever kgssapi
-is loaded, before `svc_run()`. Each call goes through `kgss_gssd_client()`.
-455c354dd4db made this fast when no gssd runs at all.
+**nfsd asks gssd at startup.** When `nfsd` starts and the Kerberos module is
+loaded, it registers its Kerberos name, `nfs@<hostname>`, before it serves
+anything (`sys/fs/nfsserver/nfs_nfsdkrpc.c:667-678`). Each registration is an
+upcall.
 
 ## 2. The problem
 
-`done_upcall` is global, but gssd is per vnet. After gssd answers in any
-vnet, every vnet is in phase 2. An upcall from a vnet jail without gssd then
-waits for a reply that will never come: 300 s, with retries. A jailed nfsd
-started after that blocks in `rpc_gss_set_svc_name_call()` and serves
-nothing.
+"gssd has answered" was remembered for the whole machine, but gssd runs per
+jail. And the 300 s timeout was set on the shared object, so it applied to
+every jail.
 
-How to repeat it (bhyve VM, kernel with `options KGSSAPI`; `kgssapi.ko`
-behaves the same):
+```mermaid
+sequenceDiagram
+  participant A as jail A (has gssd)
+  participant K as kernel (one flag, one timeout)
+  participant B as jail B (no gssd)
+  A->>K: upcall
+  K->>A: ping (200 ms)
+  A-->>K: answer
+  Note over K: gssd seen: stop pinging, timeout 300 s
+  B->>K: nfsd starts, registers its name
+  K->>B: upcall, waits up to 300 s
+  Note over B: nobody answers, nfsd does not serve
+```
 
-1. Start a vnet jail with allow.nfsd and gssd, and use it once. Any
-   Kerberos NFS mount does it; so does nfsd's own name registration.
-2. Remove it, then start a second vnet jail with allow.nfsd and no gssd,
-   running `mountd -R` and `nfsd -t`.
-3. Mount it from the host:
+Found by the NFS tests: after a Kerberos test ran, the plain `basic` test
+failed:
 
-   ```
-   nfsd: can't register svc name nfs@srv.nfstest.test jid:3
-   ```
+```
+nfsd: can't register svc name nfs@srv.nfstest.test jid:3
+[tcp] 192.0.2.2:/: NFSPROC_NULL: RPC: Timed out
+```
 
-   The mount never succeeded: the test retried every 2 s, and the test body
-   timed out after 300 s. The same server setup on a kernel without
-   kgssapi serves at once.
-
-Found by the tests/sys/fs/nfs framework: running `krb5_test` first made
-the plain `basic_test` fail with `NFSPROC_NULL: RPC: Timed out`.
+In a standalone run, the mount from the test machine never succeeded: it
+retried every 2 s until the test timed out after 300 s. The same setup on a
+kernel without the Kerberos module serves at once.
 
 ## 3. The fix
 
-`kgss_vnet.patch`, two files:
+Two changes:
 
 ```diff
 +VNET_DEFINE_STATIC(bool, kgss_gssd_seen);
@@ -87,9 +75,6 @@ the plain `basic_test` fail with `NFSPROC_NULL: RPC: Timed out`.
 -	clnt_control(cl, CLSET_RETRIES, &(int){30});
 -	clnt_control(cl, CLSET_TIMEOUT, &nulltimo);
 +	clnt_control(cl, CLSET_TIMEOUT, &(struct timeval){0});
-...
--		    rpctimo);	/* rpctimo is ignored by clnt_nl_call(). */
-+		    nulltimo);
 ...
 -		CLNT_CONTROL(cl, CLSET_TIMEOUT, &rpctimo);
 ```
@@ -104,87 +89,76 @@ the plain `basic_test` fail with `NFSPROC_NULL: RPC: Timed out`.
 +			nl->nl_timo = 0;
 ```
 
-- **Whether gssd answered becomes per vnet.** It is now
-  `V_kgss_gssd_seen`, and `V_kgss_nextrpc` replaces `nextrpc`. Each vnet
-  probes its own gssd with the 200 ms Null RPC until it answers once.
-- **The shared handle no longer carries a timeout.** Setting a timeout on
-  it for one vnet would change it for all of them. clnt_nl gets a way to
-  say "use the timeout of each call": `CLSET_TIMEOUT` with a zero timeval.
-  The probe passes 200 ms. The other upcalls pass the 25 s that the
-  rpcgen stubs use (`static struct timeval TIMEOUT = { 25, 0 }` in the
-  generated `gssd_clnt.c`).
-- **No retry.** The handle keeps the clnt_nl default of one try. With 30
-  retries and no handle timeout, each try would get 25/30 s, and a slow
-  `init_sec_context` (it may contact the KDC) would be sent again before
-  gssd answered.
-- **Callers already have to set `curvnet`.** `clnt_nl_call()` reaches
-  `V_nl_ctl` through `nl_send_group()`, so the new `V_` accesses add no
-  requirement.
+1. **"gssd has answered" becomes per jail.** `VNET_DEFINE` gives each
+   network stack its own copy of a variable. Each jail pings its own gssd
+   until it answers once.
+2. **The shared object no longer has a timeout of its own.** Each upcall
+   brings its timeout: 200 ms for the ping, 25 s for the others (the value
+   the generated `gssd_clnt.c` passes). A netlink handle normally ignores
+   the timeout of each call: it starts with a 60 s timeout of its own
+   (`sys/rpc/clnt_nl.c:202`) that wins. Setting a zero timeout now means
+   "use each call's".
+3. **No retry.** With 30 retries and no handle timeout, each try would get
+   25/30 s, and a slow Kerberos call would be sent twice before gssd
+   answered.
 
-The first version made only the two statics per vnet. It did not fix
-anything: the probe still waited 60 s in a vnet without gssd, because the
-handle's default `nl_timo` overrode its 200 ms. A procstat of the stuck
-nfsd showed it:
+The first version had only change 1, and did not fix the hang. A kernel
+stack of the stuck nfsd showed the 200 ms ping itself waiting:
 
 ```
 _sleep clnt_nl_call clnt_call_private kgss_gssd_client gss_import_name
 rpc_gss_acquire_svc_cred rpc_gss_set_svc_name nfsrvd_nfsd
 ```
 
-Tradeoff: in a vnet whose gssd answered once and then died, an upcall now
-waits 25 s, not 300 s with retries. The 5-minute window was meant for a
-gssd that starts late at boot; the 5 s re-probe from 455c354dd4db covers
-that now, and with this patch it works per vnet.
+The ping used the shared object's timeout, not its own. That is how change 2
+was found.
+
+Tradeoff: in a jail whose gssd answered once and then died, an upcall now
+waits 25 s, not 300 s with retries. The long wait was meant for a gssd
+starting late at boot; the 5 s re-ping covers that, now per jail.
 
 Alternatives:
 
-- **Report "no listener" from netlink.** `nl_send_group()` would return
-  false when no socket of the vnet is in the group, and `clnt_nl_call()`
-  would fail at once. That is the cleanest signal, but it changes a return
-  value that every netlink group sender sees (`netlink_domain.c:242-250`).
-- **Per-vnet handles.** This undoes 4602d45eb3b1. `client_nl_create()` also
-  refuses a second group with the same name.
-- **Keep 300 s for the normal upcalls.** That would need a per-call
-  timeout in `struct rpc_callextra` (a KBI change), or a different
-  timeout in the rpcgen stubs.
+- **Have netlink report "nobody is listening".** That would fail upcalls at
+  once, but it changes a return value seen by every netlink user
+  (`sys/netlink/netlink_domain.c:242-250`).
+- **One upcall object per jail.** That undoes 4602d45eb3b1, and netlink
+  refuses two channels with the same name.
+- **Keep 300 s for the normal upcalls.** It would need a per-call timeout
+  field in `struct rpc_callextra`, a binary interface change.
 
-What the patch does NOT change: rpctls and rpcbind never pass a zero
-timeout to `CLSET_TIMEOUT`, so their netlink handles behave as before.
+What the patch does NOT change: the TLS and rpcbind helpers also use netlink
+but never set a zero timeout, so they behave as before.
 
 ## 4. Tested
 
-bhyve VM, GENERIC (INVARIANTS, WITNESS) plus `options KGSSAPI`,
-`device epair`, `device if_bridge` and `options NULLFS`, on main
-7868958f5c79 with `kgss_vnet.patch`. The kernel also had
-`nfscl_jail.patch`, which the Kerberos tests need for jailed clients.
-These are the tests/sys/fs/nfs cases, with the framework's gssd
-workaround removed, run in this order in one boot:
+bhyve VM, GENERIC (with INVARIANTS and WITNESS) plus `options KGSSAPI`, on
+main 7868958f5c79. `nfscl_jail.patch` was also applied, because the
+Kerberos tests need jailed clients. The tests ran with their gssd
+workaround removed, Kerberos first, in one boot:
 
-| Case | Unpatched | First version (statics only) | Patched |
+| Case | Unpatched | First version (change 1 only) | Patched |
 |---|---|---|---|
-| krb5_test:krb5 (a gssd answers in a jail) | failed for the TMPDIR reason, but its gssd answered | passed | passed |
-| basic_test:basic (server jail without gssd) | failed: `NFSPROC_NULL: RPC: Timed out` | failed: same | passed |
-| basic_test:two_clients | failed: same | failed: same | passed |
-| recovery_test:server_reset | not run | failed: same | passed |
-| krb5_test:krb5i, krb5p | not run in this order | passed | passed, twice each |
+| `krb5` (a gssd answers in a jail) | failed on a test bug since fixed (TMPDIR), but its gssd answered | passed | passed |
+| `basic` (server jail without gssd) | failed: `NFSPROC_NULL: RPC: Timed out` | failed: same | passed |
+| `two_clients` | failed: same | failed: same | passed |
+| `server_reset` | not run | failed: same | passed |
+| `krb5i`, `krb5p` | not run in this order | passed | passed, twice each |
 
-The patched krb5i/krb5p result comes from a second boot. In the first boot
-krb5i failed because the test wrote before tcpdump was capturing, a test
-bug fixed since.
+"Unpatched" is 584f44221f45 with `nfscl_jail.patch` and `KGSSAPI`, built as
+GENERIC-NODEBUG. The patched `krb5i` and `krb5p` results come from a second
+boot: in the first, `krb5i` failed because the test wrote before `tcpdump`
+was capturing, a test bug fixed since.
 
-"Unpatched" is 584f44221f45 + nfscl_jail.patch + KGSSAPI. The TMPDIR
-problem was in the test, not the kernel, and is fixed in the framework.
-The unpatched kernel was GENERIC-NODEBUG; the other two, GENERIC.
-
-The `kgssapi` module builds with the patch (`MODULES_OVERRIDE=kgssapi`,
-`-Werror`). WITNESS reported two lock order reversals, neither in this code:
-tmpfs/ufs on nullfs unmount, and `in_control`/`ifnet_sx` in
-`vnet_destroy()`.
+The kgssapi module also builds with the patch, with warnings as errors.
+WITNESS reported two lock order reversals, neither in this code: on nullfs
+and tmpfs unmount, and in `vnet_destroy()`.
 
 Untested:
 
-- `kgss_vnet.patch` without `nfscl_jail.patch`. Only the Kerberos tests
-  need jailed clients.
-- The module loaded on a real system.
-- A gssd killed and restarted while upcalls are pending.
-- A KDC that answers slowly enough to approach 25 s.
+- the patch without `nfscl_jail.patch`;
+- the module loaded on a real system;
+- gssd killed and restarted while upcalls wait;
+- a KDC slow enough to approach 25 s;
+- the Kerberos module loaded with no gssd ever started (the case
+  455c354dd4db fixed).

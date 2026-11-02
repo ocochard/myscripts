@@ -10,9 +10,9 @@ small proxy that makes a normal FreeBSD nfsd behave like EFS.
 
 | # | patch | component | defect | symptom without it | write-up | upstream |
 |---|---|---|---|---|---|---|
-| 1 | [`badsession.patch`](badsession.patch) | NFS client (`nfs_commonkrpc.c`) | recovery restarts only if the session is not already marked defunct | two server resets within ~45 s: every process touching the mount hangs in `nfsbadse` until reboot | [`nfsbug.md`](nfsbug.md), [`BUGREPORT.txt`](BUGREPORT.txt) | yes, 5ab48fb9f7ac (PR 297252, by rmacklem) |
-| 2 | [`staleclientid.patch`](staleclientid.patch) | NFS client (`nfs_clrpcops.c`) | `STALE_CLIENTID` in the renew window returns EIO instead of doing EXCHANGE_ID | 45 to 60 s with no I/O, and a CREATE_SESSION storm | [`BUGREPORT-staleclientid.txt`](BUGREPORT-staleclientid.txt) | yes, 7a0021a0988f (PR 299221) |
-| 3 | [`session-leak.patch`](session-leak.patch) | NFS client | old sessions are never freed until unmount | `NFSCL session` memory grows with every recovery (37 to 256 in 27 h on EFS) | [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt) | no, not filed |
+| 1 | [`badsession.patch`](badsession.patch) | NFS client (`nfs_commonkrpc.c`) | recovery restarts only if the session is not already marked defunct | two server resets within ~45 s: every process touching the mount hangs in `nfsbadse` until reboot | [`badsession.md`](badsession.md) (Bugzilla: [`BUGREPORT.txt`](BUGREPORT.txt); investigation: [`nfsbug.md`](nfsbug.md)) | yes, 5ab48fb9f7ac (PR 297252, by rmacklem) |
+| 2 | [`staleclientid.patch`](staleclientid.patch) | NFS client (`nfs_clrpcops.c`) | `STALE_CLIENTID` in the renew window returns EIO instead of doing EXCHANGE_ID | 45 to 60 s with no I/O, and a CREATE_SESSION storm | [`staleclientid.md`](staleclientid.md) (Bugzilla: [`BUGREPORT-staleclientid.txt`](BUGREPORT-staleclientid.txt)) | yes, 7a0021a0988f (PR 299221) |
+| 3 | [`session-leak.patch`](session-leak.patch) | NFS client | old sessions are never freed until unmount | `NFSCL session` memory grows with every recovery (37 to 256 in 27 h on EFS) | [`session-leak.md`](session-leak.md) (Bugzilla: [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt)) | no, not filed |
 | 4 | [`nfscl_jail.patch`](nfscl_jail.patch) | NFS client, `nfssvc(2)` | the client lacks `VFCF_JAIL`; reading mount options needs `PRIV_NFS_DAEMON` | a jail cannot mount NFS, so a test client must run on the host; `umount` in a jail exits 1 | [`nfscl_jail.md`](nfscl_jail.md) | no |
 | 5 | [`kgss_vnet.patch`](kgss_vnet.patch) | kgssapi, `clnt_nl` | "gssd answered" and the upcall timeout are global, but gssd runs per jail | after one jail used Kerberos, an nfsd started in a jail without gssd does not serve | [`bugreport_kgss_vnet_upcall.md`](bugreport_kgss_vnet_upcall.md) | no, not filed |
 | 6 | [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch) | `tests/sys/fs/nfs` | the tree had no NFS test at all | regressions like #1 and #2 reach users | [`nfs_vnet_tests.md`](nfs_vnet_tests.md) | no |
@@ -86,8 +86,10 @@ fails the test. On a kernel before #2 the double-reset test fails with
 
 - `nfsbug.md`: the full troubleshooting of #1 (root cause, packet and kernel
   trace evidence, the separate efs-utils watchdog `df` fix, open items).
-- `BUGREPORT*.txt`, `bugreport_*.md`: the upstream bug reports.
-- `*.md` next to each patch: the write-up of that patch.
+- `<patch>.md` next to each patch, and `bugreport_kgss_vnet_upcall.md`: the
+  write-up of that patch, for a reader new to NFS.
+- `BUGREPORT*.txt`: the plain-text bug reports for Bugzilla, written for NFS
+  developers.
 - `vm-results/`: raw logs of the stock vs patched runs for #2 and #3.
 - `scripts/`:
   - `badsession-proxy.py`: the first fault-injecting proxy; reproduced #1

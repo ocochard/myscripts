@@ -1,62 +1,54 @@
-# Let a vnet jail mount NFS
+# #4: let a jail mount NFS
 
-Patch: `nfscl_jail.patch`, against main 584f44221f45.
-
-Two changes:
-
-1. The NFS client file system gets `VFCF_JAIL`. A jail created with
-   `allow.mount allow.mount.nfs` can then mount NFS.
-2. `nfssvc(NFSSVC_DUMPMNTOPTS)` no longer needs `PRIV_NFS_DAEMON`. Without
-   this change, umount(8) in such a jail exits 1.
+Patch: [`nfscl_jail.patch`](nfscl_jail.patch), against main 584f44221f45.
+Branch `nfscl-jail` in `~/freebsd-src-nfscljail`. Not committed upstream; it
+changes jail policy, so it needs the NFS maintainer's agreement.
 
 ## 1. Background
 
-**Jails and mounts.** A jail can mount a file system only if three things
-hold:
+**Why it matters.** The NFS tests ([`nfs_vnet_tests.md`](nfs_vnet_tests.md))
+want the client in a jail. Then a client bug hangs a jail, not the test
+machine, and a test can have two clients, for example to check that a lock
+taken by one blocks the other.
 
-- the jail has `allow.mount` set;
-- the jail has `allow.mount.<fstype>` set;
-- `enforce_statfs` is below 2.
+**Mounting from a jail.** A jail may mount a file system only if three
+things hold:
 
-The kernel creates the `allow.mount.<fstype>` parameter only for file
-systems registered with the `VFCF_JAIL` flag: `vfs_register()` calls
-`prison_add_vfs()` (`sys/kern/vfs_init.c:530`). tmpfs, nullfs, devfs and
-others have the flag. The NFS client did not:
+1. the jail was created with `allow.mount`;
+2. it has `allow.mount.<type>`, for example `allow.mount.tmpfs`;
+3. its `enforce_statfs` setting is below 2.
+
+The kernel creates the `allow.mount.<type>` parameter only for file systems
+registered with the `VFCF_JAIL` flag, a promise that the file system is
+safe to mount from a jail (`prison_add_vfs()` in `vfs_register()`,
+`sys/kern/vfs_init.c:530`). tmpfs, nullfs and devfs have it. The NFS client
+did not:
 
 ```
 sys/fs/nfsclient/nfs_clvfsops.c:160
 VFS_SET(nfs_vfsops, nfs, VFCF_NETWORK | VFCF_SBDRY);
 ```
 
-So `allow.mount.nfs` did not exist, and no jail could mount NFS.
+**What a jailed NFS client needs from the kernel.** A *vnet* jail has its
+own network stack. Kernel code that opens a socket for the jail must open
+it in the jail's network stack, or the traffic leaves from the host. The
+NFS client already does this, for other reasons:
 
-**vnet.** A vnet jail has its own network stack. Any kernel code that
-creates a socket on behalf of a jail must run with that jail's vnet as
-`curvnet`. If it doesn't, the socket lands in the host's network stack.
+| need | where it is handled |
+|---|---|
+| mount sockets in the jail's network | `mountnfs()` sets it from the mounting process (b837f100e1c8, 2025) |
+| every RPC, including background threads | switches to the mount's network (`sys/fs/nfs/nfs_commonkrpc.c:608`) |
+| a distinct client identity per jail | client ID built from the jail's own `hostuuid` (`sys/fs/nfsclient/nfs_clstate.c:913`) |
+| Kerberos and TLS helper daemons | kernel calls reach the daemon in the caller's network (`sys/rpc/clnt_nl.c:271-278`) |
 
-**The NFS client is already vnet-aware.** That work was done for other
-reasons, but it covers what a jailed mount needs:
+So the missing piece was the flag.
 
-- `mountnfs()` sets `curvnet` from the mounting credential (b837f100e1c8,
-  "nfs: set vnet(9) context in mountnfs()").
-- Every RPC, including those from the nfsiod and renew threads, switches
-  to the vnet of the mount's credential
-  (`sys/fs/nfs/nfs_commonkrpc.c:608`).
-- The NFSv4 client ID owner string comes from the jail's own `hostuuid`
-  (`getcredhostuuid()`, `sys/fs/nfsclient/nfs_clstate.c:913`). Two jails
-  therefore get two client IDs from the same server.
-- The kernel's gssd and rpctls upcalls are per vnet: the netlink RPC
-  transport sends to `curvnet` (`sys/rpc/clnt_nl.c:271-278`). So is
-  nfsuserd (`sys/fs/nfs/nfs_commonsubs.c:101`).
-
-**umount(8) and NFSv4.** After unmount(2), umount(8) sends an NFSv3 Mount
-protocol UNMOUNT RPC, unless the mount is NFSv4. It learns the version
-from `nfssvc(NFSSVC_DUMPMNTOPTS)` (`sbin/umount/umount.c:393-400`). That
-call reads the option string of a mount the caller names by path, the
-same string `nfsstat -m` prints. `sys_nfssvc()` lets anyone read the NFS
-statistics (d2ce00e9a617), but it required `PRIV_NFS_DAEMON` for this
-call (`sys/nfs/nfs_nfssvc.c:86`). A jail gets that privilege only with
-`allow.nfsd`, which a client jail has no reason to have.
+**How umount(8) treats NFS.** After unmounting, umount(8) sends an NFSv3
+"unmount" message to the server, unless the mount is NFSv4. To find out, it
+asks the kernel for the mount's options with `nfssvc(NFSSVC_DUMPMNTOPTS)`,
+the same call `nfsstat -m` uses (`sbin/umount/umount.c:393-400`). The
+kernel allowed that call only with `PRIV_NFS_DAEMON`, a privilege a jail
+gets only with `allow.nfsd`, meant for NFS servers (`sys/nfs/nfs_nfssvc.c`).
 
 ## 2. The problem
 
@@ -67,24 +59,18 @@ Before the patch:
 jail: unknown parameter: allow.mount.nfs
 ```
 
-With only `VFCF_JAIL` added, in a bhyve VM, a client jail mounts from an
-nfsd running in a second vnet jail:
+With only the flag added, in a bhyve VM, a client jail mounted from an
+nfsd in a second jail, wrote a file, and the server saw it. But umount in
+the jail failed after unmounting:
 
 ```
-+ jexec cli mount -t nfs -o nfsv4,minorversion=1 192.0.2.2:/ /mnt
-mount rc=0
-+ jexec cli sh -c 'echo from-jailed-client > /mnt/f && cat /mnt/f'
-from-jailed-client
-+ cat srv/export/f                    (on the host, the server's export)
-from-jailed-client
 + jexec cli umount /mnt
 umount: 192.0.2.2: MOUNTPROG: RPC: Port mapper failure - RPC: Timed out
 umount rc=1
 ```
 
-The unmount itself succeeded. umount(8) failed afterwards: the version
-query returned EPERM, so umount assumed NFSv3 and called rpcbind on the
-server.
+The options query failed with EPERM, so umount assumed NFSv3 and tried to
+reach an NFSv3 helper that an NFSv4-only server does not run.
 
 ## 3. The fix
 
@@ -104,77 +90,55 @@ server.
 +	    NFSSVC_DUMPMNTOPTS)) != 0) {
 ```
 
-Why the second change is safe: the `NFSSVC_DUMPMNTOPTS` handler
-(`sys/fs/nfsclient/nfs_clport.c`) only does three things:
+The second change follows d2ce00e9a617, which let anyone read the NFS
+statistics. Reading mount options is just as harmless:
 
-1. It looks the path up with the caller's credential and root directory,
-   so a jail can only reach its own mounts.
-2. It checks that the file system is NFS.
-3. It copies out the option string.
-
-It changes no state. The string holds options such as `nfsv4`, `tcp`,
-`hard`, `rsize` and `timeout`, not secrets.
+- the kernel looks the path up with the caller's own permissions and root,
+  so a jail reaches only its own mounts;
+- it only reads; it changes nothing;
+- the options are things like `nfsv4`, `tcp`, `hard` and `timeout`, not
+  secrets.
 
 Alternatives:
 
-- **Give client jails `allow.nfsd`.** That grants the nfsd, mountd and gssd
-  privileges to a jail that only wants to mount, which is far more than
-  reading mount options.
-- **Make umount(8) ignore the UNMOUNT RPC error.** That hides real NFSv3
-  failures on the host, and `nfsstat -m` would still fail in jails.
-- **Have umount(8) find the version some other way.** statfs(2) has no NFS
-  version field.
+- **Give client jails `allow.nfsd`.** That hands a jail every NFS server
+  privilege just to read mount options.
+- **Make umount(8) ignore the failed NFSv3 message.** That would hide real
+  NFSv3 failures on normal machines, and `nfsstat -m` would still fail in
+  jails.
 
-What this patch does NOT fix or check:
+What this does NOT fix or check:
 
-- **NFSv3 locking (NLM) from a jail fails** with "No locks available", even
-  with rpcbind, rpc.statd and rpc.lockd in the client jail. Mounting with
-  `nolockd` works. NLM is not vnet-aware.
-- **NFSv4.0 delegations** were not exercised. The NFSv4.0 callback daemon
-  and its port are global (`nfsv4_cbport`, `sys/fs/nfsclient/nfs_clport.c`).
-  NFSv4.1 and later send callbacks on the client's own connection, so they
-  do not use it.
-- **`umount -N` (forced dismount) from inside a jail** still needs
-  `PRIV_NFS_DAEMON`. The host can still force it.
-- **Every client ID is on one global list** (`nfsclhead`), shared by all
-  jails. Entries are keyed per jail by `hostuuid`, but this was not
-  reviewed for isolation.
-- **The `vfs.nfs.*` sysctls are global.**
-- **Security:** the patch lets a jail with `allow.mount.nfs` create network
-  mounts. This is opt-in per jail, as for every other `VFCF_JAIL` file
-  system.
+- NFSv3 file locking (NLM) from a jail fails with "No locks available", even
+  with `rpcbind`, `rpc.statd` and `rpc.lockd` in the jail. Mounting with
+  `nolockd` works.
+- NFSv4.0 delegations were not exercised. NFSv4.0's callback daemon and port
+  are shared by the whole machine; NFSv4.1 and later do not use them.
+- `umount -N` (forced dismount) inside a jail still needs the privilege; the
+  host can still force it.
+- The `vfs.nfs.*` settings and the list of client IDs are shared by all
+  jails; the isolation of that list was not reviewed.
+- Security: a jail with `allow.mount.nfs` can create network mounts. It is
+  opt-in per jail, as for every other jail-safe file system.
 
 ## 4. Tested
 
-bhyve VM, kernel main 584f44221f45 with the patch, GENERIC-NODEBUG plus
-`device epair`, `device if_bridge` and `options NULLFS`. One server jail
+bhyve VM, main 584f44221f45 with the patch. One server jail
 (`allow.nfsd`) and two client jails (`allow.mount allow.mount.nfs
-enforce_statfs=1`) share a bridge.
+enforce_statfs=1`) on one virtual bridge.
 
 | Case | Result |
 |---|---|
-| NFSv4.1 mount, write, read, server sees the file | works |
-| `nfsstat -m` in the client jail | works (EPERM before the patch) |
-| `umount` in the client jail | rc 0 (rc 1 before the patch) |
+| NFSv4.1 mount, write, read, file seen on the server | works |
+| `nfsstat -m` in the client jail | works (EPERM before) |
+| `umount` in the client jail | exit 0 (exit 1 before) |
 | NFSv4.0 mount, write, read | works |
-| NFSv3 over TCP, `nolockd`, write, read, lockf | works |
-| NFSv3 with NLM locking | fails: "No locks available" |
-| Two client jails share a file | works |
-| Lock through c1, `lockf -w -t 0` through c2 | c2 gets "already locked" (75) |
-| Client jails after `jail -r` | gone after 45 to 60 s (TCP TIME_WAIT) |
-| tests/sys/fs/nfs with jailed clients | 4 of 4 passed |
+| NFSv3 over TCP with `nolockd` | works |
+| NFSv3 with locking (NLM) | fails: "No locks available" |
+| two client jails share a file | works |
+| lock through c1, then `lockf -w -t 0` through c2 | c2 gets "already locked" |
+| client jails after `jail -r` | gone after 45 to 60 s (normal TCP TIME_WAIT) |
+| `tests/sys/fs/nfs` with jailed clients | all cases passed |
 
-Untested:
-
-- NFSv4.2-specific operations.
-- Kerberos (`sec=krb5*`) and NFS over TLS from a jail.
-- pNFS from a jailed client.
-- A non-vnet jail.
-- Running with nfscl as a module, not compiled in.
-
-Side finding, unrelated to this patch: after a server jail served clients
-that used NFSv3 with NLM, or clients driven through the fault-injecting
-proxy, it stays dying for more than 150 s after `jail -r`. A server jail
-whose only client unmounted cleanly over NFSv4.1 is gone in 1 s. This
-looks like nfsd state keeping the vnet alive, and needs its own
-investigation.
+Untested: NFSv4.2-specific operations, NFS over TLS from a jail, pNFS, a
+jail without vnet, and the NFS client loaded as a module.
