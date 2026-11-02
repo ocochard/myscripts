@@ -1,0 +1,48 @@
+2026 Oct  8 13:19:53 tcp established local=62381 -> efs:2049
+2026 Oct  8 13:19:53 setclient start /mnt/t retok=-1
+2026 Oct  8 13:19:53 tcp established local=51043 -> efs:2049
+2026 Oct  8 13:19:53 exchangeid ret=0
+2026 Oct  8 13:19:53 createsession ret=0
+2026 Oct  8 13:19:53 setclient ret=0
+2026 Oct  8 13:20:12 tcp established local=49463 -> efs:2049
+2026 Oct  8 13:20:12 setclient start /mnt/t retok=0
+2026 Oct  8 13:20:12 createsession ret=10022
+2026 Oct  8 13:20:12 exchangeid ret=0
+2026 Oct  8 13:20:12 createsession ret=0
+2026 Oct  8 13:20:12 setclient ret=0 retok_out=0
+2026 Oct  8 13:20:12 setclient ret=0
+2026 Oct  8 13:20:27 tcp established local=44728 -> efs:2049
+2026 Oct  8 13:20:27 setclient start /mnt/t retok=1
+2026 Oct  8 13:20:27 createsession ret=10022
+2026 Oct  8 13:20:27 exchangeid ret=0
+2026 Oct  8 13:20:27 createsession ret=0
+2026 Oct  8 13:20:27 setclient ret=0 retok_out=0
+2026 Oct  8 13:20:27 setclient ret=0
+2026 Oct  8 13:22:12 tcp established local=63556 -> efs:2049
+2026 Oct  8 13:22:12 setclient start /mnt/t retok=0
+2026 Oct  8 13:22:12 createsession ret=10022
+2026 Oct  8 13:22:12 exchangeid ret=0
+2026 Oct  8 13:22:12 createsession ret=0
+2026 Oct  8 13:22:12 setclient ret=0 retok_out=0
+2026 Oct  8 13:22:12 setclient ret=0
+2026 Oct  8 13:22:26 tcp established local=27301 -> efs:2049
+2026 Oct  8 13:22:26 setclient start /mnt/t retok=1
+2026 Oct  8 13:22:26 createsession ret=10022
+2026 Oct  8 13:22:26 exchangeid ret=0
+2026 Oct  8 13:22:26 createsession ret=0
+2026 Oct  8 13:22:26 setclient ret=0 retok_out=0
+2026 Oct  8 13:22:26 setclient ret=0
+
+2026 Oct  8 13:23:14 tcp efs local=62381 state-established -> state-fin-wait-1
+2026 Oct  8 13:23:14 tcp efs local=44728 state-established -> state-fin-wait-1
+2026 Oct  8 13:23:14 tcp efs local=27301 state-established -> state-fin-wait-1
+2026 Oct  8 13:23:14 tcp efs local=51043 state-established -> state-fin-wait-1
+2026 Oct  8 13:23:14 tcp efs local=63556 state-established -> state-fin-wait-1
+2026 Oct  8 13:23:14 tcp efs local=49463 state-established -> state-fin-wait-1
+2026 Oct  8 13:23:14 tcp efs local=27301 state-time-wait -> state-closed
+2026 Oct  8 13:23:14 tcp efs local=51043 state-time-wait -> state-closed
+2026 Oct  8 13:23:14 tcp efs local=49463 state-time-wait -> state-closed
+2026 Oct  8 13:23:14 tcp efs local=63556 state-time-wait -> state-closed
+2026 Oct  8 13:23:14 tcp efs local=44728 state-time-wait -> state-closed
+2026 Oct  8 13:23:14 tcp efs local=62381 state-time-wait -> state-closed
+

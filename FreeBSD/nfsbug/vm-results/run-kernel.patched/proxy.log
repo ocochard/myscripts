@@ -1,0 +1,33 @@
+13:19:51 listening on 127.0.0.1:2050 -> 127.0.0.1:2049; resets: start 20.0s, period 120.0s, gap 15.0s
+13:19:53 connection from 127.0.0.1:700
+13:19:53 connection from 127.0.0.1:780
+13:19:53 learn clientid ce97c76a01000000
+13:19:53 learn session 0100000000000000
+13:20:11 RESET: 2 connection(s), clientid ce97c76a01000000 now stale
+13:20:12 inject 10052 for op 53 xid 534a3120
+13:20:12 connection from 127.0.0.1:856
+13:20:12 inject 10052 for op 53 xid 5343ed95
+13:20:12 inject 10022 for op 43 xid 5343ed96
+13:20:12 learn clientid ce97c76a02000000
+13:20:12 learn session 0200000000000000
+13:20:26 RESET: 1 connection(s), clientid ce97c76a02000000 now stale
+13:20:27 inject 10052 for op 53 xid 5343edd6
+13:20:27 connection from 127.0.0.1:760
+13:20:27 inject 10052 for op 53 xid 53447793
+13:20:27 inject 10022 for op 43 xid 53447794
+13:20:27 learn clientid ce97c76a03000000
+13:20:27 learn session 0300000000000000
+13:22:11 RESET: 1 connection(s), clientid ce97c76a03000000 now stale
+13:22:12 inject 10052 for op 53 xid 5344793e
+13:22:12 connection from 127.0.0.1:790
+13:22:12 inject 10052 for op 53 xid 534b5ba7
+13:22:12 inject 10022 for op 43 xid 534b5ba8
+13:22:12 learn clientid ce97c76a04000000
+13:22:12 learn session 0400000000000000
+13:22:26 RESET: 1 connection(s), clientid ce97c76a04000000 now stale
+13:22:26 inject 10052 for op 53 xid 534b5be4
+13:22:26 connection from 127.0.0.1:626
+13:22:26 inject 10052 for op 53 xid 534c3154
+13:22:26 inject 10022 for op 43 xid 534c3155
+13:22:26 learn clientid ce97c76a05000000
+13:22:26 learn session 0500000000000000

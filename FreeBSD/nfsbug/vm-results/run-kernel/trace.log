@@ -1,0 +1,416 @@
+2026 Oct  8 12:55:59 tcp established local=19984 -> efs:2049
+2026 Oct  8 12:55:59 setclient start /mnt/t retok=-1
+2026 Oct  8 12:55:59 tcp established local=32233 -> efs:2049
+2026 Oct  8 12:55:59 exchangeid ret=0
+2026 Oct  8 12:55:59 createsession ret=0
+2026 Oct  8 12:55:59 setclient ret=0
+2026 Oct  8 12:56:17 tcp established local=35097 -> efs:2049
+2026 Oct  8 12:56:17 setclient start /mnt/t retok=0
+2026 Oct  8 12:56:17 createsession ret=10022
+2026 Oct  8 12:56:17 exchangeid ret=0
+2026 Oct  8 12:56:17 createsession ret=0
+2026 Oct  8 12:56:17 setclient ret=0 retok_out=0
+2026 Oct  8 12:56:17 setclient ret=0
+2026 Oct  8 12:56:33 tcp established local=42352 -> efs:2049
+2026 Oct  8 12:56:33 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:33 createsession ret=10022
+2026 Oct  8 12:56:33 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:33 setclient ret=5
+2026 Oct  8 12:56:34 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:34 createsession ret=10022
+2026 Oct  8 12:56:34 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:34 setclient ret=5
+2026 Oct  8 12:56:35 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:35 createsession ret=10022
+2026 Oct  8 12:56:35 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:35 setclient ret=5
+2026 Oct  8 12:56:36 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:36 createsession ret=10022
+2026 Oct  8 12:56:36 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:36 setclient ret=5
+2026 Oct  8 12:56:37 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:37 createsession ret=10022
+2026 Oct  8 12:56:37 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:37 setclient ret=5
+2026 Oct  8 12:56:38 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:38 createsession ret=10022
+2026 Oct  8 12:56:38 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:38 setclient ret=5
+2026 Oct  8 12:56:39 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:39 createsession ret=10022
+2026 Oct  8 12:56:39 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:39 setclient ret=5
+2026 Oct  8 12:56:40 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:40 createsession ret=10022
+2026 Oct  8 12:56:40 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:40 setclient ret=5
+2026 Oct  8 12:56:41 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:41 createsession ret=10022
+2026 Oct  8 12:56:41 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:41 setclient ret=5
+2026 Oct  8 12:56:42 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:42 createsession ret=10022
+2026 Oct  8 12:56:42 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:42 setclient ret=5
+2026 Oct  8 12:56:43 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:43 createsession ret=10022
+2026 Oct  8 12:56:43 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:43 setclient ret=5
+2026 Oct  8 12:56:44 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:44 createsession ret=10022
+2026 Oct  8 12:56:44 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:44 setclient ret=5
+2026 Oct  8 12:56:45 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:45 createsession ret=10022
+2026 Oct  8 12:56:45 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:45 setclient ret=5
+2026 Oct  8 12:56:46 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:46 createsession ret=10022
+2026 Oct  8 12:56:46 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:46 setclient ret=5
+2026 Oct  8 12:56:47 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:47 createsession ret=10022
+2026 Oct  8 12:56:47 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:47 setclient ret=5
+2026 Oct  8 12:56:48 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:48 createsession ret=10022
+2026 Oct  8 12:56:48 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:48 setclient ret=5
+2026 Oct  8 12:56:49 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:49 createsession ret=10022
+2026 Oct  8 12:56:49 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:49 setclient ret=5
+2026 Oct  8 12:56:50 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:50 createsession ret=10022
+2026 Oct  8 12:56:50 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:50 setclient ret=5
+2026 Oct  8 12:56:51 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:51 createsession ret=10022
+2026 Oct  8 12:56:51 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:51 setclient ret=5
+2026 Oct  8 12:56:52 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:52 createsession ret=10022
+2026 Oct  8 12:56:52 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:52 setclient ret=5
+2026 Oct  8 12:56:53 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:53 createsession ret=10022
+2026 Oct  8 12:56:53 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:53 setclient ret=5
+2026 Oct  8 12:56:54 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:54 createsession ret=10022
+2026 Oct  8 12:56:54 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:54 setclient ret=5
+2026 Oct  8 12:56:55 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:55 createsession ret=10022
+2026 Oct  8 12:56:55 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:55 setclient ret=5
+2026 Oct  8 12:56:56 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:56 createsession ret=10022
+2026 Oct  8 12:56:56 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:56 setclient ret=5
+2026 Oct  8 12:56:57 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:57 createsession ret=10022
+2026 Oct  8 12:56:57 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:57 setclient ret=5
+2026 Oct  8 12:56:58 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:58 createsession ret=10022
+2026 Oct  8 12:56:58 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:58 setclient ret=5
+2026 Oct  8 12:56:59 setclient start /mnt/t retok=1
+2026 Oct  8 12:56:59 createsession ret=10022
+2026 Oct  8 12:56:59 setclient ret=5 retok_out=1
+2026 Oct  8 12:56:59 setclient ret=5
+2026 Oct  8 12:57:01 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:01 createsession ret=10022
+2026 Oct  8 12:57:01 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:01 setclient ret=5
+2026 Oct  8 12:57:02 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:02 createsession ret=10022
+2026 Oct  8 12:57:02 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:02 setclient ret=5
+2026 Oct  8 12:57:03 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:03 createsession ret=10022
+2026 Oct  8 12:57:03 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:03 setclient ret=5
+2026 Oct  8 12:57:04 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:04 createsession ret=10022
+2026 Oct  8 12:57:04 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:04 setclient ret=5
+2026 Oct  8 12:57:05 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:05 createsession ret=10022
+2026 Oct  8 12:57:05 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:05 setclient ret=5
+2026 Oct  8 12:57:06 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:06 createsession ret=10022
+2026 Oct  8 12:57:06 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:06 setclient ret=5
+2026 Oct  8 12:57:07 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:07 createsession ret=10022
+2026 Oct  8 12:57:07 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:07 setclient ret=5
+2026 Oct  8 12:57:08 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:08 createsession ret=10022
+2026 Oct  8 12:57:08 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:08 setclient ret=5
+2026 Oct  8 12:57:09 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:09 createsession ret=10022
+2026 Oct  8 12:57:09 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:09 setclient ret=5
+2026 Oct  8 12:57:10 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:10 createsession ret=10022
+2026 Oct  8 12:57:10 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:10 setclient ret=5
+2026 Oct  8 12:57:11 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:11 createsession ret=10022
+2026 Oct  8 12:57:11 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:11 setclient ret=5
+2026 Oct  8 12:57:12 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:12 createsession ret=10022
+2026 Oct  8 12:57:12 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:12 setclient ret=5
+2026 Oct  8 12:57:13 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:13 createsession ret=10022
+2026 Oct  8 12:57:13 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:13 setclient ret=5
+2026 Oct  8 12:57:14 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:14 createsession ret=10022
+2026 Oct  8 12:57:14 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:14 setclient ret=5
+2026 Oct  8 12:57:15 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:15 createsession ret=10022
+2026 Oct  8 12:57:15 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:15 setclient ret=5
+2026 Oct  8 12:57:16 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:16 createsession ret=10022
+2026 Oct  8 12:57:16 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:16 setclient ret=5
+2026 Oct  8 12:57:17 setclient start /mnt/t retok=1
+2026 Oct  8 12:57:17 createsession ret=10022
+2026 Oct  8 12:57:17 setclient ret=5 retok_out=1
+2026 Oct  8 12:57:17 setclient ret=5
+2026 Oct  8 12:57:18 setclient start /mnt/t retok=0
+2026 Oct  8 12:57:18 createsession ret=10022
+2026 Oct  8 12:57:18 exchangeid ret=0
+2026 Oct  8 12:57:18 createsession ret=0
+2026 Oct  8 12:57:18 setclient ret=0 retok_out=0
+2026 Oct  8 12:57:18 setclient ret=0
+2026 Oct  8 12:58:18 tcp established local=51671 -> efs:2049
+2026 Oct  8 12:58:18 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:18 createsession ret=10022
+2026 Oct  8 12:58:18 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:18 setclient ret=5
+2026 Oct  8 12:58:19 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:19 createsession ret=10022
+2026 Oct  8 12:58:19 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:19 setclient ret=5
+2026 Oct  8 12:58:20 setclient start /mnt/t retok=0
+2026 Oct  8 12:58:20 createsession ret=10022
+2026 Oct  8 12:58:20 exchangeid ret=0
+2026 Oct  8 12:58:20 createsession ret=0
+2026 Oct  8 12:58:20 setclient ret=0 retok_out=0
+2026 Oct  8 12:58:20 setclient ret=0
+2026 Oct  8 12:58:33 tcp established local=23764 -> efs:2049
+2026 Oct  8 12:58:33 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:33 createsession ret=10022
+2026 Oct  8 12:58:33 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:33 setclient ret=5
+2026 Oct  8 12:58:34 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:34 createsession ret=10022
+2026 Oct  8 12:58:34 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:34 setclient ret=5
+2026 Oct  8 12:58:35 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:35 createsession ret=10022
+2026 Oct  8 12:58:35 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:35 setclient ret=5
+2026 Oct  8 12:58:36 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:36 createsession ret=10022
+2026 Oct  8 12:58:36 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:36 setclient ret=5
+2026 Oct  8 12:58:37 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:37 createsession ret=10022
+2026 Oct  8 12:58:37 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:37 setclient ret=5
+2026 Oct  8 12:58:38 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:38 createsession ret=10022
+2026 Oct  8 12:58:38 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:38 setclient ret=5
+2026 Oct  8 12:58:39 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:39 createsession ret=10022
+2026 Oct  8 12:58:39 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:39 setclient ret=5
+2026 Oct  8 12:58:40 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:40 createsession ret=10022
+2026 Oct  8 12:58:40 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:40 setclient ret=5
+2026 Oct  8 12:58:41 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:41 createsession ret=10022
+2026 Oct  8 12:58:41 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:41 setclient ret=5
+2026 Oct  8 12:58:42 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:42 createsession ret=10022
+2026 Oct  8 12:58:42 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:42 setclient ret=5
+2026 Oct  8 12:58:43 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:43 createsession ret=10022
+2026 Oct  8 12:58:43 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:43 setclient ret=5
+2026 Oct  8 12:58:44 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:44 createsession ret=10022
+2026 Oct  8 12:58:44 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:44 setclient ret=5
+2026 Oct  8 12:58:45 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:45 createsession ret=10022
+2026 Oct  8 12:58:45 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:45 setclient ret=5
+2026 Oct  8 12:58:46 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:46 createsession ret=10022
+2026 Oct  8 12:58:46 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:46 setclient ret=5
+2026 Oct  8 12:58:47 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:47 createsession ret=10022
+2026 Oct  8 12:58:47 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:47 setclient ret=5
+2026 Oct  8 12:58:48 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:48 createsession ret=10022
+2026 Oct  8 12:58:48 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:48 setclient ret=5
+2026 Oct  8 12:58:49 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:49 createsession ret=10022
+2026 Oct  8 12:58:49 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:49 setclient ret=5
+2026 Oct  8 12:58:50 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:50 createsession ret=10022
+2026 Oct  8 12:58:50 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:50 setclient ret=5
+2026 Oct  8 12:58:51 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:51 createsession ret=10022
+2026 Oct  8 12:58:51 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:51 setclient ret=5
+2026 Oct  8 12:58:52 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:52 createsession ret=10022
+2026 Oct  8 12:58:52 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:52 setclient ret=5
+2026 Oct  8 12:58:53 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:53 createsession ret=10022
+2026 Oct  8 12:58:53 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:53 setclient ret=5
+2026 Oct  8 12:58:54 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:54 createsession ret=10022
+2026 Oct  8 12:58:54 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:54 setclient ret=5
+2026 Oct  8 12:58:55 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:55 createsession ret=10022
+2026 Oct  8 12:58:55 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:55 setclient ret=5
+2026 Oct  8 12:58:56 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:56 createsession ret=10022
+2026 Oct  8 12:58:56 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:56 setclient ret=5
+2026 Oct  8 12:58:57 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:57 createsession ret=10022
+2026 Oct  8 12:58:57 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:57 setclient ret=5
+2026 Oct  8 12:58:58 setclient start /mnt/t retok=1
+2026 Oct  8 12:58:58 createsession ret=10022
+2026 Oct  8 12:58:58 setclient ret=5 retok_out=1
+2026 Oct  8 12:58:58 setclient ret=5
+2026 Oct  8 12:59:00 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:00 createsession ret=10022
+2026 Oct  8 12:59:00 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:00 setclient ret=5
+2026 Oct  8 12:59:01 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:01 createsession ret=10022
+2026 Oct  8 12:59:01 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:01 setclient ret=5
+2026 Oct  8 12:59:02 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:02 createsession ret=10022
+2026 Oct  8 12:59:02 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:02 setclient ret=5
+2026 Oct  8 12:59:03 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:03 createsession ret=10022
+2026 Oct  8 12:59:03 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:03 setclient ret=5
+2026 Oct  8 12:59:04 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:04 createsession ret=10022
+2026 Oct  8 12:59:04 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:04 setclient ret=5
+2026 Oct  8 12:59:05 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:05 createsession ret=10022
+2026 Oct  8 12:59:05 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:05 setclient ret=5
+2026 Oct  8 12:59:06 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:06 createsession ret=10022
+2026 Oct  8 12:59:06 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:06 setclient ret=5
+2026 Oct  8 12:59:07 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:07 createsession ret=10022
+2026 Oct  8 12:59:07 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:07 setclient ret=5
+2026 Oct  8 12:59:08 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:08 createsession ret=10022
+2026 Oct  8 12:59:08 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:08 setclient ret=5
+2026 Oct  8 12:59:09 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:09 createsession ret=10022
+2026 Oct  8 12:59:09 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:09 setclient ret=5
+2026 Oct  8 12:59:10 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:10 createsession ret=10022
+2026 Oct  8 12:59:10 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:10 setclient ret=5
+2026 Oct  8 12:59:11 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:11 createsession ret=10022
+2026 Oct  8 12:59:11 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:11 setclient ret=5
+2026 Oct  8 12:59:12 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:12 createsession ret=10022
+2026 Oct  8 12:59:12 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:12 setclient ret=5
+2026 Oct  8 12:59:13 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:13 createsession ret=10022
+2026 Oct  8 12:59:13 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:13 setclient ret=5
+2026 Oct  8 12:59:14 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:14 createsession ret=10022
+2026 Oct  8 12:59:14 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:14 setclient ret=5
+2026 Oct  8 12:59:15 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:15 createsession ret=10022
+2026 Oct  8 12:59:15 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:15 setclient ret=5
+2026 Oct  8 12:59:16 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:16 createsession ret=10022
+2026 Oct  8 12:59:16 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:16 setclient ret=5
+2026 Oct  8 12:59:17 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:17 createsession ret=10022
+2026 Oct  8 12:59:17 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:17 setclient ret=5
+2026 Oct  8 12:59:18 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:18 createsession ret=10022
+2026 Oct  8 12:59:18 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:18 setclient ret=5
+2026 Oct  8 12:59:19 setclient start /mnt/t retok=1
+2026 Oct  8 12:59:19 createsession ret=10022
+2026 Oct  8 12:59:19 setclient ret=5 retok_out=1
+2026 Oct  8 12:59:19 setclient ret=5
+2026 Oct  8 12:59:20 setclient start /mnt/t retok=0
+2026 Oct  8 12:59:20 createsession ret=10022
+2026 Oct  8 12:59:20 exchangeid ret=0
+2026 Oct  8 12:59:20 createsession ret=0
+2026 Oct  8 12:59:20 setclient ret=0 retok_out=0
+2026 Oct  8 12:59:20 setclient ret=0
+
+2026 Oct  8 12:59:22 tcp efs local=42352 state-established -> state-fin-wait-1
+2026 Oct  8 12:59:22 tcp efs local=35097 state-established -> state-fin-wait-1
+2026 Oct  8 12:59:22 tcp efs local=32233 state-established -> state-fin-wait-1
+2026 Oct  8 12:59:22 tcp efs local=51671 state-established -> state-fin-wait-1
+2026 Oct  8 12:59:22 tcp efs local=19984 state-established -> state-fin-wait-1
+2026 Oct  8 12:59:22 tcp efs local=23764 state-established -> state-fin-wait-1
+2026 Oct  8 12:59:22 tcp efs local=19984 state-time-wait -> state-closed
+2026 Oct  8 12:59:22 tcp efs local=23764 state-time-wait -> state-closed
+2026 Oct  8 12:59:22 tcp efs local=32233 state-time-wait -> state-closed
+2026 Oct  8 12:59:22 tcp efs local=51671 state-time-wait -> state-closed
+2026 Oct  8 12:59:22 tcp efs local=35097 state-time-wait -> state-closed
+2026 Oct  8 12:59:22 tcp efs local=42352 state-time-wait -> state-closed
+

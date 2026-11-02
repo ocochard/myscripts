@@ -1,0 +1,1219 @@
+diff --git etc/mtree/BSD.tests.dist etc/mtree/BSD.tests.dist
+index cec7a9f82627..0cc1b73c39e4 100644
+--- etc/mtree/BSD.tests.dist
++++ etc/mtree/BSD.tests.dist
+@@ -834,6 +834,8 @@
+             ..
+             fusefs
+             ..
++            nfs
++            ..
+             pjdfstest
+             ..
+             tarfs
+diff --git tests/sys/fs/Makefile tests/sys/fs/Makefile
+index 42fd087b16f6..5831325d634f 100644
+--- tests/sys/fs/Makefile
++++ tests/sys/fs/Makefile
+@@ -14,6 +14,7 @@ TESTS_SUBDIRS+=		fdescfs
+ .if ${COMPILER_FEATURES:Mc++14} && ${MK_GOOGLETEST} != "no"
+ TESTS_SUBDIRS+=		fusefs
+ .endif
++TESTS_SUBDIRS+=		nfs
+ TESTS_SUBDIRS+=		pjdfstest
+ TESTS_SUBDIRS+=		tarfs
+ TESTS_SUBDIRS+=		tmpfs
+diff --git tests/sys/fs/nfs/Makefile tests/sys/fs/nfs/Makefile
+new file mode 100644
+index 000000000000..1c90226294d7
+--- /dev/null
++++ tests/sys/fs/nfs/Makefile
+@@ -0,0 +1,17 @@
++PACKAGE=	tests
++
++TESTSDIR=	${TESTSBASE}/sys/fs/nfs
++BINDIR=		${TESTSDIR}
++
++ATF_TESTS_SH+=	basic_test
++ATF_TESTS_SH+=	recovery_test
++ATF_TESTS_SH+=	krb5_test
++
++# Tests share the jail names, addresses and proxy port.
++TEST_METADATA+=	is_exclusive="true"
++
++${PACKAGE}FILES+=	nfs.subr
++${PACKAGE}FILES+=	nfs_reset_proxy.py
++${PACKAGE}FILESMODE_nfs_reset_proxy.py=	0555
++
++.include <bsd.test.mk>
+diff --git tests/sys/fs/nfs/basic_test.sh tests/sys/fs/nfs/basic_test.sh
+new file mode 100644
+index 000000000000..48f9f35b19e4
+--- /dev/null
++++ tests/sys/fs/nfs/basic_test.sh
+@@ -0,0 +1,105 @@
++#
++# SPDX-License-Identifier: BSD-2-Clause
++#
++# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++# SUCH DAMAGE.
++
++. $(atf_get_srcdir)/nfs.subr
++
++atf_test_case "basic" "cleanup"
++basic_head()
++{
++	atf_set descr 'NFSv4.1 file operations against a vnet jail server'
++	atf_set require.user root
++}
++
++basic_body()
++{
++	local cl m
++
++	nfs_init
++	nfs_server_start srv
++	nfs_client_start c1
++	cl=$(nfs_client c1)
++	nfs_mount ${cl} $(nfs_addr srv)
++	m=$(nfs_mnt ${cl})
++
++	echo hello > $m/file
++	atf_check -o inline:"hello\n" cat $m/file
++	atf_check -o inline:"hello\n" cat srv/export/file
++	atf_check mkdir $m/dir
++	atf_check mv $m/file $m/dir/renamed
++	atf_check -o inline:"renamed\n" ls $m/dir
++	atf_check dd if=/dev/random of=$m/big bs=1m count=8 status=none
++	atf_check -o save:big.sum sha256 -q $m/big
++	atf_check -o file:big.sum sha256 -q srv/export/big
++	atf_check rm -r $m/dir $m/big
++	atf_check -o empty ls srv/export
++}
++
++basic_cleanup()
++{
++	nfs_cleanup
++}
++
++atf_test_case "two_clients" "cleanup"
++two_clients_head()
++{
++	atf_set descr 'Two NFSv4.1 clients share data and see each other locks'
++	atf_set require.user root
++}
++
++two_clients_body()
++{
++	local m1 m2
++
++	nfs_init
++	nfs_require_clients 2
++	nfs_server_start srv
++	nfs_client_start c1
++	nfs_client_start c2
++	nfs_mount c1 $(nfs_addr srv)
++	nfs_mount c2 $(nfs_addr srv)
++	m1=$(nfs_mnt c1)
++	m2=$(nfs_mnt c2)
++
++	echo from-c1 > $m1/file
++	atf_check -o inline:"from-c1\n" cat $m2/file
++	# A lock held through c1 conflicts with one asked through c2.
++	lockf -w -k $m1/file sleep 5 &
++	sleep 1
++	atf_check -s exit:75 -e ignore lockf -w -t 0 $m2/file true
++	wait
++	atf_check lockf -w -t 0 $m2/file true
++}
++
++two_clients_cleanup()
++{
++	nfs_cleanup
++}
++
++atf_init_test_cases()
++{
++	atf_add_test_case "basic"
++	atf_add_test_case "two_clients"
++}
+diff --git tests/sys/fs/nfs/krb5_test.sh tests/sys/fs/nfs/krb5_test.sh
+new file mode 100644
+index 000000000000..1ea33137f6ae
+--- /dev/null
++++ tests/sys/fs/nfs/krb5_test.sh
+@@ -0,0 +1,160 @@
++#
++# SPDX-License-Identifier: BSD-2-Clause
++#
++# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++# SUCH DAMAGE.
++
++#
++# NFSv4.1 with Kerberos (RFC 7530 Section 3.2, RFC 2203): KDC, nfsd and
++# gssd in the server jail, gssd with a host-based keytab entry in the
++# client jail.
++#
++
++. $(atf_get_srcdir)/nfs.subr
++
++# Export /export with Kerberos only, and prepare client c1 to mount it.
++krb5_setup()
++{
++	nfs_init
++	nfs_krb5_require
++	if ! nfs_jailed_clients; then
++		atf_skip "Kerberos tests need allow.mount.nfs"
++	fi
++	nfs_server_jail srv -sec=krb5:krb5i:krb5p
++	nfs_client_start c1 allow.nfsd
++	nfs_kdc_start srv
++	nfs_krb5_keytab srv nfs
++	nfs_krb5_keytab c1 host
++	nfs_gssd_start srv
++	nfs_server_run srv
++	nfs_gssd_start c1 -h
++}
++
++# Capture the NFS traffic on the bridge to wire.pcap.
++krb5_capture_start()
++{
++	local i
++
++	tcpdump -i $(cat nfs_bridge) -U -w wire.pcap tcp port 2049 \
++	    2> tcpdump.log &
++	echo $! > tcpdump.pid
++	for i in $(seq 10); do
++		grep -q "listening on" tcpdump.log && return 0
++		sleep 1
++	done
++	atf_fail "tcpdump did not start: $(cat tcpdump.log)"
++}
++
++# Stop the capture; fail unless it holds NFS packets.
++krb5_capture_stop()
++{
++	sleep 1
++	kill $(cat tcpdump.pid)
++	wait
++	[ $(tcpdump -r wire.pcap 2>/dev/null | wc -l) -gt 0 ] ||
++	    atf_fail "no NFS packet captured"
++}
++
++# Mount with flavor $1, then write, read back and check on the server.
++krb5_check()
++{
++	local m
++
++	nfs_mount c1 $(nfs_name srv) sec=$1,gssname=host,allgssname
++	atf_check -o match:"sec=$1," jexec c1 nfsstat -m
++	m=$(nfs_mnt c1)
++	echo $2 > $m/file
++	atf_check -o inline:"$2\n" cat $m/file
++	atf_check -o inline:"$2\n" cat srv/export/file
++}
++
++atf_test_case "krb5" "cleanup"
++krb5_head()
++{
++	atf_set descr 'NFSv4.1 with sec=krb5; sec=sys is refused'
++	atf_set require.user root
++}
++
++krb5_body()
++{
++	krb5_setup
++	atf_check -s not-exit:0 -e ignore jexec c1 mount -t nfs \
++	    -o nfsv4,minorversion=1,retrycnt=1,sec=sys $(nfs_name srv):/ /mnt
++	krb5_check krb5 hello-krb5
++}
++
++krb5_cleanup()
++{
++	nfs_cleanup
++}
++
++atf_test_case "krb5i" "cleanup"
++krb5i_head()
++{
++	atf_set descr 'NFSv4.1 with sec=krb5i: integrity, data in clear'
++	atf_set require.user root
++	atf_set require.progs tcpdump
++}
++
++krb5i_body()
++{
++	krb5_setup
++	krb5_capture_start
++	krb5_check krb5i nfstest-marker-krb5i
++	krb5_capture_stop
++	atf_check -o not-empty grep -a nfstest-marker-krb5i wire.pcap
++}
++
++krb5i_cleanup()
++{
++	nfs_cleanup
++}
++
++atf_test_case "krb5p" "cleanup"
++krb5p_head()
++{
++	atf_set descr 'NFSv4.1 with sec=krb5p: data encrypted on the wire'
++	atf_set require.user root
++	atf_set require.progs tcpdump
++}
++
++krb5p_body()
++{
++	krb5_setup
++	krb5_capture_start
++	krb5_check krb5p nfstest-marker-krb5p
++	krb5_capture_stop
++	atf_check -s exit:1 grep -a -q nfstest-marker-krb5p wire.pcap
++}
++
++krb5p_cleanup()
++{
++	nfs_cleanup
++}
++
++atf_init_test_cases()
++{
++	atf_add_test_case "krb5"
++	atf_add_test_case "krb5i"
++	atf_add_test_case "krb5p"
++}
+diff --git tests/sys/fs/nfs/nfs.subr tests/sys/fs/nfs/nfs.subr
+new file mode 100644
+index 000000000000..4529ef587c10
+--- /dev/null
++++ tests/sys/fs/nfs/nfs.subr
+@@ -0,0 +1,474 @@
++#
++# SPDX-License-Identifier: BSD-2-Clause
++#
++# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++# SUCH DAMAGE.
++
++#
++# NFS test framework.
++#
++# Every NFS server is a vnet jail (allow.nfsd).  Every client is a vnet jail
++# too when the kernel lets a jail mount NFS (allow.mount.nfs exists);
++# otherwise the only client is the host itself, and a client bug can leave
++# processes hung on the machine that runs the tests.
++#
++# All jails and the host sit on one bridge, 192.0.2.0/24:
++#   host 192.0.2.1, servers from 192.0.2.2, clients from 192.0.2.11.
++# A client is named by its jail name; "$(nfs_client <name>)" gives the
++# name to pass around, which is "host" when clients cannot be jails.  Its
++# mount point, as seen from the host, is "$(nfs_mnt <client>)": tests do
++# their file I/O from the host through that path, which uses the client's
++# mount.
++#
++# Setup functions run in the test shell, never in $(...), so that atf_check
++# and atf_fail work; they record addresses that nfs_addr reads back.
++#
++# Usage, in a test body:
++#   nfs_init
++#   nfs_server_start srv
++#   nfs_client_start c1
++#   nfs_mount $(nfs_client c1) $(nfs_addr srv)
++#   ... I/O on $(nfs_mnt $(nfs_client c1)) ...
++# and nfs_cleanup in the cleanup function.
++#
++
++. $(atf_get_srcdir)/../../common/vnet.subr
++
++NFS_HOST=192.0.2.1
++NFS_NET=192.0.2.0/24
++NFS_DOMAIN=nfstest.test
++NFS_PROXY_PORT=2050
++# Longest gap between two successful probes that counts as no outage.
++NFS_MAX_STALL=10
++
++nfs_init()
++{
++	local m
++
++	vnet_init
++	vnet_init_bridge
++	for m in nfsd nfscl nullfs; do
++		if ! kldstat -q -m $m && ! kldload -n $m 2>/dev/null; then
++			atf_skip "$m is required"
++		fi
++	done
++	bridge=$(vnet_mkbridge)
++	ifconfig ${bridge} inet ${NFS_HOST}/24 up
++	echo ${bridge} > nfs_bridge
++	printf "127.0.0.1\tlocalhost\n%s\thost.%s host\n" ${NFS_HOST} \
++	    ${NFS_DOMAIN} > nfs_hosts
++}
++
++# True when clients can be jails.
++nfs_jailed_clients()
++{
++	sysctl -q security.jail.param.allow.mount.nfs > /dev/null
++}
++
++# Skip unless the test can have the given number of distinct clients.
++nfs_require_clients()
++{
++	if [ "$1" -gt 1 ] && ! nfs_jailed_clients; then
++		atf_skip "several NFS clients need allow.mount.nfs"
++	fi
++}
++
++# Build a jail root under $1 that is a mount point of its own, as
++# allow.nfsd requires, with the base system mounted read-only and a
++# writable copy of /etc.
++_nfs_mkroot()
++{
++	local d root=$1
++
++	mkdir -p ${root}
++	mount -t tmpfs tmpfs ${root}
++	echo ${root} >> nfs_roots
++	for d in bin sbin lib libexec usr; do
++		mkdir ${root}/$d
++		mount -t nullfs -o ro /$d ${root}/$d
++	done
++	cp -Rp /etc ${root}/etc
++	mkdir -p ${root}/dev ${root}/export ${root}/mnt ${root}/tmp \
++	    ${root}/var/db ${root}/var/log ${root}/var/run ${root}/var/tmp
++	chmod 1777 ${root}/tmp ${root}/var/tmp
++	mount -t devfs -o ruleset=4 devfs ${root}/dev
++}
++
++# Create vnet jail $1, named $1.NFS_DOMAIN, with address $2 on the
++# bridge; extra jail(8) parameters follow.  Every jail's /etc/hosts lists
++# all jails.
++_nfs_mkjail()
++{
++	local name=$1 addr=$2 epair root
++	shift 2
++
++	_nfs_mkroot $PWD/${name}
++	epair=$(vnet_mkepair)
++	ifconfig ${epair}a up
++	ifconfig $(cat nfs_bridge) addm ${epair}a
++	atf_check jail -c name=${name} path=$PWD/${name} persist vnet \
++	    vnet.interface=${epair}b host.hostname=$(nfs_name ${name}) "$@"
++	unlist_interface ${epair}b
++	echo "${name} ${epair}b" >> created_jails.lst
++	jexec ${name} ifconfig ${epair}b ${addr}/24 up
++	jexec ${name} ifconfig lo0 127.0.0.1/8 up
++	printf "%s\t%s %s\n" ${addr} $(nfs_name ${name}) ${name} >> nfs_hosts
++	for root in $(cat nfs_roots); do
++		cp nfs_hosts ${root}/etc/hosts
++	done
++	[ -f nfs_krb5.conf ] && cp nfs_krb5.conf $PWD/${name}/etc/krb5.conf
++	true
++}
++
++# Host name of jail $1.
++nfs_name()
++{
++	echo $1.${NFS_DOMAIN}
++}
++
++# Give jail $1 the next free address from 192.0.2.$2.
++_nfs_setaddr()
++{
++	local n
++
++	n=$(cat nfs_count_$2 2>/dev/null || echo 0)
++	echo $((n + 1)) > nfs_count_$2
++	echo 192.0.2.$(($2 + n)) > $1.addr
++}
++
++# Address of jail $1.
++nfs_addr()
++{
++	cat $1.addr
++}
++
++# Start an NFSv4-only server in jail $1 exporting /export in it, which the
++# host sees as $1/export.  Export options default to "-maproot=root".
++nfs_server_start()
++{
++	nfs_server_jail "$@"
++	nfs_server_run $1
++}
++
++# First half of nfs_server_start: create the jail and its exports, so that
++# a test can set up more (Kerberos, ...) before nfsd starts.
++nfs_server_jail()
++{
++	local name=$1 opts=${2:--maproot=root}
++
++	_nfs_setaddr ${name} 2
++	_nfs_mkjail ${name} $(nfs_addr ${name}) allow.nfsd
++	# With the default enforce_statfs=2 the jail sees no mount but its
++	# root, so the export lives on the root file system.
++	chmod 1777 ${name}/export
++	# The V4: line takes only the security flavors.
++	cat > ${name}/exports <<-EOF
++	V4: /export $(echo ${opts} | tr ' ' '\n' | grep -- '^-sec=')
++	/export ${opts} -network ${NFS_NET}
++	EOF
++}
++
++# Second half of nfs_server_start: start mountd and nfsd in jail $1.
++nfs_server_run()
++{
++	local name=$1 i
++
++	# With kgssapi loaded, nfsd asks gssd for its Kerberos name before it
++	# serves.  Until kgssapi tracks gssd per vnet, once gssd answered in
++	# any vnet it waits a minute or more in every vnet, and a jail without
++	# gssd would hang here.
++	if kldstat -q -m kgssapi && ! pgrep -q -j ${name} gssd; then
++		nfs_gssd_start ${name}
++	fi
++
++	# NFSv4 only: no rpcbind needed.  mountd -R does not clear
++	# nfs_privport, and the proxy connects from an unprivileged port.
++	atf_check -o ignore jexec ${name} sysctl \
++	    vfs.nfsd.server_min_nfsvers=4 vfs.nfsd.nfs_privport=0
++	atf_check jexec ${name} mountd -R -n /exports
++	atf_check jexec ${name} nfsd -t
++	for i in $(seq 10); do
++		jexec ${name} sockstat -4l -P tcp -p 2049 | grep -q nfsd &&
++		    return 0
++		sleep 1
++	done
++	atf_fail "nfsd did not start in ${name}"
++}
++
++# Create client jail $1, unless clients cannot be jails; extra jail(8)
++# parameters follow.
++nfs_client_start()
++{
++	local name=$1
++
++	nfs_jailed_clients || return 0
++	shift
++	_nfs_setaddr ${name} 11
++	_nfs_mkjail ${name} $(nfs_addr ${name}) allow.mount allow.mount.nfs \
++	    enforce_statfs=1 "$@"
++}
++
++# Client name to use for client $1: the jail, or "host".
++nfs_client()
++{
++	if nfs_jailed_clients; then
++		echo $1
++	else
++		echo host
++	fi
++}
++
++# Mount point of client $1, as seen from the host.
++nfs_mnt()
++{
++	if [ "$1" = host ]; then
++		echo $PWD/mnt
++	else
++		echo $PWD/$1/mnt
++	fi
++}
++
++# Mount server $2 (address, or address:port) on client $1 with NFSv4.1;
++# extra mount options follow, comma separated.
++nfs_mount()
++{
++	local cl=$1 srv=$2 opts=nfsv4,minorversion=1,retrycnt=1 port
++
++	shift 2
++	case ${srv} in
++	*:*)	port=${srv#*:}; srv=${srv%:*}; opts=${opts},port=${port} ;;
++	esac
++	[ $# -gt 0 ] && opts=${opts},$1
++	if [ ${cl} = host ]; then
++		mkdir -p mnt
++		atf_check mount -t nfs -o ${opts} ${srv}:/ $(nfs_mnt host)
++	else
++		atf_check jexec ${cl} mount -t nfs -o ${opts} ${srv}:/ /mnt
++	fi
++	echo $(nfs_mnt ${cl}) >> nfs_mounts
++}
++
++#
++# Kerberos.  The realm is NFS_REALM; the KDC runs in a jail of the test.
++# The kernel's krb5 mechanism supports only the aes-cts-hmac-sha1-96
++# encryption types, so the realm uses nothing else.
++#
++NFS_REALM=NFSTEST.TEST
++NFS_ENCTYPES="aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96"
++
++nfs_krb5_require()
++{
++	local p
++
++	if ! kldstat -q -m kgssapi_krb5 &&
++	    ! kldload -n kgssapi_krb5 2>/dev/null; then
++		atf_skip "kgssapi_krb5 is required"
++	fi
++	for p in /usr/libexec/krb5kdc /usr/sbin/kdb5_util \
++	    /usr/sbin/kadmin.local /usr/sbin/gssd; do
++		[ -x $p ] || atf_skip "$p is required"
++	done
++}
++
++# Create realm NFS_REALM with its KDC in jail $1, and give every jail,
++# existing or created later, a krb5.conf for it.
++nfs_kdc_start()
++{
++	local kdc=$1 enctypes i root
++
++	cat > nfs_krb5.conf <<-EOF
++	[libdefaults]
++	    default_realm = ${NFS_REALM}
++	    dns_lookup_realm = false
++	    dns_lookup_kdc = false
++	    rdns = false
++	    dns_canonicalize_hostname = false
++	    permitted_enctypes = ${NFS_ENCTYPES}
++	    default_tkt_enctypes = ${NFS_ENCTYPES}
++	    default_tgs_enctypes = ${NFS_ENCTYPES}
++	[realms]
++	    ${NFS_REALM} = {
++	        kdc = $(nfs_addr ${kdc})
++	    }
++	[domain_realm]
++	    .${NFS_DOMAIN} = ${NFS_REALM}
++	EOF
++	for root in $(cat nfs_roots); do
++		cp nfs_krb5.conf ${root}/etc/krb5.conf
++	done
++	mkdir -p ${kdc}/var/db/krb5kdc
++	enctypes=$(echo ${NFS_ENCTYPES} | sed 's/\([^ ]*\)/\1:normal/g')
++	cat > ${kdc}/var/db/krb5kdc/kdc.conf <<-EOF
++	[kdcdefaults]
++	    kdc_ports = 88
++	    kdc_tcp_ports = 88
++	[realms]
++	    ${NFS_REALM} = {
++	        supported_enctypes = ${enctypes}
++	    }
++	EOF
++	atf_check -o ignore -e ignore jexec ${kdc} kdb5_util create -s \
++	    -r ${NFS_REALM} -P nfstest-master-key
++	atf_check jexec ${kdc} env -u TMPDIR /usr/libexec/krb5kdc
++	echo ${kdc} > nfs_kdc
++	for i in $(seq 10); do
++		jexec ${kdc} sockstat -4l -P udp -p 88 | grep -q krb5kdc &&
++		    return 0
++		sleep 1
++	done
++	atf_fail "krb5kdc did not start in ${kdc}"
++}
++
++# Create principal $2/<host name of jail $1> and add it to the default
++# keytab of jail $1.
++nfs_krb5_keytab()
++{
++	local kdc princ=$2/$(nfs_name $1)
++
++	kdc=$(cat nfs_kdc)
++	atf_check -o ignore -e ignore jexec ${kdc} kadmin.local \
++	    -r ${NFS_REALM} -q "addprinc -randkey ${princ}"
++	atf_check -o ignore -e ignore jexec ${kdc} kadmin.local \
++	    -r ${NFS_REALM} -q "ktadd -k /tmp/$1.keytab ${princ}"
++	cat ${kdc}/tmp/$1.keytab >> $1/etc/krb5.keytab
++	chmod 600 $1/etc/krb5.keytab
++}
++
++# Start gssd(8) in jail $1, with extra options.  A client jail needs
++# allow.nfsd for it.  Kerberos keeps its replay cache in $TMPDIR, which
++# kyua points at a directory the jail cannot see.
++nfs_gssd_start()
++{
++	local name=$1
++	shift
++
++	atf_check jexec ${name} env -u TMPDIR gssd "$@"
++}
++
++# Put nfs_reset_proxy.py, on the host, in front of server jail $1;
++# "$(nfs_addr proxy)" is the address:port to mount, and "nfs_reset" makes
++# the server lose its state.
++nfs_proxy_start()
++{
++	local i
++
++	: > proxy.log
++	python3 $(atf_get_srcdir)/nfs_reset_proxy.py \
++	    --listen ${NFS_HOST}:${NFS_PROXY_PORT} \
++	    --server $(nfs_addr $1):2049 > proxy.log 2>&1 &
++	echo $! > proxy.pid
++	echo ${NFS_HOST}:${NFS_PROXY_PORT} > proxy.addr
++	for i in $(seq 10); do
++		grep -q listening proxy.log && return 0
++		sleep 1
++	done
++	atf_fail "proxy did not start: $(cat proxy.log)"
++}
++
++nfs_reset()
++{
++	kill -USR1 $(cat proxy.pid)
++}
++
++# Create a file every second in directory $1 in the background and log the
++# time of each success to probe.log.  Never blocks the test body, even if
++# the mount hangs.
++nfs_probe_start()
++{
++	(
++		i=0
++		while :; do
++			i=$((i + 1))
++			if echo $i > $1/probe.$i; then
++				date +%s >> probe.log
++			fi
++			rm -f $1/probe.$i
++			sleep 1
++		done
++	) &
++	echo $! > probe.pid
++}
++
++# Fail if a probe took longer than NFS_MAX_STALL seconds after time $1, or
++# if no probe succeeded during the last NFS_MAX_STALL seconds.
++nfs_probe_check()
++{
++	local gap last now
++
++	gap=$(awk -v s=$1 '$1 >= s {
++		if (p != "" && $1 - p > m)
++			m = $1 - p
++		p = $1
++	} END { print m + 0 }' probe.log)
++	last=$(tail -1 probe.log 2>/dev/null)
++	now=$(date +%s)
++	[ -n "${last}" ] || atf_fail "no NFS I/O at all"
++	if [ $((now - last)) -gt ${NFS_MAX_STALL} ]; then
++		atf_fail "no NFS I/O during the last $((now - last))s"
++	fi
++	if [ ${gap} -gt ${NFS_MAX_STALL} ]; then
++		atf_fail "NFS I/O stalled for ${gap}s"
++	fi
++}
++
++nfs_cleanup()
++{
++	local d i m pid root
++
++	[ -f probe.pid ] && kill $(cat probe.pid) 2>/dev/null
++	# Unmount before the proxy goes away, so that each client can destroy
++	# its session and client ID.  A mount may be hung, so do not wait
++	# for umount(8) forever.
++	if [ -f nfs_mounts ]; then
++		for m in $(cat nfs_mounts); do
++			umount ${m} 2>/dev/null &
++			pid=$!
++			for i in $(seq 30); do
++				kill -0 ${pid} 2>/dev/null || break
++				sleep 1
++			done
++		done
++	fi
++	[ -f proxy.pid ] && kill $(cat proxy.pid) 2>/dev/null
++	if [ -f nfs_mounts ]; then
++		for m in $(cat nfs_mounts); do
++			umount -N ${m} 2>/dev/null
++		done
++	fi
++	vnet_cleanup
++	# Server state left by a proxy reset can keep a jail dying, and with
++	# it a reference on its root: wait a little, then force.
++	for i in $(seq 10); do
++		[ -z "$(jls -d -N 2>/dev/null | grep "$PWD/")" ] && break
++		sleep 1
++	done
++	if [ -f nfs_roots ]; then
++		for root in $(cat nfs_roots); do
++			for d in dev usr libexec lib sbin bin; do
++				umount -f ${root}/$d 2>/dev/null
++			done
++			umount -f ${root} 2>/dev/null
++		done
++	fi
++	true
++}
+diff --git tests/sys/fs/nfs/nfs_reset_proxy.py tests/sys/fs/nfs/nfs_reset_proxy.py
+new file mode 100644
+index 000000000000..8cb9ea205be7
+--- /dev/null
++++ tests/sys/fs/nfs/nfs_reset_proxy.py
+@@ -0,0 +1,290 @@
++#!/usr/bin/env python3
++#
++# SPDX-License-Identifier: BSD-2-Clause
++#
++# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++# SUCH DAMAGE.
++
++"""
++NFSv4.1 TCP proxy that makes the server lose its session and client ID.
++
++On SIGUSR1 the proxy resets every client connection and forgets the
++client, as a server does after a restart (RFC 8881 Section 8.4.2):
++
++  * SEQUENCE and DESTROY_SESSION on the old session get
++    NFS4ERR_BADSESSION;
++  * CREATE_SESSION with the old client ID gets NFS4ERR_STALE_CLIENTID;
++  * everything else, EXCHANGE_ID included, goes to the real server.
++
++The proxy learns the client ID and session from the EXCHANGE_ID and
++CREATE_SESSION replies.  Each injected error is logged as
++"inject <error> op <op>".
++"""
++
++import argparse
++import signal
++import socket
++import struct
++import threading
++import time
++
++NFS_PROGRAM = 100003
++NFSPROC4_COMPOUND = 1
++OP_EXCHANGE_ID = 42
++OP_CREATE_SESSION = 43
++OP_DESTROY_SESSION = 44
++OP_SEQUENCE = 53
++NFS4ERR_STALE_CLIENTID = 10022
++NFS4ERR_BADSESSION = 10052
++
++lock = threading.Lock()
++state = {"clientid": None, "session": None}
++dead_clientids = set()
++dead_sessions = set()
++conns = []
++reset_event = threading.Event()
++
++
++def log(msg):
++    print(time.strftime("%H:%M:%S ") + msg, flush=True)
++
++
++class Xdr:
++    def __init__(self, buf):
++        self.buf = buf
++        self.off = 0
++
++    def u32(self):
++        v = struct.unpack_from(">I", self.buf, self.off)[0]
++        self.off += 4
++        return v
++
++    def raw(self, n):
++        v = self.buf[self.off:self.off + n]
++        if len(v) < n:
++            raise IndexError
++        self.off += n
++        return v
++
++    def opaque(self):
++        n = self.u32()
++        v = self.raw(n)
++        self.off += (4 - n % 4) % 4
++        return v
++
++
++def parse_call(rec):
++    """Return (xid, tag, first op, op argument) of a COMPOUND, or None."""
++    x = Xdr(rec)
++    xid = x.u32()
++    if x.u32() != 0:                    # not a call
++        return None
++    x.u32()                             # rpcvers
++    prog = x.u32()
++    x.u32()                             # vers
++    proc = x.u32()
++    if prog != NFS_PROGRAM or proc != NFSPROC4_COMPOUND:
++        return None
++    x.u32()
++    x.opaque()                          # cred
++    x.u32()
++    x.opaque()                          # verf
++    tag = x.opaque()
++    x.u32()                             # minorversion
++    if x.u32() == 0:                    # no operation
++        return None
++    op = x.u32()
++    if op in (OP_SEQUENCE, OP_DESTROY_SESSION):
++        return xid, tag, op, x.raw(16)  # sessionid4
++    if op == OP_CREATE_SESSION:
++        return xid, tag, op, x.raw(8)   # clientid4
++    return xid, tag, op, b""
++
++
++def learn_reply(rec):
++    """Record the client ID and session the server hands out."""
++    x = Xdr(rec)
++    x.u32()                             # xid
++    if x.u32() != 1 or x.u32() != 0:    # not an accepted reply
++        return
++    x.u32()
++    x.opaque()                          # verf
++    if x.u32() != 0:                    # accept_stat
++        return
++    x.u32()                             # COMPOUND status
++    x.opaque()                          # tag
++    if x.u32() == 0:
++        return
++    op = x.u32()
++    if x.u32() != 0:
++        return
++    with lock:
++        if op == OP_EXCHANGE_ID:
++            state["clientid"] = x.raw(8)
++            log("learn clientid " + state["clientid"].hex())
++        elif op == OP_CREATE_SESSION:
++            state["session"] = x.raw(16)
++            log("learn session " + state["session"].hex())
++
++
++def error_reply(xid, tag, op, err):
++    pad = (4 - len(tag) % 4) % 4
++    body = (struct.pack(">IIIIII", xid, 1, 0, 0, 0, 0) +
++            struct.pack(">II", err, len(tag)) + tag + b"\0" * pad +
++            struct.pack(">III", 1, op, err))
++    return struct.pack(">I", 0x80000000 | len(body)) + body
++
++
++def records(sock):
++    """Yield whole RPC records, record marker included."""
++    buf = b""
++    while True:
++        data = sock.recv(65536)
++        if not data:
++            return
++        buf += data
++        while len(buf) >= 4:
++            n = struct.unpack(">I", buf[:4])[0] & 0x7fffffff
++            if len(buf) < 4 + n:
++                break
++            yield buf[:4 + n]
++            buf = buf[4 + n:]
++
++
++def close_all(*socks):
++    for s in socks:
++        try:
++            s.close()
++        except OSError:
++            pass
++
++
++def client_to_server(client, server, wlock):
++    try:
++        for rec in records(client):
++            try:
++                call = parse_call(rec[4:])
++            except (IndexError, struct.error):
++                call = None
++            err = None
++            if call is not None:
++                xid, tag, op, arg = call
++                with lock:
++                    if (op in (OP_SEQUENCE, OP_DESTROY_SESSION) and
++                            arg in dead_sessions):
++                        err = NFS4ERR_BADSESSION
++                    elif (op == OP_CREATE_SESSION and
++                            arg in dead_clientids):
++                        err = NFS4ERR_STALE_CLIENTID
++            if err is not None:
++                log("inject %d op %d" % (err, op))
++                with wlock:
++                    client.sendall(error_reply(xid, tag, op, err))
++            else:
++                server.sendall(rec)
++    except OSError:
++        pass
++    finally:
++        close_all(client, server)
++
++
++def server_to_client(client, server, wlock):
++    try:
++        for rec in records(server):
++            try:
++                learn_reply(rec[4:])
++            except (IndexError, struct.error):
++                pass
++            with wlock:
++                client.sendall(rec)
++    except OSError:
++        pass
++    finally:
++        close_all(client, server)
++
++
++def reset():
++    with lock:
++        if state["clientid"] is not None:
++            dead_clientids.add(state["clientid"])
++        if state["session"] is not None:
++            dead_sessions.add(state["session"])
++        victims = list(conns)
++        conns.clear()
++    log("reset %d connection(s)" % len(victims))
++    for client, server in victims:
++        try:
++            # Zero linger: close() sends a RST.
++            client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
++                              struct.pack("ii", 1, 0))
++        except OSError:
++            pass
++        close_all(client, server)
++
++
++def resetter():
++    # Not done in the signal handler: it could run while the main thread
++    # holds the lock.
++    while True:
++        reset_event.wait()
++        reset_event.clear()
++        reset()
++
++
++def hostport(s):
++    h, p = s.rsplit(":", 1)
++    return h, int(p)
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--listen", required=True, help="addr:port")
++    ap.add_argument("--server", required=True, help="addr:port")
++    a = ap.parse_args()
++
++    signal.signal(signal.SIGUSR1, lambda *_: reset_event.set())
++    threading.Thread(target=resetter, daemon=True).start()
++    lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
++    lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++    lsock.bind(hostport(a.listen))
++    lsock.listen(16)
++    log("listening on %s, server %s" % (a.listen, a.server))
++    while True:
++        client, peer = lsock.accept()
++        try:
++            server = socket.create_connection(hostport(a.server))
++        except OSError as e:
++            log("cannot reach server: %s" % e)
++            close_all(client)
++            continue
++        log("connection from %s:%d" % peer)
++        wlock = threading.Lock()
++        with lock:
++            conns.append((client, server))
++        for f in (client_to_server, server_to_client):
++            threading.Thread(target=f, args=(client, server, wlock),
++                             daemon=True).start()
++
++
++if __name__ == "__main__":
++    main()
+diff --git tests/sys/fs/nfs/recovery_test.sh tests/sys/fs/nfs/recovery_test.sh
+new file mode 100644
+index 000000000000..538de98f62ac
+--- /dev/null
++++ tests/sys/fs/nfs/recovery_test.sh
+@@ -0,0 +1,112 @@
++#
++# SPDX-License-Identifier: BSD-2-Clause
++#
++# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++# SUCH DAMAGE.
++
++#
++# Client recovery when the server loses its state (RFC 8881 Section 8.4.2),
++# driven by nfs_reset_proxy.py.
++#
++
++. $(atf_get_srcdir)/nfs.subr
++
++# Mount through the proxy and start probing.
++recovery_setup()
++{
++	local cl
++
++	nfs_init
++	nfs_server_start srv
++	nfs_client_start c1
++	cl=$(nfs_client c1)
++	nfs_proxy_start srv
++	nfs_mount ${cl} $(nfs_addr proxy)
++	nfs_probe_start $(nfs_mnt ${cl})
++	sleep 3
++}
++
++atf_test_case "server_reset" "cleanup"
++server_reset_head()
++{
++	atf_set descr 'Recover once the server loses the session and client ID'
++	atf_set require.user root
++	atf_set require.progs python3
++	atf_set timeout 180
++}
++
++server_reset_body()
++{
++	local t0
++
++	recovery_setup
++	t0=$(date +%s)
++	nfs_reset
++	sleep 20
++
++	atf_check -o not-empty grep "inject 10052" proxy.log
++	atf_check -o not-empty grep "inject 10022" proxy.log
++	nfs_probe_check ${t0}
++}
++
++server_reset_cleanup()
++{
++	nfs_cleanup
++}
++
++atf_test_case "server_reset_twice" "cleanup"
++server_reset_twice_head()
++{
++	atf_set descr 'Recover from two server resets within one renewal period'
++	atf_set require.user root
++	atf_set require.progs python3
++	atf_set timeout 300
++}
++
++server_reset_twice_body()
++{
++	local t0
++
++	recovery_setup
++	# The client allows one full recovery per nfsc_renew (half the lease,
++	# 60s with nfsd): reset again well inside it, then wait for it to end.
++	t0=$(date +%s)
++	nfs_reset
++	sleep 15
++	nfs_reset
++	sleep 60
++
++	atf_check -o not-empty grep "inject 10022" proxy.log
++	nfs_probe_check ${t0}
++}
++
++server_reset_twice_cleanup()
++{
++	nfs_cleanup
++}
++
++atf_init_test_cases()
++{
++	atf_add_test_case "server_reset"
++	atf_add_test_case "server_reset_twice"
++}

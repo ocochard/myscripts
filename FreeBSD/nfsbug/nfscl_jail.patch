@@ -1,0 +1,32 @@
+diff --git sys/fs/nfsclient/nfs_clvfsops.c sys/fs/nfsclient/nfs_clvfsops.c
+index d2ed135b5a73..2926193b6e9e 100644
+--- sys/fs/nfsclient/nfs_clvfsops.c
++++ sys/fs/nfsclient/nfs_clvfsops.c
+@@ -157,7 +157,7 @@ static struct vfsops nfs_vfsops = {
+  * for "nfscl" and is needed so that a custom event handling
+  * function gets called.  MODULE_DEPEND() macros are found there.
+  */
+-VFS_SET(nfs_vfsops, nfs, VFCF_NETWORK | VFCF_SBDRY);
++VFS_SET(nfs_vfsops, nfs, VFCF_NETWORK | VFCF_SBDRY | VFCF_JAIL);
+ 
+ MODULE_VERSION(nfs, 1);
+ 
+diff --git sys/nfs/nfs_nfssvc.c sys/nfs/nfs_nfssvc.c
+index b49afeda5a31..2661ac00a7d0 100644
+--- sys/nfs/nfs_nfssvc.c
++++ sys/nfs/nfs_nfssvc.c
+@@ -82,8 +82,12 @@ sys_nfssvc(struct thread *td, struct nfssvc_args *uap)
+ 
+ 	AUDIT_ARG_CMD(uap->flag);
+ 
+-	/* Allow anyone to get the stats. */
+-	if ((uap->flag & ~(NFSSVC_GETSTATS | NFSSVC_NEWSTRUCT)) != 0) {
++	/*
++	 * Allow anyone to get the stats and the options of an NFS mount
++	 * they can look up.
++	 */
++	if ((uap->flag & ~(NFSSVC_GETSTATS | NFSSVC_NEWSTRUCT |
++	    NFSSVC_DUMPMNTOPTS)) != 0) {
+ 		error = priv_check(td, PRIV_NFS_DAEMON);
+ 		if (error != 0)
+ 			return (error);

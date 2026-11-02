@@ -53,6 +53,21 @@ drops session + ClientID; a Linux client on the same mount target sees the same 
 recovers in 8 ms). See the efs-utils port notes for the efs-proxy connection-leak fix
 (aws/efs-utils#380).
 
+### Regression tests and the kernel changes they needed (2026-11)
+
+None of these is committed or filed yet.
+
+- `nfs_vnet_tests.patch` + `nfs_vnet_tests.md`: `tests/sys/fs/nfs/`, an NFS test
+  framework with nfsd in vnet jails. It covers basic I/O, two clients, the two recovery bugs
+  above (reset proxy derived from `scripts/efs-reset-proxy.py`) and krb5/krb5i/krb5p.
+  Branch `nfs-vnet-tests` in `~/freebsd-src-nfstest`.
+- `nfscl_jail.patch` + `nfscl_jail.md`: lets a vnet jail mount NFS (`VFCF_JAIL`, and
+  `NFSSVC_DUMPMNTOPTS` without `PRIV_NFS_DAEMON` so that umount works in a jail).
+  Branch `nfscl-jail` in `~/freebsd-src-nfscljail`.
+- `kgss_vnet.patch` + `bugreport_kgss_vnet_upcall.md`: once gssd answered in one vnet,
+  nfsd in a vnet without gssd hung at startup. The fix tracks gssd per vnet and gives the
+  shared netlink handle per-call timeouts. Branch `kgss-vnet` in `~/freebsd-src-kgssvnet`.
+
 ## Root cause (one paragraph)
 
 EFS returns `NFS4ERR_BADSESSION` (10052) on SEQUENCE, spontaneously, every so often; the ClientID is

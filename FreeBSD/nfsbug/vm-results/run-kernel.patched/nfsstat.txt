@@ -1,0 +1,2 @@
+   ExchangeId   CreateSess  DestroySess  DestroyClId    LayoutGet   GetDevInfo
+            5            9            0            0            0            0
