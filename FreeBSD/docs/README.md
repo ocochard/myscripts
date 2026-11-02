@@ -12,6 +12,7 @@ document that explains them.
 - [ithwm_amdpower.md](ithwm_amdpower.md): `ithwm(4)` (ITE IT87xx) and `amdpower(4)` sensor drivers for the NAS
 - [tun_destroy_deadlock_case_study.md](tun_destroy_deadlock_case_study.md): `tun_destroy()` parking a global sx-lock, from reproduction to fix. Patch: [tun_destroy_ebusy.patch](tun_destroy_ebusy.patch)
 - [kevent_filter_zero_guard.md](kevent_filter_zero_guard.md): the one-line filter-zero guard in kevent(2) that prevents an out-of-bounds read
+- [bugreport_tpm_crb_back_to_back_eio.md](bugreport_tpm_crb_back_to_back_eio.md): tpm_crb returns `EIO` on back-to-back commands on a Pluton TPM (Framework Desktop), because it doesn't wait for idle or the locality release. Patch: [tpm_crb_settle_before_next_command.patch](tpm_crb_settle_before_next_command.patch), reproducer: [tpm_crb_sweep.py](tpm_crb_sweep.py)
 - [vnode_pager_getpages_async_completion.md](vnode_pager_getpages_async_completion.md): how a CBMC proof led to a wrong VM patch, and what the getpages completion path really does
 
 ## Kernel concepts

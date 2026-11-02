@@ -222,3 +222,16 @@ Bump the default request timeout — cold prefill of large repo prompts
 - `maxRetries: 1` — don't pile up retries on a slow prefill.
 
 Restart qwen-code after editing (settings are read at startup).
+
+## TPM
+
+The Pluton TPM (`tpmcrb0`, `StartMethod=7`, firmware 10.6.0.4) works, but commands
+sent back to back can fail with `EIO`. Patch and write-up are in `FreeBSD/docs/`:
+
+| # | patch | component | defect | symptom without it | write-up | upstream |
+|---|---|---|---|---|---|---|
+| 1 | [`tpm_crb_settle_before_next_command.patch`](docs/tpm_crb_settle_before_next_command.patch) | kernel (`tpm_crb`) | `tpmcrb_transmit()` requests idle and releases the locality without waiting for either | 0.6% to 17.6% of no-gap commands per run fail with `EIO`, usually after 200 ms | [`bugreport_tpm_crb_back_to_back_eio.md`](docs/bugreport_tpm_crb_back_to_back_eio.md) | no |
+
+With the patch: 0 failures in 71000 test commands, about 2 ms slower per command.
+Reproducer: [`tpm_crb_sweep.py`](docs/tpm_crb_sweep.py). Tested on this machine
+only, against `584f44221f45`.
