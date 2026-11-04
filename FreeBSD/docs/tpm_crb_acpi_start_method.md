@@ -1,18 +1,20 @@
 # tpm_crb: how the driver works, and adding the ACPI start method (2)
 
 ```
-Status:    scope only, no patch yet
+Status:    patch written and tested on ser6, not submitted
+Patch:     tpm_crb_acpi_start_method.patch (sys/dev/tpm/tpm_crb.c, +89 lines)
 Driver:    sys/dev/tpm/tpm_crb.c
-Base:      main at 584f44221f45 (2026-10-29); line numbers below refer to it
+Base:      sections 1 and 2 cite main at 584f44221f45 (2026-10-29);
+           the patch applies to main at db8444c1b7e4 (2026-11-04)
 Machine:   ser6, Beelink SER (AMD Ryzen 7 7735HS, AMI BIOS 113)
 ```
 
 **Summary.** ser6 has a working AMD firmware TPM, but FreeBSD gives it no
 driver, so `/dev/tpm0` does not exist.  The firmware describes the TPM with
 start method 2, "ACPI start", and `tpm_crb` only accepts methods 7 and 13.
-This document first explains how `tpm_crb` works, then scopes the patch that
-would add method 2.  Everything in sections 1 and 2 was read from the source
-or measured on ser6.  Section 3 is a plan; nothing in it has been built or run.
+This document first explains how `tpm_crb` works, then describes the patch
+that adds method 2.  With the patch, ser6 attaches `tpmcrb0`, passes the TPM
+self-test, and ran 32000 commands without a failure.
 
 ---
 
@@ -258,35 +260,62 @@ sequenceDiagram
 
 ---
 
-## 3. The fix (planned, not written)
+### The idle and ready states are not implemented
 
-### What to change
+Before writing the patch, the idle and ready requests were tried by hand
+through `/dev/mem`, with no driver attached.  The driver would wait up to
+200 ms for the TPM to clear each bit:
 
-All in `tpm_crb.c`.  Estimated size: 60 to 90 lines.
+```
+initial        REQ=0x0 STS=0x0 CANCEL=0x0 START=0x0
+GO_READY       REQ=0x1 STS=0x0 CANCEL=0x0 START=0x0
+  ack ms: None
+GO_IDLE        REQ=0x2 STS=0x0 CANCEL=0x0 START=0x0
+  ack ms: None  idle bit: 0
+```
 
-1. **Accept method 2.**  Add an entry to `tpmcrb_sm_cfg_map[]` for
-   `TPM2_START_METHOD_ACPI` with description "Trusted Platform Module 2.0, CRB
-   mode (ACPI start)".
+The firmware never clears `CTRL_REQ` and never sets the idle bit.  Without a
+change, every command would fail with "Failed to transition to ready state".
 
-2. **An attach hook.**  Store the device's ACPI handle with
-   `acpi_get_handle()`.  Call `acpi_DSMQuery()` (`acpi.c:3187`) and refuse to
-   attach unless bit 1 (function 1) is set.  This rejects firmware that
+A `TPM2_GetRandom` sent the same way, with `GO_READY` ignored and only a
+`CTRL_START` write, worked: `CTRL_START` cleared after 12.9 ms and the
+response had return code 0.  So on this firmware the `_DSM` call is not what
+starts the command; it only waits for it.  The patch calls it anyway, because
+the specification requires it and other firmware may depend on it.
+
+---
+
+## 3. The fix
+
+### What changed
+
+All in `tpm_crb.c`: 89 lines added, none removed.
+
+1. **Accept method 2.**  An entry to `tpmcrb_sm_cfg_map[]` for
+   `TPM2_START_METHOD_ACPI`, with description "Trusted Platform Module 2.0,
+   CRB mode (ACPI start)".
+
+2. **An attach hook**, `acpi_start_attach()`.  It stores the device's ACPI
+   handle from `acpi_get_handle()`, calls `acpi_DSMQuery()` (`acpi.c:3187`),
+   and refuses to attach unless bit 1 (function 1) is set.  This rejects firmware that
    advertises method 2 but has no start function.
 
-3. **A cmdready hook.**  Evaluate `_DSM` function 1 with
-   `acpi_EvaluateDSMTyped()` (`acpi.c:3248`), asking for an integer.  Return
-   failure if the evaluation fails or the integer is not 0.  The existing
+3. **A cmdready hook**, `acpi_start_invoke()`.  It evaluates `_DSM` function
+   1 with `acpi_EvaluateDSMTyped()` (`acpi.c:3248`), asking for an integer,
+   and fails if the evaluation fails or the integer is not 0.  The existing
    `sm_cmdready` call site (`tpm_crb.c:701`) already runs right after the
    `CTRL_START` write, which is the order the specification asks for.  No
    change to `tpmcrb_transmit()` is needed for the normal path.
 
-4. **Cancel.**  The specification uses the same `_DSM` call for cancellation.
-   `tpmcrb_cancel_cmd()` (`tpm_crb.c:537`) writes `CTRL_CANCEL` but has no
-   start-method hook.  It needs one, or the cancel will never reach this
-   firmware.
+4. **A cancel hook.**  The specification uses the same `_DSM` call for
+   cancellation.  `tpmcrb_cancel_cmd()` had no start-method hook, so the
+   patch adds `sm_cancel` and calls it after writing `CTRL_CANCEL`.  Only
+   method 2 sets it, so Pluton and plain CRB behave as before.
 
-5. **Idle and ready states: decide by measurement.**  See the alternatives
-   below.
+5. **Skip the idle and ready states.**  A new flag in `struct tpmcrb_sm_cfg`,
+   `no_idle_states`, makes `tpmcrb_state_idle()` and `tpmcrb_state_ready()`
+   return at once.  Only the method 2 entry sets it, because of the
+   measurement in section 2.
 
 Nothing needs to change for the memory layout.  `tpmcrb_map()` already maps a
 control area that lies outside `_CRS`.  The command buffer is inside the first
@@ -306,43 +335,34 @@ other drivers (`acpi_spibus.c`, `acpi_spmc.c`).
 
 ### Alternatives and their tradeoffs
 
-**Idle and ready states.**  `tpmcrb_transmit()` asks for `GO_IDLE` and
-`GO_READY` and waits up to 200 ms for each acknowledgement.  Neither the
-specification nor ser6's AML says whether this firmware honours those
-requests.
-
-| Option | Gain | Risk |
-|---|---|---|
-| Keep them | No new code path; same behaviour as method 7 | If the firmware never clears `CTRL_REQ`, every command fails with "Failed to transition to ready state" after 200 ms |
-| Skip them for method 2 | Matches what another major OS does for methods 2 and 8 | A firmware that does need them would misbehave silently |
-
-Recommendation: build with them kept, run one command on ser6, and read
-`CTRL_REQ` after each request.  Skip them only if the measurement shows they
-are ignored.
+**Idle and ready states.**  Keeping them was not an option on ser6: the
+measurement in section 2 shows every command would fail.  Skipping them for
+all method 2 machines matches what another major OS does for methods 2 and 8.
+The risk is a method 2 firmware that does implement them: it would never be
+asked to go idle, which costs power, not correctness.
 
 **Revision 0 or 1.**  The specification says revision 0.  At least one other
 operating system passes 1.  ser6's `STRT` method ignores the revision, so both
-work here.  Other firmware may have been tested only with 1.  Recommendation:
-use 0, as specified, and fall back to 1 only if function 1 is missing at
-revision 0.  I don't know of a machine that needs the fallback.
+work here.  Other firmware may have been tested only with 1.  The patch uses
+0, as specified, and falls back to 1 only if function 1 is missing at revision
+0.  No known machine needs the fallback, so it is untested.
 
 **Method 8 too.**  Method 8 is "CRB plus ACPI start", the same `_DSM` call.
 Adding it is one more table entry.  But no available machine reports method 8,
-so it would ship untested.  Recommendation: leave it out of this patch and say
-so in the commit message.
+so it would ship untested.  The patch leaves it out.
 
 **Allocate the second `_CRS` range.**  The driver allocates only resource 0.
 Allocating resource 1 too would register the response buffer with the kernel's
 resource manager instead of mapping it anonymously.  That is cleaner but
-changes attach for every CRB machine with two ranges.  Recommendation: not in
-this patch.
+changes attach for every CRB machine with two ranges.  Not in this patch.
 
 ### What the patch does NOT fix
 
 * **The back-to-back `EIO` bug.**  That is a separate patch
   ([`tpm_crb_settle_before_next_command.patch`](tpm_crb_settle_before_next_command.patch)).
-  ser6 would, however, become the first non-Pluton CRB machine able to run its
-  reproducer, `tpm_crb_sweep.py`.
+  ser6 now runs its reproducer, `tpm_crb_sweep.py`, cleanly, but that says
+  nothing about the race: ser6 has no locality registers and skips the idle
+  request, which are the two steps the race involves.
 * **Interrupts.**  The driver still polls.
 * **AMD fTPM random-number stalls.**  Another OS disables the AMD fTPM as a
   random source, because reading it can stall the system on some firmware.
@@ -353,29 +373,45 @@ this patch.
 
 ## 4. Tested
 
-Nothing has been built yet.
+Patched kernel `tpm-crb-acpi-start-n290663-db8444c1b7e4-dirty`
+(GENERIC-NODEBUG), booted once on ser6 with `nextboot -k kernel.tpm` on
+2026-11-04:
+
+```
+tpmcrb0: <Trusted Platform Module 2.0, CRB mode (ACPI start)> iomem 0xb2ea3000-0xb2ea6fff,0xb2ea7000-0xb2eaafff on acpi0
+random: registering fast source TPM
+```
 
 | Configuration | Result |
 |---|---|
-| ser6, unpatched kernel: driver attaches? | No: `devinfo` shows `unknown` (measured) |
-| ser6, control area readable before a driver attaches? | Yes: sane values (measured) |
-| ser6, `_DSM` function 0 result | `0x03`, read from the decompiled AML, not evaluated at run time |
-| ser6, patched: attach, `/dev/tpm0` appears | untested |
-| ser6, patched: `GO_IDLE`/`GO_READY` acknowledged? | untested |
-| ser6, patched: `tpm2_selftest`, `tpm2_getrandom` | untested |
-| ser6, patched: `tpm_crb_sweep.py 2000 0 0 0 0 0.5 1 2 5 10 50` | untested |
+| ser6, unpatched kernel: driver attaches? | No: `devinfo` shows `unknown` |
+| ser6, patched: attach, `/dev/tpm0` appears | Yes |
+| ser6, patched: `TPM2_SelfTest(full)` | Return code 0, 13.0 ms |
+| ser6, patched: `TPM2_GetTestResult` | testResult 0 |
+| ser6, patched: one `_DSM` call per command | 200 `acpi_EvaluateDSMTyped` for 200 `tpmcrb_transmit` (dtrace) |
+| ser6, patched: sweep, no gap, 8 runs of 2000 | 0 failures of 16000 |
+| ser6, patched: sweep, 0.5 to 50 ms gaps, 8 runs of 2000 | 0 failures of 16000 |
+| ser6, patched: new `tpmcrb0` kernel messages | None |
 | ser6, patched: suspend and resume | untested |
+| ser6, patched: under load | untested |
+| `_DSM` revision 1 fallback | untested: ser6 accepts revision 0 |
 | Start method 7 and 13 machines: no regression | untested |
 | Start method 8 machines | none available |
 
-### How to test, once written
+The sweep was `tpm_crb_sweep.py 2000 0 0 0 0 0 0 0 0 0.5 1 2 3 5 10 20 50`
+and took 281 s.  A command costs about 13 ms on this TPM.
+
+### How to repeat the test
 
 ser6 has `tpm` compiled into its kernel, so the patch needs a full kernel
-build and install, not a module reload.  Then:
+build and install, not a module reload:
 
 ```sh
+make -j"$(sysctl -n hw.ncpu)" buildkernel KERNCONF=GENERIC-NODEBUG
+make installkernel KERNCONF=GENERIC-NODEBUG KODIR=/boot/kernel.tpm
+nextboot -k kernel.tpm && shutdown -r now
+# after the reboot:
 dmesg | grep tpmcrb
-ls -l /dev/tpm0
 sudo python3 tpm_crb_sweep.py 2000 0 0 0 0 0.5 1 2 5 10 50
 ```
 
@@ -385,5 +421,6 @@ sudo python3 tpm_crb_sweep.py 2000 0 0 0 0 0.5 1 2 5 10 50
   Table 8 (start method values), section 4.1 (ACPI start method `_DSM`).
 * TCG PC Client Platform TPM Profile Specification 1.03, section 5.5.3.1,
   Table 23 (CRB register layout), as already cited in `tpm_crb.c`.
-* ser6: `acpidump -b`, `iasl -d dsdt.dat`, and a read-only `/dev/mem` dump of
-  the control area, all taken on 2026-11-04.
+* ser6: `acpidump -b`, `iasl -d dsdt.dat`, a `/dev/mem` dump of the control
+  area, and the `/dev/mem` `GO_READY`/`GO_IDLE`/`TPM2_GetRandom` test, all
+  taken on 2026-11-04.
