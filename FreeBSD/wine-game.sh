@@ -15,6 +15,7 @@
 #    builtin wined3d/vkd3d fail to build UE5 pipelines => "LowLevelFatalError
 #    PipelineStateCache.cpp: Shader compilation failures are Fatal". Installed
 #    in a separate prefix (~/.wine-ue) to leave the Electron prefix untouched.
+#  - Started from ssh (no DISPLAY): the game runs on the machine's own X server.
 
 set -eu
 
@@ -23,7 +24,7 @@ usage() {
 	echo "  -d  install DXVK + vkd3d-proton (automatic for Unreal Engine games)"
 	echo "  -k  keep the current keyboard layout (no switch to us)"
 	echo "  -s  setup the prefix only, do not launch"
-	echo "Env: WINEPREFIX (default ~/.wine, ~/.wine-ue for -d), WINEDIR (default /usr/local/wine-proton)"
+	echo "Env: WINEPREFIX (default ~/.wine, ~/.wine-ue for -d), WINEDIR (default /usr/local/wine-proton), DISPLAY (default :0)"
 	exit 1
 }
 
@@ -51,6 +52,7 @@ else
 fi
 export PATH=${WINEDIR}/bin:${PATH}
 export WINEDEBUG=${WINEDEBUG:--all}
+export DISPLAY=${DISPLAY:-:0}
 fonts=${WINEPREFIX}/drive_c/windows/Fonts
 
 setup_prefix() {
@@ -95,7 +97,7 @@ if ! ${keep_layout}; then
 		    ${options:+-option "" -option "${options}"}
 	}
 	trap restore_layout EXIT
-	trap 'exit 1' INT TERM
+	trap 'exit 1' HUP INT TERM
 	setxkbmap -layout us -variant "" -option ""
 fi
 
