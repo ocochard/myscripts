@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
-"""Sweep the gap between read-only TPM2_GetRandom commands: tpmsweep.py COUNT GAP_MS..."""
+"""Sweep the gap between read-only TPM2_GetRandom commands on /dev/tpm0."""
+import argparse
 import collections
 import os
 import re
 import struct
 import subprocess
-import sys
 import time
 
-N = int(sys.argv[1])
+ap = argparse.ArgumentParser(
+    description="Send COUNT TPM2_GetRandom commands to /dev/tpm0 for each GAP_MS, "
+    "and report how many fail with EIO and which tpmcrb0 kernel messages appear. "
+    "TPM2_GetRandom changes no persistent TPM state. Run as root.",
+    epilog="example: %(prog)s 2000 0 0 0 0 0.5 1 2 5 10 50  "
+    "(repeat 0: the failure rate swings a lot between runs)")
+ap.add_argument("count", type=int, metavar="COUNT", help="commands sent per run")
+ap.add_argument("gaps", type=float, nargs="+", metavar="GAP_MS",
+                help="sleep before each command in ms, one run per value; 0 = back-to-back")
+args = ap.parse_args()
+N = args.count
 fd = os.open("/dev/tpm0", os.O_RDWR)
 c = struct.pack(">HIIH", 0x8001, 12, 0x17B, 32)
 PAT = re.compile(r"^tpmcrb0: (Failed to transition to idle state|Failed to obtain locality|Device has Error bit set)")
@@ -20,7 +30,7 @@ def msgs():
 
 
 print("gap_ms | n | fails | fail% | ms between cmds | fail durations | new kernel messages")
-for gap_ms in map(float, sys.argv[2:]):
+for gap_ms in args.gaps:
     before = msgs()
     fails, durations, real_gaps = 0, collections.Counter(), []
     last_end = None
