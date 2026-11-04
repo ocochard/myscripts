@@ -21,7 +21,7 @@ args = ap.parse_args()
 N = args.count
 fd = os.open("/dev/tpm0", os.O_RDWR)
 c = struct.pack(">HIIH", 0x8001, 12, 0x17B, 32)
-PAT = re.compile(r"^tpmcrb0: (Failed to transition to idle state|Failed to obtain locality|Device has Error bit set)")
+PAT = re.compile(r"^tpmcrb0: (Failed to transition to (idle|ready) state|Failed to obtain locality|Device has Error bit set)")
 
 
 def msgs():
