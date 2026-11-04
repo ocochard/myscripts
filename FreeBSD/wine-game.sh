@@ -15,6 +15,9 @@
 #    builtin wined3d/vkd3d fail to build UE5 pipelines => "LowLevelFatalError
 #    PipelineStateCache.cpp: Shader compilation failures are Fatal". Installed
 #    in a separate prefix (~/.wine-ue) to leave the Electron prefix untouched.
+#  - Sound output: wineoss picks its own default device (e.g. /dev/dsp0, HDMI)
+#    rather than FreeBSD's hw.snd.default_unit, so games are silent. Wine's
+#    DefaultOutput is pointed at /dev/dsp<default_unit>.
 #  - Started from ssh (no DISPLAY): the game runs on the machine's own X server.
 
 set -eu
@@ -74,7 +77,36 @@ setup_prefix() {
 	fi
 }
 
+# Point Wine's default audio output at FreeBSD's default sound unit.  The
+# endpoint ID is built from the GUID wineoss stored for that device, which
+# only exists once something in the prefix has used audio.
+setup_audio() {
+	unit=$(sysctl -n hw.snd.default_unit 2>/dev/null) || return 0
+	reg=${WINEPREFIX}/user.reg
+	guid=$(awk -v dev="0,/dev/dsp${unit}]" '
+	    index($0, "wineoss.drv\\\\devices\\\\" dev) { found = 1; next }
+	    found && /^"guid"=hex:/ {
+		split(substr($0, 12), b, ",")
+		printf "%s%s%s%s-%s%s-%s%s-%s%s-%s%s%s%s%s%s\n",
+		    b[4], b[3], b[2], b[1], b[6], b[5], b[8], b[7],
+		    b[9], b[10], b[11], b[12], b[13], b[14], b[15], b[16]
+		exit
+	    }
+	    /^\[/ { found = 0 }' "${reg}" 2>/dev/null | tr a-f A-F)
+	if [ -z "${guid}" ]; then
+		echo "WARNING: Wine does not know /dev/dsp${unit} yet (run a game" \
+		    "with sound once, then rerun $(basename "$0") -s)"
+		return 0
+	fi
+	id="{0.0.0.00000000}.{${guid}}"
+	grep -qF "\"DefaultOutput\"=\"${id}\"" "${reg}" && return 0
+	echo "Setting Wine's sound output to /dev/dsp${unit} (hw.snd.default_unit)"
+	wine reg add 'HKCU\Software\Wine\Drivers\wineoss.drv' \
+	    /v DefaultOutput /t REG_SZ /d "${id}" /f >/dev/null
+}
+
 setup_prefix
+setup_audio
 ${setup_only} && exit 0
 
 [ $# -ge 1 ] || usage
