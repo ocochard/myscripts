@@ -392,8 +392,8 @@ random: registering fast source TPM
 | ser6, patched: sweep, no gap, 8 runs of 2000 | 0 failures of 16000 |
 | ser6, patched: sweep, 0.5 to 50 ms gaps, 8 runs of 2000 | 0 failures of 16000 |
 | ser6, patched: new `tpmcrb0` kernel messages | None |
-| ser6, patched: suspend and resume | untestable: S3 resume hangs on the stock kernel too (below) |
-| ser6, patched: `debug.acpi.suspend_bounce` | untested |
+| ser6, patched: real S3 suspend and resume | untestable: S3 resume hangs on the stock kernel too (below) |
+| ser6, patched: `debug.acpi.suspend_bounce` cycle | `tpm20_suspend` and `tpm20_resume` returned 0, TPM works afterwards (below) |
 | ser6, patched: under load | untested |
 | `_DSM` revision 1 fallback | untested: ser6 accepts revision 0 |
 | Start method 7 and 13 machines: no regression | untested |
@@ -416,13 +416,41 @@ ser6 enters S3 but never resumes from it, with or without the patch:
 Both cases needed a forced power-off.  Wake-on-LAN does not wake ser6 from S3.
 
 Since the stock kernel hangs the same way, the hang is a platform problem and
-says nothing about the patch.  What remains untested is the patch's own
-suspend path: `tpm20_suspend()` sends `TPM2_Shutdown` and `tpm20_resume()`
-sends `TPM2_Startup`, both through the ACPI start method.
-`debug.acpi.suspend_bounce=1` would exercise both without sleeping, but it
-must stay set until the suspend has really run: `acpiconf -s 3` only queues
-the request.  The first attempt here cleared it too early and turned into the
-real S3 in the first row.
+says nothing about the patch.
+
+### The driver's suspend path, tested with suspend_bounce
+
+`debug.acpi.suspend_bounce` runs the software side of a suspend and skips the
+step that powers the machine down.  Drivers are suspended, then the kernel
+jumps straight into its resume code:
+
+* `AcpiOsEnterSleep()` (`sys/dev/acpica/Osd/OsdHardware.c:47`) is called just
+  before ACPICA writes the sleep type into the firmware power register.  With
+  bounce set it returns `AE_CTRL_TERMINATE`, so that write never happens.
+* `sys/amd64/acpica/acpi_wakeup.c:246` then calls `resumectx()`, which enters
+  the same resume code a real wake would reach, without the firmware.
+
+So bounce tests the driver code, `tpm20_suspend()` sending `TPM2_Shutdown`
+and `tpm20_resume()` sending `TPM2_Startup` through the ACPI start method.
+It does not test the firmware's wake path or the TPM losing power.
+
+The switch is read only at the power-register step, a few seconds after
+`acpiconf -s 3` returns, because that command only queues the request.  It
+must stay set until `/etc/rc.resume` has run.  The first attempt here cleared
+it too early and became the real S3 in the first row of the table above.
+
+Patched kernel, 2026-11-04, with the switch kept set until "resumed at" was
+logged (4 s):
+
+| Check | Result |
+|---|---|
+| `/var/log/messages` | `suspend at 23:04:04`, `resumed at 23:04:10` |
+| `tpm20_suspend()` (dtrace) | returned 0 at 23:04:07 |
+| `tpm20_resume()` (dtrace) | returned 0 at 23:04:10 |
+| `_DSM` start calls during the cycle | 11 |
+| `TPM2_GetRandom(16)` after resume | return code 0 |
+| Sweep after resume, 2000 commands with no gap | 0 failures |
+| New `tpmcrb0` kernel messages | none |
 
 ### How to repeat the test
 
