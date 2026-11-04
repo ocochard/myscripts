@@ -1,0 +1,1127 @@
+diff --git sys/conf/files.x86 sys/conf/files.x86
+index a5c85cd08955..d1d5dadc7824 100644
+--- sys/conf/files.x86
++++ sys/conf/files.x86
+@@ -100,7 +100,8 @@ dev/fdc/fdc_isa.c		optional	fdc isa
+ dev/gpio/bytgpio.c		optional	bytgpio
+ dev/gpio/chvgpio.c		optional	chvgpio
+ dev/gpio/intel/adlngpio.c	optional	adlngpio
+-dev/gpio/intel/intelgpio.c	optional	adlngpio | tglhgpio
++dev/gpio/intel/intelgpio.c	optional	adlngpio | mtlgpio | tglhgpio
++dev/gpio/intel/mtlgpio.c	optional	mtlgpio
+ dev/gpio/intel/tglhgpio.c	optional	tglhgpio
+ dev/hpt27xx/hpt27xx_os_bsd.c	optional	hpt27xx
+ dev/hpt27xx/hpt27xx_osm_bsd.c	optional	hpt27xx
+@@ -387,6 +388,7 @@ x86/x86/cpu_machdep.c		standard
+ x86/x86/dbreg.c			optional	ddb | gdb
+ x86/x86/dump_machdep.c		standard
+ x86/x86/fdt_machdep.c		optional	fdt
++x86/x86/gpio_intr.c		standard
+ x86/x86/identcpu.c		standard
+ x86/x86/intr_machdep.c		standard
+ x86/x86/legacy.c		standard
+diff --git sys/dev/gpio/gpiobus.c sys/dev/gpio/gpiobus.c
+index 3563435965de..3217bb20dcba 100644
+--- sys/dev/gpio/gpiobus.c
++++ sys/dev/gpio/gpiobus.c
+@@ -38,6 +38,10 @@
+ #include <sys/module.h>
+ #include <sys/sbuf.h>
+ 
++#if defined(__amd64__) || defined(__i386__)
++#include <machine/intr_machdep.h>
++#endif
++
+ #include <dev/gpio/gpiobusvar.h>
+ #include <dev/gpio/gpiobus_internal.h>
+ 
+@@ -114,6 +118,18 @@ gpio_alloc_intr_resource(device_t consumer_dev, int rid, u_int alloc_flags,
+ 	}
+ 	return (res);
+ }
++#elif defined(__amd64__) || defined(__i386__)
++struct resource *
++gpio_alloc_intr_resource(device_t consumer_dev, int rid, u_int alloc_flags,
++    gpio_pin_t pin, uint32_t intr_mode)
++{
++	u_int irq;
++
++	if (gpio_intr_map(pin->dev, pin->pin, intr_mode, &irq) != 0)
++		return (NULL);
++	return (bus_alloc_resource(consumer_dev, SYS_RES_IRQ, rid, irq, irq, 1,
++	    alloc_flags));
++}
+ #else
+ struct resource *
+ gpio_alloc_intr_resource(device_t consumer_dev, int rid, u_int alloc_flags,
+diff --git sys/dev/gpio/intel/intelgpio.c sys/dev/gpio/intel/intelgpio.c
+index aba4c12da828..971063a3520f 100644
+--- sys/dev/gpio/intel/intelgpio.c
++++ sys/dev/gpio/intel/intelgpio.c
+@@ -13,6 +13,7 @@
+ #include <sys/rman.h>
+ 
+ #include <machine/bus.h>
++#include <machine/intr_machdep.h>
+ #include <machine/resource.h>
+ 
+ #include <contrib/dev/acpica/include/acpi.h>
+@@ -308,6 +309,254 @@ intelgpio_pin_toggle(device_t dev, uint32_t pin)
+ 	return (0);
+ }
+ 
++/*
++ * Find the community, the group index within that community and the bit
++ * within the group registers of a pin.  The group index selects the
++ * HOSTSW_OWN, GPI_IS and GPI_IE register of the group.
++ */
++static int
++intelgpio_pin_to_group(struct intelgpio_softc *sc, uint32_t pin, int *comp,
++    int *grpp, int *bitp)
++{
++	const struct intelgpio_platform *plat = sc->sc_plat;
++	const struct intelgpio_community *com;
++	const struct intelgpio_padgroup *pg;
++	int i, j;
++
++	for (i = 0; i < plat->ncommunities; i++) {
++		com = &plat->communities[i];
++		for (j = 0; j < com->ngroups; j++) {
++			pg = &com->groups[j];
++			if (pg->gpio_base == INTELGPIO_GPIO_NOMAP)
++				continue;
++			if (pin >= pg->gpio_base &&
++			    pin < pg->gpio_base + pg->npads) {
++				*comp = i;
++				*grpp = j;
++				*bitp = pin - pg->gpio_base;
++				return (0);
++			}
++		}
++	}
++	return (-1);
++}
++
++static void
++intelgpio_set_ie(struct intelgpio_softc *sc, struct resource *res, int grp,
++    int bit, bool enable)
++{
++	bus_size_t reg;
++	uint32_t val;
++
++	reg = sc->sc_plat->gpi_ie_reg + grp * 4;
++	INTELGPIO_LOCK(sc);
++	val = bus_read_4(res, reg);
++	if (enable)
++		val |= 1u << bit;
++	else
++		val &= ~(1u << bit);
++	bus_write_4(res, reg, val);
++	INTELGPIO_UNLOCK(sc);
++}
++
++static void
++intelgpio_intr_set_pin(device_t dev, u_int pin, bool enable)
++{
++	struct intelgpio_softc *sc;
++	int bit, com, grp;
++
++	sc = device_get_softc(dev);
++	if (intelgpio_pin_to_group(sc, pin, &com, &grp, &bit) != 0 ||
++	    sc->sc_mem_res[com] == NULL)
++		return;
++	intelgpio_set_ie(sc, sc->sc_mem_res[com], grp, bit, enable);
++}
++
++static void
++intelgpio_intr_mask(device_t dev, u_int pin)
++{
++	intelgpio_intr_set_pin(dev, pin, false);
++}
++
++static void
++intelgpio_intr_unmask(device_t dev, u_int pin)
++{
++	intelgpio_intr_set_pin(dev, pin, true);
++}
++
++static int
++intelgpio_intr_config(device_t dev, u_int pin, uint32_t mode)
++{
++	struct intelgpio_softc *sc;
++	const struct intelgpio_platform *plat;
++	struct resource *res;
++	bus_size_t pad_off, reg;
++	uint32_t cfg, evcfg;
++	int bit, com, grp;
++
++	sc = device_get_softc(dev);
++	plat = sc->sc_plat;
++
++	switch (mode & GPIO_INTR_MASK) {
++	case GPIO_INTR_LEVEL_LOW:
++		evcfg = INTELGPIO_PADCFG0_RXEVCFG_LEVEL |
++		    INTELGPIO_PADCFG0_RXINV;
++		break;
++	case GPIO_INTR_LEVEL_HIGH:
++		evcfg = INTELGPIO_PADCFG0_RXEVCFG_LEVEL;
++		break;
++	case GPIO_INTR_EDGE_RISING:
++		evcfg = INTELGPIO_PADCFG0_RXEVCFG_EDGE;
++		break;
++	case GPIO_INTR_EDGE_FALLING:
++		evcfg = INTELGPIO_PADCFG0_RXEVCFG_EDGE |
++		    INTELGPIO_PADCFG0_RXINV;
++		break;
++	default:
++		return (EOPNOTSUPP);
++	}
++
++	if (intelgpio_gpio_to_pad(sc, pin, &res, &pad_off, NULL) != 0 ||
++	    res == NULL)
++		return (EINVAL);
++	if (intelgpio_pin_to_group(sc, pin, &com, &grp, &bit) != 0)
++		return (EINVAL);
++
++	INTELGPIO_LOCK(sc);
++	cfg = bus_read_4(res, pad_off);
++	if ((cfg & INTELGPIO_PADCFG0_PMODE_MASK) !=
++	    INTELGPIO_PADCFG0_PMODE_GPIO) {
++		INTELGPIO_UNLOCK(sc);
++		return (EINVAL);
++	}
++
++	/* Mask the pin while it is reprogrammed. */
++	reg = plat->gpi_ie_reg + grp * 4;
++	bus_write_4(res, reg, bus_read_4(res, reg) & ~(1u << bit));
++
++	cfg &= ~(INTELGPIO_PADCFG0_RXEVCFG_MASK | INTELGPIO_PADCFG0_RXINV |
++	    INTELGPIO_PADCFG0_GPIORXDIS);
++	cfg |= evcfg;
++	bus_write_4(res, pad_off, cfg);
++	if ((bus_read_4(res, pad_off) &
++	    (INTELGPIO_PADCFG0_RXEVCFG_MASK | INTELGPIO_PADCFG0_RXINV |
++	    INTELGPIO_PADCFG0_GPIORXDIS)) != evcfg) {
++		/* The pad configuration is locked. */
++		INTELGPIO_UNLOCK(sc);
++		return (EPERM);
++	}
++
++	/* Host GPIO driver mode: the event goes to GPI_IS, not to a GPE. */
++	reg = plat->hostsw_own_reg + grp * 4;
++	bus_write_4(res, reg, bus_read_4(res, reg) | (1u << bit));
++
++	/* Drop an event latched under the previous configuration. */
++	bus_write_4(res, plat->gpi_is_reg + grp * 4, 1u << bit);
++	INTELGPIO_UNLOCK(sc);
++
++	return (0);
++}
++
++static const struct gpio_intr_ops intelgpio_intr_ops = {
++	.gio_config = intelgpio_intr_config,
++	.gio_mask = intelgpio_intr_mask,
++	.gio_unmask = intelgpio_intr_unmask,
++};
++
++/*
++ * All communities share one interrupt.  Acknowledge each enabled pending
++ * event, then run the handlers of its pin.
++ */
++static int
++intelgpio_intr(void *arg)
++{
++	struct intelgpio_softc *sc = arg;
++	const struct intelgpio_platform *plat = sc->sc_plat;
++	const struct intelgpio_community *com;
++	const struct intelgpio_padgroup *pg;
++	struct resource *res;
++	bus_size_t is_reg;
++	uint32_t pending;
++	int bit, i, j;
++	bool handled;
++
++	handled = false;
++	for (i = 0; i < plat->ncommunities; i++) {
++		res = sc->sc_mem_res[i];
++		if (res == NULL)
++			continue;
++		com = &plat->communities[i];
++		for (j = 0; j < com->ngroups; j++) {
++			pg = &com->groups[j];
++			is_reg = plat->gpi_is_reg + j * 4;
++
++			INTELGPIO_LOCK(sc);
++			pending = bus_read_4(res, is_reg) &
++			    bus_read_4(res, plat->gpi_ie_reg + j * 4);
++			if (pending != 0)
++				bus_write_4(res, is_reg, pending);
++			INTELGPIO_UNLOCK(sc);
++
++			while (pending != 0) {
++				handled = true;
++				bit = ffs(pending) - 1;
++				pending &= ~(1u << bit);
++				if (pg->gpio_base == INTELGPIO_GPIO_NOMAP ||
++				    gpio_intr_dispatch(sc->sc_gpio_intr,
++				    pg->gpio_base + bit) != 0)
++					intelgpio_set_ie(sc, res, j, bit,
++					    false);
++			}
++		}
++	}
++	return (handled ? FILTER_HANDLED : FILTER_STRAY);
++}
++
++static void
++intelgpio_intr_attach(struct intelgpio_softc *sc)
++{
++	const struct intelgpio_platform *plat = sc->sc_plat;
++	device_t dev = sc->sc_dev;
++	int error, i, j, maxpin, rid;
++
++	/* No consumer exists yet: start with every pin masked. */
++	for (i = 0; i < plat->ncommunities; i++) {
++		if (sc->sc_mem_res[i] == NULL)
++			continue;
++		for (j = 0; j < plat->communities[i].ngroups; j++)
++			bus_write_4(sc->sc_mem_res[i], plat->gpi_ie_reg + j * 4,
++			    0);
++	}
++
++	rid = 0;
++	sc->sc_irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &rid,
++	    RF_ACTIVE | RF_SHAREABLE);
++	if (sc->sc_irq_res == NULL) {
++		device_printf(dev, "no interrupt, pin interrupts disabled\n");
++		return;
++	}
++
++	intelgpio_pin_max(dev, &maxpin);
++	sc->sc_gpio_intr = gpio_intr_register(dev, maxpin + 1,
++	    &intelgpio_intr_ops);
++	if (sc->sc_gpio_intr == NULL)
++		goto fail;
++
++	error = bus_setup_intr(dev, sc->sc_irq_res,
++	    INTR_TYPE_MISC | INTR_MPSAFE, intelgpio_intr, NULL, sc,
++	    &sc->sc_intrhand);
++	if (error != 0) {
++		device_printf(dev, "cannot set up interrupt: %d\n", error);
++		gpio_intr_deregister(sc->sc_gpio_intr);
++		sc->sc_gpio_intr = NULL;
++		goto fail;
++	}
++	return;
++fail:
++	bus_release_resource(dev, SYS_RES_IRQ, rid, sc->sc_irq_res);
++	sc->sc_irq_res = NULL;
++}
++
+ int
+ intelgpio_probe(device_t dev, const struct intelgpio_platform *plat)
+ {
+@@ -326,10 +575,28 @@ static int
+ intelgpio_detach(device_t dev)
+ {
+ 	struct intelgpio_softc *sc;
+-	int i;
++	int error, i;
+ 
+ 	sc = device_get_softc(dev);
+ 
++	if (sc->sc_gpio_intr != NULL) {
++		bus_teardown_intr(dev, sc->sc_irq_res, sc->sc_intrhand);
++		error = gpio_intr_deregister(sc->sc_gpio_intr);
++		if (error != 0) {
++			/* A consumer still has a handler on one of our pins. */
++			bus_setup_intr(dev, sc->sc_irq_res,
++			    INTR_TYPE_MISC | INTR_MPSAFE, intelgpio_intr, NULL,
++			    sc, &sc->sc_intrhand);
++			return (error);
++		}
++		sc->sc_gpio_intr = NULL;
++	}
++	if (sc->sc_irq_res != NULL) {
++		bus_release_resource(dev, SYS_RES_IRQ,
++		    rman_get_rid(sc->sc_irq_res), sc->sc_irq_res);
++		sc->sc_irq_res = NULL;
++	}
++
+ 	if (sc->sc_busdev != NULL)
+ 		gpiobus_detach_bus(dev);
+ 
+@@ -382,6 +649,9 @@ intelgpio_attach(device_t dev, const struct intelgpio_platform *plat)
+ 		return (ENXIO);
+ 	}
+ 
++	if (plat->hostsw_own_reg != 0)
++		intelgpio_intr_attach(sc);
++
+ 	sc->sc_busdev = gpiobus_add_bus(dev);
+ 	if (sc->sc_busdev == NULL) {
+ 		device_printf(dev, "failed to add gpiobus\n");
+diff --git sys/dev/gpio/intel/intelgpio.h sys/dev/gpio/intel/intelgpio.h
+index 54aecc9b76d8..5ba25ffe07c5 100644
+--- sys/dev/gpio/intel/intelgpio.h
++++ sys/dev/gpio/intel/intelgpio.h
+@@ -23,6 +23,10 @@
+ #define INTELGPIO_PADCFG0_GPIORXDIS   (1 << 9)
+ #define INTELGPIO_PADCFG0_PMODE_MASK  (0x7 << 10)
+ #define INTELGPIO_PADCFG0_PMODE_GPIO  0
++#define INTELGPIO_PADCFG0_RXINV	      (1 << 23)
++#define INTELGPIO_PADCFG0_RXEVCFG_MASK (0x3 << 25)
++#define INTELGPIO_PADCFG0_RXEVCFG_LEVEL (0 << 25)
++#define INTELGPIO_PADCFG0_RXEVCFG_EDGE (1 << 25)
+ 
+ #define INTELGPIO_GPIO_NOMAP	      (-1)
+ #define INTELGPIO_MAX_COMMUNITIES     8
+@@ -44,6 +48,15 @@ struct intelgpio_platform {
+ 	int ncommunities;
+ 	char **hids;
+ 	const char *desc;
++
++	/*
++	 * Per-community register offsets for host GPIO driver mode
++	 * interrupts; register n covers group n of the community.  Zero
++	 * hostsw_own_reg means interrupts are not supported.
++	 */
++	bus_size_t hostsw_own_reg;
++	bus_size_t gpi_is_reg;
++	bus_size_t gpi_ie_reg;
+ };
+ 
+ struct intelgpio_softc {
+@@ -54,6 +67,10 @@ struct intelgpio_softc {
+ 
+ 	struct resource *sc_mem_res[INTELGPIO_MAX_COMMUNITIES];
+ 	uint32_t sc_padbar[INTELGPIO_MAX_COMMUNITIES];
++
++	struct resource *sc_irq_res;
++	void *sc_intrhand;
++	struct gpio_intr_ctlr *sc_gpio_intr;
+ };
+ 
+ DECLARE_CLASS(intelgpio_driver);
+diff --git sys/dev/gpio/intel/mtlgpio.c sys/dev/gpio/intel/mtlgpio.c
+new file mode 100644
+index 000000000000..76778d5da3a6
+--- /dev/null
++++ sys/dev/gpio/intel/mtlgpio.c
+@@ -0,0 +1,126 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++ */
++
++/*
++ * Intel Meteor Lake-P GPIO controller (ACPI INTC1083).
++ *
++ * Group names and register offsets: "Intel Core Ultra Processors for
++ * H-series and U-series Platforms SOC I/O Registers", Intel document 795260
++ * (GPIO Community 0, 1, 3, 4 and 5 registers).  Pad counts and ACPI GPIO
++ * bases: the GPIO group table (GPCM) of the platform DSDT.  Groups without
++ * a public name are named after their community and group index, such as
++ * COM3_GRP2_ for group 2 of community 3.
++ */
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/bus.h>
++#include <sys/gpio.h>
++#include <sys/kernel.h>
++#include <sys/module.h>
++
++#include <contrib/dev/acpica/include/acpi.h>
++
++#include <dev/acpica/acpivar.h>
++#include <dev/gpio/gpiobusvar.h>
++
++#include "intelgpio.h"
++
++#include "gpio_if.h"
++#include "opt_acpi.h"
++
++/* Community 0: COM0_GRP0, GPP_V, GPP_C */
++static const struct intelgpio_padgroup mtl_com0_groups[] = {
++	{ .first_pad = 0, .npads = 5, .gpio_base = 0, .name = "COM0_GRP0_" },
++	{ .first_pad = 5, .npads = 24, .gpio_base = 32, .name = "GPP_V" },
++	{ .first_pad = 29, .npads = 24, .gpio_base = 64, .name = "GPP_C" },
++};
++
++/* Community 1: GPP_A, GPP_E */
++static const struct intelgpio_padgroup mtl_com1_groups[] = {
++	{ .first_pad = 53, .npads = 25, .gpio_base = 96, .name = "GPP_A" },
++	{ .first_pad = 78, .npads = 25, .gpio_base = 128, .name = "GPP_E" },
++};
++
++/* Community 3: GPP_H, GPP_F, COM3_GRP2, COM3_GRP3 */
++static const struct intelgpio_padgroup mtl_com3_groups[] = {
++	{ .first_pad = 103, .npads = 26, .gpio_base = 160, .name = "GPP_H" },
++	{ .first_pad = 129, .npads = 26, .gpio_base = 192, .name = "GPP_F" },
++	{ .first_pad = 155,
++	    .npads = 15,
++	    .gpio_base = 224,
++	    .name = "COM3_GRP2_" },
++	{ .first_pad = 170,
++	    .npads = 14,
++	    .gpio_base = 256,
++	    .name = "COM3_GRP3_" },
++};
++
++/* Community 4: GPP_S, COM4_GRP1 */
++static const struct intelgpio_padgroup mtl_com4_groups[] = {
++	{ .first_pad = 184, .npads = 8, .gpio_base = 288, .name = "GPP_S" },
++	{ .first_pad = 192,
++	    .npads = 12,
++	    .gpio_base = 320,
++	    .name = "COM4_GRP1_" },
++};
++
++/* Community 5: GPP_B, GPP_D, COM5_GRP2 */
++static const struct intelgpio_padgroup mtl_com5_groups[] = {
++	{ .first_pad = 204, .npads = 25, .gpio_base = 352, .name = "GPP_B" },
++	{ .first_pad = 229, .npads = 25, .gpio_base = 384, .name = "GPP_D" },
++	{ .first_pad = 254,
++	    .npads = 35,
++	    .gpio_base = 416,
++	    .name = "COM5_GRP2_" },
++};
++
++static const struct intelgpio_community mtl_communities[] = {
++	{ .ngroups = nitems(mtl_com0_groups), .groups = mtl_com0_groups },
++	{ .ngroups = nitems(mtl_com1_groups), .groups = mtl_com1_groups },
++	{ .ngroups = nitems(mtl_com3_groups), .groups = mtl_com3_groups },
++	{ .ngroups = nitems(mtl_com4_groups), .groups = mtl_com4_groups },
++	{ .ngroups = nitems(mtl_com5_groups), .groups = mtl_com5_groups },
++};
++
++static char *mtl_hids[] = { "INTC1083", NULL };
++
++static const struct intelgpio_platform mtl_platform = {
++	.communities = mtl_communities,
++	.ncommunities = nitems(mtl_communities),
++	.hids = mtl_hids,
++	.desc = "Intel Meteor Lake-P GPIO",
++	.hostsw_own_reg = 0x140,
++	.gpi_is_reg = 0x200,
++	.gpi_ie_reg = 0x210,
++};
++
++static int
++mtl_gpio_probe(device_t dev)
++{
++	return (intelgpio_probe(dev, &mtl_platform));
++}
++
++static int
++mtl_gpio_attach(device_t dev)
++{
++	return (intelgpio_attach(dev, &mtl_platform));
++}
++
++static device_method_t mtl_methods[] = { DEVMETHOD(device_probe,
++					     mtl_gpio_probe),
++	DEVMETHOD(device_attach, mtl_gpio_attach),
++
++	DEVMETHOD_END };
++
++DEFINE_CLASS_1(gpio, mtl_driver, mtl_methods, sizeof(struct intelgpio_softc),
++    intelgpio_driver);
++
++DRIVER_MODULE(mtlgpio, acpi, mtl_driver, NULL, NULL);
++MODULE_DEPEND(mtlgpio, acpi, 1, 1, 1);
++MODULE_DEPEND(mtlgpio, gpiobus, 1, 1, 1);
++MODULE_VERSION(mtlgpio, 1);
++ACPI_PNP_INFO(mtl_hids);
+diff --git sys/dev/iicbus/acpi_iicbus.c sys/dev/iicbus/acpi_iicbus.c
+index 873a96b04823..f3d5be7e3b32 100644
+--- sys/dev/iicbus/acpi_iicbus.c
++++ sys/dev/iicbus/acpi_iicbus.c
+@@ -28,6 +28,7 @@
+ #include <sys/param.h>
+ #include <sys/bus.h>
+ #include <sys/endian.h>
++#include <sys/gpio.h>
+ #include <sys/kernel.h>
+ #include <sys/malloc.h>
+ #include <sys/module.h>
+@@ -35,6 +36,9 @@
+ #include <sys/sbuf.h>
+ 
+ #include <machine/resource.h>
++#if defined(__amd64__) || defined(__i386__)
++#include <machine/intr_machdep.h>
++#endif
+ 
+ #include <contrib/dev/acpica/include/acpi.h>
+ #include <contrib/dev/acpica/include/accommon.h>
+@@ -391,6 +395,101 @@ acpi_iicbus_get_i2cres(ACPI_HANDLE handle, ACPI_RESOURCE_I2C_SERIALBUS *sb)
+ 	    acpi_iicbus_get_i2cres_cb, sb));
+ }
+ 
++#if defined(__amd64__) || defined(__i386__)
++/*
++ * Map a GpioInt resource to an IRQ through the GPIO controller it names.
++ * The controller driver must already be attached.
++ */
++static int
++acpi_iicbus_map_gpioint(ACPI_RESOURCE_GPIO *gpio, u_int *irqp)
++{
++	ACPI_HANDLE handle;
++	device_t ctlr;
++	uint32_t mode;
++
++	if (gpio->PinTableLength < 1 || gpio->ResourceSource.StringPtr == NULL)
++		return (EINVAL);
++	if (ACPI_FAILURE(AcpiGetHandle(NULL, gpio->ResourceSource.StringPtr,
++	    &handle)))
++		return (ENOENT);
++	ctlr = acpi_get_device(handle);
++	if (ctlr == NULL || !device_is_attached(ctlr))
++		return (ENXIO);
++
++	if (gpio->Triggering == ACPI_LEVEL_SENSITIVE)
++		mode = gpio->Polarity == ACPI_ACTIVE_HIGH ?
++		    GPIO_INTR_LEVEL_HIGH : GPIO_INTR_LEVEL_LOW;
++	else if (gpio->Polarity == ACPI_ACTIVE_BOTH)
++		mode = GPIO_INTR_EDGE_BOTH;
++	else
++		mode = gpio->Polarity == ACPI_ACTIVE_HIGH ?
++		    GPIO_INTR_EDGE_RISING : GPIO_INTR_EDGE_FALLING;
++
++	return (gpio_intr_map(ctlr, gpio->PinTable[0], mode, irqp));
++}
++
++struct acpi_iicbus_gpioint {
++	bool	found;
++	int	error;
++	u_int	irq;
++};
++
++/*
++ * Like acpi_iicbus_parse_resources_cb(), stop at the first interrupt
++ * resource, and map it if it is a GpioInt.
++ */
++static ACPI_STATUS
++acpi_iicbus_gpioint_cb(ACPI_RESOURCE *res, void *context)
++{
++	struct acpi_iicbus_gpioint *gi = context;
++
++	if (res->Type == ACPI_RESOURCE_TYPE_EXTENDED_IRQ &&
++	    res->Data.ExtendedIrq.InterruptCount > 0)
++		return (AE_CTRL_TERMINATE);
++	if (res->Type != ACPI_RESOURCE_TYPE_GPIO ||
++	    res->Data.Gpio.ConnectionType != ACPI_RESOURCE_GPIO_TYPE_INT)
++		return (AE_OK);
++	gi->found = true;
++	gi->error = acpi_iicbus_map_gpioint(&res->Data.Gpio, &gi->irq);
++	return (AE_CTRL_TERMINATE);
++}
++
++/*
++ * The GPIO controller named by a GpioInt resource may attach after this
++ * bus enumerated its children, or detach and attach again, so map the
++ * interrupt each time the child allocates it.  Without a controller, drop
++ * the IRQ so the child can fall back to polling.
++ */
++static struct resource *
++acpi_iicbus_alloc_resource(device_t bus, device_t child, int type, int rid,
++    rman_res_t start, rman_res_t end, rman_res_t count, u_int flags)
++{
++	struct acpi_iicbus_ivars *devi;
++	struct acpi_iicbus_gpioint gi;
++	struct resource_list *rl;
++	struct resource_list_entry *rle;
++
++	if (type == SYS_RES_IRQ && rid == 0 &&
++	    device_get_parent(child) == bus) {
++		devi = device_get_ivars(child);
++		rl = &devi->super_ivar.rl;
++		rle = resource_list_find(rl, SYS_RES_IRQ, 0);
++		gi.found = false;
++		/* An allocated entry is left alone: the allocation fails. */
++		if (devi->handle != NULL && (rle == NULL || rle->res == NULL))
++			AcpiWalkResources(devi->handle, "_CRS",
++			    acpi_iicbus_gpioint_cb, &gi);
++		if (gi.found && gi.error == 0)
++			resource_list_add(rl, SYS_RES_IRQ, 0, gi.irq, gi.irq,
++			    1);
++		else if (gi.found)
++			resource_list_delete(rl, SYS_RES_IRQ, 0);
++	}
++	return (bus_generic_rl_alloc_resource(bus, child, type, rid, start, end,
++	    count, flags));
++}
++#endif
++
+ static ACPI_STATUS
+ acpi_iicbus_parse_resources_cb(ACPI_RESOURCE *res, void *context)
+ {
+@@ -412,7 +511,10 @@ acpi_iicbus_parse_resources_cb(ACPI_RESOURCE *res, void *context)
+ 	case ACPI_RESOURCE_TYPE_GPIO:
+ 		if (res->Data.Gpio.ConnectionType ==
+ 		    ACPI_RESOURCE_GPIO_TYPE_INT) {
+-			/* Not supported by FreeBSD yet */
++			/*
++			 * x86 maps it on demand in acpi_iicbus_alloc_resource(),
++			 * other platforms do not support it yet.
++			 */
+ 			gpio_pin = res->Data.Gpio.PinTable[0];
+ 			if (bootverbose)
+ 				printf("  GPIO IRQ pin:      %d\n", gpio_pin);
+@@ -757,6 +859,9 @@ static device_method_t acpi_iicbus_methods[] = {
+ 
+ 	/* Bus interface */
+ 	DEVMETHOD(bus_add_child,	acpi_iicbus_add_child),
++#if defined(__amd64__) || defined(__i386__)
++	DEVMETHOD(bus_alloc_resource,	acpi_iicbus_alloc_resource),
++#endif
+ 	DEVMETHOD(bus_probe_nomatch,	acpi_iicbus_probe_nomatch),
+ 	DEVMETHOD(bus_driver_added,	acpi_iicbus_driver_added),
+ 	DEVMETHOD(bus_child_deleted,	acpi_iicbus_child_deleted),
+diff --git sys/modules/Makefile sys/modules/Makefile
+index 2c3553aea2f3..0a6cf0947859 100644
+--- sys/modules/Makefile
++++ sys/modules/Makefile
+@@ -280,6 +280,7 @@ SUBDIR=	\
+ 	msdosfs_iconv \
+ 	msk \
+ 	${_mthca} \
++	${_mtlgpio} \
+ 	mvs \
+ 	mwl \
+ 	${_mwlfw} \
+@@ -851,6 +852,7 @@ _padlock_rng=	padlock_rng
+ _rdrand_rng=	rdrand_rng
+ _rdseed_rng=	rdseed_rng
+ .endif
++_mtlgpio=	mtlgpio
+ _pchtherm = pchtherm
+ _s3=		s3
+ _sdhci_acpi=	sdhci_acpi
+diff --git sys/modules/mtlgpio/Makefile sys/modules/mtlgpio/Makefile
+new file mode 100644
+index 000000000000..d786db6a88b6
+--- /dev/null
++++ sys/modules/mtlgpio/Makefile
+@@ -0,0 +1,6 @@
++.PATH:	${SRCTOP}/sys/dev/gpio/intel
++KMOD=	mtlgpio
++SRCS=	intelgpio.c mtlgpio.c
++SRCS+=	acpi_if.h device_if.h bus_if.h gpio_if.h opt_acpi.h opt_platform.h
++
++.include <bsd.kmod.mk>
+diff --git sys/x86/include/intr_machdep.h sys/x86/include/intr_machdep.h
+index 6d6b1962b6bd..5a97e956536c 100644
+--- sys/x86/include/intr_machdep.h
++++ sys/x86/include/intr_machdep.h
+@@ -165,5 +165,24 @@ int	msix_release(int irq);
+ void	xen_intr_alloc_irqs(void);
+ #endif
+ 
++/*
++ * Interrupt sources for GPIO pins.  A GPIO controller driver registers the
++ * operations below; every method may be called from interrupt context, so
++ * they may only take spin locks.
++ */
++struct gpio_intr_ctlr;
++struct gpio_intr_ops {
++	int	(*gio_config)(device_t dev, u_int pin, uint32_t mode);
++	void	(*gio_mask)(device_t dev, u_int pin);
++	void	(*gio_unmask)(device_t dev, u_int pin);
++};
++
++int	gpio_intr_deregister(struct gpio_intr_ctlr *ctlr);
++int	gpio_intr_dispatch(struct gpio_intr_ctlr *ctlr, u_int pin);
++void	gpio_intr_init(void);
++int	gpio_intr_map(device_t dev, u_int pin, uint32_t mode, u_int *irqp);
++struct gpio_intr_ctlr *gpio_intr_register(device_t dev, u_int npins,
++    const struct gpio_intr_ops *ops);
++
+ #endif	/* _KERNEL */
+ #endif	/* !__X86_INTR_MACHDEP_H__ */
+diff --git sys/x86/x86/gpio_intr.c sys/x86/x86/gpio_intr.c
+new file mode 100644
+index 000000000000..1bad884df0ff
+--- /dev/null
++++ sys/x86/x86/gpio_intr.c
+@@ -0,0 +1,363 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++ */
++
++/*
++ * Interrupt sources for GPIO pins.
++ *
++ * x86 does not use INTRNG, so a GPIO controller cannot act as the interrupt
++ * controller of the devices wired to its pins.  This pseudo-PIC fills the
++ * gap.  Like MSI, it reserves a block of IRQ numbers at boot and creates an
++ * interrupt source on demand for each mapped pin.  A GPIO controller driver
++ * registers mask, unmask and trigger configuration methods, then calls
++ * gpio_intr_dispatch() from its own interrupt filter for each pin with a
++ * pending event.  The pin handlers therefore run nested in the interrupt
++ * context of the controller's parent interrupt.
++ */
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/bus.h>
++#include <sys/gpio.h>
++#include <sys/kernel.h>
++#include <sys/limits.h>
++#include <sys/lock.h>
++#include <sys/malloc.h>
++#include <sys/proc.h>
++#include <sys/queue.h>
++#include <sys/sx.h>
++#include <sys/sysctl.h>
++
++#include <machine/atomic.h>
++#include <machine/intr_machdep.h>
++
++struct gpio_intsrc {
++	struct intsrc		gi_intsrc;
++	struct gpio_intr_ctlr	*gi_ctlr;	/* NULL when the source is free */
++	u_int			gi_pin;
++	u_int			gi_irq;
++	uint32_t		gi_mode;	/* GPIO_INTR_* */
++};
++
++struct gpio_intr_ctlr {
++	device_t		gc_dev;
++	const struct gpio_intr_ops *gc_ops;
++	u_int			gc_npins;
++	struct gpio_intsrc	**gc_src;	/* mapped source, by pin */
++	TAILQ_ENTRY(gpio_intr_ctlr) gc_link;
++};
++
++static MALLOC_DEFINE(M_GPIOINTR, "gpiointr", "GPIO interrupt sources");
++
++static u_int num_gpio_irqs = 32;
++SYSCTL_UINT(_machdep, OID_AUTO, num_gpio_irqs, CTLFLAG_RDTUN, &num_gpio_irqs,
++    0, "Number of IRQs reserved for GPIO pin interrupts");
++
++static u_int first_gpio_irq;
++static u_int gpio_nsrcs;		/* sources created so far */
++static struct gpio_intsrc **gpio_srcs;	/* created sources, by IRQ offset */
++static TAILQ_HEAD(, gpio_intr_ctlr) gpio_ctlrs =
++    TAILQ_HEAD_INITIALIZER(gpio_ctlrs);
++static struct sx gpio_intr_lock;
++static bool gpio_intr_enabled;
++
++static void
++gpio_intr_enable_source(struct intsrc *isrc)
++{
++	struct gpio_intsrc *gi = (struct gpio_intsrc *)isrc;
++	struct gpio_intr_ctlr *ctlr = gi->gi_ctlr;
++
++	if (ctlr != NULL)
++		ctlr->gc_ops->gio_unmask(ctlr->gc_dev, gi->gi_pin);
++}
++
++static void
++gpio_intr_disable_source(struct intsrc *isrc, int eoi __unused)
++{
++	struct gpio_intsrc *gi = (struct gpio_intsrc *)isrc;
++	struct gpio_intr_ctlr *ctlr = gi->gi_ctlr;
++
++	if (ctlr != NULL)
++		ctlr->gc_ops->gio_mask(ctlr->gc_dev, gi->gi_pin);
++}
++
++static void
++gpio_intr_eoi_source(struct intsrc *isrc __unused)
++{
++	/* The controller acknowledges the event before dispatching it. */
++}
++
++static void
++gpio_intr_enable_intr(struct intsrc *isrc __unused)
++{
++}
++
++static void
++gpio_intr_disable_intr(struct intsrc *isrc __unused)
++{
++}
++
++static int
++gpio_intr_vector(struct intsrc *isrc)
++{
++	struct gpio_intsrc *gi = (struct gpio_intsrc *)isrc;
++
++	return (gi->gi_irq);
++}
++
++static int
++gpio_intr_source_pending(struct intsrc *isrc __unused)
++{
++	return (0);
++}
++
++static int
++gpio_intr_config_intr(struct intsrc *isrc, enum intr_trigger trig,
++    enum intr_polarity pol)
++{
++	struct gpio_intsrc *gi = (struct gpio_intsrc *)isrc;
++	struct gpio_intr_ctlr *ctlr = gi->gi_ctlr;
++	uint32_t mode;
++	bool high, level;
++	int error;
++
++	if (ctlr == NULL)
++		return (ENXIO);
++	if (trig == INTR_TRIGGER_CONFORM && pol == INTR_POLARITY_CONFORM)
++		return (0);
++
++	if (trig == INTR_TRIGGER_CONFORM)
++		level = (gi->gi_mode &
++		    (GPIO_INTR_LEVEL_LOW | GPIO_INTR_LEVEL_HIGH)) != 0;
++	else
++		level = trig == INTR_TRIGGER_LEVEL;
++	if (pol == INTR_POLARITY_CONFORM)
++		high = (gi->gi_mode &
++		    (GPIO_INTR_LEVEL_HIGH | GPIO_INTR_EDGE_RISING)) != 0;
++	else
++		high = pol == INTR_POLARITY_HIGH;
++
++	if (level)
++		mode = high ? GPIO_INTR_LEVEL_HIGH : GPIO_INTR_LEVEL_LOW;
++	else
++		mode = high ? GPIO_INTR_EDGE_RISING : GPIO_INTR_EDGE_FALLING;
++
++	error = ctlr->gc_ops->gio_config(ctlr->gc_dev, gi->gi_pin, mode);
++	if (error == 0)
++		gi->gi_mode = mode;
++	return (error);
++}
++
++static int
++gpio_intr_assign_cpu(struct intsrc *isrc __unused, u_int apic_id __unused)
++{
++	/* Pin handlers run on the CPU that takes the parent interrupt. */
++	return (EOPNOTSUPP);
++}
++
++static struct pic gpio_pic = {
++	.pic_enable_source = gpio_intr_enable_source,
++	.pic_disable_source = gpio_intr_disable_source,
++	.pic_eoi_source = gpio_intr_eoi_source,
++	.pic_enable_intr = gpio_intr_enable_intr,
++	.pic_disable_intr = gpio_intr_disable_intr,
++	.pic_vector = gpio_intr_vector,
++	.pic_source_pending = gpio_intr_source_pending,
++	.pic_config_intr = gpio_intr_config_intr,
++	.pic_assign_cpu = gpio_intr_assign_cpu,
++};
++
++/*
++ * Reserve the GPIO IRQ block.  Must run before intr_init_sources() sizes
++ * the interrupt source table.
++ */
++void
++gpio_intr_init(void)
++{
++	if (num_gpio_irqs == 0)
++		return;
++	if (num_gpio_irqs > UINT_MAX - num_io_irqs)
++		panic("num_gpio_irqs too high");
++
++	first_gpio_irq = num_io_irqs;
++	num_io_irqs += num_gpio_irqs;
++	gpio_srcs = mallocarray(num_gpio_irqs, sizeof(*gpio_srcs), M_GPIOINTR,
++	    M_WAITOK | M_ZERO);
++	sx_init(&gpio_intr_lock, "gpiointr");
++	intr_register_pic(&gpio_pic);
++	gpio_intr_enabled = true;
++}
++
++struct gpio_intr_ctlr *
++gpio_intr_register(device_t dev, u_int npins,
++    const struct gpio_intr_ops *ops)
++{
++	struct gpio_intr_ctlr *ctlr;
++
++	if (!gpio_intr_enabled)
++		return (NULL);
++
++	ctlr = malloc(sizeof(*ctlr), M_GPIOINTR, M_WAITOK | M_ZERO);
++	ctlr->gc_dev = dev;
++	ctlr->gc_ops = ops;
++	ctlr->gc_npins = npins;
++	ctlr->gc_src = mallocarray(npins, sizeof(*ctlr->gc_src), M_GPIOINTR,
++	    M_WAITOK | M_ZERO);
++
++	sx_xlock(&gpio_intr_lock);
++	TAILQ_INSERT_TAIL(&gpio_ctlrs, ctlr, gc_link);
++	sx_xunlock(&gpio_intr_lock);
++	return (ctlr);
++}
++
++/*
++ * The controller must have torn down its own interrupt handler first, so
++ * gpio_intr_dispatch() cannot run concurrently.
++ */
++int
++gpio_intr_deregister(struct gpio_intr_ctlr *ctlr)
++{
++	struct gpio_intsrc *gi;
++	u_int pin;
++
++	sx_xlock(&gpio_intr_lock);
++	for (pin = 0; pin < ctlr->gc_npins; pin++) {
++		gi = ctlr->gc_src[pin];
++		if (gi != NULL && gi->gi_intsrc.is_handlers != 0) {
++			sx_xunlock(&gpio_intr_lock);
++			return (EBUSY);
++		}
++	}
++	for (pin = 0; pin < ctlr->gc_npins; pin++) {
++		gi = ctlr->gc_src[pin];
++		if (gi == NULL)
++			continue;
++		ctlr->gc_ops->gio_mask(ctlr->gc_dev, pin);
++		ctlr->gc_src[pin] = NULL;
++		gi->gi_ctlr = NULL;
++	}
++	TAILQ_REMOVE(&gpio_ctlrs, ctlr, gc_link);
++	sx_xunlock(&gpio_intr_lock);
++
++	free(ctlr->gc_src, M_GPIOINTR);
++	free(ctlr, M_GPIOINTR);
++	return (0);
++}
++
++/*
++ * Return a free source, creating one if the reserved block allows it.
++ * Sources are never destroyed: x86 cannot unregister an interrupt source,
++ * so a source freed by gpio_intr_deregister() is reused here.
++ */
++static int
++gpio_intr_get_source(struct gpio_intsrc **gip)
++{
++	struct gpio_intsrc *gi;
++	u_int i;
++	int error;
++
++	sx_assert(&gpio_intr_lock, SA_XLOCKED);
++
++	for (i = 0; i < gpio_nsrcs; i++) {
++		if (gpio_srcs[i]->gi_ctlr == NULL) {
++			*gip = gpio_srcs[i];
++			return (0);
++		}
++	}
++	if (gpio_nsrcs == num_gpio_irqs)
++		return (ENOSPC);
++
++	gi = malloc(sizeof(*gi), M_GPIOINTR, M_WAITOK | M_ZERO);
++	gi->gi_intsrc.is_pic = &gpio_pic;
++	gi->gi_irq = first_gpio_irq + gpio_nsrcs;
++	error = intr_register_source(&gi->gi_intsrc);
++	if (error != 0) {
++		free(gi, M_GPIOINTR);
++		return (error);
++	}
++	nexus_add_irq(gi->gi_irq);
++	gpio_srcs[gpio_nsrcs++] = gi;
++	*gip = gi;
++	return (0);
++}
++
++/*
++ * Map pin 'pin' of GPIO controller 'dev' to an IRQ number, and program the
++ * pin for trigger mode 'mode' (one of GPIO_INTR_*).
++ */
++int
++gpio_intr_map(device_t dev, u_int pin, uint32_t mode, u_int *irqp)
++{
++	struct gpio_intr_ctlr *ctlr;
++	struct gpio_intsrc *gi;
++	int error;
++
++	if (!gpio_intr_enabled)
++		return (ENXIO);
++
++	sx_xlock(&gpio_intr_lock);
++	TAILQ_FOREACH(ctlr, &gpio_ctlrs, gc_link) {
++		if (ctlr->gc_dev == dev)
++			break;
++	}
++	if (ctlr == NULL) {
++		error = ENXIO;
++		goto out;
++	}
++	if (pin >= ctlr->gc_npins) {
++		error = EINVAL;
++		goto out;
++	}
++
++	gi = ctlr->gc_src[pin];
++	if (gi != NULL) {
++		if (gi->gi_mode == mode) {
++			*irqp = gi->gi_irq;
++			error = 0;
++			goto out;
++		}
++		if (gi->gi_intsrc.is_handlers != 0) {
++			error = EBUSY;
++			goto out;
++		}
++	} else {
++		error = gpio_intr_get_source(&gi);
++		if (error != 0)
++			goto out;
++	}
++
++	error = ctlr->gc_ops->gio_config(dev, pin, mode);
++	if (error != 0)
++		goto out;
++	gi->gi_pin = pin;
++	gi->gi_mode = mode;
++	gi->gi_ctlr = ctlr;
++	atomic_store_rel_ptr((volatile uintptr_t *)&ctlr->gc_src[pin],
++	    (uintptr_t)gi);
++	*irqp = gi->gi_irq;
++out:
++	sx_xunlock(&gpio_intr_lock);
++	return (error);
++}
++
++/*
++ * Run the handlers of pin 'pin'.  Called by the controller driver from its
++ * interrupt filter, after it acknowledged the event.  Returns ENOENT if the
++ * pin is not mapped; the controller should then mask the pin.
++ */
++int
++gpio_intr_dispatch(struct gpio_intr_ctlr *ctlr, u_int pin)
++{
++	struct gpio_intsrc *gi;
++
++	if (pin >= ctlr->gc_npins)
++		return (EINVAL);
++	gi = (struct gpio_intsrc *)atomic_load_acq_ptr(
++	    (volatile uintptr_t *)&ctlr->gc_src[pin]);
++	if (gi == NULL)
++		return (ENOENT);
++	intr_execute_handlers(&gi->gi_intsrc, curthread->td_intr_frame);
++	return (0);
++}
+diff --git sys/x86/x86/local_apic.c sys/x86/x86/local_apic.c
+index 824ff6b3c37b..9054eda074a8 100644
+--- sys/x86/x86/local_apic.c
++++ sys/x86/x86/local_apic.c
+@@ -2247,6 +2247,9 @@ apic_setup_io(void *dummy __unused)
+ 	/* Enable the MSI "pic". */
+ 	msi_init();
+ 
++	/* Reserve IRQs for GPIO pin interrupts. */
++	gpio_intr_init();
++
+ #ifdef XENHVM
+ 	xen_intr_alloc_irqs();
+ #endif
