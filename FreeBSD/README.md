@@ -8,6 +8,7 @@ Development notes and tutorials: [docs/README.md](docs/README.md) (kernel patche
 
 Hardware / platform notes:
 - [Framework Desktop (Strix Halo) setup notes](Framework-desktop.md) — see also the cross-OS llama.cpp results in [../LLM/benches.FrameWork-Desktop.md](../LLM/benches.FrameWork-Desktop.md)
+- [ThinkPad X1 Carbon Gen 12: devices without driver](X1.Carbon.Gen.12.md)
 - [Drivers notes](drivers.md)
 
 Install / system setup:
