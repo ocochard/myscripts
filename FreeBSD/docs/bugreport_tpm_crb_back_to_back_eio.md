@@ -280,6 +280,23 @@ How to read this table:
 
 Base: main at `584f44221f45` (2026-11-02).
 
+### Control: a TIS machine
+
+The same reproducer, run on a ThinkPad X1 Carbon Gen 12 (Intel Core Ultra 7
+165U, BIOS N3YET80W 1.45), gave 0 failures in 32000 commands: 0 of 16000 with no
+gap, and 0 of 16000 with 0.5 to 50 ms gaps.  No new TPM message was logged.
+
+Its TPM attaches through the FIFO interface, not CRB:
+
+```
+tpmtis0: <Trusted Platform Module 2.0, FIFO mode> iomem 0xfed40000-0xfed44fff on acpi0
+```
+
+So this run exercises `tpm_tis` and the shared `tpm20` code, not `tpm_crb`.  It
+shows that the shared code survives the same back-to-back load.  It does not
+show whether other CRB TPMs fail, or only Pluton.  Kernel: unpatched main at
+`240d81169286` (2026-08-21).
+
 ---
 
 ## 5. What is still open
@@ -297,9 +314,11 @@ Base: main at `584f44221f45` (2026-11-02).
   task is unproven.
 * **A fully unmodified kernel was not tested.**  The failures were only measured
   on #12, which carries the local edits.
-* **Only one machine was tested.**  Start method 13 systems would now also wait
-  for the mailbox at the end of each command.  Systems without the locality
-  registers skip the release wait but still get the idle wait.  Both need testing.
+* **Only one CRB machine was tested.**  The TIS control in section 4 clears the
+  shared code, but no non-Pluton CRB TPM was tested.  Start method 13 systems
+  would now also wait for the mailbox at the end of each command.  Systems
+  without the locality registers skip the release wait but still get the idle
+  wait.  Both need testing.
 * **When it started is unknown.**  `f0ac0f73aea7` (D59786) changed these idle and
   ready waits, but older kernels were not tested, so nothing implicates it.
 
