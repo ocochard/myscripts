@@ -392,7 +392,8 @@ random: registering fast source TPM
 | ser6, patched: sweep, no gap, 8 runs of 2000 | 0 failures of 16000 |
 | ser6, patched: sweep, 0.5 to 50 ms gaps, 8 runs of 2000 | 0 failures of 16000 |
 | ser6, patched: new `tpmcrb0` kernel messages | None |
-| ser6, patched: suspend and resume | untested |
+| ser6, patched: suspend and resume | untestable: S3 resume hangs on the stock kernel too (below) |
+| ser6, patched: `debug.acpi.suspend_bounce` | untested |
 | ser6, patched: under load | untested |
 | `_DSM` revision 1 fallback | untested: ser6 accepts revision 0 |
 | Start method 7 and 13 machines: no regression | untested |
@@ -400,6 +401,28 @@ random: registering fast source TPM
 
 The sweep was `tpm_crb_sweep.py 2000 0 0 0 0 0 0 0 0 0.5 1 2 3 5 10 20 50`
 and took 281 s.  A command costs about 13 ms on this TPM.
+
+### Suspend and resume could not be tested on ser6
+
+ser6 enters S3 but never resumes from it, with or without the patch:
+
+| Kernel | Suspend | After a short press of the power button |
+|---|---|---|
+| Patched (`tpmcrb0` attached) | `suspend at 20261104 22:39:31` logged, LED blinks slowly | LED steady, no video signal, no ping, no `resumed at` line |
+| Stock `main-n290446-0974ef03b43f` (no TPM driver attached) | `suspend at 20261104 22:56:51` logged, LED blinks slowly | Same |
+
+`/etc/rc.suspend` writes the "suspend at" line and `/etc/rc.resume` writes
+"resumed at", so the hang is in the kernel's resume, before userland runs.
+Both cases needed a forced power-off.  Wake-on-LAN does not wake ser6 from S3.
+
+Since the stock kernel hangs the same way, the hang is a platform problem and
+says nothing about the patch.  What remains untested is the patch's own
+suspend path: `tpm20_suspend()` sends `TPM2_Shutdown` and `tpm20_resume()`
+sends `TPM2_Startup`, both through the ACPI start method.
+`debug.acpi.suspend_bounce=1` would exercise both without sleeping, but it
+must stay set until the suspend has really run: `acpiconf -s 3` only queues
+the request.  The first attempt here cleared it too early and turned into the
+real S3 in the first row.
 
 ### How to repeat the test
 
