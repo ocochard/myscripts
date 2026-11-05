@@ -426,7 +426,106 @@ been run on an Intel CPU.  Set `PMC_EVENT` if it cannot find one (see `pmcstat -
 
 ---
 
-## 6. What this does not fix
+## 6. How Linux avoids these scans
+
+The driver comes from Linux, where these scans do not happen.  The reasons differ:
+the GPU mapping search is an optimization that LinuxKPI left out, and the CPU
+mapping searches come from a difference in how the two kernels manage memory.
+
+The driver code quoted here was read in the drm-kmod 6.12-lts branch.  The
+description of the Linux memory manager was not checked against the Linux source
+for this document.
+
+### 6.1 GPU mappings: an optimization left out
+
+Section 3.3 described the Linux method: each tree node stores the highest end
+address found below it, so a search can skip whole branches.  The driver is already
+written for this.  Its mapping structure has the field, and it gives the field's
+name to the macro that creates the tree:
+
+```c
+uint64_t __subtree_last;	/* in struct amdgpu_bo_va_mapping */
+
+INTERVAL_TREE_DEFINE(struct amdgpu_bo_va_mapping, rb, uint64_t, __subtree_last,
+    START, LAST, static, amdgpu_vm_it)
+```
+
+The LinuxKPI version of this macro names that argument `dummy` and ignores it, so
+the field is never filled in.  `drm_mm.c` shows the same split: it calls
+`rb_insert_augmented_cached` on Linux and plain `rb_insert_color_cached` on FreeBSD.
+
+Keeping the field correct means updating it on every tree rotation.  LinuxKPI
+generates its rotation code once, for all users of its trees, and that code has no
+hook for it.  A hook would also need per-type code, because the field is at a
+different place in each structure.
+
+So fix 2 is a shortcut, not what Linux does:
+
+| | Fix 2 (flag) | Linux method (subtree maximum) |
+|---|---|---|
+| Trees that get faster | only those where nothing overlaps | all of them |
+| `drm_mm` | keeps the walk | fast |
+| Changes needed | one flag and the search macros | a rotation hook in LinuxKPI, and a drm-kmod change |
+
+`drm_mm` has not been a hotspot in our profiles, so the shortcut covers the search
+we measured.  A FreeBSD reviewer may still prefer the complete version.  We plan to
+test the shortcut first, since that shows how much this search really costs, and to
+name the Linux method as the alternative when proposing it.
+
+### 6.2 CPU mappings: two different designs
+
+On Linux, `mmap` creates a record of the mapping, a VMA, that points to the buffer
+object.  When the program first touches the memory, a *page fault* happens, and the
+handler receives that VMA directly.  Nothing has to be searched by handle.
+
+On FreeBSD, every mapping must be backed by a *VM object*, the kernel's description
+of a piece of memory, and all the mappings of one buffer must share the same object.
+So `mmap` has to answer a question that Linux never asks: does this buffer already
+have an object?
+
+```mermaid
+flowchart TD
+    subgraph Linux
+        LM["mmap"] --> LV["New VMA, points to the buffer"]
+        LF["Page fault"] -->|"receives the VMA"| LB["Buffer found, no search"]
+    end
+    subgraph FreeBSD
+        FM["mmap"] --> FS["Search: does this buffer have an emulated VMA?"]
+        FS --> FO["Search: does this buffer have a VM object?"]
+        FF["Page fault"] -->|"receives the VM object"| FV["Search: find the emulated VMA"]
+        FD["Object destroyed"] -->|"receives the handle"| FV2["Search: find the emulated VMA"]
+    end
+```
+
+There is no Linux code to port here.  The hash tables of fix 1 speed up these
+searches without changing the design.
+
+### 6.3 Could FreeBSD remove the searches completely?
+
+Partly.  These ideas come from reading the code, and none has been written or tested.
+
+| Function | Can it go? | How |
+|---|---|---|
+| `linux_cdev_pager_populate` | Yes, easily | The page fault already has the VM object, so a new field in it could point to the emulated VMA. |
+| `vm_pager_object_lookup` | Mostly | It repeats a search LinuxKPI has just done.  A buffer already mapped could reuse its stored object, and a new one would need an allocate call that skips the lookup. |
+| `linux_cdev_pager_dtor` | Only with an API change | `cdev_pg_dtor` receives only the handle, and every device pager user would have to change. |
+| `linux_file_mmap` | Only with driver changes | This is the search that finds a shared object.  Skipping it means keeping a pointer in each buffer object, so drm-kmod and every other LinuxKPI user with an `mmap` handler would have to provide one. |
+
+A bigger idea is to copy the Linux layout, where one device has one address space and
+each buffer sits at its own offset.  With one VM object per device, `mmap` would need
+no per-buffer lookup.  The obstacle is that FreeBSD has no callback for each mapping.
+LinuxKPI calls the driver's `close` function from the object's destructor, so
+per-buffer objects are how it knows that a buffer's mappings are gone.  Changing this
+means redesigning the pager, which is far beyond this bug.
+
+**Conclusion: keep the hash tables.**  With fix 1, these four functions already take
+about 0.2% of CPU cycles in the scene we measured, so removing the searches could gain
+no more than that.  Fix 1 changes about 60 lines and no API, and it has been measured.
+A hash table is the right tool when a search cannot be designed away cheaply.
+
+---
+
+## 7. What this does not fix
 
 - The global locks stay.  They should be held for much less time now, but the lists
   are still protected by one lock each.
@@ -435,7 +534,7 @@ been run on an Intel CPU.  Set `PMC_EVENT` if it cannot find one (see `pmcstat -
   went from 22% to 67% busy, so at some point the GPU becomes the real limit, which
   is a good problem to have.
 
-## 7. What to remember
+## 8. What to remember
 
 1. **Profile before guessing.**  We first blamed the GPU, then guessed a modest gain.
    The profiler showed 50%.
