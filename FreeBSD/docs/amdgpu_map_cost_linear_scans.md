@@ -2,7 +2,7 @@
 
 ```
 Status:    both fixes booted and measured against the same kernel without them;
-           a GPU page fault in another game is not explained yet (section 7)
+           another game fails with and without them, see section 7
 Files:     sys/vm/device_pager.c
            sys/compat/linuxkpi/common/src/linux_compat.c
            sys/compat/linuxkpi/common/include/linux/interval_tree_generic.h
@@ -20,8 +20,9 @@ second, while the graphics chip sat idle about 78% of the time.  The chip was
 waiting for the CPU, and the CPU was busy inside the kernel searching long lists
 one item at a time.  Replacing two of those searches with hash tables removed
 50% of the CPU work.  The profile then showed a third search of the same kind, and
-fixing it too brought the searches down to 0.18% of the CPU work, with the game at
-45 to 50 frames per second.  This document explains how we found them and how each one is fixed.  It assumes
+fixing it too brought the searches down to well under 1% of the CPU work.  On the same
+kernel source and driver, with and without the patch, the game went from a median of 10
+to 40 frames per second, and its slowest moments from 2 to 38.  This document explains how we found them and how each one is fixed.  It assumes
 you know what a list, a binary tree and a function call are, and nothing about
 kernels or graphics.
 
@@ -348,13 +349,15 @@ With both fixes, the game was profiled twice in one session, for 60 seconds each
 
 The tree search did not get slower when the mappings more than doubled.  The hash
 table functions did, as expected: with 77,833 mappings a bucket holds about 19 items
-instead of 9.  The cost is still far too small to justify a larger table.
+instead of 9.  The cost is still far too small to justify a larger table here.  Section 4
+shows where this table size reaches its limit.
 
 Over the whole work, the same five functions went from more than 50% of CPU cycles
 to 0.18%, and the median frame rate from 10 to 14 to 45 to 50.  The first number is
 direct evidence.  The frame rate is only suggestive: the scene was not controlled, and
 the runs also differ by 234 unrelated commits and a newer driver (6.12.85).  So we
-cannot say how much of the gain comes from fix 2 alone.  The frame rate also fell
+cannot say how much of the gain comes from fix 2 alone.  Section 3.9 removes those
+differences.  The frame rate also fell
 between the two runs while the searches stayed negligible, so that fall has another
 cause, which we did not identify.  GPU load was not recorded in these runs.
 
@@ -379,9 +382,9 @@ gave this after a few minutes:
 | Frames per second, slowest 10% below | 36.5 |
 
 This is one run with far fewer mappings than the runs of section 3.8, so it cannot be
-compared with them directly.  It is not yet the before and after we need.  It does show
-the searches at 18.71% with only 20,156 mappings.  The game creating only 13 mappings
-per second also explains the low share for `linux_root_RB_NEXT`.
+compared with them directly.  It does show the searches at 18.71% with only 20,156
+mappings.  The game creating only 13 mappings per second also explains the low share for
+`linux_root_RB_NEXT`.
 
 The frame rate is a warning about our first numbers.  This kernel stayed at about 34 to
 47 frames per second for most of a 37-minute session, against 10 to 14 on the older
@@ -390,6 +393,41 @@ easier scene, but some of the early gain may come from the other commits or the 
 driver.  Near the end, the rate fell to about 3 frames per second and the game stopped.
 It left no crash report and no GPU error, and it was not out of memory.  The profiler
 missed that moment, so we do not know the cause.
+
+For a real before and after, the game was then played in the same area on both kernels,
+with the same in-game light source equipped, and a profile started by itself once the
+game passed 35,000 mappings:
+
+| Measure | No fixes | Both fixes, first profile | Both fixes, second profile |
+|---|---|---|---|
+| Mappings at the end of the run | 42,272 | 70,305 | 76,798 |
+| New mappings per second | 110 | 553 | 22 |
+| `linux_cdev_pager_populate` | 25.55% | 0.03% | 0.01% |
+| `vm_pager_object_lookup` | 10.42% | 0.08% | 0.02% |
+| `linux_file_mmap` | 10.05% | 0.10% | 0.03% |
+| `linux_root_RB_NEXT` | 9.20% | 0.04% | 0.02% |
+| `linux_cdev_pager_dtor` | 2.26% | 0.00% | 0.00% |
+| **All five functions** | **57.49%** | **0.26%** | **0.07%** |
+| `lock_delay` | 15.74% | 1.41% | below the top 10 |
+| Kernel share of the game's CPU time | 66.8% | 11.6% | 11.0% |
+| Frames per second, median | **10.3** | **40.2** | **41.8** |
+| Frames per second, slowest 10% below | **2.3** | **38.3** | **39.4** |
+| CPU cores used by the game | 2.03 | 3.69 | 3.49 |
+
+The first patched profile is the one to compare: it was creating mappings five times
+faster than the unpatched run and held more of them, and it still spent almost nothing
+on the searches.  The second one created few mappings, so its 0.07% proves little, but
+its frame rate shows the game holding up at a size the unpatched kernel never reached:
+that game stopped at 56,077 mappings.  Over the whole 18-minute patched session, the
+median was 43.0 frames per second.
+
+`lock_delay` is time spent waiting for a lock.  It probably falls because the searches no
+longer hold their global locks for so long, but we did not trace which lock it was.
+
+This is one session on each kernel, and the area was matched by hand, so the frame rates
+are approximate.  The search shares are the stronger evidence.  The unpatched rate also
+varies a lot with what the game is doing, as the earlier 37-minute session shows.  The
+game stopping is a separate problem, because it also happens with the fixes (section 7).
 
 ---
 
@@ -482,10 +520,11 @@ And at 30,000 objects, the default, in microseconds per operation:
 | Kernel | Runs | `bo_alloc` | `gpu_va_map` | `cpu_mmap` |
 |---|---|---|---|---|
 | No fixes | 4 | 137 to 223 | 861 to 1015 | 876 to 1403 |
-| Both fixes | 2 | 2.3 to 2.5 | 3.4 to 4.0 | 1.6 to 1.8 |
+| Both fixes | 5 | 2.3 to 2.5 | 3.4 to 4.0 | 1.6 to 1.8 |
 
 That makes `gpu_va_map` about 250 times faster, and `cpu_mmap` about 500 to 850 times
-faster.  Freeing is not affected: the teardown costs the same on both kernels, so these
+faster.  The whole default run takes about 36 seconds without the fixes, and 0.48 seconds
+with them.  Freeing is not affected: the teardown costs the same on both kernels, so these
 scans only cost anything when creating objects.
 
 The unpatched values vary a lot between runs.  The first value of a run can double, so
@@ -509,11 +548,33 @@ scan_total_pct=95.34
 Start it just after the program, and ask for at least 50,000 objects so that the program
 outlives the sampling.  The last two scans stay at zero because this program never touches
 the mapped memory and frees nothing during the sampling, so it covers three of the five
-scans.  We have not yet run this combination with the fixes.
+scans.
 
-With both fixes the program was only run up to 30,000 objects, although the game itself
-reached 77,833 mappings.  We have not traced why `bo_alloc` grows without the patch:
-no other function shows up in the profile, so its time must go to these same scans.
+With the fixes the program is too fast to sample at this size, so we ran it with 800,000
+objects, ten times more than the game used:
+
+```
+ objects   bo_alloc gpu_va_map   cpu_mmap
+  100000        2.8        2.9        2.1
+  400000       10.1        2.0       10.3
+  800000       19.7        1.9       20.5
+
+growth from first to last line:
+  bo_alloc    x7.0  growing
+  gpu_va_map  x0.7  flat
+  cpu_mmap    x9.5  growing
+```
+
+This shows the difference between the two fixes.  The tree search stays flat, as `O(log n)`
+should.  A hash table with a fixed size is still `O(n)`: it only makes each list 4096 times
+shorter.  At about 370,000 objects, the two hash lookups took 61.97% of the cycles.  This
+does not matter for this game, which reached about 78,000 mappings and spent 0.26% on all
+the searches, and 20 microseconds is still far from the 4,000 microseconds at 50,000 objects
+without the fixes.  But a table that grows with its content would remove this limit.  The
+growth in `bo_alloc` follows `cpu_mmap` here, which suggests it depends on these lookups.
+
+We have not traced why `bo_alloc` grows without the patch: no other function shows up in
+the profile, so its time must go to these same scans.
 
 This program proves the scaling problem and whether it is gone.  It says nothing
 about frames per second.
@@ -676,15 +737,31 @@ A hash table is the right tool when a search cannot be designed away cheaply.
 
 ## 7. What this does not fix
 
-- **An open question about the patch.**  Another Unreal Engine 5 game, Fort Solis, failed
-  twice on the patched kernel with the GPU reporting an error.  The second time it was a
-  page fault, which means the GPU used an address with no valid mapping:
-  `[gfxhub] page fault`, then `ring comp_1.0.1 timeout`.  A bug in fix 2 could produce
-  this, because that tree tracks GPU mappings.  Reading how `amdgpu_vm.c` uses the tree
-  found no bug: the driver only changes an interval while it is outside the tree.  On the
-  kernel without the patch, the same game crashed twice in its own code after 15 to 20
-  seconds, before the point where the patched run failed, and with no GPU error.  So
-  this is not settled either way, and this patch should not be used widely until it is.
+- **Another game fails with and without the patch.**  Fort Solis, also built with Unreal
+  Engine 5, never reached a playable world in six runs on this machine.  It failed in
+  several ways, on both kernels:
+
+  | Result | No fixes (4 runs) | Both fixes (2 runs) |
+  |---|---|---|
+  | `ring gfx_0.0.0 timeout`, and the game loses the GPU | 1 | 1 |
+  | `[gfxhub] page fault`, then `ring comp_1.0.1 timeout` | 0 | 1 |
+  | The game crashes on a null pointer after 15 to 20 seconds | 2 | 0 |
+  | Reaches the menu, but the game world stays black | 1 | 0 |
+
+  The GPU hang happens without the patch, so the patch does not cause it.  The cause is
+  somewhere else in the stack (the game, vkd3d-proton, Mesa or the driver), and we have not
+  found it.  The page fault has only been seen with the patch, once.  It means the GPU used
+  an address with no valid mapping, and fix 2 changes the tree that tracks those mappings,
+  so we cannot rule fix 2 out.  Reading how `amdgpu_vm.c` uses the tree found no bug: the
+  driver only changes an interval while it is outside the tree.  With so few runs and such
+  varied failures, one fault does not point at the patch either.  It is worth watching
+  for when testing this patch.
+- The game of the main test also stopped three times without the fixes: after about 37
+  minutes, 1 minute and 5 minutes.  There was no crash report, GPU error or out-of-memory
+  kill, and two of the stops came after the frame rate fell to about 1 to 3 per second.
+  We do not know why.  It also stopped with both fixes, after about 18 minutes and with no
+  fall in the frame rate before it, at about 47 frames per second.  So the searches do not
+  explain these stops.  It left no crash report or GPU error there either.
 - The global locks stay.  They should be held for much less time now, but the lists
   are still protected by one lock each.
 - A tree with even one overlapping interval keeps the slow walk until it is emptied.
