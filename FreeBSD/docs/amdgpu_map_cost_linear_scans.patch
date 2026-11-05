@@ -1,0 +1,304 @@
+diff --git sys/compat/linuxkpi/common/include/linux/interval_tree_generic.h sys/compat/linuxkpi/common/include/linux/interval_tree_generic.h
+index 3ed6e105cbda..e9ed687f7699 100644
+--- sys/compat/linuxkpi/common/include/linux/interval_tree_generic.h
++++ sys/compat/linuxkpi/common/include/linux/interval_tree_generic.h
+@@ -31,9 +31,9 @@
+ #define	INTERVAL_TREE_DEFINE(type, field, valtype, dummy, START, LAST, 	\
+ 		attr, name)						\
+ 	__IT_DEFINE_ITER_FROM(type, field, valtype, START, LAST, name)	\
+-	__IT_DEFINE_ITER_FIRST(type, valtype, attr, name)		\
++	__IT_DEFINE_ITER_FIRST(type, field, valtype, START, LAST, attr, name) \
+ 	__IT_DEFINE_ITER_NEXT(type, field, valtype, attr, name)		\
+-	__IT_DEFINE_INSERT(type, field, START, attr, name)		\
++	__IT_DEFINE_INSERT(type, field, START, LAST, attr, name)	\
+ 	__IT_DEFINE_REMOVE(type, field, attr, name)
+ 
+ #define	__IT_DEFINE_ITER_FROM(type, field, valtype, START, LAST, name)	\
+@@ -53,11 +53,32 @@ name##_iter_from(struct rb_node *rb, valtype start, valtype last)	\
+ 	return (NULL);							\
+ }
+ 
+-#define	__IT_DEFINE_ITER_FIRST(type, valtype, attr, name)		\
++/*
++ * The tree has no per-subtree maximum, so an arbitrary set of intervals has to
++ * be walked in start order.  When the intervals are known to be disjoint, their
++ * last values are sorted as well and the first match can be found by descent.
++ */
++#define	__IT_DEFINE_ITER_FIRST(type, field, valtype, START, LAST, attr, name) \
+ attr type *								\
+ name##_iter_first(struct rb_root_cached *root, valtype start, valtype last) \
+ {									\
+-	return (name##_iter_from(rb_first_cached(root), start, last));	\
++	struct rb_node *rb;						\
++	type *match, *node;						\
++									\
++	if (!root->rb_disjoint)						\
++		return (name##_iter_from(rb_first_cached(root), start,	\
++		    last));						\
++	match = NULL;							\
++	rb = root->rb_root.rb_node;					\
++	while (rb != NULL) {						\
++		node = rb_entry(rb, type, field);			\
++		if (LAST(node) >= start) {				\
++			match = node;					\
++			rb = rb->rb_left;				\
++		} else							\
++			rb = rb->rb_right;				\
++	}								\
++	return (match != NULL && START(match) <= last ? match : NULL);	\
+ }
+ 
+ #define	__IT_DEFINE_ITER_NEXT(type, field, valtype, attr, name)		\
+@@ -67,25 +88,37 @@ name##_iter_next(type *node, valtype start, valtype last)		\
+ 	return (name##_iter_from(rb_next(&node->field), start, last));	\
+ }
+ 
+-#define	__IT_DEFINE_INSERT(type, field, START, attr, name)		\
++/*
++ * rb_disjoint is only set here, on the first insertion into an empty tree, so
++ * that trees filled by other means, like drm_mm, keep the walk in iter_first.
++ */
++#define	__IT_DEFINE_INSERT(type, field, START, LAST, attr, name)	\
+ attr void								\
+ name##_insert(type *node, struct rb_root_cached *root)			\
+ {									\
+ 	struct rb_node **iter = &root->rb_root.rb_node;			\
+ 	struct rb_node *parent = NULL;					\
+-	type *iter_node;						\
++	type *iter_node, *next = NULL, *prev = NULL;			\
+ 	bool min_entry = true;						\
+ 									\
++	if (*iter == NULL)						\
++		root->rb_disjoint = true;				\
+ 	while (*iter != NULL) {						\
+ 		parent = *iter;						\
+ 		iter_node = rb_entry(parent, type, field);		\
+-		if (START(node) < START(iter_node))			\
++		if (START(node) < START(iter_node)) {			\
++			next = iter_node;				\
+ 			iter = &parent->rb_left;			\
+-		else {							\
++		} else {						\
++			prev = iter_node;				\
+ 			iter = &parent->rb_right;			\
+ 			min_entry = false;				\
+ 		}							\
+ 	}								\
++	if (LAST(node) < START(node) ||					\
++	    (prev != NULL && LAST(prev) >= START(node)) ||		\
++	    (next != NULL && START(next) <= LAST(node)))		\
++		root->rb_disjoint = false;				\
+ 									\
+ 	rb_link_node(&node->field, parent, iter);			\
+ 	rb_insert_color_cached(&node->field, root, min_entry);		\
+diff --git sys/compat/linuxkpi/common/include/linux/rbtree.h sys/compat/linuxkpi/common/include/linux/rbtree.h
+index 834e5645e991..86839377fa8c 100644
+--- sys/compat/linuxkpi/common/include/linux/rbtree.h
++++ sys/compat/linuxkpi/common/include/linux/rbtree.h
+@@ -53,6 +53,7 @@ struct rb_root {
+ struct rb_root_cached {
+ 	struct rb_root rb_root;
+ 	struct rb_node *rb_leftmost;
++	bool rb_disjoint;	/* interval_tree: no intervals overlap */
+ };
+ 
+ /*
+diff --git sys/compat/linuxkpi/common/src/linux_compat.c sys/compat/linuxkpi/common/src/linux_compat.c
+index 08c7cfdac8ed..6d57c93acf26 100644
+--- sys/compat/linuxkpi/common/src/linux_compat.c
++++ sys/compat/linuxkpi/common/src/linux_compat.c
+@@ -33,6 +33,7 @@
+ 
+ #include <sys/param.h>
+ #include <sys/systm.h>
++#include <sys/hash.h>
+ #include <sys/malloc.h>
+ #include <sys/kernel.h>
+ #include <sys/sysctl.h>
+@@ -573,9 +574,22 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+ 	return (err);
+ }
+ 
++/*
++ * VM area structures, hashed by vm_private_data.  Graphics drivers can create
++ * tens of thousands of them, and a lookup is done for each mmap(2), first page
++ * fault and destruction of one.
++ */
++#define	LINUX_VMA_HASH_SIZE	4096
+ static struct rwlock linux_vma_lock;
+-static TAILQ_HEAD(, vm_area_struct) linux_vma_head =
+-    TAILQ_HEAD_INITIALIZER(linux_vma_head);
++static TAILQ_HEAD(linux_vma_list, vm_area_struct)
++    linux_vma_hash[LINUX_VMA_HASH_SIZE];
++
++static struct linux_vma_list *
++linux_vma_bucket(void *handle)
++{
++	return (&linux_vma_hash[jenkins_hash(&handle, sizeof(handle), 0) &
++	    (LINUX_VMA_HASH_SIZE - 1)]);
++}
+ 
+ static void
+ linux_cdev_handle_free(struct vm_area_struct *vmap)
+@@ -594,7 +608,7 @@ static void
+ linux_cdev_handle_remove(struct vm_area_struct *vmap)
+ {
+ 	rw_wlock(&linux_vma_lock);
+-	TAILQ_REMOVE(&linux_vma_head, vmap, vm_entry);
++	TAILQ_REMOVE(linux_vma_bucket(vmap->vm_private_data), vmap, vm_entry);
+ 	rw_wunlock(&linux_vma_lock);
+ }
+ 
+@@ -604,7 +618,7 @@ linux_cdev_handle_find(void *handle)
+ 	struct vm_area_struct *vmap;
+ 
+ 	rw_rlock(&linux_vma_lock);
+-	TAILQ_FOREACH(vmap, &linux_vma_head, vm_entry) {
++	TAILQ_FOREACH(vmap, linux_vma_bucket(handle), vm_entry) {
+ 		if (vmap->vm_private_data == handle)
+ 			break;
+ 	}
+@@ -1343,7 +1357,7 @@ linux_file_mmap_single(struct file *fp, const struct file_operations *fop,
+ 	 * and the mm_struct is usually freed when a process exits.
+ 	 *
+ 	 * The atomic reference below makes sure the mm_struct is
+-	 * available as long as the vmap is in the linux_vma_head.
++	 * available as long as the vmap is in the linux_vma_hash.
+ 	 */
+ 	task = current;
+ 	mm = task->mm;
+@@ -1393,7 +1407,8 @@ linux_file_mmap_single(struct file *fp, const struct file_operations *fop,
+ 		vm_private_data = vmap->vm_private_data;
+ 
+ 		rw_wlock(&linux_vma_lock);
+-		TAILQ_FOREACH(ptr, &linux_vma_head, vm_entry) {
++		TAILQ_FOREACH(ptr, linux_vma_bucket(vm_private_data),
++		    vm_entry) {
+ 			if (ptr->vm_private_data == vm_private_data)
+ 				break;
+ 		}
+@@ -1424,7 +1439,8 @@ linux_file_mmap_single(struct file *fp, const struct file_operations *fop,
+ 			}
+ 		} else {
+ 			/* insert VM area structure into list */
+-			TAILQ_INSERT_TAIL(&linux_vma_head, vmap, vm_entry);
++			TAILQ_INSERT_TAIL(linux_vma_bucket(vm_private_data),
++			    vmap, vm_entry);
+ 			error = 0;
+ 			vm_no_fault = (vmap->vm_ops->fault == NULL);
+ 		}
+@@ -2951,6 +2967,8 @@ linux_compat_init(void *arg)
+ 	}
+ #endif
+ 	rw_init(&linux_vma_lock, "lkpi-vma-lock");
++	for (i = 0; i < LINUX_VMA_HASH_SIZE; i++)
++		TAILQ_INIT(&linux_vma_hash[i]);
+ 
+ 	rootoid = SYSCTL_ADD_ROOT_NODE(NULL,
+ 	    OID_AUTO, "sys", CTLFLAG_RD|CTLFLAG_MPSAFE, NULL, "sys");
+diff --git sys/vm/device_pager.c sys/vm/device_pager.c
+index 9277d6255418..bd457a1f7f43 100644
+--- sys/vm/device_pager.c
++++ sys/vm/device_pager.c
+@@ -37,6 +37,7 @@
+ #include <sys/param.h>
+ #include <sys/systm.h>
+ #include <sys/conf.h>
++#include <sys/hash.h>
+ #include <sys/lock.h>
+ #include <sys/proc.h>
+ #include <sys/mutex.h>
+@@ -67,11 +68,23 @@ static void dev_pager_free_page(vm_object_t object, vm_page_t m);
+ static int dev_pager_populate(vm_object_t object, vm_pindex_t pidx,
+     int fault_type, vm_prot_t, vm_pindex_t *first, vm_pindex_t *last);
+ 
+-/* list of device pager objects */
+-static struct pagerlst dev_pager_object_list;
++/*
++ * Device pager objects, hashed by handle.  Graphics drivers can create tens of
++ * thousands of objects, and a lookup is done for each mmap(2) of one.
++ */
++#define	DEV_PAGER_HASH_SIZE	4096
++static struct pagerlst dev_pager_object_list[DEV_PAGER_HASH_SIZE];
+ /* protect list manipulation */
+ static struct mtx dev_pager_mtx;
+ 
++static struct pagerlst *
++dev_pager_bucket(void *handle)
++{
++
++	return (&dev_pager_object_list[jenkins_hash(&handle, sizeof(handle),
++	    0) & (DEV_PAGER_HASH_SIZE - 1)]);
++}
++
+ const struct pagerops devicepagerops = {
+ 	.pgo_kvme_type = KVME_TYPE_DEVICE,
+ 	.pgo_init =	dev_pager_init,
+@@ -109,8 +122,10 @@ static const struct cdev_pager_ops old_dev_pager_ops = {
+ static void
+ dev_pager_init(void)
+ {
++	int i;
+ 
+-	TAILQ_INIT(&dev_pager_object_list);
++	for (i = 0; i < DEV_PAGER_HASH_SIZE; i++)
++		TAILQ_INIT(&dev_pager_object_list[i]);
+ 	mtx_init(&dev_pager_mtx, "dev_pager list", NULL, MTX_DEF);
+ }
+ 
+@@ -121,7 +136,7 @@ cdev_pager_lookup(void *handle)
+ 
+ again:
+ 	mtx_lock(&dev_pager_mtx);
+-	object = vm_pager_object_lookup(&dev_pager_object_list, handle);
++	object = vm_pager_object_lookup(dev_pager_bucket(handle), handle);
+ 	if (object != NULL && object->un_pager.devp.handle == NULL) {
+ 		msleep(&object->un_pager.devp.handle, &dev_pager_mtx,
+ 		    PVM | PDROP, "cdplkp", 0);
+@@ -172,7 +187,7 @@ cdev_pager_allocate(void *handle, enum obj_type tp,
+ 	/*
+ 	 * Look up pager, creating as necessary.
+ 	 */
+-	object = vm_pager_object_lookup(&dev_pager_object_list, handle);
++	object = vm_pager_object_lookup(dev_pager_bucket(handle), handle);
+ 	if (object == NULL) {
+ 		vm_object_t object1;
+ 
+@@ -184,7 +199,8 @@ cdev_pager_allocate(void *handle, enum obj_type tp,
+ 		mtx_unlock(&dev_pager_mtx);
+ 		object1 = vm_object_allocate(tp, pindex);
+ 		mtx_lock(&dev_pager_mtx);
+-		object = vm_pager_object_lookup(&dev_pager_object_list, handle);
++		object = vm_pager_object_lookup(dev_pager_bucket(handle),
++		    handle);
+ 		if (object != NULL) {
+ 			object1->type = OBJT_DEAD;
+ 			vm_object_deallocate(object1);
+@@ -215,7 +231,7 @@ cdev_pager_allocate(void *handle, enum obj_type tp,
+ 			object->un_pager.devp.ops = ops;
+ 			if (object->type == OBJT_DEVICE)
+ 				vm_object_set_flag(object, OBJ_PG_DTOR);
+-			TAILQ_INSERT_TAIL(&dev_pager_object_list, object,
++			TAILQ_INSERT_TAIL(dev_pager_bucket(handle), object,
+ 			    pager_object_list);
+ 			mtx_unlock(&dev_pager_mtx);
+ 			if (ops->cdev_pg_populate != NULL)
+@@ -223,7 +239,7 @@ cdev_pager_allocate(void *handle, enum obj_type tp,
+ 			if (ops->cdev_pg_ctor(handle, size, prot, foff,
+ 			    cred, &color) != 0) {
+ 				mtx_lock(&dev_pager_mtx);
+-				TAILQ_REMOVE(&dev_pager_object_list, object,
++				TAILQ_REMOVE(dev_pager_bucket(handle), object,
+ 				    pager_object_list);
+ 				wakeup(&object->un_pager.devp.handle);
+ 				mtx_unlock(&dev_pager_mtx);
+@@ -336,7 +352,8 @@ dev_pager_dealloc(vm_object_t object)
+ 	object->un_pager.devp.ops->cdev_pg_dtor(object->un_pager.devp.handle);
+ 
+ 	mtx_lock(&dev_pager_mtx);
+-	TAILQ_REMOVE(&dev_pager_object_list, object, pager_object_list);
++	TAILQ_REMOVE(dev_pager_bucket(object->handle), object,
++	    pager_object_list);
+ 	mtx_unlock(&dev_pager_mtx);
+ 	VM_OBJECT_WLOCK(object);
+ 

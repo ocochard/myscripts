@@ -9,6 +9,7 @@ document that explains them.
 - [DEBUGNET_if_rge.md](DEBUGNET_if_rge.md): adding debugnet/netdump support to a NIC driver, using rge(4). Patch: [rge.debugnet.patch](rge.debugnet.patch)
 - [IPMI_SSIF.md](IPMI_SSIF.md): writing an IPMI SSIF driver on top of iicbus. Patch: [ipmi.ssif.patch](ipmi.ssif.patch), test script: [test_i2c.sh](test_i2c.sh) (Ampere Altra)
 - [hidraw_kqueue_evfilt_write.md](hidraw_kqueue_evfilt_write.md): adding `EVFILT_WRITE` to hidraw(4), and why tokio programs could not open HID devices. Userland backend: [../async-hid/](../async-hid/)
+- [amdgpu_map_cost_linear_scans.md](amdgpu_map_cost_linear_scans.md): why a game was slow on amdgpu: three linear scans in the kernel, replaced by hash tables and a tree search. Patch: [amdgpu_map_cost_linear_scans.patch](amdgpu_map_cost_linear_scans.patch), reproducer: [amdgpu_bo_scale.c](amdgpu_bo_scale.c), profiler: [amdgpu_map_cost_profile.sh](amdgpu_map_cost_profile.sh)
 - [ithwm_amdpower.md](ithwm_amdpower.md): `ithwm(4)` (ITE IT87xx) and `amdpower(4)` sensor drivers for the NAS
 - [tun_destroy_deadlock_case_study.md](tun_destroy_deadlock_case_study.md): `tun_destroy()` parking a global sx-lock, from reproduction to fix. Patch: [tun_destroy_ebusy.patch](tun_destroy_ebusy.patch)
 - [kevent_filter_zero_guard.md](kevent_filter_zero_guard.md): the one-line filter-zero guard in kevent(2) that prevents an out-of-bounds read
