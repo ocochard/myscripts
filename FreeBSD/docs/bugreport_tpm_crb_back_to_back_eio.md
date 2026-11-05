@@ -203,18 +203,30 @@ the locality while it waits, so the register reads mean something.
 **Wait for the release to take effect**, in `tpmcrb_relinquish_locality()`:
 
 ```c
+mask = TPM_LOC_STATE_VALID | TPM_LOC_STATE_ASSIGNED;
+
 bus_write_4(res, TPM_LOC_CTRL, TPM_LOC_CTRL_RELINQUISH);
 
-for (timeout = TPM_TIMEOUT_C; timeout > 0; timeout -= tick) {
-	if ((bus_read_4(res, TPM_LOC_STATE) &
-	    TPM_LOC_STATE_ASSIGNED) == 0)
+for (timeout = TPM_TIMEOUT_C;; timeout -= tick) {
+	if ((bus_read_4(res, TPM_LOC_STATE) & mask) ==
+	    TPM_LOC_STATE_VALID)
 		return;
+	if (timeout <= 0)
+		break;
 	pause("TPM locality", 1);
 }
 device_printf(crb_sc->base.dev, "Failed to relinquish locality\n");
 ```
 
-This has the same shape as `tpmcrb_request_locality()`.  `pause(..., 1)` sleeps
+This has the same shape as `tpmcrb_request_locality()`, with two
+differences.  First, the release only counts when the `VALID` bit is set.
+PTP 1.07, Table 37 says the other bits of `TPM_LOC_STATE` mean nothing
+without it, so a read of zero must not pass as "released".  Linux's
+`__crb_relinquish_locality()` uses the same mask.  Second, the loop reads
+the register once more after its last sleep, like `pluton_wait_reply()`.
+Without that read, a release that happens during the last sleep is
+reported as a failure.  Both changes came from review and only affect the
+failure path.  `pause(..., 1)` sleeps
 for one clock tick, so the CPU is free while waiting.  `tick` is the length of
 that tick in microseconds, which makes `timeout` a count of microseconds left.
 The loop always ends, so a TPM that never answers costs 200 ms and a log line,
@@ -255,14 +267,14 @@ kernel's entropy task can still land right after another command.
 
 Same machine and scripts throughout.  Each result counts failed commands.
 
-| Commands | System | #12: local edits, no patch | #13: local edits + patch | #14: patch only |
-|---|---|---|---|---|
-| No gap | Quiet | 1038 of 23000 | 0 of 21000 | **0 of 21000** |
-| No gap | Loaded | 753 of 7000 | 0 of 8000 | **0 of 8000** |
-| 0.5 to 50 ms gap | Quiet | 0 of 21000 | 0 of 21000 | **0 of 21000** |
-| 0.5 to 50 ms gap | Loaded | 8 of 21000 | 0 of 21000 | **0 of 21000** |
+| Commands | System | #12: local edits, no patch | #13: local edits + patch | #14: patch only | #15: patch after review |
+|---|---|---|---|---|---|
+| No gap | Quiet | 1038 of 23000 | 0 of 21000 | **0 of 21000** | **0 of 16000** |
+| No gap | Loaded | 753 of 7000 | 0 of 8000 | **0 of 8000** | **0 of 8000** |
+| 0.5 to 50 ms gap | Quiet | 0 of 21000 | 0 of 21000 | **0 of 21000** | **0 of 16000** |
+| 0.5 to 50 ms gap | Loaded | 8 of 21000 | 0 of 21000 | **0 of 21000** | **0 of 16000** |
 
-Neither patched kernel logged a new TPM message during these runs, including
+No patched kernel logged a new TPM message during these runs, including
 `Failed to relinquish locality`, and the self-test still passes.
 
 How to read this table:
@@ -272,6 +284,12 @@ How to read this table:
   proves little, so each kernel got at least eight quiet no-gap runs.
 * **#12 and #13 differ only by the patch.**  That is the comparison showing the
   patch made the difference.
+* **#15 is the patch after review.**  It differs from #14 only in
+  `tpmcrb_relinquish_locality()`, which now also requires the `VALID` bit.
+  If this TPM cleared `VALID` after a release, every command would wait
+  200 ms and log `Failed to relinquish locality`.  It did not: the median
+  command took 4.9 ms quiet and 5.0 ms loaded (p99 5.0 and 5.1 ms), the
+  same as #14.
 * **#14 shows the patch doesn't depend on the local edits**, which cover Pluton
   mailbox handling (start method 13 only) and extra logging.
 * **The load isn't the same.**  The #12 load came from about 30 unrelated
