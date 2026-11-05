@@ -19,13 +19,18 @@
 #    rather than FreeBSD's hw.snd.default_unit, so games are silent. Wine's
 #    DefaultOutput is pointed at /dev/dsp<default_unit>.
 #  - Started from ssh (no DISPLAY): the game runs on the machine's own X server.
+#  - -m: the mesa-devel package redirects libvulkan_radeon.so to its beta
+#    build through libmap.d for every program.  Some games hang the GPU or
+#    stall with it (e.g. Clair Obscur), so -m disables libmap for the game to
+#    use the release Mesa.  This disables every libmap redirection.
 
 set -eu
 
 usage() {
-	echo "Usage: $(basename "$0") [-d] [-k] [-s] /path/to/game.exe [game args...]"
+	echo "Usage: $(basename "$0") [-d] [-k] [-m] [-s] /path/to/game.exe [game args...]"
 	echo "  -d  install DXVK + vkd3d-proton (automatic for Unreal Engine games)"
 	echo "  -k  keep the current keyboard layout (no switch to us)"
+	echo "  -m  use the release Mesa, not the mesa-devel one libmap redirects to"
 	echo "  -s  setup the prefix only, do not launch"
 	echo "Env: WINEPREFIX (default ~/.wine, ~/.wine-ue for -d), WINEDIR (default /usr/local/wine-proton), DISPLAY (default :0)"
 	exit 1
@@ -33,11 +38,13 @@ usage() {
 
 dxvk=false
 keep_layout=false
+release_mesa=false
 setup_only=false
-while getopts "dksh" opt; do
+while getopts "dkmsh" opt; do
 	case ${opt} in
 	d) dxvk=true ;;
 	k) keep_layout=true ;;
+	m) release_mesa=true ;;
 	s) setup_only=true ;;
 	*) usage ;;
 	esac
@@ -144,4 +151,5 @@ if grep -q '"chromium-args"' package.json 2>/dev/null &&
 	sed 's/"chromium-args": "/"chromium-args": "--no-sandbox /' \
 	    package.json.orig > package.json
 fi
+${release_mesa} && export LD_LIBMAP_DISABLE=1
 wine "$(basename "${exe}")" --no-sandbox "$@"
