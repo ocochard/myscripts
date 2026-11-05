@@ -1,24 +1,26 @@
 # Why a game was slow on FreeBSD: three linear scans in the kernel
 
 ```
-Status:    fix 1 (hash tables) booted and measured; fix 2 (interval tree) written
-           and tested in userland only, not built into a kernel yet
+Status:    both fixes booted and measured with the game and the reproducer
 Files:     sys/vm/device_pager.c
            sys/compat/linuxkpi/common/src/linux_compat.c
            sys/compat/linuxkpi/common/include/linux/interval_tree_generic.h
            sys/compat/linuxkpi/common/include/linux/rbtree.h
-Patch:     amdgpu_map_cost_linear_scans.patch (both fixes, not committed)
 Base:      main at 7806832f23fb
-Machine:   ser6, AMD Ryzen 7 7735HS, Radeon 680M, drm-latest-kmod 6.12
-Tools:     amdgpu_bo_scale.c (reproducer), amdgpu_map_cost_profile.sh (profiler)
+Machine:   ser6, AMD Ryzen 7 7735HS, Radeon 680M, drm-latest-kmod 6.12.85
 ```
+
+- Patch: [`amdgpu_map_cost_linear_scans.patch`](amdgpu_map_cost_linear_scans.patch) (both fixes, not committed)
+- Reproducer: [`amdgpu_bo_scale.c`](amdgpu_bo_scale.c)
+- Profiler: [`amdgpu_map_cost_profile.sh`](amdgpu_map_cost_profile.sh)
 
 **Summary.** A Windows game running on FreeBSD managed 10 to 19 frames per
 second, while the graphics chip sat idle about 78% of the time.  The chip was
 waiting for the CPU, and the CPU was busy inside the kernel searching long lists
 one item at a time.  Replacing two of those searches with hash tables removed
-50% of the CPU work.  The profile then showed a third search of the same kind.
-This document explains how we found them and how each one is fixed.  It assumes
+50% of the CPU work.  The profile then showed a third search of the same kind, and
+fixing it too brought the searches down to 0.18% of the CPU work, with the game at
+45 to 50 frames per second.  This document explains how we found them and how each one is fixed.  It assumes
 you know what a list, a binary tree and a function call are, and nothing about
 kernels or graphics.
 
@@ -325,12 +327,42 @@ not be loaded on the new kernel: it calls functions in the kernel while passing 
 old, smaller structure, and the kernel would read and write past its end.  A commit
 needs a `__FreeBSD_version` bump so that ports get rebuilt.
 
+### 3.8 The result
+
+With both fixes, the game was profiled twice in one session, for 60 seconds each:
+
+| Measure | Run 1 | Run 2 |
+|---|---|---|
+| Mappings at the end of the run | 35,537 | 77,833 |
+| New mappings per second | 231 | 322 |
+| `linux_root_RB_NEXT` | 0.03% | 0.03% |
+| `vm_pager_object_lookup` | 0.02% | 0.07% |
+| `linux_file_mmap` | 0.02% | 0.06% |
+| `linux_cdev_pager_populate` | 0.01% | 0.02% |
+| `linux_cdev_pager_dtor` | 0.00% | 0.00% |
+| **All five functions** | **0.08%** | **0.18%** |
+| Kernel share of the game's CPU time | 10.2% | 10.0% |
+| Frames per second, median | 49.9 | 45.3 |
+| Frames per second, slowest 10% below | 46.1 | 42.6 |
+
+The tree search did not get slower when the mappings more than doubled.  The hash
+table functions did, as expected: with 77,833 mappings a bucket holds about 19 items
+instead of 9.  The cost is still far too small to justify a larger table.
+
+Over the whole work, the same five functions went from more than 50% of CPU cycles
+to 0.18%, and the median frame rate from 10 to 14 to 45 to 50.  The first number is
+direct evidence.  The frame rate is only suggestive: the scene was not controlled, and
+the runs also differ by 234 unrelated commits and a newer driver (6.12.85).  So we
+cannot say how much of the gain comes from fix 2 alone.  The frame rate also fell
+between the two runs while the searches stayed negligible, so that fall has another
+cause, which we did not identify.  GPU load was not recorded in these runs.
+
 ---
 
 ## 4. Reproducing it without the game
 
 Asking people to install a large game to test a kernel patch is not practical.  The
-problem needs only one thing: many buffer objects.  `amdgpu_bo_scale.c` is about 150 lines, draws
+problem needs only one thing: many buffer objects.  [`amdgpu_bo_scale.c`](amdgpu_bo_scale.c) is about 200 lines, draws
 nothing, and needs only libdrm:
 
 ```sh
@@ -343,9 +375,11 @@ cc -O2 -Wall -I/usr/local/include -I/usr/local/include/libdrm \
 It needs an AMD GPU, membership of the `video` group and 120 MB of GPU-visible
 memory.  It takes about a minute on the affected kernel.
 
+The program explains its columns before the results, and `-h` shows the same text.
 Each line is the average cost of one operation in microseconds.  **A healthy kernel
-gives flat columns.**  A column that grows means a linear scan.  Here is the kernel
-with fix 1 but not fix 2, while a `buildworld` ran on the same machine:
+gives flat columns.**  A column that grows means a linear scan.  Here are the results
+for the kernel with fix 1 but not fix 2, while a `buildworld` ran on the same machine
+(this run predates the explanations and the growth lines):
 
 ```
  objects   bo_alloc gpu_va_map   cpu_mmap
@@ -362,9 +396,36 @@ the start.  (This run asked for more objects than the default 30,000.)  The prof
 confirms it is the same bug as in the game, with 95% of the program's cycles in
 `linux_root_RB_NEXT`.
 
-We have not yet run this program on a kernel without fix 1, where `cpu_mmap` should
-grow too, nor on one with fix 2.  The smaller growth in `bo_alloc` is not explained
-and may be noise from the build.
+With both fixes, on an idle machine, the column is flat:
+
+```
+ objects   bo_alloc gpu_va_map   cpu_mmap
+   10000        2.1        3.7        1.4
+   20000        2.3        3.9        1.6
+   30000        2.5        3.4        1.8
+
+growth from first to last line:
+  bo_alloc    x1.2  flat
+  gpu_va_map  x0.9  flat
+  cpu_mmap    x1.3  flat
+
+teardown (freeing everything): cpu_munmap 1.0 gpu_va_unmap 4.7 bo_free 2.0
+```
+
+The program calls a column "growing" above x3, and "flat" below.  This limit is a
+rule of thumb: we measured at most x1.3 with both fixes, and x12.5 for `gpu_va_map` at
+30,000 objects without fix 2.  It needs at least three result lines and batches of 10,000
+objects, so a smaller run prints no verdict: with both fixes, `gpu_va_map` still rose
+about x3 from 1,000 to 3,000 objects, before staying flat from 10,000 on.  We do not
+know why, and the verdict is not a pass or fail: a busy machine can move these values.
+
+The two runs should not be compared number by number, because the first one shared
+the machine with a build.  What matters is the shape: `gpu_va_map` no longer grows
+with the number of objects.
+
+We have not run this program on a kernel without fix 1, where `cpu_mmap` should grow
+too.  With both fixes it was only run up to 30,000 objects, although the game itself
+reached 77,833 mappings.  The slight growth in `bo_alloc` is not explained.
 
 This program proves the scaling problem and whether it is gone.  It says nothing
 about frames per second.
@@ -373,7 +434,7 @@ about frames per second.
 
 ## 5. Measuring a real game, before and after
 
-`amdgpu_map_cost_profile.sh` samples all CPUs with `pmcstat` while the game runs, and
+[`amdgpu_map_cost_profile.sh`](amdgpu_map_cost_profile.sh) samples all CPUs with `pmcstat` while the game runs, and
 writes a report.  `-h` explains every value in it:
 
 ```sh
@@ -387,7 +448,7 @@ sh amdgpu_map_cost_profile.sh -c before.txt after.txt
 ```
 
 The main number is `scan_total_pct`, the share of all CPU samples spent in the
-scans.  It is expected to fall close to zero with both fixes.
+scans.  With both fixes it was 0.08% and 0.18% in our runs (section 3.8).
 
 With Wine, target the game (`Win64-Shipping`), not the idle `wine` launcher.  The
 script refuses a process that used no CPU.
@@ -468,9 +529,9 @@ So fix 2 is a shortcut, not what Linux does:
 | Changes needed | one flag and the search macros | a rotation hook in LinuxKPI, and a drm-kmod change |
 
 `drm_mm` has not been a hotspot in our profiles, so the shortcut covers the search
-we measured.  A FreeBSD reviewer may still prefer the complete version.  We plan to
-test the shortcut first, since that shows how much this search really costs, and to
-name the Linux method as the alternative when proposing it.
+we measured: `linux_root_RB_NEXT` fell to 0.03% (section 3.8).  A FreeBSD reviewer may
+still prefer the complete version, so we plan to name the Linux method as the
+alternative when proposing this one.
 
 ### 6.2 CPU mappings: two different designs
 

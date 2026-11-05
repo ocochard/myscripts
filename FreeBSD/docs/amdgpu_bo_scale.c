@@ -12,6 +12,7 @@
  * cc -O2 -Wall -I/usr/local/include -I/usr/local/include/libdrm \
  *     -L/usr/local/lib amdgpu_bo_scale.c -ldrm_amdgpu -o amdgpu_bo_scale
  * ./amdgpu_bo_scale [count [batch [render node]]]
+ * ./amdgpu_bo_scale -h
  */
 
 #include <err.h>
@@ -28,6 +29,15 @@
 
 #define	BO_SIZE		4096u
 #define	VA_STRIDE	(2 * BO_SIZE)
+/* Largest last/first ratio called flat: x1.3 and x12.5 were measured */
+#define	GROWTH_LIMIT	3.0
+/*
+ * With fewer result lines the growth is not meaningful, and neither is it with
+ * small batches: on a fixed kernel, the cost still rises x3 up to 3000 objects
+ * before staying flat from 10000 objects on.
+ */
+#define	MIN_LINES	3
+#define	MIN_BATCH	10000
 
 struct timer {
 	double	start;
@@ -57,9 +67,38 @@ timer_stop(struct timer *t)
 	t->total += now() - t->start;
 }
 
+static void
+explain(void)
+{
+
+	printf(
+	    "Cost of one operation, in microseconds, as the number of buffer "
+	    "objects\ngrows.  Each value should stay about the same.  A value "
+	    "that keeps growing\nmeans the kernel is searching a list one item "
+	    "at a time (a linear scan).\n"
+	    "Run this on an idle machine: other load adds noise to the values.\n"
+	    "\n"
+	    "  objects     number of buffer objects created so far\n"
+	    "  bo_alloc    create a buffer object\n"
+	    "  gpu_va_map  give it a GPU address (known scan: interval tree)\n"
+	    "  cpu_mmap    map it for the CPU (known scans: device pager, VMA list)\n"
+	    "\n");
+}
+
+static void
+print_growth(const char *name, double first, double last)
+{
+	double ratio;
+
+	ratio = first > 0 ? last / first : 0;
+	printf("  %-10s  x%.1f  %s\n", name, ratio,
+	    ratio > GROWTH_LIMIT ? "growing" : "flat");
+}
+
 int
 main(int argc, char **argv)
 {
+	double avg[3], first[3];
 	struct amdgpu_bo_alloc_request req;
 	struct timer alloc, map, cpu, unmap, cpuunmap, freebo;
 	amdgpu_device_handle dev;
@@ -69,8 +108,21 @@ main(int argc, char **argv)
 	void *ptr;
 	uint64_t va;
 	uint32_t major, minor;
-	int batch, count, done, fd, i, r;
+	int batch, count, done, fd, i, lines, r;
 
+	if (argc > 1 && strcmp(argv[1], "-h") == 0) {
+		printf("usage: %s [count [batch [render node]]]\n"
+		    "Defaults: 30000 objects, one result line per 10000 objects, "
+		    "/dev/dri/renderD128.\n\n", argv[0]);
+		explain();
+		printf("The last lines give each column's growth from the first "
+		    "to the last result line:\n"
+		    "\"growing\" is above x%.0f, \"flat\" is below.  This limit "
+		    "is a rule of thumb.\n"
+		    "The teardown line is the cost of freeing everything, "
+		    "per object.\n", GROWTH_LIMIT);
+		return (0);
+	}
 	count = argc > 1 ? atoi(argv[1]) : 30000;
 	batch = argc > 2 ? atoi(argv[2]) : 10000;
 	node = argc > 3 ? argv[3] : "/dev/dri/renderD128";
@@ -96,9 +148,10 @@ main(int argc, char **argv)
 	req.phys_alignment = BO_SIZE;
 	req.preferred_heap = AMDGPU_GEM_DOMAIN_GTT;
 
-	printf("microseconds per operation\n");
+	explain();
 	printf("%8s %10s %10s %10s\n", "objects", "bo_alloc", "gpu_va_map",
 	    "cpu_mmap");
+	lines = 0;
 	for (done = 0; done < count; done += batch) {
 		memset(&alloc, 0, sizeof(alloc));
 		memset(&map, 0, sizeof(map));
@@ -126,11 +179,25 @@ main(int argc, char **argv)
 				errx(1, "amdgpu_bo_cpu_map %d: %s", i,
 				    strerror(-r));
 		}
-		printf("%8d %10.1f %10.1f %10.1f\n", i,
-		    alloc.total * 1e6 / (i - done), map.total * 1e6 / (i - done),
-		    cpu.total * 1e6 / (i - done));
+		avg[0] = alloc.total * 1e6 / (i - done);
+		avg[1] = map.total * 1e6 / (i - done);
+		avg[2] = cpu.total * 1e6 / (i - done);
+		if (lines++ == 0)
+			memcpy(first, avg, sizeof(first));
+		printf("%8d %10.1f %10.1f %10.1f\n", i, avg[0], avg[1], avg[2]);
 		fflush(stdout);
 	}
+
+	if (lines < MIN_LINES || batch < MIN_BATCH)
+		printf("\nNo verdict: it needs at least %d result lines and a "
+		    "batch of %d.\n", MIN_LINES, MIN_BATCH);
+	else {
+		printf("\ngrowth from first to last line:\n");
+		print_growth("bo_alloc", first[0], avg[0]);
+		print_growth("gpu_va_map", first[1], avg[1]);
+		print_growth("cpu_mmap", first[2], avg[2]);
+	}
+	printf("\n");
 
 	memset(&cpuunmap, 0, sizeof(cpuunmap));
 	memset(&unmap, 0, sizeof(unmap));
@@ -147,7 +214,8 @@ main(int argc, char **argv)
 		amdgpu_bo_free(bo[i]);
 		timer_stop(&freebo);
 	}
-	printf("teardown: cpu_munmap %.1f gpu_va_unmap %.1f bo_free %.1f\n",
+	printf("teardown (freeing everything): cpu_munmap %.1f gpu_va_unmap %.1f "
+	    "bo_free %.1f\n",
 	    cpuunmap.total * 1e6 / count, unmap.total * 1e6 / count,
 	    freebo.total * 1e6 / count);
 
