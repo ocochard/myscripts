@@ -64,8 +64,8 @@ setup_prefix() {
 		echo "Installing Tahoma into ${WINEPREFIX}"
 		cp "${WINEDIR}"/share/wine/fonts/tahoma*.ttf "${fonts}/"
 		key='HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
-		wine64 reg add "${key}" /v 'Tahoma (TrueType)' /d tahoma.ttf /f >/dev/null
-		wine64 reg add "${key}" /v 'Tahoma Bold (TrueType)' /d tahomabd.ttf /f >/dev/null
+		wine reg add "${key}" /v 'Tahoma (TrueType)' /d tahoma.ttf /f >/dev/null
+		wine reg add "${key}" /v 'Tahoma Bold (TrueType)' /d tahomabd.ttf /f >/dev/null
 	fi
 	if [ ! -f "${fonts}/arial.ttf" ] || [ ! -f "${fonts}/times.ttf" ]; then
 		echo "Installing MS core fonts into ${WINEPREFIX}"
@@ -144,4 +144,4 @@ if grep -q '"chromium-args"' package.json 2>/dev/null &&
 	sed 's/"chromium-args": "/"chromium-args": "--no-sandbox /' \
 	    package.json.orig > package.json
 fi
-wine64 "$(basename "${exe}")" --no-sandbox "$@"
+wine "$(basename "${exe}")" --no-sandbox "$@"
