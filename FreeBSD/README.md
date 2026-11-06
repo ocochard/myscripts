@@ -188,6 +188,34 @@ sudo etcupdate status      # empty output = no conflict left
 If you take the new login.conf, run `cap_mkdb /etc/login.conf` after.
 Then rerun beinstall.sh.
 
+#### beinstall.sh fails with `No previous tree to compare against`
+
+On a fresh release install (no `/var/db/etcupdate/current`), `beinstall.sh` fails in its pre-world etcupdate step with:
+"No previous tree to compare against, a sane comparison is not possible."
+
+etcupdate needs the stock `/etc` tree of the *currently installed* version as its old tree.
+Seeding it from the new /usr/src would make old and new identical, and no upstream change would be merged.
+So extract it from the source of the installed release (here 15.1) in a writable directory,
+because the NFS /usr/src is read-only and holds the newer version:
+```
+git clone --depth 1 -b releng/15.1 https://git.freebsd.org/src.git /var/tmp/src151
+sudo etcupdate extract -s /var/tmp/src151
+```
+
+Then run `beinstall.sh` from the NFS tree as above.
+If installworld then fails with `Undefined symbol "fts_open@FBSD_1.9"` (legacy `mtree` built against the newer libc),
+that is the libc problem: use the `LD_PRELOAD` form above.
+
+When upgrading to -CURRENT there are no `FreeBSD:16` pkg repositories (404 on `pkgmir.geo.freebsd.org`),
+and `beinstall.sh` aborts with "Unable to update pkg" and destroys the new BE. Skip it with `NO_PKG_UPGRADE=1`.
+
+Working command from a fresh 15.1-RELEASE to 16.0-CURRENT (builder's /usr/src and /usr/obj NFS-mounted read-only):
+```
+cd /usr/src && sudo env NO_PKG_UPGRADE=1 MAKE_OBJDIR_CHECK_WRITABLE=0 \
+LD_PRELOAD=/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7 \
+tools/build/beinstall.sh -j $(sysctl -n hw.ncpu)
+```
+
 ### Build from MacOS (ARM M3 pro)
 
 Great [user guide](https://docs.freebsd.org/en/books/handbook/cutting-edge/#building-on-non-freebsd-hosts).
