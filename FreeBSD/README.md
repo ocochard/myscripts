@@ -59,16 +59,24 @@ Misc utilities:
 
 Subdirectories:
 - [TP/](TP/) — practical-work prep scripts (preparation-master/server, tunnels)
-- [async-hid/](async-hid/): FreeBSD hidraw(4) backend for the Rust async-hid crate (design note, skeleton, hardware checks)
-- [jail/](jail/) — jail management scripts (bridge/nullfs/FRR examples, jail_lib, tests), NETINT card in a jail
-- [netint_demo/](netint_demo/) — live NETINT Quadra web demo: hardware transcode with resolution, bitrate, rate control, codec and AI filters, card/CPU/RAM/network load (FreeBSD only)
-- [benches/tcp/](benches/tcp/) — TCP stack and CCA benchmarks
+- [async-hid/](async-hid/README.md): FreeBSD hidraw(4) backend for the Rust async-hid crate (design note, skeleton, hardware checks)
+- [docs/](docs/README.md) — development notes and tutorials
+- [frr-topotest-vm/](frr-topotest-vm/README.md) — bhyve guest running the FRR topotests, capturing kernel panics
+- [jail/](jail/README.md) — jail management scripts (bridge/nullfs/FRR examples, jail_lib, tests), NETINT card in a jail
+- [kern-test-vm/](kern-test-vm/README.md) — boot a kernel under test in a throwaway bhyve guest and read the results back
+- [ktls_sendfile/](ktls_sendfile/README.md) — KTLS + sendfile corruption reproducer (FreeBSD 15.0)
+- [mesa-dri-video-codecs/](mesa-dri-video-codecs/README.md) — graphics/mesa-dri: enable Vulkan Video encode codecs in RADV
+- [moonshine/](moonshine/README.md) — Moonshine on FreeBSD feasibility study
+- [netint_demo/](netint_demo/README.md) — live NETINT Quadra web demo: hardware transcode with resolution, bitrate, rate control, codec and AI filters, card/CPU/RAM/network load (FreeBSD only)
+- [nfsbug/](nfsbug/README.md) — NFSv4.1 client fixes found with Amazon EFS, and their regression tests
+- [benches/tcp/](benches/tcp/README.md) — TCP stack and CCA benchmarks
 - [benches/nfs/](benches/nfs/) — NFS benchmarks
 - [benches/udp/](benches/udp/) — UDP benchmarking C tools
 - [benches/buildworld.sh](benches/buildworld.sh) — buildworld benchmark
 - [benches/http_bench.sh](benches/http_bench.sh) — HTTP benchmark
-- [sendfile/](sendfile/), [tcp_dscp/](tcp_dscp/), [testrss/](testrss/) — small C test programs
-- [ports-tests/](ports-tests/) — port-related test scripts
+- [sendfile/](sendfile/README.md), [tcp_dscp/](tcp_dscp/README.md), [testrss/](testrss/README.md) — small C test programs
+- [ports-tests/](ports-tests/README.md) — port-related test scripts
+- [video/](video/README.md) — vtblank: paint the console framebuffer black
 
 ## Building
 
