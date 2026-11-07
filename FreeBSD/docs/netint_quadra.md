@@ -192,6 +192,24 @@ The FreeBSD port is not complete if the card can only be flashed from Linux.
 | Download | `nvme fw-download -f <bin> -x 4096` | **1397 x Firmware Image Download (0x11)**, 4096 bytes each (NUMD=0x3ff, OFST in dwords, step 0x400). Last chunk 868 bytes (NUMD=0xd8, OFST=0x15d000 dwords). 1396.2 x 4096 = 5 718 884 bytes = the file size |
 | Burn | `nvme admin-passthru --opcode 0xc7 -t 180000` | **one vendor admin command, opcode 0xC7**, no data, all cdw = 0, timeout 180 s |
 
+```mermaid
+sequenceDiagram
+    participant H as Host (script)
+    participant C as Card firmware
+    participant F as NOR flash
+    H->>C: Identify (0x06), Get Log Page 194 (0x02)
+    H->>C: vendor 0xC2 (variant query)
+    C-->>H: image variant (old FW: invalid opcode, plain -Quadra.bin)
+    H->>C: controller reset
+    loop 1397 chunks of 4096 bytes
+        H->>C: Firmware Image Download (0x11) to DDR
+    end
+    H->>C: vendor 0xC7 (burn, timeout 180 s)
+    C->>F: copy DDR image to NOR
+    C-->>H: status (on failure the old firmware stays)
+    Note over H,C: No Firmware Commit (0x10).<br/>Warm: controller reset. Cold: power cycle.
+```
+
 Findings:
 - There is **no Firmware Commit (0x10)**. The NVMe slot mechanism is not used. The image goes to DDR (0x11), then vendor 0xC7 tells the card to burn it into NOR flash.
 - A cold upgrade needs a power cycle afterwards; the script does not reset after the burn. The host reboot in section 6.3 is that step.
@@ -356,7 +374,7 @@ So, for these workloads, the FreeBSD stack produces byte-identical bitstreams to
 - `ni_quadra_scale=640:360` after upload, and after hardware decode: both give valid 640x360 H.264, 501 frames, 0 errors. The hardware decode must emit hardware frames (`-xcoder-params out=hw`); without it the scaler fails with `Function not implemented` (usage, not a port bug). The two chains differ by a few hundred bytes (software decode + upload vs card decode): not investigated.
 - libxcoder demo `ni_xcoder_scale` (1280x720 to 640x360): works and is deterministic, but writes 502 frames for 501 input (frame 502 is an exact copy of frame 501, apparently a demo end-of-stream quirk; not checked on Linux).
 
-Not yet covered: AV1 and VP9, AI sessions (the Linux AIO path is not ported), the other filters (overlay, pad, crop, ...), long runs and error cases. The framemd5 hashes of the decode tests and the scaler outputs have no Ubuntu reference yet (record them on Ubuntu to compare).
+Not yet covered: AV1 and VP9, AI sessions (the Linux AIO path is not ported), the other filters (overlay, pad, crop, ...), long runs and error cases. The framemd5 hashes of the decode tests and the scaler outputs have no Ubuntu reference yet (record them on Ubuntu to compare). The scaler demo duplicates its last frame (not yet explained; check against Ubuntu).
 
 ### 7.11 AI engine and POSIX AIO (verified 2026-11-06)
 
