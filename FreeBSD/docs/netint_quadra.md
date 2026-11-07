@@ -437,7 +437,56 @@ Tested on the 465-frame 1080p clip, all outputs frame-complete (plus the demos `
 
 **Not tested:** `bg`/`bgr`/`overlay` elements, the patched GStreamer and its NETINT video formats, Logan plugins.
 
-## 8. References
+## 8. What is inside the card (firmware static analysis, 2026-11-07)
+
+Goal of this chapter: understand what chip the card is built around and what its firmware looks like, by taking apart the upgrade image from chapter 6. Read-only: nothing here was flashed or sent to a card. Work was done in a scratch dir, not in git.
+
+### 8.1 The chip: Codensity G5, an ASIC
+
+**(verified)** The card is built on NETINT's **Codensity G5 ASIC**. The firmware reports the NVMe model string `CODENSITY-T400`, and the release notes call it "Quadra RevA ASIC Firmware Loader". ASIC = Application-Specific Integrated Circuit: the logic is etched into fixed silicon at the factory.
+
+This matters for anyone hoping to repurpose the board:
+
+| | FPGA | ASIC (this card) |
+|---|---|---|
+| What the silicon is | reconfigurable logic; a bitstream *becomes* the circuit | fixed gates, etched once |
+| Can you change the hardware function? | yes, load a new bitstream | no |
+| Can you change the software? | yes | yes, the CPU cores run firmware |
+
+So you can write new *code* for the on-chip CPUs, but you cannot add a hardware function the silicon does not already have. The datapaths here are wired for H.264/H.265/AV1 transcode (motion estimation, DCT, entropy coders) plus DDR/PCIe/NoC fabric. There is no general-compute or crypto fabric to retarget. Running an unrelated workload (for example a hashing algorithm) would fall back to the handful of general-purpose cores as plain software, which is orders of magnitude slower than a chip designed for that task and pointless in practice. A video ASIC transcodes video; that is the one thing its silicon does well.
+
+### 8.2 The CPU cores: Xtensa running FreeRTOS
+
+**(verified)** The firmware is **Cadence/Tensilica Xtensa**, 32-bit little-endian, windowed ABI, built with Cadence's XCC compiler and running **FreeRTOS**. Evidence:
+- Reset stub decodes cleanly as Xtensa: `entry a1,32` / `l32r` / `callx8` / `retw.n`, with a literal pool in front of the code (the Xtensa idiom).
+- Ghidra (processor `Xtensa:LE:32:default`) found 1085 functions at ~50% code coverage with coherent control flow on the main image. The same bytes decoded as ARM-Cortex or RISC-V gave near-zero valid functions.
+- Build path string: `.../FreeRTOS/Source/portable/ThirdParty/XCC/Xtensa/portclib.c`.
+
+Not determined without NETINT/Cadence tooling: the exact Xtensa core variant (LX6/LX7) and any custom TIE/FLIX instruction extensions (a few opcodes in the video/AI cores did not decode, which is the usual sign of custom instructions).
+
+### 8.3 The flash image is layered and signed, not encrypted
+
+**(verified)** `nor_flash_*.bin` — it is a **raw NOR flash image**. Intel HEX text appears *inside* the partitions, and every partition except the first-stage loader is **LZ4-compressed** (raw LZ4 block). Nothing is encrypted: all code decompresses to plaintext with readable strings.
+
+Boot chain and layout:
+
+| Flash offset | Content | Notes |
+|---|---|---|
+| 0x002000 | NOR control table | version, slot pointers |
+| 0x004000 | persistent config (`FACE1234` magic) | the per-variant `-C/-E/-F/-G` data |
+| 0x010000 | **FL1** first-stage loader | header magic `0xBEEF1234`, uncompressed Intel HEX |
+| 0x020000 | **FL2** firmware loader | magic `0xCAFE0F12`, LZ4; does DDR/PCIe/NoC bring-up |
+| 0x100000 | **FW slot 1** ("NVMe" management core + "other cores") | magic `0xA5F0CAFE`, LZ4 |
+
+Each region carries a **256-byte RSA-2048 signature over a SHA hash**, verified *by firmware already on the card* at commit time, not by the upgrade script. Strings: `Fail to verify RSA2048 OtherCores image`, `RSA verify result %d. FW_IMG_{FL1,FL2,NVME,OTHER_CORES,...}_HASH_ERROR`. This is the "signature of the FW binary" the upgrade script (6.1) refers to: a bad or modified image is rejected as "firmware image specified for activation is invalid". The signing key is NETINT's, so custom firmware cannot be loaded without it. Defeating this was out of scope and not attempted.
+
+The `-C/-E/-F/-G` variants: FL1 and FL2 are byte-identical across all five images; base/C/G are the same code built at different times; E/F are a separate build configuration (a different board SKU). The per-variant difference lives in the control table and persistent config, not the code.
+
+### 8.4 Takeaway for custom use
+
+The supported way to get custom behaviour out of this card is NETINT's SDK (libxcoder / the FFmpeg fork, chapters 3-7): you drive the codec, you do not replace the firmware. Replacing the firmware with your own build is blocked by signed boot; repurposing the silicon for a non-video workload is blocked by it being an ASIC. The decompressed Xtensa images load into Ghidra (`Xtensa:LE:32:default`, raw binary, one block per segment at its load address) if you want to study how the firmware itself works.
+
+## 9. References
 
 - NETINT docs: https://docs.netint.com/vpu/quadra/
 - libxcoder: https://github.com/NETINT-Technologies/netint_libxcoder
