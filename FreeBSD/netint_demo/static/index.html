@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NETINT Quadra on FreeBSD: live demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; }
+  main { max-width: 1000px; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.3rem; }
+  .row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 1rem; }
+  label { display: flex; flex-direction: column; font-size: .85rem; gap: .25rem; }
+  select, button { font-size: 1rem; padding: .4rem .6rem; }
+  video { width: 100%; background: #000; aspect-ratio: 16/9; }
+  #msg { min-height: 1.4rem; color: #fc6; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .75rem; margin-top: 1rem; }
+  .card { background: #1c1c1c; border-radius: 6px; padding: .6rem .8rem; }
+  .card h2 { font-size: .8rem; margin: 0 0 .3rem; color: #999; font-weight: 600; text-transform: uppercase; }
+  .big { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: #333; border-radius: 3px; margin-top: .3rem; }
+  .bar > div { height: 100%; background: #4a9; border-radius: 3px; width: 0; }
+  small { color: #888; }
+</style>
+</head>
+<body>
+<main>
+  <h1>NETINT Quadra T1U on FreeBSD: live hardware transcode</h1>
+  <div class="row">
+    <label>Video <select id="video"></select></label>
+    <label>Quality <select id="quality"></select></label>
+    <label>Codec <select id="codec"></select></label>
+    <label>Filter <select id="filter"></select></label>
+    <button id="toggle">Start</button>
+  </div>
+  <div id="msg"></div>
+  <p id="fdesc"><small></small></p>
+  <video id="player" controls muted playsinline></video>
+  <div class="grid">
+    <div class="card"><h2>Streams</h2><div class="big" id="streams">-</div><small>concurrent, all visitors</small></div>
+    <div class="card"><h2>Your stream</h2><div class="big" id="yours">-</div><small id="yours2"></small></div>
+    <div class="card"><h2>Card encoder</h2><div class="big" id="enc">-</div><div class="bar"><div id="encbar"></div></div><small id="encinst"></small></div>
+    <div class="card"><h2>Card decoder</h2><div class="big" id="dec">-</div><div class="bar"><div id="decbar"></div></div><small id="decinst"></small></div>
+    <div class="card"><h2>Card scaler / AI</h2><div class="big" id="scl">-</div><small id="ai"></small></div>
+    <div class="card"><h2>Card</h2><div class="big" id="temp">-</div><small id="power"></small></div>
+    <div class="card"><h2>Server network</h2><div class="big" id="nettx">-</div><div class="bar"><div id="nettxbar"></div></div><small id="netrx"></small></div>
+    <div class="card"><h2>Host CPU</h2><div class="big" id="cpu">-</div><div class="bar"><div id="cpubar"></div></div></div>
+    <div class="card"><h2>Host RAM</h2><div class="big" id="ram">-</div><div class="bar"><div id="rambar"></div></div><small id="ramstreams"></small></div>
+  </div>
+  <p><small>Decode, scale, filter and video encode all run on the card. The CPU only moves packets.
+  Playback starts after about 10 to 20 seconds (HLS, 6 s segments).
+  A session lasts as long as the video.</small></p>
+  <p id="host"><small></small></p>
+</main>
+<script src="/hls.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
