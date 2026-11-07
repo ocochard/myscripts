@@ -27,13 +27,16 @@
   <h1>NETINT Quadra T1U on FreeBSD: live hardware transcode</h1>
   <div class="row">
     <label>Video <select id="video"></select></label>
-    <label>Quality <select id="quality"></select></label>
+    <label>Resolution <select id="resolution"></select></label>
+    <label>Bitrate <select id="bitrate"></select></label>
+    <label>Rate control <select id="rate"></select></label>
     <label>Codec <select id="codec"></select></label>
     <label>Filter <select id="filter"></select></label>
     <button id="toggle">Start</button>
   </div>
   <div id="msg"></div>
   <p id="fdesc"><small></small></p>
+  <p id="rdesc"><small></small></p>
   <video id="player" controls muted playsinline></video>
   <div class="grid">
     <div class="card"><h2>Streams</h2><div class="big" id="streams">-</div><small>concurrent, all visitors</small></div>

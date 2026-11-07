@@ -45,15 +45,37 @@ IDLE_SECONDS = int(os.environ.get("DEMO_IDLE_SECONDS", "30"))
 IFACE = os.environ.get("DEMO_IFACE", "re0")
 LINK_MBPS = int(os.environ.get("DEMO_LINK_MBPS", "1000"))
 MAX_CONNECTIONS = int(os.environ.get("DEMO_MAX_CONNECTIONS", "200"))
+# Producer lead = media time encoded minus elapsed wall time. It starts near
+# +10 s (initial burst) and stays there while the card keeps up in real time;
+# below LAG_LEAD seconds the card/encoder is the bottleneck, not the network.
+LAG_LEAD = float(os.environ.get("DEMO_LAG_LEAD", "3"))
+SEG_SECONDS = 6          # must match -hls_time
+SLOW_SEND_RATIO = 0.5    # sending a segment slower than this x its duration
+SNDBUF = 524288          # socket send buffer: makes write time follow the
+                         # client speed instead of vanishing into the buffer
 PER_IP = int(os.environ.get("DEMO_PER_IP", "1"))
 TRUST_PROXY = os.environ.get("DEMO_TRUST_PROXY", "0") == "1"
 
-# name -> (output height, video bitrate)
-QUALITY = {
-    "360p": (360, "800k"),
-    "720p": (720, "2500k"),
-    "1080p": (1080, "5000k"),
-    "2160p": (2160, "15000k"),
+# Output resolution (height) and the bitrate used by "Auto" at that resolution.
+RESOLUTIONS = {"360p": 360, "720p": 720, "1080p": 1080, "2160p": 2160}
+AUTO_KBPS = {"360p": 800, "720p": 2500, "1080p": 5000, "2160p": 15000}
+BITRATES_KBPS = [500, 1000, 2000, 4000, 8000, 15000, 25000]
+# Sum of the bitrates of all live sessions (the uplink is 1 Gbit/s).
+MAX_MBPS = int(os.environ.get("DEMO_MAX_MBPS", "400"))
+# id -> (label, description shown on the page)
+RATE_MODES = {
+    "cbr": ("CBR (steady)",
+            "Bitrate stays close to the chosen value, without spikes "
+            "(block-level rate control, 0.5 s buffer). Fits a link with a "
+            "fixed capacity."),
+    "vbr": ("VBR (peaks allowed)",
+            "Constrained variable bitrate: the average stays near the chosen "
+            "bitrate, but busy scenes may peak up to 1.5 times higher, which "
+            "can improve quality there."),
+    "crf": ("Constant quality (CRF 23)",
+            "The encoder aims at constant visual quality and uses fewer bits "
+            "on easy scenes. The chosen bitrate is a ceiling, not a target, "
+            "so the real bitrate is often lower."),
 }
 # id -> (label, description shown on the page)
 FILTERS = {
@@ -69,7 +91,7 @@ FILTERS = {
                "A neural network (GentleAIEnhance) loaded into the card's AI "
                "engine, applied before encoding. The network works at "
                "1280x720 only, so the picture is scaled to 720p, enhanced, "
-               "then scaled to the chosen quality."),
+               "then scaled to the chosen resolution."),
     "roi": ("AI region of interest (YOLOv4)",
             "A YOLOv4 object-detection network finds objects (people, "
             "cars...) and the encoder spends more bits there while keeping "
@@ -98,6 +120,36 @@ lock = threading.Lock()
 sessions = {}
 videos = {}
 stats = {"card": None, "cpu": None, "ram": None, "net": None}
+
+
+def parse_ua(ua):
+    """Short "Browser major / OS" from a User-Agent, for the log."""
+    if not ua:
+        return "no user-agent"
+    browser = "other browser"
+    for pat, name in ((r"Edg/(\d+)", "Edge"), (r"OPR/(\d+)", "Opera"),
+                      (r"Firefox/(\d+)", "Firefox"),
+                      (r"(?:Chrome|CriOS)/(\d+)", "Chrome"),
+                      (r"Version/(\d+)[^ ]* .*Safari/", "Safari")):
+        m = re.search(pat, ua)
+        if m:
+            browser = f"{name} {m.group(1)}"
+            break
+    for pat, name in (("iPhone|iPad", "iOS"), ("Android", "Android"),
+                      ("Windows", "Windows"), ("Macintosh|Mac OS X", "macOS"),
+                      ("CrOS", "ChromeOS"), ("FreeBSD", "FreeBSD"),
+                      ("Linux", "Linux")):
+        if re.search(pat, ua):
+            return f"{browser} / {name}"
+    return f"{browser} / unknown OS"
+
+
+def clean(text, n=200):
+    """Printable ASCII only (no forged log lines), at most n characters."""
+    return re.sub(r"[^\x20-\x7e]", "?", text)[:n]
+
+
+known_clients = {}  # printable address -> time of the last "connected" log
 
 
 def read_kenv(name):
@@ -152,10 +204,15 @@ def scan_videos():
 # ------------------------------------------------------------- sessions
 
 class Session:
-    def __init__(self, ip, name, quality, flt, codec):
+    def __init__(self, ip, name, resolution, flt, codec, addr="", ua="",
+                 kbps=0, rate="cbr"):
         self.id = secrets.token_hex(8)
-        self.ip, self.name, self.quality, self.flt = ip, name, quality, flt
+        self.ip, self.name, self.resolution, self.flt = ip, name, resolution, flt
+        self.kbps = kbps or AUTO_KBPS[resolution]
+        self.rate = rate
         self.codec = codec
+        self.addr = addr or ip  # printable client address, for the log
+        self.ua = ua
         self.dir = HLS_ROOT / self.id
         self.start = self.last_seen = time.time()
         self.state = "starting"
@@ -164,7 +221,14 @@ class Session:
         self.errors = deque(maxlen=10)
         self.proc = None
         self.stopping = False
-        self.out4k = QUALITY[quality][0] > 1080  # 4K encode: ~12% of the card
+        self.events = 0  # player reports received (capped)
+        self.media_time = 0.0  # seconds of video encoded so far
+        self.lagging = False
+        self.lag_episodes = 0
+        self.slow = 0  # segments sent slower than SLOW_SEND_RATIO
+        self.stalls = 0
+        self.stall_ms = 0
+        self.out4k = RESOLUTIONS[resolution] > 1080  # 4K encode: ~12% of the card
         self.heavy = videos[name]["h"] > 1080  # 4K decode: ~7% of the card
 
     def add_sent(self, n):
@@ -181,10 +245,25 @@ class Session:
 
     def command(self):
         v = videos[self.name]
-        height, bitrate = QUALITY[self.quality]
+        height = RESOLUTIONS[self.resolution]
         width = max(2, round(height * v["w"] / v["h"] / 2) * 2)
         scale = f"ni_quadra_scale={width}:{height}"
-        enc_params = []
+        # Rate control (NETINT docs, "Rate Control"): without RcEnable=1 the
+        # card ignores -b:v (constant QP): 2160p segments were 25 to 35 MB
+        # instead of ~11 MB. cuLevelRCEnable=1 (block-level rate control)
+        # removed 3.5x bitrate spikes at scene changes that no vbv setting
+        # could bound; bitrateMode=1 makes -b:v the average to aim at (0 =
+        # a maximum, often undershot); vbvBufferSize is in ms.
+        br = self.kbps * 1000
+        if self.rate == "vbr":      # constrained VBR: average <= bitrate
+            rc = ("RcEnable=1:cuLevelRCEnable=1:bitrateMode=1:"
+                  f"vbvBufferSize=1000:vbvMaxRate={br * 3 // 2}")
+        elif self.rate == "crf":    # capped CRF: bitrate is the ceiling
+            rc = (f"RcEnable=0:crf=23:lookAheadDepth=10:vbvBufferSize=500:"
+                  f"bitrate={br}")
+        else:                       # cbr: close to the bitrate, no spikes
+            rc = "RcEnable=1:cuLevelRCEnable=1:bitrateMode=1:vbvBufferSize=500"
+        enc_params = ["-xcoder-params", rc]
         if self.flt == "hvsplus":
             if height > 1080:
                 # The AI engine cannot sustain 30 fps at 2160p (about 25 fps,
@@ -205,7 +284,7 @@ class Session:
                   + ":qpoffset=-0.6")
             # The encoder only applies the ROI map with RoiEnable=1, and
             # keeps the target bitrate only with RcEnable=1.
-            enc_params = ["-xcoder-params", "RoiEnable=1:RcEnable=1"]
+            enc_params = ["-xcoder-params", "RoiEnable=1:" + rc]
         elif self.flt == "flip":
             vf = scale + ",ni_quadra_flip=flip_type=0"
         else:
@@ -221,7 +300,7 @@ class Session:
             "-c:v", DECODERS[v["codec"]], "-xcoder-params", "out=hw",
             "-i", str(v["path"]), "-an", "-sn", "-vf", vf,
             "-c:v", CODECS[self.codec][1], *CODECS[self.codec][2],
-            *enc_params, "-b:v", bitrate,
+            *enc_params, "-b:v", f"{self.kbps}k",
             "-force_key_frames", "expr:gte(t,n_forced*2)",
             "-f", "hls", "-hls_time", "6",
             "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
@@ -248,11 +327,18 @@ class Session:
                     self.fps = float(val)
                 except ValueError:
                     pass
+            elif k == "out_time_us":
+                try:
+                    self.media_time = int(val) / 1e6
+                except ValueError:
+                    pass
             elif k == "progress" and self.state == "starting":
                 self.state = "running"
         self.proc.wait()
         rc = self.proc.returncode
-        log(f"session {self.id} ended rc={rc} "
+        log(f"session {self.id} ended rc={rc} ip={self.addr} "
+            f"stalls={self.stalls}/{self.stall_ms / 1000:.1f}s "
+            f"lag={self.lag_episodes} slow={self.slow} "
             f"{self.errors[-1] if self.errors else ''}")
         if rc == 0 and not self.stopping:
             # Reached the end of the video: the card is free already, keep
@@ -301,8 +387,10 @@ class Session:
         threading.Thread(target=_escalate, daemon=True).start()
 
 
-def start_session(ip, name, quality, flt, codec):
+def start_session(ip, name, resolution, flt, codec, addr="", ua="",
+                  kbps=0, rate="cbr"):
     """Returns (session, None) or (None, (http_status, message))."""
+    kbps = kbps or AUTO_KBPS[resolution]
     with lock:
         mine = sorted((s for s in sessions.values() if s.ip == ip),
                       key=lambda s: s.start)
@@ -324,11 +412,14 @@ def start_session(ip, name, quality, flt, codec):
                 1 for x in live if x.heavy) >= MAX_4K:
             return None, (503, "4K video slots are busy, try a 1080p video "
                                "or retry in a minute")
-        if QUALITY[quality][0] > 1080 and sum(
+        if RESOLUTIONS[resolution] > 1080 and sum(
                 1 for x in live if x.out4k) >= MAX_4K_OUT:
             return None, (503, "2160p output slots are busy, try 1080p "
                                "or retry in a minute")
-        s = Session(ip, name, quality, flt, codec)
+        if sum(x.kbps for x in live) + kbps > MAX_MBPS * 1000:
+            return None, (503, "the bandwidth budget is used up, choose a "
+                               "lower bitrate or retry in a minute")
+        s = Session(ip, name, resolution, flt, codec, addr, ua, kbps, rate)
         sessions[s.id] = s
     try:
         s.run()
@@ -336,8 +427,27 @@ def start_session(ip, name, quality, flt, codec):
         with lock:
             sessions.pop(s.id, None)
         return None, (500, f"cannot start encoder: {e.strerror}")
-    log(f"session {s.id} start {name} {quality} {flt} {codec}")
+    log(f"session {s.id} start {name} {resolution} {kbps}k {rate} {flt} "
+        f"{codec} "
+        f"ip={s.addr} ua=\"{s.ua}\"")
     return s, None
+
+
+def check_lag(s, now):
+    """Log when the card falls behind real time (card bottleneck)."""
+    if s.state != "running" or now - s.start < 15:
+        return
+    lead = s.media_time - (now - s.start)
+    if lead < LAG_LEAD and not s.lagging:
+        s.lagging = True
+        s.lag_episodes += 1
+        s.lag_since = now
+        log(f"session {s.id} producer lag: lead={lead:.1f}s fps={s.fps} "
+            f"ip={s.addr} {s.name} {s.resolution} {s.flt} {s.codec}")
+    elif s.lagging and lead > LAG_LEAD + 3:
+        s.lagging = False
+        log(f"session {s.id} producer recovered after "
+            f"{now - s.lag_since:.0f}s: lead={lead:.1f}s")
 
 
 def reaper():
@@ -347,6 +457,7 @@ def reaper():
         with lock:
             snapshot = list(sessions.values())
         for s in snapshot:
+            check_lag(s, now)
             idle = now - s.last_seen
             if s.state == "finished":
                 if idle > FINISHED_GRACE:
@@ -480,6 +591,15 @@ def ip_key(addr):
     return str(ip)
 
 
+def plain_ip(addr):
+    """Printable client address: IPv4-mapped IPv6 shown as IPv4."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return addr
+    return str(ip.ipv4_mapped or ip) if ip.version == 6 else str(ip)
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128
@@ -494,6 +614,15 @@ class Server(ThreadingHTTPServer):
         if self.address_family == socket.AF_INET6:
             self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         super().server_bind()
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionError, TimeoutError)):
+            # The viewer went away (closed tab, aborted fetch): not a fault.
+            log(f"client {plain_ip(client_address[0])} disconnected: "
+                f"{type(exc).__name__}: {exc.strerror or exc}")
+            return
+        super().handle_error(request, client_address)
 
     def process_request(self, request, client_address):
         if not self.slots.acquire(blocking=False):
@@ -511,18 +640,42 @@ class Server(ThreadingHTTPServer):
 class Handler(BaseHTTPRequestHandler):
     server_version = "niquadra-demo"
     sys_version = ""
+
+    def setup(self):
+        super().setup()
+        try:
+            self.request.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF,
+                                    SNDBUF)
+        except OSError:
+            pass
     timeout = 10  # seconds per socket operation: drops idle/slow clients
 
     def log_message(self, *args):
         pass
 
-    def client_ip(self):
-        peer = self.client_address[0]
-        if TRUST_PROXY and ip_key(peer) in ("127.0.0.1", "::1/128"):
+    def note_client(self):
+        """Log the user agent the first time an address shows up (and again
+        after an hour)."""
+        addr = self.client_ip(raw=True)
+        now = time.time()
+        with lock:
+            if now - known_clients.get(addr, 0) < 3600:
+                return
+            if len(known_clients) > 2000:
+                known_clients.clear()
+            known_clients[addr] = now
+        ua = self.headers.get("User-Agent", "")
+        log(f"client {addr} connected: {parse_ua(ua)} "
+            f"[{clean(ua)}]")
+
+    def client_ip(self, raw=False):
+        """Per-visitor key, or with raw=True the printable address."""
+        addr = self.client_address[0]
+        if TRUST_PROXY and ip_key(addr) in ("127.0.0.1", "::1/128"):
             fwd = self.headers.get("X-Forwarded-For", "")
             if fwd:
-                return ip_key(fwd.split(",")[-1].strip())
-        return ip_key(peer)
+                addr = fwd.split(",")[-1].strip()
+        return plain_ip(addr) if raw else ip_key(addr)
 
     def send_bytes(self, code, body, ctype, cache="no-store"):
         self.send_response(code)
@@ -538,6 +691,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_bytes(code, json.dumps(obj).encode(), "application/json")
 
     def do_GET(self):
+        self.note_client()
         path, _, query = self.path.partition("?")
         if path in STATIC:
             name, ctype = STATIC[path]
@@ -550,7 +704,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {
                 "videos": list(videos),
                 "codecs": {k: v[0] for k, v in CODECS.items()},
-                "quality": list(QUALITY),
+                "resolutions": list(RESOLUTIONS),
+                "auto_kbps": AUTO_KBPS,
+                "bitrates": BITRATES_KBPS,
+                "rates": {k: {"label": v[0], "desc": v[1]}
+                          for k, v in RATE_MODES.items()},
                 "filters": {k: {"label": v[0], "desc": v[1]}
                             for k, v in FILTERS.items()},
                 "max": MAX_SESSIONS, "host": HOST})
@@ -576,7 +734,7 @@ class Handler(BaseHTTPRequestHandler):
             s.last_seen = time.time()
             out["session"] = {
                 "state": s.state, "fps": s.fps, "mbps": s.mbps(),
-                "target": QUALITY[s.quality][1],
+                "target_kbps": s.kbps, "rate": s.rate,
                 "remaining": max(0, int(videos[s.name]["dur"] -
                                         (time.time() - s.start))),
                 "error": s.errors[-1] if s.errors else ""}
@@ -596,8 +754,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(404, {"error": "not ready"})
         ctype = ("application/vnd.apple.mpegurl" if fname.endswith(".m3u8")
                  else "video/mp4")
+        t0 = time.monotonic()
         self.send_bytes(200, body, ctype)
+        dt = time.monotonic() - t0
         s.add_sent(len(body))
+        if fname.endswith(".m4s") and dt > SLOW_SEND_RATIO * SEG_SECONDS \
+                and s.slow < 50:
+            # The client takes too long to receive a segment: network or
+            # viewer bottleneck (the card already produced it).
+            s.slow += 1
+            # dt undercounts: the kernel and the client buffer the rest, so
+            # no throughput is computed from it, only "blocked for".
+            log(f"session {s.id} slow segment {fname} "
+                f"{len(body) / 1e6:.1f}MB, server blocked {dt:.1f}s "
+                f"(stream needs {len(body) * 8 / SEG_SECONDS / 1e6:.1f} "
+                f"Mbit/s) ip={self.client_ip(raw=True)}")
 
     def read_json(self):
         try:
@@ -613,18 +784,31 @@ class Handler(BaseHTTPRequestHandler):
         return obj if isinstance(obj, dict) else None
 
     def do_POST(self):
+        self.note_client()
         req = self.read_json()
         if req is None:
             return self.send_json(400, {"error": "bad request"})
         if self.path == "/api/start":
-            name, q, f = req.get("video"), req.get("quality"), req.get(
-                "filter")
+            name, f = req.get("video"), req.get("filter")
+            q = req.get("resolution", req.get("quality"))  # old page: quality
             codec = req.get("codec", "h264")
-            if name not in videos or q not in QUALITY or f not in FILTERS \
-                    or codec not in CODECS:
+            rate = req.get("rate", "cbr")
+            kb = req.get("bitrate", "auto")
+            if kb == "auto":
+                kb = 0
+            if name not in videos or q not in RESOLUTIONS \
+                    or f not in FILTERS or codec not in CODECS \
+                    or rate not in RATE_MODES \
+                    or (kb != 0 and (not isinstance(kb, int)
+                                     or kb not in BITRATES_KBPS)):
                 return self.send_json(400, {"error": "bad parameters"})
-            s, err = start_session(self.client_ip(), name, q, f, codec)
+            s, err = start_session(self.client_ip(), name, q, f, codec,
+                                   self.client_ip(raw=True),
+                                   parse_ua(self.headers.get(
+                                       "User-Agent", "")), kb, rate)
             if err:
+                log(f"refused ip={self.client_ip(raw=True)} {name} {q} {kb}k {rate} {f} "
+                    f"{codec}: {err[1]}")
                 return self.send_json(err[0], {"error": err[1]})
             return self.send_json(200, {"id": s.id})
         if self.path == "/api/stop":
@@ -634,6 +818,30 @@ class Handler(BaseHTTPRequestHandler):
                     ID_RE.match(sid) else None
             if s is not None:
                 s.stop()
+            return self.send_json(200, {"ok": True})
+        if self.path == "/api/event":
+            # The player reports startup time, stalls and errors: the server
+            # cannot see buffering, it only sees segment requests.
+            sid, typ = req.get("id", ""), req.get("type")
+            with lock:
+                s = sessions.get(sid) if isinstance(sid, str) and \
+                    ID_RE.match(sid) else None
+            if s is None or typ not in ("startup", "stall", "error") \
+                    or s.events >= 100:
+                return self.send_json(200, {"ok": True})
+            s.events += 1
+            ms = req.get("ms", 0)
+            ms = ms if isinstance(ms, int) and 0 <= ms <= 3600000 else 0
+            detail = re.sub(r"[^A-Za-z0-9_ .:/=-]", "",
+                            str(req.get("detail", "")))[:60]
+            if typ == "stall":
+                s.stalls += 1
+                s.stall_ms += ms
+            what = f"error {detail}" if typ == "error" else \
+                f"{typ} {ms / 1000:.1f}s {detail}".rstrip()
+            log(f"session {s.id} {what} at {int(time.time() - s.start)}s "
+                f"ip={self.client_ip(raw=True)} {s.name} {s.resolution} "
+                f"{s.flt} {s.codec}")
             return self.send_json(200, {"ok": True})
         self.send_json(404, {"error": "not found"})
 

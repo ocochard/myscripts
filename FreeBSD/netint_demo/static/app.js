@@ -1,6 +1,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-let finishedSeen = false, sid = null, hls = null, statTimer = null, restartTimer = null, gen = 0;
+let startedAt = 0, startedPlaying = false, waitingSince = null, finishedSeen = false, sid = null, hls = null, statTimer = null, restartTimer = null, gen = 0;
 
 function fill(sel, items) {
   sel.replaceChildren(...items.map(([v, t]) => new Option(t, v)));
@@ -43,7 +43,7 @@ function showStats(s) {
   $("nettxbar").style.width = n ? Math.min(100, 100 * n.tx_mbps / n.link_mbps) + "%" : "0";
   if (ses && ses.fps != null) {
     $("yours").textContent = ses.mbps.toFixed(1) + " Mbit/s";
-    $("yours2").textContent = ses.fps.toFixed(0) + " fps, target " + ses.target + "bit/s, " + ses.remaining + " s left";
+    $("yours2").textContent = ses.fps.toFixed(0) + " fps, " + (ses.rate === "crf" ? "ceiling " : "target ") + (ses.target_kbps / 1000) + " Mbit/s, " + ses.remaining + " s left";
   }
   if (sid && ses && ses.state === "finished") {
     finishedSeen = true;
@@ -94,14 +94,35 @@ async function waitPlaylist(url, myGen) {
   return false;
 }
 
+// What the player knows when it stalls: bandwidth estimate and how far it
+// is behind the live edge (small = waiting for the card, big = download).
+function hlsInfo() {
+  // dropped = frames the browser could not decode/render in time: a high
+  // count means the viewer's device is the bottleneck, not the network.
+  const q = $("player").getVideoPlaybackQuality ? $("player").getVideoPlaybackQuality() : null;
+  const dropped = q ? " dropped=" + q.droppedVideoFrames + "/" + q.totalVideoFrames : "";
+  if (!hls) return dropped.trim();
+  const bw = hls.bandwidthEstimate ? (hls.bandwidthEstimate / 1e6).toFixed(1) : "?";
+  const lat = Number.isFinite(hls.latency) ? hls.latency.toFixed(1) : "?";
+  return "bw=" + bw + "Mbps behind=" + lat + "s" + dropped;
+}
+
+// Report player events to the server log: it cannot see buffering itself.
+function report(type, ms, detail) {
+  if (!sid) return;
+  api("/api/event", {id: sid, type: type, ms: ms || 0, detail: detail || ""}).catch(() => {});
+}
+
 async function start() {
   if (sid) await stop(true);
+  startedAt = Date.now(); startedPlaying = false; waitingSince = null;
   const myGen = ++gen;
   $("toggle").disabled = true;
   $("msg").textContent = "Starting the encoder on the card...";
   const r = await api("/api/start", {video: $("video").value,
-    quality: $("quality").value, filter: $("filter").value,
-    codec: $("codec").value});
+    resolution: $("resolution").value, filter: $("filter").value,
+    codec: $("codec").value, rate: $("rate").value,
+    bitrate: $("bitrate").value === "auto" ? "auto" : parseInt($("bitrate").value, 10)});
   $("toggle").disabled = false;
   if (!r.ok) { setIdle(r.json.error || "Error " + r.status); return; }
   sid = r.json.id;
@@ -115,6 +136,7 @@ async function start() {
   const v = $("player");
   if (window.Hls && Hls.isSupported()) {
     hls = new Hls({liveSyncDurationCount: 2});
+    hls.on(Hls.Events.ERROR, (ev, data) => report("error", 0, data.details + (data.fatal ? " fatal" : "")));
     hls.loadSource(url);
     hls.attachMedia(v);
   } else {
@@ -140,8 +162,16 @@ function canPlay(codec) {
 async function init() {
   const o = (await api("/api/videos")).json;
   fill($("video"), o.videos.map((v) => [v, v]));
-  fill($("quality"), o.quality.map((q) => [q, q]));
-  $("quality").value = o.quality.includes("720p") ? "720p" : o.quality[0];
+  fill($("resolution"), o.resolutions.map((q) => [q, q]));
+  $("resolution").value = o.resolutions.includes("720p") ? "720p" : o.resolutions[0];
+  fill($("bitrate"), [["auto", "Auto"], ...o.bitrates.map((k) => [String(k), (k / 1000) + " Mbit/s"])]);
+  const autoLabel = () => { $("bitrate").options[0].text = "Auto (" + (o.auto_kbps[$("resolution").value] / 1000) + " Mbit/s)"; };
+  $("resolution").addEventListener("change", autoLabel);
+  autoLabel();
+  fill($("rate"), Object.entries(o.rates).map(([k, r]) => [k, r.label]));
+  const showRate = () => { $("rdesc").firstChild.textContent = o.rates[$("rate").value].desc; };
+  $("rate").addEventListener("change", showRate);
+  showRate();
   fill($("filter"), Object.entries(o.filters).map(([k, f]) => [k, f.label]));
   const showDesc = () => { $("fdesc").firstChild.textContent = o.filters[$("filter").value].desc; };
   $("filter").addEventListener("change", showDesc);
@@ -150,7 +180,7 @@ async function init() {
   for (const opt of $("codec").options) {
     if (!canPlay(opt.value)) { opt.disabled = true; opt.text += " (not playable in this browser)"; }
   }
-  for (const id of ["video", "quality", "filter", "codec"]) $(id).addEventListener("change", scheduleRestart);
+  for (const id of ["video", "resolution", "bitrate", "rate", "filter", "codec"]) $(id).addEventListener("change", scheduleRestart);
   $("toggle").addEventListener("click", () => (sid ? stop(false) : start()));
   window.addEventListener("pagehide", () => {
     if (sid) navigator.sendBeacon("/api/stop", new Blob([JSON.stringify({id: sid})], {type: "application/json"}));
@@ -160,8 +190,18 @@ async function init() {
   const host = o.host || {};
   const hostText = [host.system, host.cpu].filter(Boolean).join(" - ");
   if (hostText) $("host").firstChild.textContent = "Host: " + hostText;
-  v.addEventListener("playing", () => { if (sid) $("msg").textContent = ""; });
-  v.addEventListener("waiting", () => { if (sid) $("msg").textContent = "Buffering..."; });
+  v.addEventListener("playing", () => {
+    if (!sid) return;
+    $("msg").textContent = "";
+    if (!startedPlaying) { startedPlaying = true; report("startup", Date.now() - startedAt); }
+    else if (waitingSince !== null) { report("stall", Date.now() - waitingSince, hlsInfo()); }
+    waitingSince = null;
+  });
+  v.addEventListener("waiting", () => {
+    if (!sid) return;
+    $("msg").textContent = "Buffering...";
+    if (startedPlaying && waitingSince === null) waitingSince = Date.now();
+  });
   pollStats();
   statTimer = setInterval(pollStats, 2000);
 }

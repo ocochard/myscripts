@@ -10,6 +10,14 @@ Pipeline per visitor (everything but packaging runs on the card):
         -vf ni_quadra_scale=WxH[,ni_quadra_hvsplus | ni_quadra_flip] -c:v h264_ni_quadra_enc -b:v N
         -f hls (6 s segments, keyframe every 2 s)
 
+## Platform
+
+FreeBSD only for now. The encoding and streaming core is portable, but the
+CPU, RAM, network and host-info readers use `sysctl`, `netstat -ibn` and
+`kenv` (Linux would need `/proc/stat`, `/proc/meminfo`, `/proc/net/dev` and
+`/sys/class/dmi/id`). Never run on Linux. `-readrate_initial_burst` needs
+FFmpeg 7.1 or later.
+
 ## Run
 
     mkdir videos        # put freely licensed H.264/HEVC/VP9 8-bit 4:2:0 files here
@@ -19,7 +27,7 @@ Files the card cannot decode (10-bit, AV1, other codecs) are skipped at
 startup, with a log line. Restart to rescan.
 
 Environment: `DEMO_VIDEOS`, `DEMO_HLS` (use a tmpfs), `DEMO_PORT` (8080), `DEMO_BIND` (`::`),
-`DEMO_MAX_SESSIONS` (20), `DEMO_MAX_AI` (6), `DEMO_MAX_4K` (6), `DEMO_MAX_4K_OUT` (2), `DEMO_PER_IP` (1), `DEMO_SESSION_SECONDS` (180),
+`DEMO_MAX_SESSIONS` (20), `DEMO_MAX_AI` (6), `DEMO_MAX_4K` (6), `DEMO_MAX_4K_OUT` (2), `DEMO_MAX_MBPS` (400, total bitrate of live sessions), `DEMO_PER_IP` (1), `DEMO_SESSION_SECONDS` (180),
 `DEMO_IDLE_SECONDS` (30), `DEMO_IFACE` (re0), `DEMO_TRUST_PROXY=1` (use
 `X-Forwarded-For` when the peer is the local reverse proxy).
 
@@ -64,8 +72,31 @@ process. Caps: 20 sessions, at most 6 with a 4K source, at most 2 with 2160p
 output, at most 6 with the AI filter: worst case about 67 % decoder and 55 % encoder. Not measured: clients
 fetching segments (network, HTTP serving).
 
+## Encoder settings (resolution, bitrate, rate control)
+
+The page offers resolution (360p to 2160p, upscaling allowed), bitrate (Auto
+or 0.5 to 25 Mbit/s; Auto is 0.8, 2.5, 5 and 15 Mbit/s per resolution) and a
+rate-control mode, each mapped to NETINT encoder parameters (see "Rate
+Control" in NETINT's docs, docs.netint.com/vpu/quadra/v5.9.0/llms/llms.txt):
+
+| Mode | `-xcoder-params` | Measured, 1080p 4 Mbit/s H.264, per 6 s segment |
+|---|---|---|
+| CBR (steady) | `RcEnable=1:cuLevelRCEnable=1:bitrateMode=1:vbvBufferSize=500` | 3.5 to 4.5 Mbit/s |
+| VBR (peaks allowed) | same with `vbvBufferSize=1000:vbvMaxRate=1.5 x bitrate` | 3.5 to 4.5 Mbit/s |
+| Constant quality | `RcEnable=0:crf=23:lookAheadDepth=10:vbvBufferSize=500:bitrate=<ceiling>` | 1.5 to 3.6 Mbit/s |
+
+All three work with H.264, H.265 and AV1, and with the ROI filter. Selections
+are validated against fixed lists; the sum of the bitrates of live sessions
+is limited by `DEMO_MAX_MBPS`. The caps in the load-test tables were measured
+at the Auto bitrates: encoder load at 25 Mbit/s is not measured.
+
 ## Notes from testing (FreeBSD 16.0-CURRENT, firmware 5906tFr1)
 
+- The encoder ignores `-b:v` unless `-xcoder-params RcEnable=1` is given
+  (constant quality otherwise). Without it, 2160p segments were 25 to 35 MB
+  per 6 s (33 to 45 Mbit/s) for a 15 Mbit/s target, which made browsers
+  stall at segment boundaries. With it, segments follow the target. The load
+  test tables above were measured before this was found: re-run them.
 - `ffmpeg-netint` ignores SIGTERM (stock `ffmpeg` does not). The server
   stops it by writing `q` on stdin: exits in about 1 s and the card shows 0
   instances. SIGKILL leaves card instances allocated for about 10 s.
