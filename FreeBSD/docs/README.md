@@ -54,6 +54,10 @@ The six loader/md(4) memdisk fixes are summarized in a table in
 - [TPM_IRQ.md](TPM_IRQ.md): TPM TIS "Failed to switch to ready state" on ST33 chips
 - `vnet_jail_deadlock_*.txt`: raw evidence (dmesg, kgdb session, procstat, netstat, vmstat) for a VNET jail deadlock, no write-up yet
 
+## Hardware bring-up and ports
+
+- [netint_quadra.md](netint_quadra.md): NETINT Quadra T1U video card, which appears as an NVMe device. How libxcoder, FFmpeg, GStreamer, the AI filters and a firmware upgrade tool were ported to FreeBSD, with measured results. Port: `freebsd` branch of ocochard/netint_libxcoder. Live demo: [../netint_demo/](../netint_demo/)
+
 ## Developer workflow
 
 - [forgejo_ron_git_pr.md](forgejo_ron_git_pr.md): opening and updating pull requests on the ron-dev.freebsd.org Forgejo test instance with git-pr(1) (`devel/freebsd-git-pr`)

@@ -9,7 +9,7 @@ Development notes and tutorials: [docs/README.md](docs/README.md) (kernel patche
 Hardware / platform notes:
 - [Framework Desktop (Strix Halo) setup notes](Framework-desktop.md) — see also the cross-OS llama.cpp results in [../LLM/benches.FrameWork-Desktop.md](../LLM/benches.FrameWork-Desktop.md)
 - [ThinkPad X1 Carbon Gen 12: devices without driver](X1.Carbon.Gen.12.md)
-- [Drivers notes](drivers.md)
+- [NETINT Quadra VPU on FreeBSD](docs/netint_quadra.md) — how the card works, libxcoder / FFmpeg / GStreamer port results, firmware upgrade tool; live demo in [netint_demo/](netint_demo/)
 
 Install / system setup:
 - [install-server.sh](install-server.sh) — post-install setup for a FreeBSD server
@@ -60,10 +60,10 @@ Misc utilities:
 Subdirectories:
 - [TP/](TP/) — practical-work prep scripts (preparation-master/server, tunnels)
 - [async-hid/](async-hid/): FreeBSD hidraw(4) backend for the Rust async-hid crate (design note, skeleton, hardware checks)
-- [jail/](jail/) — jail management scripts (bridge/nullfs/FRR examples, jail_lib, tests)
+- [jail/](jail/) — jail management scripts (bridge/nullfs/FRR examples, jail_lib, tests), NETINT card in a jail
+- [netint_demo/](netint_demo/) — live NETINT Quadra web demo: hardware transcode with resolution, bitrate, rate control, codec and AI filters, card/CPU/RAM/network load (FreeBSD only)
 - [benches/tcp/](benches/tcp/) — TCP stack and CCA benchmarks
 - [benches/nfs/](benches/nfs/) — NFS benchmarks
-- [benches/aio/](benches/aio/) — AIO benchmarks
 - [benches/udp/](benches/udp/) — UDP benchmarking C tools
 - [benches/buildworld.sh](benches/buildworld.sh) — buildworld benchmark
 - [benches/http_bench.sh](benches/http_bench.sh) — HTTP benchmark
