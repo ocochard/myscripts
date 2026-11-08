@@ -223,11 +223,23 @@ corruption of the root filesystem is the worse of the two.
 
 ### Fix (loader): `loader_memdisk_memtype.patch`
 
-Allocate the buffer as `EfiReservedMemoryType`.  It is not in the list in
-section 1.2, so the kernel skips it and never reuses those pages
-(requirement 1).  This fixes the corruption.  It does **not** guarantee
-requirement 2: that needs the md.c fix from section 3.  Measured
-2026-10-25, results in section 4.
+Never allocate the buffer as `EfiLoaderData`.  The type now depends on how
+the image is handed on, so `do_download_ramdisk()` looks up
+`EFI_RAM_DISK_PROTOCOL` before the download starts:
+
+* Firmware has the protocol: the buffer is registered as a virtual disk and
+  allocated `EfiReservedMemoryType`, as ACPI requires (see "Is
+  `EfiReservedMemoryType` the right type?" below).
+* No protocol, or the `initmd` path (`download_md_image()`), where only md
+  uses the buffer: it gets the OS loader type `0x80000000`, because UEFI
+  forbids loaders to allocate Reserved.
+
+Neither type is in the list in section 1.2, so the kernel skips both and
+never reuses those pages (requirement 1).  This fixes the corruption.  It
+does **not** guarantee requirement 2: that needs the md.c fix from section
+3.  If `Register()` fails after the download, the md fallback keeps the
+Reserved buffer, which is still safe for the kernel.  Reserved was measured
+2026-10-25 and the OS loader type 2026-11-08; results are in section 4.
 
 This is the type the fallback used before `85fb40bad584`.  That commit left
 Reserved because "the md driver fails", and that failure is bug 2: with a
@@ -264,6 +276,104 @@ Limit: Reserved was tested only on amd64 under bhyve's edk2.  The
 Supermicro md fallback run predates the switch and used RT_DATA.  arm64 and
 riscv build physmap and the DMAP their own way, and other firmware may set
 attributes differently.
+
+### Is `EfiReservedMemoryType` the right type?  Specs and prior art
+
+**UEFI says `EfiLoaderData` belongs to the OS.**  UEFI 2.9A, section 7.2.1,
+Table 7.6 "Memory Type Usage after ExitBootServices()":
+
+> EfiLoaderData: The Loader and/or OS may use this memory as they see fit.
+>
+> EfiReservedMemoryType: Not usable.
+
+So the kernel adding `EfiLoaderData` to physmap is correct.  Any loader that
+hands an `EfiLoaderData` buffer to the OS needs the OS to reserve it some
+other way.  FreeBSD has no such mechanism for the ram disk: the only reader
+of `hint.md.N.physaddr` in `sys/` is `md.c:2130`, and nothing in the
+physmap setup excludes that range.  So the claim in `85fb40bad584`, "The
+kernel handles the former properly and won't reallocate it", does not hold
+for the ram disk.  Section 2 measures the result.
+
+**ACPI requires Reserved for a virtual disk.**  ACPI 6.4, section 5.2.25.2
+(NFIT, SPA Range Structure):
+
+> System physical address ranges described as Virtual CD or Virtual Disk
+> shall be described as AddressRangeReserved in E820, and EFI Reserved
+> Memory Type in the UEFI GetMemoryMap.
+
+On the `VirtualDisk` path the loader registers the buffer with
+`EFI_RAM_DISK_PROTOCOL` (`memdisk.c:332`) as exactly such a virtual disk.
+
+**edk2 does the same for its own RAM disks.**
+
+* HTTP boot of an ISO: `BmExpandLoadFile()` in
+  `MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c` allocates the buffer
+  with `AllocateAlignedReservedPages()`.  Commit `026ede493c` (2016):
+  "Use reserved memory to hold the buffer for the RAM disk to follow the
+  ACPI spec requirement."
+* `RamDiskPublishNfit()` in `RamDiskDxe/RamDiskProtocol.c` publishes the
+  NFIT entry only when the buffer is `EfiReservedMemoryType`; otherwise it
+  returns `EFI_NOT_FOUND` silently.  `RamDiskRegister()` calls it for every
+  registration.  So the ACPI RAM disk that `85fb40bad584` says "we don't
+  do" is a consequence of the memory type, not of a separate call: with
+  `EfiLoaderData` edk2 publishes nothing, with Reserved it publishes an NFIT
+  volatile virtual disk.
+
+**Linux makes the same split.**  The x86 EFI stub builds e820 in
+`setup_e820()` (`drivers/firmware/efi/libstub/x86-stub.c`):
+`EFI_RESERVED_TYPE` and `EFI_RUNTIME_SERVICES_DATA` become
+`E820_TYPE_RESERVED`, `EFI_LOADER_DATA` becomes `E820_TYPE_RAM`.  Linux
+consumes a firmware RAM disk (edk2 HTTP boot of an ISO) through that NFIT
+entry, as `/dev/pmemN` (`nfit_spa_is_virtual()` in
+`drivers/acpi/nfit/core.c`, added in 2016 by "acpi, nfit: treat virtual
+ramdisk SPA as pmem region").  That only works because the range is
+Reserved.
+
+**GRUB uses `EfiLoaderData`, but only with an explicit reservation.**  GRUB
+allocates the Linux initrd as `GRUB_EFI_LOADER_DATA`
+(`allocate_initrd_mem()` in `grub-core/loader/efi/linux.c`).  It is safe
+because Linux reserves the range itself, from `boot_params`, before the page
+allocator starts (`early_reserve_initrd()` in `arch/x86/kernel/setup.c`
+calls `memblock_reserve_kern()`).  The initrd is also short-lived: Linux
+unpacks it and frees it.  A FreeBSD md root lives as long as the system.
+
+**The objection: UEFI forbids loaders to allocate Reserved.**  UEFI 2.9A,
+section 7.2.1, `AllocatePages()`:
+
+> UEFI Applications, UEFI Drivers, and UEFI OS Loaders must not allocate
+> memory of types EfiReservedMemoryType, EfiMemoryMappedIO, and
+> EfiUnacceptedMemoryType.
+
+`loader.efi` is a UEFI OS loader.  Firmware does not enforce the rule: edk2
+`CoreInternalAllocatePages()` (`MdeModulePkg/Core/Dxe/Mem/Page.c`) rejects
+only out-of-range types, `EfiConventionalMemory`, `EfiPersistentMemory` and
+`EfiUnacceptedMemoryType`.  On the `VirtualDisk` path the ACPI rule above is
+the more specific one, and edk2 itself follows it.  On the md fallback path
+no virtual disk is registered, so only the UEFI rule applies.
+
+The choices for the md fallback are:
+
+| Choice | Spec | Kernel side | Cost |
+|---|---|---|---|
+| OS loader type `0x80000000` (this patch) | allowed: "reserved for use by UEFI OS loaders" | skipped by amd64 `add_efi_map_entries()` (`default: continue`), by `subr_efi_map.c` on arm64/riscv (`default: break`), and by Linux `setup_e820()` (`default: continue`) | md.c fix still needed; `sysctl machdep.efi_map` shows the range as `<INVALID>` |
+| `EfiLoaderData` + kernel reservation (GRUB/Linux model) | clean for the loader | each architecture must exclude `hint.md.N.physaddr` from physmap early; arm64/riscv can use `physmem_exclude_region(..., EXFLAG_NOALLOC)`, which keeps the range in the DMAP | a new loader with an old kernel still corrupts silently |
+| `EfiReservedMemoryType` | breaks the UEFI loader rule on the fallback path | skipped everywhere, as above | none beyond the md.c fix |
+
+Firmware that rejects an OS loader type would fail the allocation, and the
+download with it.  edk2 accepts it.  Older AMI firmware (the Supermicro
+below) has not been tested with it.
+
+On arm64 and riscv, `subr_efi_map.c` says "Entry types not explicitly listed
+here are ignored and not mapped", so Reserved or an OS loader type is never
+in the DMAP there.  The md.c fix is then required on every boot, not only
+when the buffer is at the top of RAM.
+
+**Not measured:** whether edk2 really publishes an NFIT for the
+FreeBSD-registered buffer (`acpidump -t` in the guest should show an `NFIT`
+with a volatile virtual disk SPA), and what `nvdimm(4)` does with it.
+`nvdimm(4)` is a module, not in GENERIC, and knows the virtual disk GUIDs
+(`nvdimm_spa.c:108`).  If loaded, it would attach a second device over the
+same memory as md0.
 
 ---
 
@@ -405,6 +515,9 @@ the top of RAM.
 | `EfiRuntimeServicesData` + tail trim | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact, +2046 MB usable** (below) |
 | `EfiReservedMemoryType` | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **panic in `mdstart_preload`**, same fault address as RT_DATA (below) |
 | `EfiReservedMemoryType` | 15.1 + md.c patch | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact except the backup GPT** (below) |
+| this patch: `EfiReservedMemoryType` | stock 15.1 | mini-memstick | bhyve, VirtualDisk | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
+| this patch: OS loader type, md fallback forced | stock 15.1 | mini-memstick | bhyve, md fallback | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
+| `EfiLoaderData`, md fallback forced (negative control) | stock 15.1 | mini-memstick | bhyve, md fallback | **`dd` SIGSEGV, `md5 /dev/md0` changes, `poweroff: Exec format error`** (below) |
 
 With the md.c patch, same VM, same loader, same image rebuilt around the
 patched kernel (895026656 bytes compressed, so the decompression buffer is the
@@ -524,6 +637,37 @@ served ISO: in the guest and on the host, `dd` of sectors 0 to 2640982
 gives `17c1e701435dd5ac3f52e9a73cd02254`, and of sectors 2640984 to
 2641014 gives `51596dda30fc38f0df3556d6f115256d`.
 
+This patch (Reserved for a registered RAM disk, OS loader type for md),
+measured 2026-11-08.  Loader: main at `0448f4d0a435` with patches #1 to #5
+of `FreeBSD/iPXE.md` 7(f).  bhyve's edk2 has `EFI_RAM_DISK_PROTOCOL`, so a
+test-only build sets `ram_disk = NULL` after the lookup to force the md
+fallback; the negative control also sets the md type back to
+`EfiLoaderData`.  Image: the 15.1 mini-memstick (`cb891aba...`
+uncompressed), stock 15.1 kernel, 8 GB guest, `boot_single=YES`.  In the
+single-user shell: `md5 /dev/md0`, then fill RAM with 7000 MB written to
+tmpfs, then `md5 /dev/md0` twice more.
+
+| Loader | Buffer in `sysctl machdep.efi_map` | md5 before fill | md5 after fill (x2) |
+|---|---|---|---|
+| this patch, VirtualDisk | `Reserved 0000729e1000 ... 00028766` | `cb891aba...` | `cb891aba...`, `cb891aba...` |
+| this patch, md fallback forced | `<INVALID> 0000729e1000 ... 00028766` | `cb891aba...` | `cb891aba...`, `cb891aba...` |
+| `EfiLoaderData`, md fallback forced | `LoaderData 0000729e1000 ... 00028766` | `cb891aba...` | `c1c08d94...`, `c1c08d94...` |
+
+`<INVALID>` is how the kernel prints a type it has no name for, here
+`0x80000000`.  With the OS loader type, physmap has a hole exactly where
+the buffer is (`hint.md.0.physaddr` `0x729e1000`, 678842880 bytes):
+
+```
+0x0000000000100000 - 0x00000000729e0fff, 1921912832 bytes (469217 pages)
+0x000000009b147000 - 0x00000000b3ffffff, 418091008 bytes (102073 pages)
+```
+
+The fill left `v_free_count` at 54394 pages (212 MB), so the kernel had
+used nearly all the memory it owns, and none of it was the ram disk.  The
+negative control proves the fill catches the bug: during the fill, `dd`
+died with SIGSEGV (`pid 29 (dd) ... exited on signal 11`), the device
+checksum changed, and `poweroff` then failed with `Exec format error`.
+
 Base: main at `c14281f6bb46` (2026-09-24) for the loader patch.  The md.c
 patch applies to main as shown; on releng/15.1 the line has an extra
 `(char *)` cast before `pmap_map`.
@@ -563,3 +707,18 @@ optional but recommended).
     boot_verbose=YES -i <iso.xz>`.
 * md.c test (passed 2026-10-19): same kernel and ISO recipe as above, in a
   worktree that no longer exists.
+* OS loader type test (2026-11-08): worktree `~/wt-memdisk-ostype` (branch
+  `olivier-memdisk-ostype`, patches staged, this change unstaged), objdir
+  `~/obj-memdisk-ostype`, loaders and console logs in
+  `~/memdisk-ostype-test/`.  Driver `drive2.py` runs
+  `bhyve-uefi-http-poc.sh` (stdio console) under a pty and types the
+  checks.  Use it rather than `-N`: with the nmdm console the output stopped
+  after `Loading /boot/loader.conf.local` in three runs, one of which ended
+  in a guest reset that was never explained.  Under the pty the same loaders
+  booted every time.
+* Spec quotes (UEFI 2.9A Table 7.6 and the `AllocatePages()` note, ACPI 6.4
+  5.2.25.2) come from search excerpts of the uefi.org HTML specs: uefi.org
+  returned 403 to the fetcher on 2026-11-08.  Check them word for word
+  against the current UEFI/ACPI PDFs, and the table numbers, before
+  submitting.  edk2 references: `~/edk2-upstream` at `870493d743`.  Linux
+  and GRUB references: master on 2026-11-08 (GRUB via the rhboot mirror).

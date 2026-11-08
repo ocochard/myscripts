@@ -1,5 +1,8 @@
-Ram disk memory type for the loader.efi md fallback: EfiLoaderData ->
-EfiReservedMemoryType, so the kernel does not reclaim a memdisk= root.
+Ram disk memory type for loader.efi memdisk=: never EfiLoaderData, so the
+kernel does not reclaim a ram disk root.  A buffer registered with
+EFI_RAM_DISK_PROTOCOL is EfiReservedMemoryType (ACPI NFIT rule for virtual
+disks); a buffer only md uses (no RamDisk protocol, and initmd) gets the OS
+loader type 0x80000000, since UEFI forbids loaders to allocate Reserved.
 Needs md_preload_mapdev.patch in the booted kernel when the ram disk can
 land above the direct map.
 
@@ -7,10 +10,10 @@ Bug report: FreeBSD/docs/bugreport_loader_memdisk_memtype.md
 Investigation: FreeBSD/iPXE.md, section 7(f) "The fallback needed four fixes"
 
 diff --git a/stand/efi/loader/decompress.c b/stand/efi/loader/decompress.c
-index fbf800f87862..e15a6c819b00 100644
+index fbf800f..5022f07 100644
 --- a/stand/efi/loader/decompress.c
 +++ b/stand/efi/loader/decompress.c
-@@ -20,13 +20,20 @@
+@@ -20,14 +20,13 @@
  #define ULL(x) ((unsigned long long)(x))
  
  /*
@@ -19,21 +22,136 @@ index fbf800f87862..e15a6c819b00 100644
 - * memory to the kernel. This is also safe if we're chain booting to another efi
 - * progarm since the memory will be available to that program. The other type
 - * isn't necessarily in the pmap, so the md driver fails.
-+ * A ram disk has to outlive the loader: it stays the live root filesystem for
-+ * as long as the kernel runs. EfiLoaderData does not, because the kernel adds
-+ * EFI_MD_TYPE_DATA ranges to physmap (see add_efi_map_entries()) and hands
-+ * those pages to the allocator, which then overwrites the image underneath the
-+ * md driver.
-+ *
-+ * EfiReservedMemoryType is skipped when the kernel builds physmap, so the
-+ * pages are never reused. It is also not a runtime type: edk2 marks
-+ * EfiRuntimeServicesData EFI_MEMORY_RUNTIME, which would put the whole ram
-+ * disk into the kernel's EFI runtime map. Being outside physmap, the buffer
-+ * can lie above the direct map, so md must map it with pmap_mapdev_attr()
-+ * rather than pmap_map().
++ * The caller picks the memory type of the image, see decompress.h.  It is never
++ * EfiLoaderData: the image stays the live root filesystem for as long as the
++ * kernel runs, and the kernel adds EFI_MD_TYPE_DATA ranges to physmap (see
++ * add_efi_map_entries()), so the allocator would overwrite it underneath the
++ * md driver.  Being outside physmap, the buffer can lie above the direct map,
++ * so md must map it with pmap_mapdev_attr() rather than pmap_map().
   */
 -static EFI_MEMORY_TYPE mem_type = EfiLoaderData;
-+static EFI_MEMORY_TYPE mem_type = EfiReservedMemoryType;
- 
+-
  struct decomp_state
  {
+ 	enum compression type;
+@@ -37,6 +36,7 @@ struct decomp_state
+ 	uint8_t *buf_cur;	/* Current output buffer */
+ 	uint8_t *buf_end;	/* Current end of allocated buffer */
+ 	EFI_PHYSICAL_ADDRESS buf; /* Decompression buffer */
++	EFI_MEMORY_TYPE mem_type; /* Memory type of `buf` */
+ 	union {
+ 		z_stream zstrm;
+ 		bz_stream bzstrm;
+@@ -84,7 +84,7 @@ alloc_buffer(decomp_state *dctx, size_t size)
+ {
+ 	dctx->alloc_size = roundup2(size, EFI_PAGE_SIZE);
+ 	dctx->pages = dctx->alloc_size / EFI_PAGE_SIZE;
+-	EFI_STATUS status = BS->AllocatePages(AllocateAnyPages, mem_type, dctx->pages, &dctx->buf);
++	EFI_STATUS status = BS->AllocatePages(AllocateAnyPages, dctx->mem_type, dctx->pages, &dctx->buf);
+ 	if (EFI_ERROR(status)) {
+ 		printf("Failed to allocate memory for %llu bytes\n", ULL(dctx->alloc_size));
+ 		return (status);
+@@ -104,7 +104,7 @@ grow_buffer(decomp_state *dctx)
+ 	size_t newsz = roundup2(dctx->alloc_size * 3 / 2, EFI_PAGE_SIZE);
+ 	size_t newpages = newsz / EFI_PAGE_SIZE;
+ 	EFI_PHYSICAL_ADDRESS newbuf;
+-	EFI_STATUS status = BS->AllocatePages(AllocateAnyPages, mem_type, newpages, &newbuf);
++	EFI_STATUS status = BS->AllocatePages(AllocateAnyPages, dctx->mem_type, newpages, &newbuf);
+ 	if (EFI_ERROR(status)) {
+ 		printf("Failed to allocate memory for %llu bytes\n", ULL(newsz));
+ 		return (status);
+@@ -448,12 +448,14 @@ null_fini(decomp_state *dctx, bool flush)
+ }
+ 
+ decomp_state *
+-decomp_init(uint8_t *buf, size_t buflen, size_t size_hint)
++decomp_init(uint8_t *buf, size_t buflen, size_t size_hint,
++    EFI_MEMORY_TYPE mem_type)
+ {
+ 	decomp_state *dctx;
+ 	
+ 	dctx = malloc(sizeof(*dctx));
+ 	memset(dctx, 0, sizeof(*dctx));
++	dctx->mem_type = mem_type;
+ 	dctx->type = what_compressed(buf, buflen);
+ 	switch (dctx->type) {
+ 	case zlib:
+diff --git a/stand/efi/loader/decompress.h b/stand/efi/loader/decompress.h
+index f9d4fe4..5740cef 100644
+--- a/stand/efi/loader/decompress.h
++++ b/stand/efi/loader/decompress.h
+@@ -11,7 +11,19 @@ enum step_return { ok, done, err };
+ 
+ typedef struct decomp_state decomp_state;
+ 
+-decomp_state *decomp_init(uint8_t *buf, size_t buflen, size_t size_hint);
++/*
++ * Memory types for an image that outlives the loader.  A buffer registered
++ * with EFI_RAM_DISK_PROTOCOL is a virtual disk, which ACPI (NFIT, SPA Range
++ * Structure) requires to be EfiReservedMemoryType.  UEFI forbids OS loaders to
++ * allocate that type otherwise, so a buffer only the md driver uses gets a type
++ * from the range UEFI leaves to OS loaders (0x80000000-0xffffffff).  The
++ * kernel keeps both out of physmap.
++ */
++#define	MEMDISK_RAM_DISK_MEMORY_TYPE	EfiReservedMemoryType
++#define	MEMDISK_MD_MEMORY_TYPE		((EFI_MEMORY_TYPE)0x80000000)
++
++decomp_state *decomp_init(uint8_t *buf, size_t buflen, size_t size_hint,
++    EFI_MEMORY_TYPE mem_type);
+ enum step_return decomp_step(decomp_state *dctx, uint8_t *buf, size_t len, size_t offset);
+ void decomp_fini(decomp_state *dctx, bool flush);
+ EFI_PHYSICAL_ADDRESS decomp_buffer(decomp_state *dctx);
+diff --git a/stand/efi/loader/memdisk.c b/stand/efi/loader/memdisk.c
+index 6a4fb5b..fe2bd32 100644
+--- a/stand/efi/loader/memdisk.c
++++ b/stand/efi/loader/memdisk.c
+@@ -48,6 +48,7 @@ static struct dl_state
+ 	size_t size;
+ 	EFI_STATUS status;
+ 	decomp_state *dctx;
++	EFI_MEMORY_TYPE mem_type;
+ 	bool complete;
+ } dl;
+ 
+@@ -84,7 +85,7 @@ download_chunk(dl_state *ctx, void *buffer, size_t length, size_t offset)
+ 	 * Peek into the first chunk to see the format of the data.
+ 	 */
+ 	if (offset == 0) {
+-		dctx = decomp_init(buffer, length, ctx->size);
++		dctx = decomp_init(buffer, length, ctx->size, ctx->mem_type);
+ 		if (dctx == NULL) {
+ 			ctx->in_progress = false;
+ 			ctx->status = EFI_VOLUME_CORRUPTED;
+@@ -182,6 +183,7 @@ download_md_image(const char *url)
+ 	}
+ 	memset(&ctx, 0, sizeof(ctx));
+ 	ctx.size = sb.st_size;
++	ctx.mem_type = MEMDISK_MD_MEMORY_TYPE;
+ 	offset = 0;
+ 	printf("Press Esc to cancel.\n");
+ 	while ((nread = read(fd, buf, DOWNLOAD_BUFSIZE)) > 0) {
+@@ -267,6 +269,14 @@ do_download_ramdisk(CHAR8 *url, bool is_disk)
+ 	printf("Downloading %s as a %s\n", url, is_disk ? "disk" : "cd");
+ 	printf("Press Esc to cancel.\n");
+ 	memset(ctx, 0, sizeof(*ctx));
++
++	/*
++	 * The memory type depends on how the image is handed on, so decide that
++	 * before allocating.  ram_disk will be NULL if this fails.
++	 */
++	BS->LocateProtocol(&ramdiskGuid, NULL, (void**)&ram_disk);
++	ctx->mem_type = ram_disk != NULL ? MEMDISK_RAM_DISK_MEMORY_TYPE :
++	    MEMDISK_MD_MEMORY_TYPE;
+ 	ctx->in_progress = true;
+ 	Status = ipxe_download->Start(ipxe_download, url, download_data, download_finish,
+ 	    &dl, &token);
+@@ -308,9 +318,6 @@ do_download_ramdisk(CHAR8 *url, bool is_disk)
+ 	printf("\nDownloaded %llu bytes, actual size %llu -- registering ramdisk\n",
+ 	    ULL(ctx->size), ULL(decomp_buffer_length(ctx->dctx)));
+ 
+-	/* ram_disk will be NULL if this fails */
+-	BS->LocateProtocol(&ramdiskGuid, NULL, (void**)&ram_disk);
+-
+ 	/*
+ 	 * If there's no ram_disk protocol installed in this firmware, do the
+ 	 * next best thing by saving a pointer and using that later.

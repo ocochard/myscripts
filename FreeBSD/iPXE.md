@@ -1750,7 +1750,7 @@ bhyve. Patches and write-ups are in `FreeBSD/docs/`:
 
 | # | patch | component | defect | symptom without it | write-up | in hosted `loader.x64.efi` | upstream |
 |---|---|---|---|---|---|---|---|
-| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (`EfiReservedMemoryType` since 2026-10-26) | no |
+| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (Reserved for a registered RAM disk, OS loader type for md, since 2026-11-08) | no |
 | 2 | [`loader_md_partition_probe.patch`](docs/loader_md_partition_probe.patch) | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md) | yes | no |
 | 3 | [`loader_disk_parsedev.patch`](docs/loader_disk_parsedev.patch) | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | [`bugreport_loader_disk_parsedev_names.md`](docs/bugreport_loader_disk_parsedev_names.md) | yes | no |
 | 4 | [`loader_set_currdev_disk_devdesc.patch`](docs/loader_set_currdev_disk_devdesc.patch) | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | [`bugreport_loader_set_currdev_devsw_undersized.md`](docs/bugreport_loader_set_currdev_devsw_undersized.md) | yes | no |
@@ -1777,8 +1777,11 @@ MD5 (/dev/md0) = 6e1b0bbd...
 MD5 (/dev/md0) = aa24358b...
 ```
 
-A stable checksum equal to the served image is the pass condition. Fix is one
-line: `EfiReservedMemoryType`, which the kernel skips when building physmap.
+A stable checksum equal to the served image is the pass condition. Fix: a
+memory type the kernel skips when building physmap. A buffer registered with
+`EFI_RAM_DISK_PROTOCOL` gets `EfiReservedMemoryType`, as ACPI requires for a
+virtual disk. A buffer only md uses gets the OS loader type `0x80000000`,
+because UEFI forbids loaders to allocate Reserved (since 2026-11-08).
 (An earlier version used `EfiRuntimeServicesData`; edk2 marks that type
 `EFI_MEMORY_RUNTIME`, which pulls the whole ram disk into the kernel's EFI
 runtime map.)
