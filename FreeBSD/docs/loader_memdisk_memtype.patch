@@ -10,10 +10,10 @@ Bug report: FreeBSD/docs/bugreport_loader_memdisk_memtype.md
 Investigation: FreeBSD/iPXE.md, section 7(f) "The fallback needed four fixes"
 
 diff --git a/stand/efi/loader/decompress.c b/stand/efi/loader/decompress.c
-index fbf800f..63a0f84 100644
+index fbf800f..8288b71 100644
 --- a/stand/efi/loader/decompress.c
 +++ b/stand/efi/loader/decompress.c
-@@ -20,13 +20,25 @@
+@@ -20,13 +20,12 @@
  #define ULL(x) ((unsigned long long)(x))
  
  /*
@@ -22,23 +22,10 @@ index fbf800f..63a0f84 100644
 - * memory to the kernel. This is also safe if we're chain booting to another efi
 - * progarm since the memory will be available to that program. The other type
 - * isn't necessarily in the pmap, so the md driver fails.
-+ * A ram disk has to outlive the loader: it stays the live root filesystem for
-+ * as long as the kernel runs. EfiLoaderData does not, because the kernel adds
-+ * EFI_MD_TYPE_DATA ranges to physmap (see add_efi_map_entries()) and hands
-+ * those pages to the allocator, which then overwrites the image underneath the
-+ * md driver.
-+ *
-+ * EfiReservedMemoryType is skipped when the kernel builds physmap, so the
-+ * pages are never reused. It is also not a runtime type: edk2 marks
-+ * EfiRuntimeServicesData EFI_MEMORY_RUNTIME, which would put the whole ram
-+ * disk into the kernel's EFI runtime map. Being outside physmap, the buffer
-+ * can lie above the direct map, so md must map it with pmap_mapdev_attr()
-+ * rather than pmap_map().
-+ *
-+ * ACPI requires this type for a buffer registered with EFI_RAM_DISK_PROTOCOL.
-+ * UEFI forbids loaders to allocate it otherwise, but the md fallback uses it
-+ * anyway: the fallback runs on old firmware, and the alternative UEFI leaves
-+ * to OS loaders (0x80000000 and up) hangs GetMemoryMap() on a ThinkPad T420.
++ * The ram disk is the root filesystem for as long as the kernel runs, so it
++ * must not be EfiLoaderData: the kernel reuses those pages.  The kernel skips
++ * EfiReservedMemoryType.  ACPI requires it for a registered RAM disk, and the
++ * OS loader types UEFI suggests instead hang some firmware in GetMemoryMap().
   */
 -static EFI_MEMORY_TYPE mem_type = EfiLoaderData;
 +static EFI_MEMORY_TYPE mem_type = EfiReservedMemoryType;
