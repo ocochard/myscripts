@@ -65,9 +65,14 @@ Two programs manage memory one after the other:
   which ranges it may reuse.
 
 On amd64 that decision is `add_efi_map_entries()` in
-`sys/amd64/amd64/machdep.c:819`:
+`sys/amd64/amd64/machdep.c:838`:
 
 ```c
+        case EFI_MD_TYPE_BS_CODE:  /* EfiBootServicesCode   */
+        case EFI_MD_TYPE_BS_DATA:  /* EfiBootServicesData   */
+                if (EFI_MAP_BOOTTYPE_ALLOWED(p->md_type))
+                        continue;  /* machdep.efirt.regs keeps it, default off */
+                /* FALLTHROUGH */
         case EFI_MD_TYPE_CODE:     /* EfiLoaderCode         */
         case EFI_MD_TYPE_DATA:     /* EfiLoaderData         */
         case EFI_MD_TYPE_FREE:     /* EfiConventionalMemory */
@@ -240,7 +245,7 @@ stock kernel, Reserved panics in `mdstart_preload` when the buffer crosses
 `dmaplimit`.  The md.c patch removes it.  `pmap_mapdev_attr()` never looks
 at the EFI type, only at the physical address: inside the DMAP it returns
 the DMAP address, otherwise it maps the range with `kva_alloc()`
-(`pmap.c:9445`).
+(`pmap.c:9458`).
 
 ### Why not `EfiRuntimeServicesData`
 
@@ -402,8 +407,9 @@ same memory as md0.
 
 ## 3. Bug 2: a kept buffer above `dmaplimit` panics in `mdstart_preload`
 
-Once the buffer is outside physmap (bug 1 fixed, or the old
-`EfiReservedMemoryType`), it no longer counts toward Maxmem.  If the firmware
+Once the buffer is `EfiReservedMemoryType` (the bug 1 fix, and the type
+before `85fb40bad584`), it is outside physmap and no longer counts toward
+Maxmem.  If the firmware
 places it at the **top** of RAM, Maxmem stops where the buffer starts, the
 DMAP ends shortly after, and part of the buffer is outside the DMAP.  md's
 pointer into that part is not mapped.
@@ -411,7 +417,9 @@ pointer into that part is not mapped.
 ### How to repeat
 
 Measured 2026-10-19: bhyve guest, 8 GB, 2 vCPUs, UEFI HTTP boot, the loader
-with `loader_memdisk_memtype.patch`, image
+with the first version of `loader_memdisk_memtype.patch`
+(`EfiRuntimeServicesData`, no tail trim); the `EfiReservedMemoryType` loader
+panics with the same memory map and fault address (section 4), image
 `FreeBSD-15.1-RELEASE-amd64-disc1.iso.xz` (894980880 bytes compressed,
 1352255488 uncompressed), kernel 15.1-RELEASE GENERIC, `boot_verbose=YES`:
 
@@ -460,8 +468,8 @@ flowchart LR
 * **Why the buffer is at the top of RAM:** the decompressor cannot know the
   final size in advance, so for gzip, bzip2 and xz (and zstd without a frame
   size) it allocates `max(4 x compressed size, 64 MB)`, about 3.6 GB here,
-  and grows it by 1.5x if needed (`grow_buffer()`).  The unused tail is never
-  freed.  The firmware placed this block at the top of the 8 GB guest.
+  and grows it by 1.5x if needed (`grow_buffer()`).  Without
+  `loader_memdisk_trim.patch` the unused tail is never freed.  The firmware placed this block at the top of the 8 GB guest.
 * **So Maxmem is about 5.67 GB and `dmaplimit` is `0x180000000` (6 GB).**
 * **The ram disk spans `0x16a9eb000 - 0x1bb3877ff`:** the first 342 MiB are
   below 6 GB and readable, the remaining 947 MiB are not.
@@ -492,18 +500,13 @@ either.
 ```diff
 --- sys/dev/md/md.c
 +++ sys/dev/md/md.c
-@@ -2131,7 +2131,16 @@ g_md_init(struct g_class *mp __unused)
+@@ -2131,7 +2131,11 @@ g_md_init(struct g_class *mp __unused)
  		    resource_int_value("md", i, "len", &len) != 0)
  		        break;
 -		ptr = pmap_map(NULL, paddr, paddr + len, VM_PROT_READ);
 +		/*
-+		 * The loader keeps this memory out of the physical memory
-+		 * map so the kernel does not reuse it, which means it can lie
-+		 * above the end of the direct map: on amd64 the direct map
-+		 * only covers up to the top of physmap.  pmap_map() would
-+		 * blindly return a direct map address there, so build a real
-+		 * mapping instead; pmap_mapdev_attr() still uses the direct
-+		 * map when the whole range is covered by it.
++		 * The loader keeps the image out of physmap, so it can lie
++		 * beyond the direct map, where pmap_map() is not valid.
 +		 */
 +		ptr = pmap_mapdev_attr(paddr, len, VM_MEMATTR_DEFAULT);
  		if (ptr != NULL && len != 0) {
@@ -539,6 +542,7 @@ the top of RAM.
 | `EfiReservedMemoryType` + tail trim | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **single-user shell, no panic, image intact under memory pressure, +2046 MB usable** (below) |
 | `EfiReservedMemoryType` | 15.1 + md.c patch | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact except the backup GPT** (below) |
 | `EfiReservedMemoryType` | stock 15.1 | mini-memstick | bhyve, VirtualDisk | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
+| `EfiReservedMemoryType` + tail trim | 15.1 + md.c patch | mini-memstick | bhyve, VirtualDisk | **single-user shell, ram disk inside the DMAP, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
 | OS loader type `0x80000000`, md fallback forced | stock 15.1 | mini-memstick | bhyve, md fallback | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
 | `EfiReservedMemoryType` | stock 15.1 | mini-memstick | Lenovo X1 Carbon, VirtualDisk | boots, `md5 /dev/md0` equal to the served image (RAM fill not reported); firmware publishes an NFIT virtual disk SPA at the ram disk address |
 | `EfiLoaderData`, md fallback forced (negative control) | stock 15.1 | mini-memstick | bhyve, md fallback | **`dd` SIGSEGV, `md5 /dev/md0` changes, `poweroff: Exec format error`** (below) |
@@ -673,6 +677,35 @@ served ISO: in the guest and on the host, `dd` of sectors 0 to 2640982
 gives `17c1e701435dd5ac3f52e9a73cd02254`, and of sectors 2640984 to
 2641014 gives `51596dda30fc38f0df3556d6f115256d`.
 
+The md.c patch with a ram disk that lies inside the DMAP, the common case,
+measured 2026-11-08.  Loader: main at `bdcfeac3e1cb` plus patches #1 to #5
+of `FreeBSD/iPXE.md` 7(f).  Kernel: releng/15.1 at `96841ea08dcf` plus
+`md_preload_mapdev.patch`, installed in the 15.1 mini-memstick, which was
+then recompressed with `xz` (image md5 `02d1f790...`).  bhyve, 8 GB,
+`boot_single=YES`:
+
+```
+Freed 75010048 unused bytes of the decompression buffer
+Downloaded 125641860 bytes, actual size 678842880 -- registering ramdisk
+Installed RAM disk as VirtualDisk(0x6D185000,0x958EA1FF,0)
+FreeBSD 15.1-RELEASE #0 n283562-96841ea08dcf-dirty: Sun Nov  8 23:34:03 CET 2026
+avail memory = 7629225984 (7275 MB)
+md0: Preloaded image <preload0 0x000000006d185000> 678842880 bytes at 0xfffff8006d185000
+# sysctl machdep.efi_map | grep -v -e BootServices -e Conventional
+               Reserved 00006d185000 000000000000 00028766 UC WC WT WB
+# md5 /dev/md0; md5 /dev/md0
+MD5 (/dev/md0) = 02d1f790585dfdbe216de38a0f9f9ca8
+MD5 (/dev/md0) = 02d1f790585dfdbe216de38a0f9f9ca8
+# dd if=/dev/zero of=/tmp/fill bs=1m count=7000   (tmpfs)
+vm.stats.vm.v_free_count: 54871
+# md5 /dev/md0
+MD5 (/dev/md0) = 02d1f790585dfdbe216de38a0f9f9ca8
+```
+
+`pmap_mapdev_attr()` returned the DMAP address (`0xfffff8006d185000`), so
+the patch keeps the direct map when the range is covered.  After the kernel
+used all but 214 MB of its memory, the ram disk still matched the image.
+
 A variant of this patch (Reserved for a registered RAM disk, OS loader
 type `0x80000000` for md, since dropped because of the T420), measured
 2026-11-08.  Loader: main at `0448f4d0a435` with patches #1 to #5
@@ -705,9 +738,9 @@ negative control proves the fill catches the bug: during the fill, `dd`
 died with SIGSEGV (`pid 29 (dd) ... exited on signal 11`), the device
 checksum changed, and `poweroff` then failed with `Exec format error`.
 
-Base: main at `c14281f6bb46` (2026-09-24) for the loader patch.  The md.c
-patch applies to main as shown; on releng/15.1 the line has an extra
-`(char *)` cast before `pmap_map`.
+Base: main at `f22d65998fe1` (2026-11-01) for all patches; source line
+numbers in this report are from that tree.  On releng/15.1 the md.c line
+has an extra `(char *)` cast before `pmap_map`.
 
 Patches attached: `loader_memdisk_memtype.patch` (loader),
 `md_preload_mapdev.patch` (kernel), `loader_memdisk_trim.patch` (loader,
