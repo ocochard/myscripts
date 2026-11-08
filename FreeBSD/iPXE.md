@@ -1750,7 +1750,7 @@ bhyve. Patches and write-ups are in `FreeBSD/docs/`:
 
 | # | patch | component | defect | symptom without it | write-up | in hosted `loader.x64.efi` | upstream |
 |---|---|---|---|---|---|---|---|
-| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (Reserved for a registered RAM disk, OS loader type for md, since 2026-11-08) | no |
+| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (`EfiReservedMemoryType`, built 2026-10-26) | no |
 | 2 | [`loader_md_partition_probe.patch`](docs/loader_md_partition_probe.patch) | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md) | yes | no |
 | 3 | [`loader_disk_parsedev.patch`](docs/loader_disk_parsedev.patch) | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | [`bugreport_loader_disk_parsedev_names.md`](docs/bugreport_loader_disk_parsedev_names.md) | yes | no |
 | 4 | [`loader_set_currdev_disk_devdesc.patch`](docs/loader_set_currdev_disk_devdesc.patch) | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | [`bugreport_loader_set_currdev_devsw_undersized.md`](docs/bugreport_loader_set_currdev_devsw_undersized.md) | yes | no |
@@ -1777,11 +1777,12 @@ MD5 (/dev/md0) = 6e1b0bbd...
 MD5 (/dev/md0) = aa24358b...
 ```
 
-A stable checksum equal to the served image is the pass condition. Fix: a
-memory type the kernel skips when building physmap. A buffer registered with
-`EFI_RAM_DISK_PROTOCOL` gets `EfiReservedMemoryType`, as ACPI requires for a
-virtual disk. A buffer only md uses gets the OS loader type `0x80000000`,
-because UEFI forbids loaders to allocate Reserved (since 2026-11-08).
+A stable checksum equal to the served image is the pass condition. Fix is one
+line: `EfiReservedMemoryType`, which the kernel skips when building physmap,
+and which ACPI requires for a virtual disk. UEFI forbids loaders to allocate
+it, and allows types `0x80000000` and up instead; a loader using `0x80000000`
+for the md fallback hung `GetMemoryMap()` on a ThinkPad T420 (2026-11-08),
+so the md fallback keeps Reserved too.
 (An earlier version used `EfiRuntimeServicesData`; edk2 marks that type
 `EFI_MEMORY_RUNTIME`, which pulls the whole ram disk into the kernel's EFI
 runtime map.)
@@ -1811,7 +1812,9 @@ Read the raw device.
 | bhyve, disc1 ISO, #1-#4, kernel with #6 | installer prompt; `/dev/md0` matches the image except 2 backup-GPT sectors edk2 writes | #6 fixes the panic |
 | bhyve, disc1 ISO, #1-#5, stock 15.1 kernel | installer prompt, same integrity result, 4587 -> 6633 MB usable | #5 avoids the panic on its own here |
 | Lenovo X1 Carbon, mini-memstick, hosted loader fetched by `nas:/tftpboot/autoexec.ipxe` (2026-11-08) | boots; ram disk range `Reserved`; `md5 /dev/md0` equal to the image | laptop firmware has `EFI_RAM_DISK_PROTOCOL`; the Reserved buffer is intact on real hardware, and the firmware publishes it as an ACPI NFIT virtual disk (loader build not confirmed from the banner) |
-| bhyve, mini-memstick, #1-#5 with the OS loader type, md fallback forced by a test build (2026-11-08) | `md5 /dev/md0` equal to the image before and after filling RAM; the same test with `EfiLoaderData` corrupts | the OS loader type keeps the md buffer out of physmap |
+| bhyve, mini-memstick, #1-#5 with the OS loader type, md fallback forced by a test build (2026-11-08) | `md5 /dev/md0` equal to the image before and after filling RAM; the same test with `EfiLoaderData` corrupts | the fill test catches the corruption; the OS loader type works in bhyve |
+| Lenovo T420 (2011 UEFI, no RamDisk protocol), mini-memstick, #1-#5 (2026-11-08) | with the OS loader type: hangs after `staging 0x...`, and `memmap` hangs; with Reserved: boots, `memmap` shows the ram disk `Reserved` | old firmware chokes on the OS loader type in `GetMemoryMap()`, so #1 keeps Reserved |
+| Supermicro A1SRi-2758F, mini-memstick, #1-#5 with Reserved (2026-11-08) | ram disk range `Reserved`; `md5 /dev/md0` equal to the image before and after writing 14000 MB to tmpfs | Reserved holds on the md fallback on real hardware under full memory pressure |
 
 #### Check a booted system
 
@@ -1847,8 +1850,8 @@ leading zeros).  The type on that line:
 
 | Type | Path | What it proves |
 |---|---|---|
-| `Reserved` | RamDisk (`VirtualDisk`) | the firmware has `EFI_RAM_DISK_PROTOCOL`; old and new #1 both use Reserved here, so it does not tell which loader ran |
-| `<INVALID>` | md fallback | the OS loader type `0x80000000` (the kernel has no name for it): the new #1, on firmware without the protocol |
+| `Reserved` | either | #1 uses Reserved on both paths; the console line above tells which path ran |
+| `<INVALID>` | md fallback | the OS loader type `0x80000000` (the kernel has no name for it): the dropped 2026-11-08 variant of #1, which hangs old firmware |
 | `LoaderData` | either | a loader without #1: expect corruption |
 
 No `hint.md.0.physaddr` at all means the root is not a loader ram disk.

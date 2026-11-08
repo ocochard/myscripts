@@ -223,23 +223,16 @@ corruption of the root filesystem is the worse of the two.
 
 ### Fix (loader): `loader_memdisk_memtype.patch`
 
-Never allocate the buffer as `EfiLoaderData`.  The type now depends on how
-the image is handed on, so `do_download_ramdisk()` looks up
-`EFI_RAM_DISK_PROTOCOL` before the download starts:
+Allocate the buffer as `EfiReservedMemoryType`.  It is not in the list in
+section 1.2, so the kernel skips it and never reuses those pages
+(requirement 1).  This fixes the corruption.  It does **not** guarantee
+requirement 2: that needs the md.c fix from section 3.  Measured
+2026-10-25, results in section 4.
 
-* Firmware has the protocol: the buffer is registered as a virtual disk and
-  allocated `EfiReservedMemoryType`, as ACPI requires (see "Is
-  `EfiReservedMemoryType` the right type?" below).
-* No protocol, or the `initmd` path (`download_md_image()`), where only md
-  uses the buffer: it gets the OS loader type `0x80000000`, because UEFI
-  forbids loaders to allocate Reserved.
-
-Neither type is in the list in section 1.2, so the kernel skips both and
-never reuses those pages (requirement 1).  This fixes the corruption.  It
-does **not** guarantee requirement 2: that needs the md.c fix from section
-3.  If `Register()` fails after the download, the md fallback keeps the
-Reserved buffer, which is still safe for the kernel.  Reserved was measured
-2026-10-25 and the OS loader type 2026-11-08; results are in section 4.
+The same type serves both paths.  ACPI requires it for a buffer registered
+with `EFI_RAM_DISK_PROTOCOL`.  For the md fallback, UEFI forbids loaders to
+allocate it, but the alternative UEFI allows, an OS loader type, hangs real
+firmware (see "Is `EfiReservedMemoryType` the right type?" below).
 
 This is the type the fallback used before `85fb40bad584`.  That commit left
 Reserved because "the md driver fails", and that failure is bug 2: with a
@@ -355,13 +348,33 @@ The choices for the md fallback are:
 
 | Choice | Spec | Kernel side | Cost |
 |---|---|---|---|
-| OS loader type `0x80000000` (this patch) | allowed: "reserved for use by UEFI OS loaders" | skipped by amd64 `add_efi_map_entries()` (`default: continue`), by `subr_efi_map.c` on arm64/riscv (`default: break`), and by Linux `setup_e820()` (`default: continue`) | md.c fix still needed; `sysctl machdep.efi_map` shows the range as `<INVALID>` |
+| OS loader type `0x80000000` | allowed: "reserved for use by UEFI OS loaders" | skipped by amd64 `add_efi_map_entries()` (`default: continue`), by `subr_efi_map.c` on arm64/riscv (`default: break`), and by Linux `setup_e820()` (`default: continue`) | **hangs `GetMemoryMap()` on a ThinkPad T420** (below) |
 | `EfiLoaderData` + kernel reservation (GRUB/Linux model) | clean for the loader | each architecture must exclude `hint.md.N.physaddr` from physmap early; arm64/riscv can use `physmem_exclude_region(..., EXFLAG_NOALLOC)`, which keeps the range in the DMAP | a new loader with an old kernel still corrupts silently |
-| `EfiReservedMemoryType` | breaks the UEFI loader rule on the fallback path | skipped everywhere, as above | none beyond the md.c fix |
+| `EfiReservedMemoryType` (this patch) | breaks the UEFI loader rule on the fallback path | skipped everywhere, as above | none beyond the md.c fix |
 
-Firmware that rejects an OS loader type would fail the allocation, and the
-download with it.  edk2 accepts it.  Older AMI firmware (the Supermicro
-below) has not been tested with it.
+**The OS loader type hangs real firmware.**  A loader that gave the md
+fallback buffer type `0x80000000` was tried on 2026-11-08 and works in
+bhyve (section 4).  On a Lenovo ThinkPad T420 (2011 firmware, no
+`EFI_RAM_DISK_PROTOCOL`, so the md fallback), it hangs the boot after the
+last loader message, `staging 0xcaa00000`.  That message is printed by
+`bi_load()` (`stand/efi/loader/bootinfo.c:219`) just before it calls
+`GetMemoryMap()` and `ExitBootServices()`.  The loader's `memmap` command,
+which only calls `GetMemoryMap()` and prints the map, hangs too.  The
+loader names unknown types `"Unknown"` (`efi_memory_type()`), so the hang
+is in the firmware.  The previous loader, with Reserved on both paths, boots the T420, and
+its `memmap` prints the map, with the ram disk as an ordinary entry
+(0x28766 pages = 678842880 bytes, the uncompressed mini-memstick):
+
+```
+               Reserved 0000893c3000 000000000000 00028766 UC WC WT WB
+```
+  It was built from a main of 2026-10-20 or
+earlier; the only `stand/` commit since then touches the BIOS loader
+(`stand/i386/libi386/vbe.c`), so the memory type is the only change that
+reaches `loader.efi`.  The md fallback exists for exactly this kind of firmware:
+anything older than UEFI 2.6 lacks the RAM disk protocol.  So the
+spec-allowed type fails where the fallback is needed, and Reserved, which
+edk2 itself uses for ram disks, is the practical choice.
 
 On arm64 and riscv, `subr_efi_map.c` says "Entry types not explicitly listed
 here are ignored and not mapped", so Reserved or an OS loader type is never
@@ -522,10 +535,13 @@ the top of RAM.
 | `EfiRuntimeServicesData` + tail trim | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact, +2046 MB usable** (below) |
 | `EfiReservedMemoryType` | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **panic in `mdstart_preload`**, same fault address as RT_DATA (below) |
 | `EfiReservedMemoryType` | 15.1 + md.c patch | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact except the backup GPT** (below) |
-| this patch: `EfiReservedMemoryType` | stock 15.1 | mini-memstick | bhyve, VirtualDisk | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
-| this patch: OS loader type, md fallback forced | stock 15.1 | mini-memstick | bhyve, md fallback | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
-| this patch: `EfiReservedMemoryType` | stock 15.1 | mini-memstick | Lenovo X1 Carbon, VirtualDisk | boots, `md5 /dev/md0` equal to the served image (RAM fill not reported); firmware publishes an NFIT virtual disk SPA at the ram disk address |
+| `EfiReservedMemoryType` | stock 15.1 | mini-memstick | bhyve, VirtualDisk | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
+| OS loader type `0x80000000`, md fallback forced | stock 15.1 | mini-memstick | bhyve, md fallback | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
+| `EfiReservedMemoryType` | stock 15.1 | mini-memstick | Lenovo X1 Carbon, VirtualDisk | boots, `md5 /dev/md0` equal to the served image (RAM fill not reported); firmware publishes an NFIT virtual disk SPA at the ram disk address |
 | `EfiLoaderData`, md fallback forced (negative control) | stock 15.1 | mini-memstick | bhyve, md fallback | **`dd` SIGSEGV, `md5 /dev/md0` changes, `poweroff: Exec format error`** (below) |
+| OS loader type `0x80000000` | stock 15.1 | mini-memstick | Lenovo T420, md fallback | **hangs after `staging 0xcaa00000`; `memmap` at the loader prompt hangs** (section 2) |
+| `EfiReservedMemoryType` (this patch) | stock 15.1 | mini-memstick | Lenovo T420, md fallback | **boots (verbose); ram disk range `Reserved`; `memmap` prints the map** |
+| `EfiReservedMemoryType` (this patch) | stock 15.1 | mini-memstick | Supermicro A1SRi-2758F (16 GB), md fallback | **ram disk range `Reserved 0000310ce000 ... 00028766`; `md5 /dev/md0` equal to the served image before and after writing 14000 MB to tmpfs** (2026-11-08) |
 
 With the md.c patch, same VM, same loader, same image rebuilt around the
 patched kernel (895026656 bytes compressed, so the decompression buffer is the
@@ -645,8 +661,9 @@ served ISO: in the guest and on the host, `dd` of sectors 0 to 2640982
 gives `17c1e701435dd5ac3f52e9a73cd02254`, and of sectors 2640984 to
 2641014 gives `51596dda30fc38f0df3556d6f115256d`.
 
-This patch (Reserved for a registered RAM disk, OS loader type for md),
-measured 2026-11-08.  Loader: main at `0448f4d0a435` with patches #1 to #5
+A variant of this patch (Reserved for a registered RAM disk, OS loader
+type `0x80000000` for md, since dropped because of the T420), measured
+2026-11-08.  Loader: main at `0448f4d0a435` with patches #1 to #5
 of `FreeBSD/iPXE.md` 7(f).  bhyve's edk2 has `EFI_RAM_DISK_PROTOCOL`, so a
 test-only build sets `ram_disk = NULL` after the lookup to force the md
 fallback; the negative control also sets the md type back to
@@ -657,8 +674,8 @@ tmpfs, then `md5 /dev/md0` twice more.
 
 | Loader | Buffer in `sysctl machdep.efi_map` | md5 before fill | md5 after fill (x2) |
 |---|---|---|---|
-| this patch, VirtualDisk | `Reserved 0000729e1000 ... 00028766` | `cb891aba...` | `cb891aba...`, `cb891aba...` |
-| this patch, md fallback forced | `<INVALID> 0000729e1000 ... 00028766` | `cb891aba...` | `cb891aba...`, `cb891aba...` |
+| Reserved, VirtualDisk | `Reserved 0000729e1000 ... 00028766` | `cb891aba...` | `cb891aba...`, `cb891aba...` |
+| OS loader type, md fallback forced | `<INVALID> 0000729e1000 ... 00028766` | `cb891aba...` | `cb891aba...`, `cb891aba...` |
 | `EfiLoaderData`, md fallback forced | `LoaderData 0000729e1000 ... 00028766` | `cb891aba...` | `c1c08d94...`, `c1c08d94...` |
 
 `<INVALID>` is how the kernel prints a type it has no name for, here
