@@ -6,8 +6,8 @@ Component: boot
 Version:   16.0-CURRENT
 ```
 
-Patch: `loader_set_currdev_disk_devdesc.patch` (`stand/efi/loader/main.c`).
-Patch #4 of six; the full list is in `FreeBSD/iPXE.md`, section 7(f).
+Patch: `loader_set_currdev_disk_devdesc.patch` (`stand/efi/loader/main.c`,
+`stand/common/md.c`, `stand/common/bootstrap.h`).  Patch #3 of six; the full list is in `FreeBSD/iPXE.md`, section 7(f).
 
 **Summary.** `set_currdev_devsw()` describes the boot device with a small
 structure on the stack, but for a disk the name formatter reads two fields
@@ -94,7 +94,7 @@ Any `DEVT_DISK` device whose devsw sets `dv_fmtdev = disk_fmtdev` and whose
 `currdev` is set through `set_currdev_devsw()`.  Not reachable in tree
 today, because the disk devices that go through `set_currdev_devsw()` have
 no `dv_fmtdev`.  It becomes reachable the moment one gains it, which is what
-patch #2 (`loader_md_partition_probe.patch`) does for md: `probe_md_currdev()`
+patch #4 (`loader_md_partition_probe.patch`) does for md: `probe_md_currdev()`
 calls `set_currdev_devsw(&md_dev, 0)`.
 
 ---
@@ -109,12 +109,31 @@ In `probe_md_currdev()`, use a real `struct disk_devdesc`, as
 * **open the device once before naming it**, with `disk_open()`, so the
   wildcards are replaced by the slice and partition actually found, then
   close it;
+* if that open fails, the image has no partition table: set
+  `d_slice = D_SLICENONE` and `d_partition = D_PARTNONE` so the whole image
+  is used, as before;
 * pass it to `set_currdev_devdesc()`.
+
+`disk_open()` needs the image size and sector size, which live in the
+private `struct md_info` of `md.c`.  The patch adds a small `md_get_size()`
+accessor and moves `MD_BLOCK_SIZE` from `md.c` to `bootstrap.h`, so
+`main.c` can use both.
+
+Land this patch after #2 and before #4.  Without #4, md has no
+`dv_fmtdev`, so the device is still named `md0:` and the loader behaves
+as stock (table in `bugreport_loader_md_no_partition_probe.md`, section 4).
+The patch applies on a tree without #4.
 
 The open-first step matters because of a second sharp edge: `disk_fmtdev()`
 prints a slice whenever `d_slice > D_SLICENONE` (-1), and `D_SLICEWILD` is 0,
 so an unresolved wildcard would be printed as `s0`, a slice that cannot
 exist.
+
+The fallback matters for unpartitioned images, such as a bare UFS image
+made with `makefs`.  `disk_open()` finds no table, `ptable_getbestpart()`
+returns `ENOENT`, and the wildcards stay unresolved.  Without the fallback,
+currdev becomes `md0s0:` and the loader prints `MD not present`, where the
+stock loader boots the same image as `md0:`.
 
 ### Alternatives
 
@@ -134,5 +153,16 @@ exist.
 | #1 to #4 | Supermicro A1SRi-2758F, md fallback | multi-user, `Setting currdev to md0s2a:` from resolved values |
 | #1 to #4 | qemu and bhyve (edk2) | installer prompt; `probe_md_currdev()` not reached (VirtualDisk path) |
 | fix inside `set_currdev_devsw()` | any | **untested** |
+
+md fallback forced by a test build (`ram_disk = NULL` after
+`LocateProtocol()`), qemu 11.1.0 + edk2, iPXE `memdisk=`, 2026-11-08.  The
+images are a 32 MB `makefs` UFS holding `/boot/defaults` and `/boot/lua`,
+raw and wrapped in MBR + BSD label (`mkimg`):
+
+| Loader | Raw UFS image | MBR + BSD label image |
+|---|---|---|
+| stock | `md0:`, loader menu | `md0:`, `MD not present` |
+| #1 to #4, without the fallback | `md0s0:`, `MD not present` | `md0s1a:`, loader menu |
+| #1 to #4, with the fallback | `md0:`, loader menu | `md0s1a:`, loader menu |
 
 Base: main at `c14281f6bb46` (2026-09-24).

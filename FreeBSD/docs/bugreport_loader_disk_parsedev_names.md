@@ -6,7 +6,7 @@ Component: boot
 Version:   16.0-CURRENT
 ```
 
-Patch: `loader_disk_parsedev.patch` (`stand/common/disk.c`).  Patch #3 of
+Patch: `loader_disk_parsedev.patch` (`stand/common/disk.c`).  Patch #2 of
 six; the full list is in `FreeBSD/iPXE.md`, section 7(f).
 
 **Summary.** The loader names disks with one function and reads names back
@@ -69,7 +69,7 @@ that a name is *present*, not to decide which names are *allowed*.
 Any `DEVT_DISK` device whose `dv_name` is neither `disk` nor `vdisk`.  Today
 none exists in tree, so nothing fails: this is a latent defect.  It becomes
 real as soon as another driver uses the generic disk hooks.  The md driver
-does exactly that with patch #2 (`loader_md_partition_probe.patch`), after
+does exactly that with patch #4 (`loader_md_partition_probe.patch`), after
 which the loader prints
 
 ```
@@ -113,7 +113,7 @@ includes.  8 lines, no new includes.
 
 | Patches | Platform | Result |
 |---|---|---|
-| #2 without #3 | Supermicro A1SRi-2758F, md fallback | `md0s2a:` printed, then refused |
+| #4 without #2 | Supermicro A1SRi-2758F, md fallback | `md0s2a:` printed, then refused |
 | #1 to #4 | Supermicro A1SRi-2758F, md fallback | multi-user, `Setting currdev to md0s2a:` |
 | #1 to #4 | qemu and bhyve (edk2) | installer prompt; `disk` and `vdisk` names still parse (no regression), md not exercised |
 

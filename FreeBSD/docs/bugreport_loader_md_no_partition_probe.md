@@ -6,8 +6,8 @@ Component: boot
 Version:   16.0-CURRENT
 ```
 
-Patch: `loader_md_partition_probe.patch` (`stand/common/md.c`,
-`stand/common/bootstrap.h`).  Patch #2 of six; the full list is in
+Patch: `loader_md_partition_probe.patch` (`stand/common/md.c`).  Patch #4
+of six; the full list is in
 `FreeBSD/iPXE.md`, section 7(f).
 
 **Summary.** When `loader.efi` boots a disk image from RAM through its `md`
@@ -124,13 +124,10 @@ Make md do what its type promises:
 * `md_close()` calls `disk_close()`;
 * `md_strategy()` adds `dev->d_offset` to the block number before reading;
 * the devsw gains `dv_fmtdev = disk_fmtdev` and `dv_parsedev =
-  disk_parsedev`, so the device is named like any other disk;
-* a small `md_get_size()` accessor and `MD_SECTOR_SIZE`, so code outside
-  `md.c` (patch #4) can open the device without reaching into the private
-  `struct md_info`.
+  disk_parsedev`, so the device is named like any other disk.
 
 The functions now take a `struct disk_devdesc` instead of a plain
-`struct devdesc`, because that is where `d_offset` lives.  About 40 lines.
+`struct devdesc`, because that is where `d_offset` lives.  About 30 lines.
 
 ### Why it is not enough on its own
 
@@ -138,11 +135,19 @@ Giving md the generic disk hooks exposes two latent loader bugs that no
 device had hit before, both on the path that turns the device into the
 `currdev` string and back:
 
-* **#3, `loader_disk_parsedev.patch`:** `disk_parsedev()` only accepts names
+* **#2, `loader_disk_parsedev.patch`:** `disk_parsedev()` only accepts names
   starting with `disk` or `vdisk`, so `md0s2a:` is printed but refused.
-* **#4, `loader_set_currdev_disk_devdesc.patch`:** the md probe passes a
+* **#3, `loader_set_currdev_disk_devdesc.patch`:** the md probe passes a
   plain `struct devdesc`, and `disk_fmtdev()` reads `d_slice` and
   `d_partition` past its end.
+
+On its own, this patch makes the md fallback worse than today: the probe
+names the device from stack garbage (`Setting currdev to
+md0s2145801568a:`) and fails on every image, raw ones included.  Land the
+three in the order #2, #3, #4.  #2 and #3 change nothing visible on their
+own, so every step of the series boots at least what the stock loader
+boots.  The patch files are generated for that order: this one applies on
+top of #3.
 
 A bootable root also needs #1, `loader_memdisk_memtype.patch`, or the kernel
 overwrites the ram disk once it runs.
@@ -155,6 +160,7 @@ overwrites the ram disk once it runs.
 |---|---|---|
 | none | Supermicro A1SRi-2758F, md fallback | `MD not present` |
 | #1 to #4 | Supermicro A1SRi-2758F, md fallback | multi-user from the memstick: `Setting currdev to md0s2a:` |
+| each step of #2, #3, #4, and #4 alone | qemu + edk2, md fallback forced by a test build | see the table below |
 | #1 to #4 | qemu and bhyve (edk2) | installer prompt, but this code is **not exercised** (see below) |
 
 Console with all four fixes on the Supermicro:
@@ -166,8 +172,20 @@ Loading /boot/defaults/loader.conf
 ```
 
 qemu and bhyve both have `EFI_RAM_DISK_PROTOCOL`, so they take the
-`VirtualDisk` path and never call `md_open()`.  The md fallback is only
-reachable on firmware without the protocol, so hardware is the only test of
-this fix.
+`VirtualDisk` path and never call `md_open()`.  To reach the md fallback
+in qemu, a test build sets `ram_disk = NULL` after `LocateProtocol()` in
+`memdisk.c`.  With that build (qemu 11.1.0 + edk2, iPXE `memdisk=`,
+2026-11-08), each step of the series was booted with two 32 MB images: a
+`makefs` UFS holding `/boot/defaults` and `/boot/lua`, raw and wrapped in
+MBR + BSD label (`mkimg`).  All builds include #1.
+
+| Applied | Raw UFS image | MBR + BSD label image |
+|---|---|---|
+| #2 | `md0:`, loader menu | `md0:`, `MD not present` |
+| #2, #3 | `md0:`, loader menu | `md0:`, `MD not present` |
+| #2, #3, #4 | `md0:`, loader menu | `md0s1a:`, loader menu |
+| #4 alone | `md0s2145801568a:`, `MD not present` | `md0s2145801568a:`, `MD not present` |
+
+The first two rows match the stock loader.
 
 Base: main at `c14281f6bb46` (2026-09-24).

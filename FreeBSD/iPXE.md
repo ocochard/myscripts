@@ -1774,10 +1774,10 @@ bhyve. Patches and write-ups are in `FreeBSD/docs/`:
 
 | # | patch | component | defect | symptom without it | write-up | in hosted `loader.x64.efi` | upstream |
 |---|---|---|---|---|---|---|---|
-| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (`EfiReservedMemoryType`, built 2026-10-26) | no |
-| 2 | [`loader_md_partition_probe.patch`](docs/loader_md_partition_probe.patch) | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md) | yes | no |
-| 3 | [`loader_disk_parsedev.patch`](docs/loader_disk_parsedev.patch) | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | [`bugreport_loader_disk_parsedev_names.md`](docs/bugreport_loader_disk_parsedev_names.md) | yes | no |
-| 4 | [`loader_set_currdev_disk_devdesc.patch`](docs/loader_set_currdev_disk_devdesc.patch) | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | [`bugreport_loader_set_currdev_devsw_undersized.md`](docs/bugreport_loader_set_currdev_devsw_undersized.md) | yes | no |
+| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (`EfiReservedMemoryType`, built 2026-11-08) | no |
+| 2 | [`loader_disk_parsedev.patch`](docs/loader_disk_parsedev.patch) | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | [`bugreport_loader_disk_parsedev_names.md`](docs/bugreport_loader_disk_parsedev_names.md) | yes | no |
+| 3 | [`loader_set_currdev_disk_devdesc.patch`](docs/loader_set_currdev_disk_devdesc.patch) | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | [`bugreport_loader_set_currdev_devsw_undersized.md`](docs/bugreport_loader_set_currdev_devsw_undersized.md) | yes | no |
+| 4 | [`loader_md_partition_probe.patch`](docs/loader_md_partition_probe.patch) | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md) | yes | no |
 | 5 | [`loader_memdisk_trim.patch`](docs/loader_memdisk_trim.patch) | loader | 4x-guessed decompression buffer never trimmed | 2 GiB lost to the kernel for the disc1 ISO; with #1 the ram disk can end up above the direct map and #6 fires | [`loader_memdisk_trim.md`](docs/loader_memdisk_trim.md) | yes (since 2026-10-19) | no |
 | 6 | [`md_preload_mapdev.patch`](docs/md_preload_mapdev.patch) | kernel (`md(4)`) | `pmap_map()` assumes the hint range is in the direct map | with #1, `Fatal trap 12` in `mdstart_preload` when the ram disk sits above `dmaplimit` | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md), section 3 | n/a: must be in the booted kernel | no |
 
@@ -1785,6 +1785,10 @@ Upstream status checked against `freebsd/main` at `f2bba0192166`: all six
 still apply. #1 to #5 make up the loader; #6 only helps once a kernel built
 with it is the one being booted, so a stock release image still depends on
 #5 to avoid the panic.
+
+Apply the patches in table order; the patch files are generated for it.
+#4 needs #2 and #3 first: alone it names the md device from stack garbage
+and fails on every image.
 
 The first is the nastiest and is worth knowing about even if you never touch
 the others. `EfiLoaderData` becomes `EFI_MD_TYPE_DATA`, which
@@ -2291,7 +2295,7 @@ loader simply falls through to the next candidate device once `md0:` fails.
    Later correction (2026-10-25): this second point is probably wrong.
    That comment refers to the kernel's md(4) driver (bug #6), and the
    loader reads Reserved memory without trouble through the firmware's
-   identity map. The loader-side `MD not present` matches bug #2:
+   identity map. The loader-side `MD not present` matches bug #4:
    `md_open()` never calls `disk_open()`, so a partitioned image has no
    filesystem at offset 0. See
    [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md).

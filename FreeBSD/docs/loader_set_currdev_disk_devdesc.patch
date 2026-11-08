@@ -1,8 +1,56 @@
+diff --git a/stand/common/bootstrap.h b/stand/common/bootstrap.h
+index 7dab530a368a..c091dc3266e5 100644
+--- a/stand/common/bootstrap.h
++++ b/stand/common/bootstrap.h
+@@ -387,5 +387,8 @@ void set_currdev(const char *devname);
+ extern struct devsw md_dev;
+ int md_register(void *image, size_t size, unsigned int flags);
+ void md_export_to_kernel(uint64_t start, uint64_t len);
++int md_get_size(int unit, uint64_t *size);
++
++#define	MD_BLOCK_SIZE	512
+ 
+ #endif /* !_BOOTSTRAP_H_ */
+diff --git a/stand/common/md.c b/stand/common/md.c
+index c8692a8948fb..93301e39a2f5 100644
+--- a/stand/common/md.c
++++ b/stand/common/md.c
+@@ -32,7 +32,6 @@
+ 
+ #include "bootstrap.h"
+ 
+-#define	MD_BLOCK_SIZE	512
+ #define	MD_FLAG_MASK	MD_FLAG_KERNEL
+ 
+ struct md_info {
+@@ -95,6 +94,22 @@ md_get_info(int unit)
+ 	return (NULL);
+ }
+ 
++/*
++ * Report a registered md's size, so probe_md_currdev() can hand it to
++ * disk_open() without reaching into the private struct md_info.
++ */
++int
++md_get_size(int unit, uint64_t *size)
++{
++	struct md_info *md;
++
++	md = md_get_info(unit);
++	if (md == NULL)
++		return (ENXIO);
++	*size = md->md_size;
++	return (0);
++}
++
+ int
+ md_register(void *image, size_t size, unsigned int flags)
+ {
 diff --git a/stand/efi/loader/main.c b/stand/efi/loader/main.c
-index 488e3eb1100b..44df3e83dfb7 100644
+index 488e3eb1100b..d20623568a96 100644
 --- a/stand/efi/loader/main.c
 +++ b/stand/efi/loader/main.c
-@@ -328,9 +328,34 @@ static bool
+@@ -328,9 +328,39 @@ static bool
  probe_md_currdev(void)
  {
  #ifdef LOADER_MD_SUPPORT
@@ -31,8 +79,13 @@ index 488e3eb1100b..44df3e83dfb7 100644
 +	 * name that.
 +	 */
 +	if (md_get_size(0, &mediasize) == 0 &&
-+	    disk_open(&dev, mediasize, MD_SECTOR_SIZE) == 0)
++	    disk_open(&dev, mediasize, MD_BLOCK_SIZE) == 0) {
 +		disk_close(&dev);
++	} else {
++		/* No partition table: use the whole image as the filesystem. */
++		dev.d_slice = D_SLICENONE;
++		dev.d_partition = D_PARTNONE;
++	}
 +
 +	set_currdev_devdesc((struct devdesc *)&dev);
  	rv = sanity_check_currdev();
