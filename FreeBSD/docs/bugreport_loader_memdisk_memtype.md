@@ -368,9 +368,16 @@ here are ignored and not mapped", so Reserved or an OS loader type is never
 in the DMAP there.  The md.c fix is then required on every boot, not only
 when the buffer is at the top of RAM.
 
-**Not measured:** whether edk2 really publishes an NFIT for the
-FreeBSD-registered buffer (`acpidump -t` in the guest should show an `NFIT`
-with a volatile virtual disk SPA), and what `nvdimm(4)` does with it.
+**Measured on real firmware:** a Lenovo X1 Carbon booted on the
+`VirtualDisk` path with the Reserved buffer (2026-11-08) has one NFIT.
+`acpidump -dt` shows a SPA range with the volatile virtual disk GUID
+`77AB535A-45FC-624B-5560-F7B281D1F96E` at the address in
+`hint.md.0.physaddr`.  So with Reserved, the firmware publishes the
+FreeBSD-registered ram disk to the OS, which contradicts "registered the
+device as an ACPI RAM disk, which we don't do" in `85fb40bad584`.  With
+`EfiLoaderData`, edk2 publishes nothing (`RamDiskPublishNfit()` above).
+`nvdimm(4)` was not loaded, and md0 was the only device over that memory.
+Not measured: what `nvdimm(4)` does with the entry when loaded.
 `nvdimm(4)` is a module, not in GENERIC, and knows the virtual disk GUIDs
 (`nvdimm_spa.c:108`).  If loaded, it would attach a second device over the
 same memory as md0.
@@ -517,6 +524,7 @@ the top of RAM.
 | `EfiReservedMemoryType` | 15.1 + md.c patch | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact except the backup GPT** (below) |
 | this patch: `EfiReservedMemoryType` | stock 15.1 | mini-memstick | bhyve, VirtualDisk | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
 | this patch: OS loader type, md fallback forced | stock 15.1 | mini-memstick | bhyve, md fallback | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
+| this patch: `EfiReservedMemoryType` | stock 15.1 | mini-memstick | Lenovo X1 Carbon, VirtualDisk | boots, `md5 /dev/md0` equal to the served image (RAM fill not reported); firmware publishes an NFIT virtual disk SPA at the ram disk address |
 | `EfiLoaderData`, md fallback forced (negative control) | stock 15.1 | mini-memstick | bhyve, md fallback | **`dd` SIGSEGV, `md5 /dev/md0` changes, `poweroff: Exec format error`** (below) |
 
 With the md.c patch, same VM, same loader, same image rebuilt around the
@@ -707,9 +715,9 @@ optional but recommended).
     boot_verbose=YES -i <iso.xz>`.
 * md.c test (passed 2026-10-19): same kernel and ISO recipe as above, in a
   worktree that no longer exists.
-* OS loader type test (2026-11-08): worktree `~/wt-memdisk-ostype` (branch
-  `olivier-memdisk-ostype`, patches staged, this change unstaged), objdir
-  `~/obj-memdisk-ostype`, loaders and console logs in
+* OS loader type test (2026-11-08): worktree and objdirs deleted the same
+  day; recreate with a worktree of main plus patches #1 to #5, built as in
+  the Reserved test below.  Loaders and console logs kept in
   `~/memdisk-ostype-test/`.  Driver `drive2.py` runs
   `bhyve-uefi-http-poc.sh` (stdio console) under a pty and types the
   checks.  Use it rather than `-N`: with the nmdm console the output stopped

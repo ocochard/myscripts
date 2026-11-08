@@ -1810,6 +1810,62 @@ Read the raw device.
 | bhyve, disc1 ISO, #1-#4 | `Fatal trap 12` in `mdstart_preload` | why #5/#6 exist |
 | bhyve, disc1 ISO, #1-#4, kernel with #6 | installer prompt; `/dev/md0` matches the image except 2 backup-GPT sectors edk2 writes | #6 fixes the panic |
 | bhyve, disc1 ISO, #1-#5, stock 15.1 kernel | installer prompt, same integrity result, 4587 -> 6633 MB usable | #5 avoids the panic on its own here |
+| Lenovo X1 Carbon, mini-memstick, hosted loader fetched by `nas:/tftpboot/autoexec.ipxe` (2026-11-08) | boots; ram disk range `Reserved`; `md5 /dev/md0` equal to the image | laptop firmware has `EFI_RAM_DISK_PROTOCOL`; the Reserved buffer is intact on real hardware, and the firmware publishes it as an ACPI NFIT virtual disk (loader build not confirmed from the banner) |
+| bhyve, mini-memstick, #1-#5 with the OS loader type, md fallback forced by a test build (2026-11-08) | `md5 /dev/md0` equal to the image before and after filling RAM; the same test with `EfiLoaderData` corrupts | the OS loader type keeps the md buffer out of physmap |
+
+#### Check a booted system
+
+Three questions, in order: which loader ran, which path it took, and
+whether the ram disk is intact.
+
+**Which loader.**  The loader banner, printed right after the download and
+before the kernel, carries the build date:
+
+```
+FreeBSD/amd64 EFI loader, Revision 3.1
+(Sun Nov  8 14:03:40 CET 2026 olivier@bigone)
+```
+
+The booted system keeps no trace of it, so read it on the console.  Know
+where the loader came from: the `nas:/tftpboot/autoexec.ipxe` script fetches
+it from people.freebsd.org, not from the copy in `nas:/tftpboot`.
+
+**Which path.**  The console says it during the download:
+`Installed RAM disk as VirtualDisk(...)` for the RamDisk path, `No RamDisk
+protocol, falling back to md image` for the md fallback.  From the booted
+system, compare the memory type of the range where the ram disk starts:
+
+```console
+# kenv hint.md.0.physaddr
+0x00000000729e1000
+# sysctl machdep.efi_map | grep -i -e invalid -e reserved
+               Reserved 0000729e1000 000000000000 00028766 UC WC WT WB
+```
+
+Match the second column with `hint.md.0.physaddr` (drop the `0x` and the
+leading zeros).  The type on that line:
+
+| Type | Path | What it proves |
+|---|---|---|
+| `Reserved` | RamDisk (`VirtualDisk`) | the firmware has `EFI_RAM_DISK_PROTOCOL`; old and new #1 both use Reserved here, so it does not tell which loader ran |
+| `<INVALID>` | md fallback | the OS loader type `0x80000000` (the kernel has no name for it): the new #1, on firmware without the protocol |
+| `LoaderData` | either | a loader without #1: expect corruption |
+
+No `hint.md.0.physaddr` at all means the root is not a loader ram disk.
+
+**Intact.**  Read the raw device, then fill RAM so the kernel uses every
+page it owns, then read it twice more.  All three checksums must equal the
+uncompressed image (`xz -dc image.img.xz | md5`; `cb891aba774ceb4ccde092d965a10af8`
+for the 15.1 mini-memstick):
+
+```console
+# md5 /dev/md0
+# mount -t tmpfs tmpfs /tmp && dd if=/dev/zero of=/tmp/fill bs=1m count=<free RAM in MB>
+# md5 /dev/md0; md5 /dev/md0
+```
+
+On the RamDisk path with a disc1 ISO, the two backup-GPT sectors edk2
+writes differ from the published image (bug report, section 4).
 
 ---
 
