@@ -7,6 +7,7 @@
 #
 #   1. Wrappers on PATH — /usr/local/bin/{hermes,hermes-agent,hermes-acp}
 #      resolve and `--help` returns 0 (proves sys.path shim works).
+#      hermes-acp also passes --check and answers an ACP initialize.
 #
 #   2. Skills catalog non-empty — `hermes skills list` on FreeBSD used to
 #      show ZERO installed skills because most declare `platform: linux`
@@ -21,6 +22,8 @@
 #   4. Lazy-install default off on FreeBSD — Commit B.  A fresh install
 #      writes `allow_lazy_installs: false` into the default config.yaml,
 #      not True as on Linux/macOS.
+#
+# `hermes --tui` is covered by hermes-tui_test.sh (misc/hermes-tui).
 #
 # Steps 1-4 do NOT need an LLM API key: skills-list is offline, the gateway
 # can start without ever making an outbound call, and the lazy-install check
@@ -100,6 +103,22 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Since 0.22.5 `hermes -z` spawns an unmanaged gateway that outlives it
+# for gateway.unmanaged_idle_exit_seconds (600s).  Kill the one whose HOME
+# is $1 so test homes don't leave daemons behind.
+stop_home_gateway() {
+	_pids=""
+	for p in $(pgrep -U "$(id -u)" python3 2>/dev/null); do
+		procstat -e "$p" 2>/dev/null | grep -qE " HOME=$1( |$)" && _pids="${_pids} $p"
+	done
+	[ -n "${_pids}" ] || return 0
+	kill ${_pids} 2>/dev/null
+	# The gateway writes its shutdown state into HOME on SIGTERM; wait, or
+	# the caller's rm -rf races it ("Directory not empty").
+	pwait -t 15 ${_pids} 2>/dev/null
+	return 0
+}
+
 pass() { printf 'PASS  %s\n' "$1"; }
 fail() { printf 'FAIL  %s\n' "$1"; exit 1; }
 
@@ -126,6 +145,48 @@ if hermes --help >/dev/null 2>&1; then
 else
 	fail "hermes --help exited non-zero — wrapper or runtime broken"
 fi
+
+# `hermes --version` must report the package version.  Since 0.22.5 it
+# comes from the port-written install-stamp.json; without it hermes says
+# 0.0.0.  Strip PORTREVISION/PORTEPOCH from the pkg version.
+VER_HOME=$(mktemp -d)
+VER_OUT=$(HOME="${VER_HOME}" timeout 30 hermes --version 2>&1) || true
+rm -rf "${VER_HOME}"
+case "${VER_OUT}" in
+	*"${PKG_VER%%[_,]*}"*) pass "hermes --version reports ${PKG_VER%%[_,]*}" ;;
+	*) printf '%s\n' "${VER_OUT}" | sed -n '1,10p'
+	   fail "hermes --version does not report ${PKG_VER%%[_,]*}" ;;
+esac
+
+# `hermes-acp` (editor integration, Agent Client Protocol over stdio) needs
+# the `acp` module from devel/py-agent-client-protocol; without it --help
+# still works, so check imports and one real JSON-RPC initialize exchange.
+ACP_HOME=$(mktemp -d)
+if HOME="${ACP_HOME}" timeout 60 hermes-acp --check 2>&1 | grep -q 'Hermes ACP check OK'; then
+	pass "hermes-acp --check imports acp + adapter"
+else
+	rm -rf "${ACP_HOME}"
+	fail "hermes-acp --check failed (agent-client-protocol missing?)"
+fi
+ACP_OUT=$(HOME="${ACP_HOME}" timeout 90 /usr/local/bin/python3 -I -c '
+import json, subprocess, sys, select
+p = subprocess.Popen(["hermes-acp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                     stderr=subprocess.DEVNULL)
+req = {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+       "params": {"protocolVersion": 1, "clientCapabilities": {}}}
+p.stdin.write((json.dumps(req) + "\n").encode()); p.stdin.flush()
+r, _, _ = select.select([p.stdout], [], [], 60)
+print(p.stdout.readline().decode().strip() if r else "TIMEOUT")
+p.kill(); p.wait()
+' 2>&1) || true
+stop_home_gateway "${ACP_HOME}"
+rm -rf "${ACP_HOME}"
+case "${ACP_OUT}" in
+	*'"id":0'*'"protocolVersion"'*|*'"id": 0'*'"protocolVersion"'*)
+		pass "hermes-acp answers ACP initialize over stdio" ;;
+	*) printf '%s\n' "${ACP_OUT}" | sed -n '1,10p'
+	   fail "hermes-acp did not answer ACP initialize" ;;
+esac
 
 # --- 2. Skills catalog non-empty on FreeBSD (PR#31850) --------------------
 # `hermes skills list` renders a table.  We just need to prove the row
@@ -171,9 +232,12 @@ import os, sys
 sys.path.insert(0, '/usr/local/lib/hermes-agent')
 os.environ.setdefault('HERMES_BUNDLED_SKILLS', '/usr/local/share/hermes-agent/skills')
 os.environ.setdefault('HERMES_OPTIONAL_SKILLS', '/usr/local/share/hermes-agent/optional-skills')
-from tools.lazy_deps import _allow_lazy_installs
-print(_allow_lazy_installs())
-" 2>&1)
+try:
+    from pm.install import lazy_installs_allowed  # >= 0.22.5
+except ImportError:
+    from tools.lazy_deps import _allow_lazy_installs as lazy_installs_allowed
+print(lazy_installs_allowed())
+" 2>&1) || true
 case "${LAZY_OUT}" in
 	False) pass "allow_lazy_installs resolves to False on FreeBSD (Commit B)" ;;
 	True)  fail "allow_lazy_installs resolves to True on FreeBSD — Commit B default gate is broken" ;;
@@ -233,7 +297,7 @@ pass "service hermes_gateway status returns non-zero after stop"
 # needs it non-empty).  --cli forces non-interactive stdout (without it the
 # output is TTY-gated); --yolo skips tool-approval prompts.  HOME is
 # redirected so the real ~/.hermes config is never touched.
-LLAMA_MODELS_JSON=$(curl -sf -m 5 "${LLAMA_URL}/v1/models" 2>/dev/null)
+LLAMA_MODELS_JSON=$(curl -sf -m 5 "${LLAMA_URL}/v1/models" 2>/dev/null) || true
 if [ -z "${LLAMA_MODELS_JSON}" ]; then
 	printf 'SKIP  LLM round-trip: %s unreachable\n' "${LLAMA_URL}"
 else
@@ -278,11 +342,12 @@ print(d.get("default_generation_settings", {}).get("n_ctx") or d.get("n_ctx") or
 		HOME="${LLM_HOME}" \
 		CUSTOM_BASE_URL="${LLAMA_URL}/v1" \
 		CUSTOM_API_KEY="sk-local-llama" \
-		timeout 120 hermes --provider custom -m "${LLAMA_MODEL}" \
+		timeout --foreground 120 hermes --provider custom -m "${LLAMA_MODEL}" \
 			--yolo --cli --safe-mode \
 			-z "Reply with the single word PONG." \
 		>"${LLM_OUT}" 2>&1
 	rc=$?
+	stop_home_gateway "${LLM_HOME}"
 	set -e
 	if [ "${rc}" -ne 0 ]; then
 		printf '%s\n' "$(sed -n '1,40p' "${LLM_OUT}")"
@@ -332,11 +397,12 @@ else
 		HOME="${ANT_HOME}" \
 		ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL}" \
 		ANTHROPIC_API_KEY="sk-local-anthropic" \
-		timeout 120 hermes --provider anthropic -m "${ANTHROPIC_MODEL}" \
+		timeout --foreground 120 hermes --provider anthropic -m "${ANTHROPIC_MODEL}" \
 			--yolo --cli --safe-mode \
 			-z "Reply with the single word PONG." \
 		>"${ANT_OUT}" 2>&1
 	rc=$?
+	stop_home_gateway "${ANT_HOME}"
 	set -e
 	if [ "${rc}" -ne 0 ]; then
 		printf '%s\n' "$(sed -n '1,40p' "${ANT_OUT}")"
