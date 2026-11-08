@@ -535,8 +535,8 @@ the top of RAM.
 | `EfiRuntimeServicesData` | 15.1 | mini-memstick | qemu and bhyve, VirtualDisk | installer prompt, no panic |
 | `EfiRuntimeServicesData` | 15.1 | disc1.iso | bhyve, VirtualDisk | **panic in `mdstart_preload`** (section 3) |
 | `EfiRuntimeServicesData` | 15.1 + md.c patch | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic; image intact except the backup GPT edk2 writes** (below) |
-| `EfiRuntimeServicesData` + tail trim | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact, +2046 MB usable** (below) |
 | `EfiReservedMemoryType` | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **panic in `mdstart_preload`**, same fault address as RT_DATA (below) |
+| `EfiReservedMemoryType` + tail trim | stock 15.1 | disc1.iso | bhyve, VirtualDisk | **single-user shell, no panic, image intact under memory pressure, +2046 MB usable** (below) |
 | `EfiReservedMemoryType` | 15.1 + md.c patch | disc1.iso | bhyve, VirtualDisk | **installer prompt, no panic, image intact except the backup GPT** (below) |
 | `EfiReservedMemoryType` | stock 15.1 | mini-memstick | bhyve, VirtualDisk | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
 | OS loader type `0x80000000`, md fallback forced | stock 15.1 | mini-memstick | bhyve, md fallback | **single-user shell, `md5 /dev/md0` equal to the served image before and after filling RAM** (below) |
@@ -604,7 +604,9 @@ with `md5 /dev/md0`: compare everything except the backup GPT sectors.
 
 Freeing the unused tail of the decompression buffer
 (`loader_memdisk_trim.patch`, tutorial in `loader_memdisk_trim.md`) avoids
-the panic on its own in this configuration, with the **stock** 15.1 kernel:
+the panic on its own in this configuration, with the **stock** 15.1 kernel.
+Measured 2026-11-08, loader from main `bdcfeac3e1cb` plus patches #1 to #5
+of `FreeBSD/iPXE.md` 7(f), so `EfiReservedMemoryType`:
 
 ```
 Freed 2227666944 unused bytes of the decompression buffer
@@ -613,17 +615,22 @@ Installed RAM disk as VirtualDisk(0x16A9EB000,0x1BB3877FF,0)
 FreeBSD 15.1-RELEASE releng/15.1-n283562-96841ea08dcf GENERIC amd64
 0x0000000100000000 - 0x000000016a9eafff, 1788784640 bytes (436715 pages)   <- was 0x16a9d0fff
 0x00000001bb388000 - 0x000000023ffe5fff, 2227560448 bytes (543838 pages)   <- new: the freed tail, now usable RAM
-avail memory = 6955864064 (6633 MB)                                         <- was 4587 MB
+avail memory = 6955855872 (6633 MB)                                         <- was 4587 MB
 md0: Preloaded image <preload0 0x000000016a9eb000> 1352255488 bytes at 0xfffff8016a9eb000
 Trying to mount root from cd9660:/dev/iso9660/15_1_RELEASE_AMD64_CD [ro]...
-Welcome to FreeBSD!
+Enter full pathname of shell or RETURN for /bin/sh:
+# sysctl machdep.efi_map | grep -v -e BootServices -e Conventional
+...
+               Reserved 00016a9eb000 000000000000 0005099d UC WC WT WB
 ```
 
-The ram disk did not move; the memory above it is now the kernel's, so
+The ram disk did not move and stays Reserved (0x5099d pages, the image
+rounded up to a page): edk2 accepts a partial `FreePages()` of a Reserved
+allocation. the memory above it is now the kernel's, so
 Maxmem and the direct map reach the top of RAM and cover it.  Every sector
 of `/dev/md0` matches the published ISO except the two backup-GPT sectors
 edk2 writes (LBA 2641091 and 2641123 for this image), and two whole-device
-reads agree.  This does not replace the md.c patch: an image allocated at
+reads agree, also after writing 5500 MB to tmpfs.  This does not replace the md.c patch: an image allocated at
 its exact size (uncompressed, or zstd with a frame size) has no tail to free
 and can still land at the top of RAM.
 

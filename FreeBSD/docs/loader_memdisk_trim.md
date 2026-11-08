@@ -69,13 +69,16 @@ That has two costs:
 
 bhyve guest, 8 GB, UEFI HTTP boot, `FreeBSD-15.1-RELEASE-amd64-disc1.iso.xz`
 (894980880 bytes compressed, 1352255488 uncompressed), stock 15.1 kernel,
-`boot_verbose=YES`, loader with `loader_memdisk_memtype.patch` only:
+`boot_verbose=YES`, loader with `loader_memdisk_memtype.patch` and no trim.
+This log is from 2026-10-19, when the memtype patch still used
+`EfiRuntimeServicesData`; the `EfiReservedMemoryType` loader panics with the
+same memory map and fault address (bug report, section 4):
 
 ```
 Downloaded 894980880 bytes, actual size 1352255488 -- registering ramdisk
 Installed RAM disk as VirtualDisk(0x16A9EB000,0x1BB3877FF,0)
 ...
-0x0000000100000000 - 0x000000016a9d0fff, 1788678144 bytes (436689 pages)   <- last usable chunk: ends at the ram disk
+0x0000000100000000 - 0x000000016a9d0fff, 1788678144 bytes (436689 pages)   <- last usable chunk, just below the ram disk
 avail memory = 4810575872 (4587 MB)
 md0: Preloaded image <preload0 0x000000016a9eb000> 1352255488 bytes at 0xfffff8016a9eb000
 Fatal trap 12: page fault while in kernel mode
@@ -163,7 +166,7 @@ it changes hands.
 * **Allocate the exact size:** xz and gzip streams do not reliably carry the
   decompressed size at the start, which is the whole reason for the guess.
 * **Copy into a right-sized block at the end:** needs both blocks at once
-  (4.9 GiB at peak here) and a 1.3 GB copy, for the same result as freeing
+  (4.9 GB at peak here) and a 1.3 GB copy, for the same result as freeing
   in place.
 * **Allocate below a fixed address (`AllocateMaxAddress`):** the loader
   cannot know where the kernel's `Maxmem` will end up, so any limit is a
@@ -173,9 +176,10 @@ it changes hands.
 
 ## 4. Tested
 
-Same VM and image as section 2, **stock** 15.1 kernel (no md.c patch), loader
-built from main `bdcfeac3e1cb` plus the four `loader_*.patch` files and this
-patch:
+Measured 2026-11-08: same VM and image as section 2, **stock** 15.1 kernel
+(no md.c patch), `boot_single=YES`, loader built from main `bdcfeac3e1cb`
+plus the four other `loader_*.patch` files (so `EfiReservedMemoryType`) and
+this patch:
 
 ```
 Freed 2227666944 unused bytes of the decompression buffer
@@ -184,11 +188,18 @@ Installed RAM disk as VirtualDisk(0x16A9EB000,0x1BB3877FF,0)
 FreeBSD 15.1-RELEASE releng/15.1-n283562-96841ea08dcf GENERIC amd64
 0x0000000100000000 - 0x000000016a9eafff, 1788784640 bytes (436715 pages)   <- was 0x16a9d0fff
 0x00000001bb388000 - 0x000000023ffe5fff, 2227560448 bytes (543838 pages)   <- new: the freed tail, now usable RAM
-avail memory = 6955864064 (6633 MB)                                         <- was 4587 MB
+avail memory = 6955855872 (6633 MB)                                         <- was 4587 MB
 md0: Preloaded image <preload0 0x000000016a9eb000> 1352255488 bytes at 0xfffff8016a9eb000
 Trying to mount root from cd9660:/dev/iso9660/15_1_RELEASE_AMD64_CD [ro]...
-Welcome to FreeBSD!
+Enter full pathname of shell or RETURN for /bin/sh:
+# sysctl machdep.efi_map | grep -v -e BootServices -e Conventional
+...
+               Reserved 00016a9eb000 000000000000 0005099d UC WC WT WB
 ```
+
+The firmware accepted the partial `FreePages()` of the Reserved buffer: the
+map keeps 0x5099d pages (the image, rounded up to a page) as Reserved and
+hands the rest to the kernel.
 
 The ram disk is at the same address as in the panic run; it is still reached
 through the plain direct-map address (`0xfffff8016a9eb000`), which is now
@@ -197,12 +208,13 @@ checks the 4x rule exactly: 1352257536 bytes used (image size rounded up to
 a page) + 2227666944 freed = 3579924480 = 4 x 894980880, rounded up to a
 page.
 
-Integrity, from the installer shell in that guest:
+Integrity, from the single-user shell in that guest:
 
 ```
 whole device, read twice:            d97749258ecb12c5ad6a58e9bbaa753a  (both reads)
 sectors 0 - 2641090,     guest/host: 0ec322dca3238eed386fb0a483fc22fe / same
 sectors 2641092 - 2641122, guest/host: 51596dda30fc38f0df3556d6f115256d / same
+after writing 5500 MB to tmpfs:      d97749258ecb12c5ad6a58e9bbaa753a
 ```
 
 Every sector matches the published ISO except LBA 2641091 and 2641123, the
@@ -212,7 +224,8 @@ starts (see the bug report, section 4).
 | Loader | Kernel | Image | Result |
 |---|---|---|---|
 | memtype patch | stock 15.1 | disc1.iso.xz | panic in `mdstart_preload` |
-| memtype + trim patches | stock 15.1 | disc1.iso.xz | **installer, no panic, image intact, +2046 MB usable** |
+| memtype + trim patches | stock 15.1 | disc1.iso.xz | **single-user shell, no panic, image intact under memory pressure, +2046 MB usable** |
 | memtype patch | 15.1 + md.c patch | disc1.iso.xz | installer, no panic (bug report, section 4) |
 | memtype + trim patches | any | uncompressed image placed at top of RAM | **untested**; expected to panic without the md.c patch (no tail to free) |
+| memtype + trim patches | any | disc1.iso.xz, md fallback (no RamDisk protocol) | **untested** |
 | trim patch | any | any | **untested** on firmware other than edk2 (partial `FreePages()`) |

@@ -7,20 +7,16 @@ Companions: FreeBSD/docs/loader_memdisk_memtype.patch,
 Base: main at bdcfeac3e1cb (2026-10-17); applies with or without the memtype patch.
 
 diff --git a/stand/efi/loader/decompress.c b/stand/efi/loader/decompress.c
-index fbf800f87862..d91786ea6872 100644
+index fbf800f87862..657c507fcc0a 100644
 --- a/stand/efi/loader/decompress.c
 +++ b/stand/efi/loader/decompress.c
-@@ -128,6 +128,32 @@ free_buffer(decomp_state *dctx)
+@@ -128,6 +128,28 @@ free_buffer(decomp_state *dctx)
  	dctx->buf = 0;
  }
  
 +/*
-+ * The output size is only a guess when the buffer is allocated (4x the
-+ * compressed size for most formats), so once the image is complete, give the
-+ * pages past its end back to the firmware.  Otherwise they stay allocated
-+ * until the kernel runs, and with a memory type the kernel does not reclaim,
-+ * forever.  If the firmware refuses to free part of an allocation, keep the
-+ * whole buffer.
++ * The buffer size is a guess, so once the image is complete, give the pages
++ * past its end back to the firmware.
 + */
 +static void
 +trim_buffer(decomp_state *dctx)
@@ -43,7 +39,7 @@ index fbf800f87862..d91786ea6872 100644
  /*
   * zlib supprot
   */
-@@ -503,7 +529,9 @@ decomp_step(decomp_state *dctx, uint8_t *buf, size_t len, size_t offset)
+@@ -503,7 +525,9 @@ decomp_step(decomp_state *dctx, uint8_t *buf, size_t len, size_t offset)
  void
  decomp_fini(decomp_state *dctx, bool flush)
  {
