@@ -361,7 +361,10 @@ last loader message, `staging 0xcaa00000`.  That message is printed by
 `GetMemoryMap()` and `ExitBootServices()`.  The loader's `memmap` command,
 which only calls `GetMemoryMap()` and prints the map, hangs too.  The
 loader names unknown types `"Unknown"` (`efi_memory_type()`), so the hang
-is in the firmware.  The previous loader, with Reserved on both paths, boots the T420, and
+is in the firmware.  A Dell Latitude E5530 (2012, Dell firmware)
+hangs at the same point with the same loader (`staging 0xc6000000`), so
+this is not one vendor's bug.  With Reserved, the E5530 boots and the ram disk
+survives a RAM fill.  The previous loader, with Reserved on both paths, boots the T420, and
 its `memmap` prints the map, with the ram disk as an ordinary entry
 (0x28766 pages = 678842880 bytes, the uncompressed mini-memstick):
 
@@ -540,6 +543,8 @@ the top of RAM.
 | `EfiReservedMemoryType` | stock 15.1 | mini-memstick | Lenovo X1 Carbon, VirtualDisk | boots, `md5 /dev/md0` equal to the served image (RAM fill not reported); firmware publishes an NFIT virtual disk SPA at the ram disk address |
 | `EfiLoaderData`, md fallback forced (negative control) | stock 15.1 | mini-memstick | bhyve, md fallback | **`dd` SIGSEGV, `md5 /dev/md0` changes, `poweroff: Exec format error`** (below) |
 | OS loader type `0x80000000` | stock 15.1 | mini-memstick | Lenovo T420, md fallback | **hangs after `staging 0xcaa00000`; `memmap` at the loader prompt hangs** (section 2) |
+| OS loader type `0x80000000` | stock 15.1 | mini-memstick | Dell Latitude E5530 (2012) | **hangs after `staging 0xc6000000`, like the T420** (2026-11-08) |
+| `EfiReservedMemoryType` (this patch) | stock 15.1 | mini-memstick | Dell Latitude E5530 (2012) | **boots; ram disk range `Reserved`; `md5 /dev/md0` unchanged after filling RAM** (2026-11-08) |
 | `EfiReservedMemoryType` (this patch) | stock 15.1 | mini-memstick | Lenovo T420, md fallback | **boots (verbose); ram disk range `Reserved`; `memmap` prints the map** |
 | `EfiReservedMemoryType` (this patch) | stock 15.1 | mini-memstick | Supermicro A1SRi-2758F (16 GB), md fallback | **ram disk range `Reserved 0000310ce000 ... 00028766`; `md5 /dev/md0` equal to the served image before and after writing 14000 MB to tmpfs** (2026-11-08) |
 

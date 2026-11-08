@@ -1742,6 +1742,30 @@ RamDisk to the kernel through the same `hint.md.N.physaddr` as the fallback,
 so a VM does exercise everything from `md(4)` on (measured 2026-10-19, see
 below).
 
+#### How this compares with the standard ways
+
+There is no single standard way to netboot a UEFI machine.  Three are
+common, and `memdisk=` borrows from two of them.
+
+| Method | Who fetches what | What stays in RAM | How the OS keeps it safe |
+|---|---|---|---|
+| Classic UEFI PXE (most Linux distributions) | firmware: `shim`/`grubx64.efi` over TFTP; GRUB: kernel + initrd; Linux: the real root (NFS, disk, or a squashfs over HTTP) | only the initrd, briefly | GRUB allocates it `EfiLoaderData`, Linux reserves the range itself from `boot_params` (`early_reserve_initrd()`), unpacks it, then frees it |
+| UEFI HTTP Boot (UEFI 2.5+) | firmware: a whole ISO over HTTP | the ISO, as a RAM disk, for the system's lifetime | firmware allocates it `EfiReservedMemoryType` and publishes it as an ACPI NFIT virtual disk; Linux finds it as `/dev/pmem0` |
+| iPXE in the middle | firmware: iPXE; iPXE: anything, over HTTP, scripts, `sanboot` | depends on what iPXE chains | depends on what iPXE chains |
+| **`loader.efi memdisk=` (here)** | iPXE: `loader.efi`; the loader: the image, decompressed into RAM | the image, as the root filesystem, for the system's lifetime | RamDisk path: same as UEFI HTTP Boot (`Reserved` + NFIT, seen on the X1 Carbon). md fallback: only the memory type, because nothing in the FreeBSD kernel reserves `hint.md.N.physaddr` |
+
+So the md fallback has no standard behind it: it is a FreeBSD mechanism,
+like the Linux initrd but never freed and with no explicit reservation in
+the kernel.  That is why its memory type decides everything: `EfiLoaderData`
+lets the kernel overwrite the root filesystem (#1 below), and the OS loader
+types UEFI reserves for loaders (`0x80000000` and up) hang old firmware in
+`GetMemoryMap()` (measured on a ThinkPad T420 and a Dell Latitude E5530), so #1 uses
+Reserved.
+
+FreeBSD's older netboot routes avoid the question: an NFS root, or a small
+`mfsroot` loaded as a boot module, whose location the kernel learns from
+the module metadata, the same way Linux learns where its initrd is.
+
 #### The fallback needed four fixes (2026-09-28)
 
 On stock `main` the `md` path does not work. Four defects, all found on the
@@ -1814,6 +1838,7 @@ Read the raw device.
 | Lenovo X1 Carbon, mini-memstick, hosted loader fetched by `nas:/tftpboot/autoexec.ipxe` (2026-11-08) | boots; ram disk range `Reserved`; `md5 /dev/md0` equal to the image | laptop firmware has `EFI_RAM_DISK_PROTOCOL`; the Reserved buffer is intact on real hardware, and the firmware publishes it as an ACPI NFIT virtual disk (loader build not confirmed from the banner) |
 | bhyve, mini-memstick, #1-#5 with the OS loader type, md fallback forced by a test build (2026-11-08) | `md5 /dev/md0` equal to the image before and after filling RAM; the same test with `EfiLoaderData` corrupts | the fill test catches the corruption; the OS loader type works in bhyve |
 | Lenovo T420 (2011 UEFI, no RamDisk protocol), mini-memstick, #1-#5 (2026-11-08) | with the OS loader type: hangs after `staging 0x...`, and `memmap` hangs; with Reserved: boots, `memmap` shows the ram disk `Reserved` | old firmware chokes on the OS loader type in `GetMemoryMap()`, so #1 keeps Reserved |
+| Dell Latitude E5530 (2012), mini-memstick, #1-#5 (2026-11-08) | with the OS loader type: hangs after `staging 0xc6000000`, like the T420; with Reserved: boots, ram disk `Reserved`, `md5 /dev/md0` unchanged after filling RAM | a second firmware vendor chokes on the OS loader type, and Reserved works there |
 | Supermicro A1SRi-2758F, mini-memstick, #1-#5 with Reserved (2026-11-08) | ram disk range `Reserved`; `md5 /dev/md0` equal to the image before and after writing 14000 MB to tmpfs | Reserved holds on the md fallback on real hardware under full memory pressure |
 
 #### Check a booted system
