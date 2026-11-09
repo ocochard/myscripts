@@ -500,13 +500,14 @@ either.
 ```diff
 --- sys/dev/md/md.c
 +++ sys/dev/md/md.c
-@@ -2131,7 +2131,11 @@ g_md_init(struct g_class *mp __unused)
+@@ -2131,7 +2131,12 @@ g_md_init(struct g_class *mp __unused)
  		    resource_int_value("md", i, "len", &len) != 0)
  		        break;
 -		ptr = pmap_map(NULL, paddr, paddr + len, VM_PROT_READ);
 +		/*
-+		 * The loader keeps the image out of physmap, so it can lie
-+		 * beyond the direct map, where pmap_map() is not valid.
++		 * Map the memory into the kernel pmap, if not already present.
++		 * Some RamDisks reside in reserved memory without mappings, so
++		 * a simple pmap_map() won't always work.
 +		 */
 +		ptr = pmap_mapdev_attr(paddr, len, VM_MEMATTR_DEFAULT);
  		if (ptr != NULL && len != 0) {
