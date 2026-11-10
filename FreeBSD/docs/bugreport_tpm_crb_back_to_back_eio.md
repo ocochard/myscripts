@@ -361,7 +361,8 @@ section 3 patch.
 `Failed to relinquish locality` every 10 seconds.  The likely cause: on the
 Pluton start method, the locality release never shows up in `TPM_LOC_STATE`,
 so the new release wait from section 3 times out on every command.  The patch
-stops using the locality registers with that start method, like Linux does.
+uses the locality registers only with the plain CRB start method (7), like
+Linux does, so Pluton (13) no longer touches them.
 It has only been compiled.  It has not run on a Pluton laptop yet.
 
 ### 7.1 Background
@@ -379,6 +380,8 @@ time, in `has_locality` (`tpm_crb.c:366`).  Before this patch it looked only at
 the memory layout: locality registers are used if the 64 bytes before the
 control area belong to the TPM's memory resource.  The start method played no
 part.  So a method 13 TPM with that layout got the full locality handshake.
+The same would hold for method 2 (ACPI start), which
+[`tpm_crb_acpi_start_method.patch`](tpm_crb_acpi_start_method.patch) adds.
 
 **The 10 seconds.**  With `RANDOM_ENABLE_TPM`, `tpm20.c` asks the TPM for
 random bytes every 10 seconds (`tpm20.c:53`).  That is one command, so one
@@ -422,10 +425,14 @@ followed Linux's release mask, but Linux never runs that code on this hardware.
 
 ```diff
 -	crb_sc->has_locality = tbl->ControlAddress >= TPM_CRB_LOCALITY_SIZE &&
-+	crb_sc->has_locality =
-+	    tbl->StartMethod != ACPI_TPM2_COMMAND_BUFFER_WITH_PLUTON &&
++	crb_sc->has_locality = tbl->StartMethod == TPM2_START_METHOD_CRB &&
 +	    tbl->ControlAddress >= TPM_CRB_LOCALITY_SIZE &&
 ```
+
+The test names the one start method that keeps locality, instead of the one
+that loses it.  Linux does the same: its list in `crb_map_io()` names the
+methods that get locality registers.  So a start method added later starts
+without locality, and someone has to test it before adding it to the list.
 
 With `has_locality` false, `tpmcrb_request_locality()` returns true at once and
 `tpmcrb_relinquish_locality()` returns at once.  The idle wait from section 3
@@ -449,13 +456,17 @@ then does not release.
 
 | Option | For | Against |
 |---|---|---|
+| Exclude only method 13 (`!= ACPI_TPM2_COMMAND_BUFFER_WITH_PLUTON`), the first version of this patch | Changes only the broken machine | Method 2 from `tpm_crb_acpi_start_method.patch`, and any later method, would get the locality handshake that Linux never uses there |
 | Skip only the release wait on Pluton | Smallest change in behaviour | Keeps writing and reading registers that, on this hardware, do not report what the driver expects |
 | Remove the release wait for every TPM | Simple | Section 5 never tested the idle wait alone.  The section 2 race could come back on method 7 |
 | Ring the Pluton doorbell after the locality write | Might make the firmware act on it | Guesswork: no spec or other driver does it |
 
 **What it does not fix.**
 
-* Method 13 machines lose the locality request too.  Since `f0ac0f73aea7`,
+* Method 13 machines lose the locality request too, and so will method 2
+  machines once `tpm_crb_acpi_start_method.patch` lands.  On ser6 (method 2)
+  that changes nothing: its layout test already fails
+  (`tpm_crb_acpi_start_method.md`, section on the TPM2 table).  Since `f0ac0f73aea7`,
   FreeBSD has requested a locality on these machines, and command transmit
   worked that way.  It should keep working without the request, as it does on
   Linux, but this is not tested.
@@ -467,13 +478,16 @@ then does not release.
 | Configuration | Result |
 |---|---|
 | `make` in `sys/modules/tpm`, main at `86861520613f` | Builds, no warnings |
+| Same, plus `tpm_crb_acpi_start_method.patch` on top | Applies (offsets only), builds, no warnings |
 | Framework 13, method 13, patched | **Untested** |
 | Framework Desktop, method 7, patched | **Untested**: `has_locality` is unchanged for method 7, so behaviour should match #15 in section 4 |
 
 ### 7.6 Open
 
-* **The `TPM_LOC_STATE` value is unknown.**  If the reporter runs a kernel
-  that has only the new log line, without the `has_locality` change, the
-  message shows it.
+* **The `TPM_LOC_STATE` value is unknown.**  A reviewer sent a debug patch
+  that logs `LOC_STATE` before and after the release, plus `LOC_STS`,
+  `CTRL_REQ` and `CTRL_STS`.  It must run on `bfe4be85a935` without this
+  patch: with this patch, the release function returns at once on Pluton
+  and logs nothing.
 * **Ask the reporter to run the section 2 reproducer** on the patched kernel.
   0 failures and no TPM messages would close this.
