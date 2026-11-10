@@ -1,0 +1,47 @@
+diff --git a/sys/dev/tpm/tpm_crb.c b/sys/dev/tpm/tpm_crb.c
+index 4e6f550e473c..bd50f4c20d3d 100644
+--- a/sys/dev/tpm/tpm_crb.c
++++ b/sys/dev/tpm/tpm_crb.c
+@@ -359,7 +359,13 @@ tpmcrb_attach_acpi(struct tpmcrb_sc *crb_sc)
+ 		AcpiPutTable((ACPI_TABLE_HEADER *)tbl);
+ 		return (false);
+ 	}
+-	crb_sc->has_locality = tbl->ControlAddress >= TPM_CRB_LOCALITY_SIZE &&
++	/*
++	 * Pluton firmware may not act on locality requests, so do not use
++	 * the locality registers with its start method.
++	 */
++	crb_sc->has_locality =
++	    tbl->StartMethod != ACPI_TPM2_COMMAND_BUFFER_WITH_PLUTON &&
++	    tbl->ControlAddress >= TPM_CRB_LOCALITY_SIZE &&
+ 	    tbl->ControlAddress - TPM_CRB_LOCALITY_SIZE ==
+ 	    rman_get_start(crb_sc->base.mem_res);
+ 
+@@ -553,7 +559,7 @@ static void
+ tpmcrb_relinquish_locality(struct tpmcrb_sc *crb_sc)
+ {
+ 	struct resource *res = crb_sc->base.mem_res;
+-	uint32_t mask;
++	uint32_t mask, state;
+ 	int timeout;
+ 
+ 	if (!crb_sc->has_locality)
+@@ -571,14 +577,15 @@ tpmcrb_relinquish_locality(struct tpmcrb_sc *crb_sc)
+ 	 * pause so a release during it is not reported as a failure.
+ 	 */
+ 	for (timeout = TPM_TIMEOUT_C;; timeout -= tick) {
+-		if ((bus_read_4(res, TPM_LOC_STATE) & mask) ==
+-		    TPM_LOC_STATE_VALID)
++		state = bus_read_4(res, TPM_LOC_STATE);
++		if ((state & mask) == TPM_LOC_STATE_VALID)
+ 			return;
+ 		if (timeout <= 0)
+ 			break;
+ 		pause("TPM locality", 1);
+ 	}
+-	device_printf(crb_sc->base.dev, "Failed to relinquish locality\n");
++	device_printf(crb_sc->base.dev,
++	    "Failed to relinquish locality (loc_state=%#x)\n", state);
+ }
+ 
+ static bool

@@ -336,7 +336,7 @@ show whether other CRB TPMs fail, or only Pluton.  Kernel: unpatched main at
   shared code, but no non-Pluton CRB TPM was tested.  Start method 13 systems
   would now also wait for the mailbox at the end of each command.  Systems
   without the locality registers skip the release wait but still get the idle
-  wait.  Both need testing.
+  wait.  Both need testing.  Start method 13 did break: see section 7.
 * **When it started is unknown.**  `f0ac0f73aea7` (D59786) changed these idle and
   ready waits, but older kernels were not tested, so nothing implicates it.
 
@@ -348,3 +348,132 @@ show whether other CRB TPMs fail, or only Pluton.  Kernel: unpatched main at
 interface (TIS, `tpm_tis_core.c`): STMicro ST33 parts need the driver to leave
 the chip in a clean state before releasing the locality.  In both cases, what
 the driver does at the end of one command decides whether the next one works.
+
+---
+
+## 7. Follow-up: "Failed to relinquish locality" every 10 s on Pluton
+
+Patch: [`tpm_crb_pluton_no_locality.patch`](tpm_crb_pluton_no_locality.patch)
+(`sys/dev/tpm/tpm_crb.c`), on top of `bfe4be85a935`, the commit of the
+section 3 patch.
+
+**Summary.** After `bfe4be85a935`, a Framework 13 (AMD Ryzen 7 7840U) logs
+`Failed to relinquish locality` every 10 seconds.  The likely cause: on the
+Pluton start method, the locality release never shows up in `TPM_LOC_STATE`,
+so the new release wait from section 3 times out on every command.  The patch
+stops using the locality registers with that start method, like Linux does.
+It has only been compiled.  It has not run on a Pluton laptop yet.
+
+### 7.1 Background
+
+**Start method.**  The ACPI TPM2 table has a `StartMethod` field.  It tells
+the driver how to make the TPM notice a request.  The Framework Desktop in
+section 2 reports 7, plain CRB: writing to the register is enough.  Method 13,
+"command buffer with Pluton", adds a mailbox.  After each register write, the
+driver rings a doorbell so that the Pluton firmware looks at the registers
+(`pluton_doorbell()`, `tpm_crb.c:907`).  `4995fd4bf2c6` fixed that mailbox for
+"a Framework AMD laptop", so these laptops use method 13.
+
+**Which machines use locality.**  `tpmcrb_attach_acpi()` decides once at attach
+time, in `has_locality` (`tpm_crb.c:366`).  Before this patch it looked only at
+the memory layout: locality registers are used if the 64 bytes before the
+control area belong to the TPM's memory resource.  The start method played no
+part.  So a method 13 TPM with that layout got the full locality handshake.
+
+**The 10 seconds.**  With `RANDOM_ENABLE_TPM`, `tpm20.c` asks the TPM for
+random bytes every 10 seconds (`tpm20.c:53`).  That is one command, so one
+release, every 10 seconds.
+
+### 7.2 The problem
+
+Reported by a user, not reproduced here:
+
+```
+On a Framework 13" AMD Ryzen 7840U I'm now seeing this message
+(Failed to relinquish locality) emitted every 10s.
+```
+
+The reporter's TPM2 table (`acpidump -dt`) shows `StartMethod=d`, that is
+13: the Pluton start method.  So the patch applies to this machine.
+
+Before `bfe4be85a935`, `tpmcrb_relinquish_locality()` wrote the release
+request and returned without reading anything, so a TPM that ignored the
+request went unnoticed.  Section 3 added a loop that polls `TPM_LOC_STATE`
+until `VALID` is set and `ASSIGNED` is clear, for up to 200 ms.  On this
+laptop the loop always times out.
+
+The commands still succeed.  The release wait returns nothing, so a timeout
+only logs.  The cost is the log line plus 200 ms added to every command.
+
+**Inferred, not measured:** what `TPM_LOC_STATE` actually reads.  It could
+stay `ASSIGNED`, lack `VALID`, or read all-ones.  The old message did not
+print it.
+
+### 7.3 How Linux handles this
+
+Linux's `drivers/char/tpm/tpm_crb.c` keeps a pointer to the locality registers,
+`regs_h`.  `crb_map_io()` sets it only for start methods 6 (memory mapped), 7
+(command buffer) and FF-A.  For method 13 it stays `NULL`, and the request and
+release functions return at once when it is `NULL`.  So Linux has never used
+the locality registers on Pluton, and Linux works on these laptops.  Section 3
+followed Linux's release mask, but Linux never runs that code on this hardware.
+
+### 7.4 The fix
+
+```diff
+-	crb_sc->has_locality = tbl->ControlAddress >= TPM_CRB_LOCALITY_SIZE &&
++	crb_sc->has_locality =
++	    tbl->StartMethod != ACPI_TPM2_COMMAND_BUFFER_WITH_PLUTON &&
++	    tbl->ControlAddress >= TPM_CRB_LOCALITY_SIZE &&
+```
+
+With `has_locality` false, `tpmcrb_request_locality()` returns true at once and
+`tpmcrb_relinquish_locality()` returns at once.  The idle wait from section 3
+still runs, and so does the Pluton doorbell that goes with it.
+
+The patch also prints the last `TPM_LOC_STATE` value when a release fails:
+
+```
+tpmcrb0: Failed to relinquish locality (loc_state=0x...)
+```
+
+If another TPM shows the same message, the value tells which bit is wrong
+without a debug kernel.
+
+**Why at attach and not in the release function.**  `has_locality` is the one
+place that decides whether locality registers exist.  Deciding there keeps
+request and release consistent: the driver never requests a locality that it
+then does not release.
+
+**Alternatives.**
+
+| Option | For | Against |
+|---|---|---|
+| Skip only the release wait on Pluton | Smallest change in behaviour | Keeps writing and reading registers that, on this hardware, do not report what the driver expects |
+| Remove the release wait for every TPM | Simple | Section 5 never tested the idle wait alone.  The section 2 race could come back on method 7 |
+| Ring the Pluton doorbell after the locality write | Might make the firmware act on it | Guesswork: no spec or other driver does it |
+
+**What it does not fix.**
+
+* Method 13 machines lose the locality request too.  Since `f0ac0f73aea7`,
+  FreeBSD has requested a locality on these machines, and command transmit
+  worked that way.  It should keep working without the request, as it does on
+  Linux, but this is not tested.
+* A non-Pluton TPM that also ignores the release still logs once per command.
+  Now the log line at least carries the register value.
+
+### 7.5 Tested
+
+| Configuration | Result |
+|---|---|
+| `make` in `sys/modules/tpm`, main at `86861520613f` | Builds, no warnings |
+| Framework 13, method 13, patched | **Untested** |
+| Framework Desktop, method 7, patched | **Untested**: `has_locality` is unchanged for method 7, so behaviour should match #15 in section 4 |
+
+### 7.6 Open
+
+* **The `TPM_LOC_STATE` value is unknown.**  If the reporter runs a kernel
+  that has only the new log line, without the `has_locality` change, the
+  message shows it.
+* **Ask the reporter to run the section 2 reproducer** on the patched kernel.
+  0 failures and no TPM messages would close this.
