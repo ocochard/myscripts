@@ -1,5 +1,5 @@
 diff --git a/sys/dev/tpm/tpm_crb.c b/sys/dev/tpm/tpm_crb.c
-index 4e6f550e473c..ff40c2a968aa 100644
+index 4e6f550e473c..e191699e4e4c 100644
 --- a/sys/dev/tpm/tpm_crb.c
 +++ b/sys/dev/tpm/tpm_crb.c
 @@ -359,7 +359,12 @@ tpmcrb_attach_acpi(struct tpmcrb_sc *crb_sc)
@@ -9,7 +9,7 @@ index 4e6f550e473c..ff40c2a968aa 100644
 -	crb_sc->has_locality = tbl->ControlAddress >= TPM_CRB_LOCALITY_SIZE &&
 +	/*
 +	 * Only the plain CRB start method uses the locality registers: Pluton
-+	 * firmware may not act on locality requests.
++	 * firmware keeps LOC_STATE assigned after a release.
 +	 */
 +	crb_sc->has_locality = tbl->StartMethod == TPM2_START_METHOD_CRB &&
 +	    tbl->ControlAddress >= TPM_CRB_LOCALITY_SIZE &&

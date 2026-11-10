@@ -50,10 +50,38 @@ TPM has done the work when it clears the bit, some time later.
 
 ### 1.2 What a locality is
 
-A locality is a form of ownership of the TPM interface.  Software requests one,
-uses the TPM, and releases it.  FreeBSD only uses locality 0.  Like the state
-changes, this is a request and an answer: the driver writes to `TPM_LOC_CTRL`,
-and the TPM reports the result in `TPM_LOC_STATE`.
+A locality tells the TPM which software layer sent a command.  One TPM is
+shared by layers of different trust, and the TCG specification numbers them
+0 to 4:
+
+| Locality | Typical user |
+|---|---|
+| 4 | CPU microcode during a late launch (Intel TXT `SENTER`, AMD `SKINIT`) |
+| 3 | Authenticated code module or auxiliary firmware |
+| 2 | The trusted kernel started by the late launch |
+| 1 | An environment that kernel launches |
+| 0 | Normal software: UEFI, then the OS |
+
+Only the hardware can issue commands from the higher localities, so even a
+kernel cannot pretend to be locality 4.  The TPM uses this to enforce rules:
+PCRs 17 to 22 can only be reset from a high locality, and
+`TPM2_PolicyLocality` ties a key to a locality.
+
+Each locality has its own window of registers: locality *n* starts at
+*n* x 0x1000 from the TPM's base address.  Three of them matter here:
+
+* `TPM_LOC_CTRL`: write here to request or release the locality.
+* `TPM_LOC_STATE`: the **global** view, which locality is active right now.
+* `TPM_LOC_STS`: this window's **own** view, whether this locality was
+  granted (`Granted`, bit 0).
+
+Only one locality can drive the TPM at a time, so request and release work
+like a lock: request, wait until `TPM_LOC_STATE` shows the locality as
+assigned, send the command, release.  FreeBSD only uses locality 0, and on a
+normal machine nothing else uses another locality while the OS runs.  So the
+lock is never contended, but the driver still has to take it.  Like the state
+changes, each step is a request and an answer: the driver writes to
+`TPM_LOC_CTRL`, and the TPM reports the result some time later.
 
 A comment in the driver (`tpm_crb.c:649`) records something unusual about this
 hardware:
@@ -358,9 +386,10 @@ Patch: [`tpm_crb_pluton_no_locality.patch`](tpm_crb_pluton_no_locality.patch)
 section 3 patch.
 
 **Summary.** After `bfe4be85a935`, a Framework 13 (AMD Ryzen 7 7840U) logs
-`Failed to relinquish locality` every 10 seconds.  The likely cause: on the
-Pluton start method, the locality release never shows up in `TPM_LOC_STATE`,
-so the new release wait from section 3 times out on every command.  The patch
+`Failed to relinquish locality` every 10 seconds.  The cause, measured with
+a debug kernel: on the Pluton start method, `TPM_LOC_STATE` still shows the
+locality as assigned after the release, so the new release wait from
+section 3 times out on every command.  The patch
 uses the locality registers only with the plain CRB start method (7), like
 Linux does, so Pluton (13) no longer touches them.
 It has only been compiled.  It has not run on a Pluton laptop yet.
@@ -408,9 +437,41 @@ laptop the loop always times out.
 The commands still succeed.  The release wait returns nothing, so a timeout
 only logs.  The cost is the log line plus 200 ms added to every command.
 
-**Inferred, not measured:** what `TPM_LOC_STATE` actually reads.  It could
-stay `ASSIGNED`, lack `VALID`, or read all-ones.  The old message did not
-print it.
+**Measured.**  A reviewer sent a debug patch that changes no behaviour, only
+the failure message.  It reads `TPM_LOC_STATE` once before the release
+request (`before`), keeps the last value the wait loop read (`last`), and
+after the timeout also reads `LOC_STS`, `CTRL_REQ` and `CTRL_STS`.  These
+answer three questions: did the release change anything (`before` against
+`last`), is a request still pending (`CTRL_REQ`), and is the TPM healthy
+(`CTRL_STS`).  On the reporter's Framework 13, running `bfe4be85a935`
+without the fix in section 7.4:
+
+```
+tpmcrb0: Failed to relinquish locality:
+LOC_STATE before=0x83 last=0x83 LOC_STS=0 CTRL_REQ=0 CTRL_STS=0x2
+```
+
+Decoded with the bit definitions at the top of `tpm_crb.c`.  `tpm_crb.c`
+does not define the `LOC_STS` bits; `Granted` as bit 0 comes from the PTP
+register layout (`TPM_LOC_STS_x`), and the active locality is bits 2 to 4 of
+`LOC_STATE`:
+
+| Register | Value | Meaning |
+|---|---|---|
+| `LOC_STATE` before and after | `0x83` | `VALID` (bit 7), `ASSIGNED` (bit 1) and `ESTB` (bit 0) set; active locality field 0.  Unchanged by the release |
+| `LOC_STS` | `0` | `Granted` (bit 0) clear |
+| `CTRL_REQ` | `0` | No request pending: the idle request was acknowledged |
+| `CTRL_STS` | `0x2` | `tpmIdle` set, error bit clear: the TPM is idle and healthy |
+
+So the release request is not lost: the TPM is idle, and `LOC_STS` no longer
+reports the locality as granted.  Only `LOC_STATE` keeps saying "assigned to
+locality 0" for the whole 200 ms.  In the terms of section 1.2, locality 0's
+own view says "released" while the global view says "assigned", and the
+driver waits on the global view.  Either the firmware does not update it, or
+it does not really implement the lock, since the Pluton mailbox already
+serialises access.  This is one log line from one machine.
+`LOC_STS` was read after the wait, so it does not show whether `Granted` was
+ever set during the command.
 
 ### 7.3 How Linux handles this
 
@@ -470,6 +531,10 @@ then does not release.
   FreeBSD has requested a locality on these machines, and command transmit
   worked that way.  It should keep working without the request, as it does on
   Linux, but this is not tested.
+* Skipping the locality lock on Pluton removes its protection.  If firmware
+  or SMM used the TPM through another locality while the OS runs, nothing
+  would keep the two apart.  Linux takes the same risk on these laptops, and
+  nothing suggests it happens.
 * A non-Pluton TPM that also ignores the release still logs once per command.
   Now the log line at least carries the register value.
 
@@ -495,10 +560,8 @@ locality registers with or without this patch.
 
 ### 7.6 Open
 
-* **The `TPM_LOC_STATE` value is unknown.**  A reviewer sent a debug patch
-  that logs `LOC_STATE` before and after the release, plus `LOC_STS`,
-  `CTRL_REQ` and `CTRL_STS`.  It must run on `bfe4be85a935` without this
-  patch: with this patch, the release function returns at once on Pluton
-  and logs nothing.
+* **Why `LOC_STATE` and `LOC_STS` disagree on Pluton is unknown.**  The
+  measurement in section 7.2 settles what the driver sees, not why.  It does
+  not change the fix: the release wait cannot pass on this firmware.
 * **Ask the reporter to run the section 2 reproducer** on the patched kernel.
   0 failures and no TPM messages would close this.
