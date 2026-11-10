@@ -1,5 +1,5 @@
 diff --git sys/dev/tpm/tpm_crb.c sys/dev/tpm/tpm_crb.c
-index df47f88f79fd..8298e77215b7 100644
+index df47f88f79fd..249368f016f4 100644
 --- sys/dev/tpm/tpm_crb.c
 +++ sys/dev/tpm/tpm_crb.c
 @@ -89,8 +89,12 @@ struct tpmcrb_sm_cfg {
@@ -32,18 +32,15 @@ index df47f88f79fd..8298e77215b7 100644
  	{
  		.acpi_sm = ACPI_TPM2_COMMAND_BUFFER_WITH_PLUTON,
  		.desc = "Trusted Platform Module 2.0, CRB mode (Pluton)",
-@@ -138,6 +152,10 @@ struct tpmcrb_sc {
+@@ -138,6 +152,7 @@ struct tpmcrb_sc {
  			bus_space_handle_t	start_bsh;
  			bus_space_handle_t	reply_bsh;
  		} pluton;
-+		struct {
-+			ACPI_HANDLE		handle;
-+			int			revision;
-+		} acpi_start;
++		ACPI_HANDLE	acpi_start_handle;
  	};
  	bus_space_tag_t	bst;
  	struct tpmcrb_mapping ctrl;
-@@ -564,6 +582,8 @@ tpmcrb_cancel_cmd(struct tpmcrb_sc *crb_sc)
+@@ -564,6 +579,8 @@ tpmcrb_cancel_cmd(struct tpmcrb_sc *crb_sc)
  	uint32_t mask = ~0;
  
  	tpmcrb_ctrl_write_4(crb_sc, TPM_CRB_CTRL_CANCEL, TPM_CRB_CTRL_CANCEL_CMD);
@@ -52,7 +49,7 @@ index df47f88f79fd..8298e77215b7 100644
  	if (!tpmcrb_ctrl_wait(crb_sc, TPM_CRB_CTRL_START,
  		    mask, ~mask, TPM_TIMEOUT_B)) {
  		device_printf(crb_sc->base.dev,
-@@ -604,6 +624,8 @@ tpmcrb_state_idle(struct tpmcrb_sc *crb_sc, bool wait)
+@@ -604,6 +621,8 @@ tpmcrb_state_idle(struct tpmcrb_sc *crb_sc, bool wait)
  {
  	int mask, timeout;
  
@@ -61,7 +58,7 @@ index df47f88f79fd..8298e77215b7 100644
  	timeout = wait ? TPM_TIMEOUT_C : 0;
  
  	tpmcrb_ctrl_write_4(crb_sc, TPM_CRB_CTRL_REQ, TPM_CRB_CTRL_REQ_GO_IDLE);
-@@ -627,6 +649,8 @@ tpmcrb_state_ready(struct tpmcrb_sc *crb_sc, bool wait)
+@@ -627,6 +646,8 @@ tpmcrb_state_ready(struct tpmcrb_sc *crb_sc, bool wait)
  {
  	int mask, timeout;
  
@@ -70,16 +67,28 @@ index df47f88f79fd..8298e77215b7 100644
  	timeout = wait ? TPM_TIMEOUT_C : 0;
  
  	tpmcrb_ctrl_write_4(crb_sc, TPM_CRB_CTRL_REQ, TPM_CRB_CTRL_REQ_GO_READY);
-@@ -797,6 +821,71 @@ tpmcrb_transmit(device_t dev, struct tpm_priv *priv, size_t length)
+@@ -724,9 +745,7 @@ tpmcrb_transmit(device_t dev, struct tpm_priv *priv, size_t length)
+ 	command_started = true;
+ 
+ 	if (!tpmcrb_notify_cmdready(crb_sc, timeout)) {
+-		device_printf(dev,
+-		    "Timeout while waiting for device to ready (cmd=%#x)\n",
+-		    curr_cmd);
++		device_printf(dev, "Start method failed (cmd=%#x)\n", curr_cmd);
+ 		if (!tpmcrb_cancel_cmd(crb_sc)) {
+ 			error = EIO;
+ 			goto out;
+@@ -797,6 +816,64 @@ tpmcrb_transmit(device_t dev, struct tpm_priv *priv, size_t length)
  
  /* StartMethod Implementation Details */
  
 +/*
 + * ACPI start method: TCG ACPI Specification 1.4, section 4.1.  After setting
 + * CTRL_START or CTRL_CANCEL, the driver evaluates _DSM function 1 to ask the
-+ * firmware to act on the control area.  AMD fTPM firmware using this method
++ * firmware to act on the control area.  Some firmware using this method
 + * never acknowledges CTRL_REQ, so the idle and ready states are skipped.
 + */
++#define	TPM_ACPI_START_REV		0
 +#define	TPM_ACPI_START_FUNC_START	1
 +
 +/* 6BBF6CAB-5463-4714-B7CD-F0203C0368D4 */
@@ -93,23 +102,15 @@ index df47f88f79fd..8298e77215b7 100644
 +    size_t datasz __unused)
 +{
 +	ACPI_HANDLE handle;
-+	int revision;
 +
 +	handle = acpi_get_handle(crb_sc->base.dev);
-+	if (handle == NULL)
++	if (handle == NULL || (acpi_DSMQuery(handle, tpm_acpi_start_uuid,
++	    TPM_ACPI_START_REV) & (1 << TPM_ACPI_START_FUNC_START)) == 0) {
++		device_printf(crb_sc->base.dev, "No ACPI start method in _DSM\n");
 +		return (false);
-+
-+	/* The specification says revision 0; some firmware may expect 1. */
-+	for (revision = 0; revision <= 1; revision++) {
-+		if ((acpi_DSMQuery(handle, tpm_acpi_start_uuid, revision) &
-+		    (1 << TPM_ACPI_START_FUNC_START)) != 0) {
-+			crb_sc->acpi_start.handle = handle;
-+			crb_sc->acpi_start.revision = revision;
-+			return (true);
-+		}
 +	}
-+	device_printf(crb_sc->base.dev, "No ACPI start method in _DSM\n");
-+	return (false);
++	crb_sc->acpi_start_handle = handle;
++	return (true);
 +}
 +
 +static bool
@@ -120,9 +121,9 @@ index df47f88f79fd..8298e77215b7 100644
 +	ACPI_STATUS status;
 +	bool ret;
 +
-+	status = acpi_EvaluateDSMTyped(crb_sc->acpi_start.handle,
-+	    tpm_acpi_start_uuid, crb_sc->acpi_start.revision,
-+	    TPM_ACPI_START_FUNC_START, NULL, &buf, ACPI_TYPE_INTEGER);
++	status = acpi_EvaluateDSMTyped(crb_sc->acpi_start_handle,
++	    tpm_acpi_start_uuid, TPM_ACPI_START_REV, TPM_ACPI_START_FUNC_START,
++	    NULL, &buf, ACPI_TYPE_INTEGER);
 +	if (ACPI_FAILURE(status)) {
 +		device_printf(crb_sc->base.dev,
 +		    "ACPI start method failed: %s\n",

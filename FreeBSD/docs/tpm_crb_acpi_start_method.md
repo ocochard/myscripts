@@ -2,7 +2,7 @@
 
 ```
 Status:    patch written and tested on ser6, not submitted
-Patch:     tpm_crb_acpi_start_method.patch (sys/dev/tpm/tpm_crb.c, +89 lines)
+Patch:     tpm_crb_acpi_start_method.patch (sys/dev/tpm/tpm_crb.c, +80 -3 lines)
 Driver:    sys/dev/tpm/tpm_crb.c
 Base:      sections 1 and 2 cite main at 584f44221f45 (2026-10-29);
            the patch applies to main at db8444c1b7e4 (2026-11-04)
@@ -118,7 +118,7 @@ whether it wants the device.  `tpm_crb` says yes only when the hardware ID is
 1. Allocate the first `_CRS` memory range (`tpm_crb.c:374`).
 2. Read the TPM2 table and map the control area (`tpmcrb_attach_acpi()`,
    `tpm_crb.c:307`).  If the control area is outside the `_CRS` range,
-   `tpmcrb_map()` (`tpm_crb.c:250`) maps it separately.
+   `tpmcrb_map()` (`tpm_crb.c:251`) maps it separately.
 3. Run the start method's own attach hook, if it has one.  Pluton uses this to
    map its two mailbox registers (`pluton_attach()`, `tpm_crb.c:779`).
 4. Read the buffer addresses and sizes from the control area and map both
@@ -289,21 +289,22 @@ the specification requires it and other firmware may depend on it.
 
 ### What changed
 
-All in `tpm_crb.c`: 89 lines added, none removed.
+All in `tpm_crb.c`: 80 lines added, 3 removed.
 
 1. **Accept method 2.**  An entry to `tpmcrb_sm_cfg_map[]` for
    `TPM2_START_METHOD_ACPI`, with description "Trusted Platform Module 2.0,
    CRB mode (ACPI start)".
 
 2. **An attach hook**, `acpi_start_attach()`.  It stores the device's ACPI
-   handle from `acpi_get_handle()`, calls `acpi_DSMQuery()` (`acpi.c:3187`),
-   and refuses to attach unless bit 1 (function 1) is set.  This rejects firmware that
-   advertises method 2 but has no start function.
+   handle from `acpi_get_handle()`, calls `acpi_DSMQuery()` (`acpi.c:3187`)
+   at revision 0, and refuses to attach unless bit 1 (function 1) is set.
+   This rejects firmware that advertises method 2 but has no start function,
+   with the message "No ACPI start method in _DSM".
 
 3. **A cmdready hook**, `acpi_start_invoke()`.  It evaluates `_DSM` function
    1 with `acpi_EvaluateDSMTyped()` (`acpi.c:3248`), asking for an integer,
    and fails if the evaluation fails or the integer is not 0.  The existing
-   `sm_cmdready` call site (`tpm_crb.c:701`) already runs right after the
+   `sm_cmdready` call site (`tpm_crb.c:726`) already runs right after the
    `CTRL_START` write, which is the order the specification asks for.  No
    change to `tpmcrb_transmit()` is needed for the normal path.
 
@@ -316,6 +317,12 @@ All in `tpm_crb.c`: 89 lines added, none removed.
    `no_idle_states`, makes `tpmcrb_state_idle()` and `tpmcrb_state_ready()`
    return at once.  Only the method 2 entry sets it, because of the
    measurement in section 2.
+
+6. **A correct failure message.**  When the `sm_cmdready` hook fails,
+   `tpmcrb_transmit()` printed "Timeout while waiting for device to ready".
+   That was true for the Pluton doorbell, but not for a `_DSM` call that
+   returned an error.  It now prints "Start method failed (cmd=...)", which
+   is true for both.  The hook prints the detail first.
 
 Nothing needs to change for the memory layout.  `tpmcrb_map()` already maps a
 control area that lies outside `_CRS`.  The command buffer is inside the first
@@ -333,6 +340,16 @@ unchanged for every other machine.
 The `_DSM` helpers already exist in `sys/dev/acpica/acpi.c` and are used by
 other drivers (`acpi_spibus.c`, `acpi_spmc.c`).
 
+### Which machines start attaching
+
+The patch is not limited to AMD.  Any machine whose TPM2 table reports
+method 2 now gets `tpmcrb0`, where before it had no TPM driver.  Another major
+OS's driver says that the Intel PTT in 4th generation Core CPUs (Haswell)
+reports method 2, and that it also needs the `CTRL_START` write.  FreeBSD
+always writes `CTRL_START`, so that case should work, but no Intel machine was
+tested.  This is why the comment in the patch says "some firmware" and not
+"AMD fTPM firmware".
+
 ### Alternatives and their tradeoffs
 
 **Idle and ready states.**  Keeping them was not an option on ser6: the
@@ -341,11 +358,14 @@ all method 2 machines matches what another major OS does for methods 2 and 8.
 The risk is a method 2 firmware that does implement them: it would never be
 asked to go idle, which costs power, not correctness.
 
-**Revision 0 or 1.**  The specification says revision 0.  At least one other
-operating system passes 1.  ser6's `STRT` method ignores the revision, so both
-work here.  Other firmware may have been tested only with 1.  The patch uses
-0, as specified, and falls back to 1 only if function 1 is missing at revision
-0.  No known machine needs the fallback, so it is untested.
+**Revision 0 or 1.**  The TCG ACPI specification (the 2014 draft, 1.3, 1.4
+and 1.5) and Microsoft's TEE ACPI profile say revision 0.  Another major OS
+passes 1.  ser6's `STRT` method ignores the revision, so both work here.  The
+patch uses 0 only.  An earlier version retried with 1 when revision 0 had no
+function 1.  It was removed for three reasons: firmware vendors validate
+against Windows, which uses 0; no known machine needs the retry, so it was
+untested; and on firmware without `_DSM`, each try logged "Failed to
+enumerate DSM functions", so the message appeared twice.
 
 **Method 8 too.**  Method 8 is "CRB plus ACPI start", the same `_DSM` call.
 Adding it is one more table entry.  But no available machine reports method 8,
@@ -364,10 +384,16 @@ changes attach for every CRB machine with two ranges.  Not in this patch.
   nothing about the race: ser6 has no locality registers and skips the idle
   request, which are the two steps the race involves.
 * **Interrupts.**  The driver still polls.
-* **AMD fTPM random-number stalls.**  Another OS disables the AMD fTPM as a
-  random source, because reading it can stall the system on some firmware.
-  FreeBSD's `tpm20_harvest()` (`tpm20.c:418`) asks for random bytes every 10
-  seconds.  Whether this firmware stalls has not been measured.
+* **AMD fTPM random-number stalls.**  Another major OS never uses the TPM as
+  a random source on an AMD x86 machine, unless the start method is Pluton.
+  The reason is AMD advisory PA-410: fTPM accesses can make the whole system
+  stutter.  That OS applies the rule to every AMD CRB fTPM, without checking
+  the firmware version, so ser6 is in the affected group.  FreeBSD's
+  `tpm20_harvest()` (`tpm20.c:418`) asks for random bytes every 10 seconds
+  when the kernel has `RANDOM_ENABLE_TPM`, as ser6's does.  It runs on the
+  shared `taskqueue_thread`.  Whether ser6 stutters has not been measured.
+  If it does, the fix is a separate patch that skips the harvest on AMD,
+  like that OS.
 
 ---
 
@@ -395,9 +421,23 @@ random: registering fast source TPM
 | ser6, patched: real S3 suspend and resume | untestable: S3 resume hangs on the stock kernel too (below) |
 | ser6, patched: `debug.acpi.suspend_bounce` cycle | `tpm20_suspend` and `tpm20_resume` returned 0, TPM works afterwards (below) |
 | ser6, patched: under load | untested |
-| `_DSM` revision 1 fallback | untested: ser6 accepts revision 0 |
-| Start method 7 and 13 machines: no regression | untested |
+| ser6, patched: `TPM2_CreatePrimary` RSA 2048, 2 runs of 5 | 10 of 10 return code 0, 1.1 to 2.2 s |
+| ser6, patched: `_DSM` during those commands (dtrace) | 5 calls of 256 to 511 ms (the `STRT` poll ending at 512 ms, return 0), 5 under 16 ms (`FlushContext`); `tpmcrb_cancel_cmd` never called |
+| ser6, patched (current version): sweep, no gap, 2 runs of 2000, and 1 ms gap | 0 failures of 6000, no new kernel messages |
+| Framework Desktop, method 7, patched: attach | `tpmcrb0: <Trusted Platform Module 2.0, CRB mode>`, as before |
+| Framework Desktop, method 7, patched: `TPM2_CreatePrimary` RSA 2048 | 3 of 3 return code 0, 2.6 to 7.5 s (stock kernel: 5.0 to 6.1 s) |
+| Framework Desktop, method 7, patched: sweep, no gap, 2 runs of 2000 | 14 and 8 failures, the back-to-back `EIO` bug; unpatched quiet baseline is 12 |
+| Framework Desktop, method 7, patched: sweep, 1 ms gap, 2000 | 0 failures |
+| Start method 13 (Pluton) machines: no regression | untested |
 | Start method 8 machines | none available |
+
+The ser6 rows were measured with the first version of the patch.  The
+current version drops the revision 1 retry and changes one error message.  On
+ser6, revision 0 already succeeded, so the code path is the same.  The rows
+marked "current version", the `TPM2_CreatePrimary` rows and the Framework
+Desktop rows use the current version, kernel
+`tpm-crb-acpi-start-n290663-db8444c1b7e4-dirty` built on 2026-11-10, with
+`tpm_crb_long_command.py 3` and `tpm_crb_sweep.py 2000 0 0 1`.
 
 The sweep was `tpm_crb_sweep.py 2000 0 0 0 0 0 0 0 0 0.5 1 2 3 5 10 20 50`
 and took 281 s.  A command costs about 13 ms on this TPM.
@@ -464,6 +504,7 @@ nextboot -k kernel.tpm && shutdown -r now
 # after the reboot:
 dmesg | grep tpmcrb
 sudo python3 tpm_crb_sweep.py 2000 0 0 0 0 0.5 1 2 5 10 50
+sudo python3 tpm_crb_long_command.py 3
 ```
 
 ### Sources
@@ -472,6 +513,12 @@ sudo python3 tpm_crb_sweep.py 2000 0 0 0 0 0.5 1 2 5 10 50
   Table 8 (start method values), section 4.1 (ACPI start method `_DSM`).
 * TCG PC Client Platform TPM Profile Specification 1.03, section 5.5.3.1,
   Table 23 (CRB register layout), as already cited in `tpm_crb.c`.
+* Revision 0 of the start `_DSM`: [TCG ACPI Specification 1.5](https://trustedcomputinggroup.org/wp-content/uploads/TCG-ACPI-General-Specification_v1.50_pub.pdf),
+  [1.4 r14](https://trustedcomputinggroup.org/wp-content/uploads/TCG-ACPI-Specification-Version-1.4-Revision-14_28November23.pdf),
+  and Microsoft's [Trusted Execution Environment ACPI Profile](https://learn.microsoft.com/en-us/windows-hardware/test/hlk/testref/trusted-execution-environment-acpi-profile).
+* Another major OS: Linux `drivers/char/tpm/tpm_crb.c` at 7.2-rc5
+  (`tpm_crb_has_idle()`, `crb_do_acpi_start()`, the PA-410 hwrng quirk in
+  `crb_acpi_probe()`).
 * ser6: `acpidump -b`, `iasl -d dsdt.dat`, a `/dev/mem` dump of the control
   area, and the `/dev/mem` `GO_READY`/`GO_IDLE`/`TPM2_GetRandom` test, all
   taken on 2026-11-04.
