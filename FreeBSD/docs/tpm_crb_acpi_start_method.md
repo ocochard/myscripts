@@ -2,7 +2,8 @@
 
 ```
 Status:    patch written and tested on ser6, not submitted
-Patch:     tpm_crb_acpi_start_method.patch (sys/dev/tpm/tpm_crb.c, +80 -3 lines)
+Patch:     tpm_crb_acpi_start_method.patch (sys/dev/tpm/tpm_crb.c, tpm20.c,
+           tpm20.h; +104 -9 lines)
 Driver:    sys/dev/tpm/tpm_crb.c
 Base:      sections 1 and 2 cite main at 584f44221f45 (2026-10-29);
            the patch applies to main at db8444c1b7e4 (2026-11-04)
@@ -289,7 +290,7 @@ the specification requires it and other firmware may depend on it.
 
 ### What changed
 
-All in `tpm_crb.c`: 80 lines added, 3 removed.
+In `tpm_crb.c`, `tpm20.c` and `tpm20.h`: 104 lines added, 9 removed.
 
 1. **Accept method 2.**  An entry to `tpmcrb_sm_cfg_map[]` for
    `TPM2_START_METHOD_ACPI`, with description "Trusted Platform Module 2.0,
@@ -323,6 +324,15 @@ All in `tpm_crb.c`: 80 lines added, 3 removed.
    That was true for the Pluton doorbell, but not for a `_DSM` call that
    returned an error.  It now prints "Start method failed (cmd=...)", which
    is true for both.  The hook prints the detail first.
+
+7. **No entropy harvest on AMD.**  A new `no_harvest` flag in `struct
+   tpm_sc` tells `tpm20_init()` not to register the TPM as a random source
+   and not to schedule the 10 s harvest.  The resume path and the error path
+   of `tpm20_suspend()` do not reschedule it either.  The task is still
+   initialized, so the drain calls on suspend and detach stay valid.
+   `acpi_start_attach()` sets the flag on AMD CPUs (`cpu_vendor_id ==
+   CPU_VENDOR_AMD`) and prints "Not used as an entropy source (AMD PA-410)".
+   Section 4 shows why: on ser6, every harvest froze the whole machine.
 
 Nothing needs to change for the memory layout.  `tpmcrb_map()` already maps a
 control area that lies outside `_CRS`.  The command buffer is inside the first
@@ -376,6 +386,13 @@ Allocating resource 1 too would register the response buffer with the kernel's
 resource manager instead of mapping it anonymously.  That is cleaner but
 changes attach for every CRB machine with two ranges.  Not in this patch.
 
+**Skip the harvest on every AMD fTPM.**  Another major OS skips it on every
+AMD x86 machine except Pluton, so also for method 7, the Framework Desktop
+included.  This patch skips it only for method 2 on AMD.  The wider rule would
+stop the harvest on machines that use it today, without a measurement showing
+that they stall.  That belongs in its own patch, with the stall probe run on a
+method 7 machine first.
+
 ### What the patch does NOT fix
 
 * **The back-to-back `EIO` bug.**  That is a separate patch
@@ -384,16 +401,11 @@ changes attach for every CRB machine with two ranges.  Not in this patch.
   nothing about the race: ser6 has no locality registers and skips the idle
   request, which are the two steps the race involves.
 * **Interrupts.**  The driver still polls.
-* **AMD fTPM random-number stalls.**  Another major OS never uses the TPM as
-  a random source on an AMD x86 machine, unless the start method is Pluton.
-  The reason is AMD advisory PA-410: fTPM accesses can make the whole system
-  stutter.  That OS applies the rule to every AMD CRB fTPM, without checking
-  the firmware version, so ser6 is in the affected group.  FreeBSD's
-  `tpm20_harvest()` (`tpm20.c:418`) asks for random bytes every 10 seconds
-  when the kernel has `RANDOM_ENABLE_TPM`, as ser6's does.  It runs on the
-  shared `taskqueue_thread`.  Whether ser6 stutters has not been measured.
-  If it does, the fix is a separate patch that skips the harvest on AMD,
-  like that OS.
+* **AMD fTPM stalls on other start methods.**  The patch stops the 10 s
+  harvest for method 2 on AMD only (item 7 above).  An AMD machine using
+  method 7 still harvests, and nobody has measured whether it stalls.
+  Commands sent from userland, through `/dev/tpm0`, still cause the stalls
+  measured in section 4.  Only the periodic kernel harvest is gone.
 
 ---
 
@@ -420,7 +432,12 @@ random: registering fast source TPM
 | ser6, patched: new `tpmcrb0` kernel messages | None |
 | ser6, patched: real S3 suspend and resume | untestable: S3 resume hangs on the stock kernel too (below) |
 | ser6, patched: `debug.acpi.suspend_bounce` cycle | `tpm20_suspend` and `tpm20_resume` returned 0, TPM works afterwards (below) |
-| ser6, patched: under load | untested |
+| ser6, patched: under load | untested (CPU load); TPM load: see "AMD fTPM stalls, measured" |
+| ser6, patched, before item 7: system stalls from the 10 s harvest | **yes**: 2.3 ms on all CPUs per harvest, 1.2 s once in 18 harvests |
+| ser6, patched with item 7: harvest | none: "Not used as an entropy source (AMD PA-410)", no "registering fast source TPM" line |
+| ser6, patched with item 7: `devctl detach`, then attach by handle `\_SB_.TPM_` | detach and re-attach clean, 200 commands with 0 failures afterwards |
+| ser6, patched with item 7: `TPM2_CreatePrimary` 3 times, sweep 2000 with no gap and 2000 with 1 ms | 3 of 3 return code 0 (1.3 to 2.5 s), 0 failures of 4000 |
+| ser6, patched with item 7: suspend and resume | untested: the `suspend_bounce` run was not repeated.  If it fails, ser6 enters a real S3, which it cannot leave |
 | ser6, patched: `TPM2_CreatePrimary` RSA 2048, 2 runs of 5 | 10 of 10 return code 0, 1.1 to 2.2 s |
 | ser6, patched: `_DSM` during those commands (dtrace) | 5 calls of 256 to 511 ms (the `STRT` poll ending at 512 ms, return 0), 5 under 16 ms (`FlushContext`); `tpmcrb_cancel_cmd` never called |
 | ser6, patched (current version): sweep, no gap, 2 runs of 2000, and 1 ms gap | 0 failures of 6000, no new kernel messages |
@@ -491,6 +508,42 @@ logged (4 s):
 | `TPM2_GetRandom(16)` after resume | return code 0 |
 | Sweep after resume, 2000 commands with no gap | 0 failures |
 | New `tpmcrb0` kernel messages | none |
+
+### AMD fTPM stalls, measured
+
+`tpm_stall_probe.c` runs one thread per CPU, pinned, at normal priority.  Each
+thread reads `CLOCK_REALTIME` in a tight loop and logs every gap over 200 us.
+Ordinary preemption delays one CPU at a time.  A gap on all 16 CPUs at the same
+moment means the whole machine stopped.  dtrace logged the start and end of
+each `tpmcrb_transmit()` call, and `tpm_stall_analyze.py` matches the two.  The
+raw data is in `tpm_stall_data/`.  Measured on ser6 on 2026-11-10:
+
+| Run | TPM commands | Stalls on all 16 CPUs |
+|---|---|---|
+| Stock kernel, no TPM driver, idle, 120 s | 0 | 0 (longest single-CPU gap 2.0 ms) |
+| Patched, idle, 180 s (harvest only) | 18 | 36, all during a TPM command |
+| Patched, `TPM2_GetRandom` every 1 ms, 60 s | 4006 | 9, all during a TPM command |
+| Patched with item 7 (no harvest), idle, 180 s | 0 | 0 (longest single-CPU gap 1.2 ms) |
+
+In the idle run there are two patterns:
+
+* 17 harvests took 18 ms each.  During each one, every CPU stopped for 2.2 to
+  2.4 ms.
+* 1 harvest took 1396 ms.  During it, every CPU stopped 19 times, mostly for
+  60 to 75 ms each, about 1.2 s frozen in total.  This is the stutter that
+  advisory PA-410 describes.
+
+Under load the commands took 3 ms on average, and only 9 of 4006 stalled the
+machine, each for about 2.3 ms.  So a stall does not come with every command.
+It seems to come with the first command after the fTPM has been idle, which is
+exactly the harvest's pattern.  This is inferred from the timing, not proven.
+
+The stalls are System Management Interrupts (SMIs).  The AMD performance
+counter `ls_smi_rx` (`pmcstat -c 0 -s ls_smi_rx -w 1`) counted 2 SMIs at
+seconds 1, 11, 21, 31, 41, 51 and 61 of a 65 s idle run, which is the
+harvest period, and none in any other second.  200 back-to-back
+`TPM2_GetRandom` commands caused only 2 SMIs.  The SMI count on the stock
+kernel was not measured, but its stall probe saw no stall on all CPUs.
 
 ### How to repeat the test
 

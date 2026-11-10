@@ -1,8 +1,82 @@
+diff --git sys/dev/tpm/tpm20.c sys/dev/tpm/tpm20.c
+index b5d40eeac7d7..aced216c352d 100644
+--- sys/dev/tpm/tpm20.c
++++ sys/dev/tpm/tpm20.c
+@@ -277,10 +277,13 @@ tpm20_init(struct tpm_sc *sc)
+ 		return (result);
+ 
+ #if defined TPM_HARVEST || defined RANDOM_ENABLE_TPM
+-	random_source_register(&random_tpm);
+ 	TIMEOUT_TASK_INIT(taskqueue_thread, &sc->harvest_task, 0,
+ 	    tpm20_harvest, sc);
+-	taskqueue_enqueue_timeout(taskqueue_thread, &sc->harvest_task, 0);
++	if (!sc->no_harvest) {
++		random_source_register(&random_tpm);
++		taskqueue_enqueue_timeout(taskqueue_thread, &sc->harvest_task,
++		    0);
++	}
+ #endif
+ 	sc->common_initialized = true;
+ 
+@@ -306,7 +309,8 @@ tpm20_release(struct tpm_sc *sc)
+ 		goto out;
+ #if defined TPM_HARVEST || defined RANDOM_ENABLE_TPM
+ 	taskqueue_drain_timeout(taskqueue_thread, &sc->harvest_task);
+-	random_source_deregister(&random_tpm);
++	if (!sc->no_harvest)
++		random_source_deregister(&random_tpm);
+ #endif
+ 	sc->common_initialized = false;
+ out:
+@@ -338,8 +342,9 @@ tpm20_resume(device_t dev)
+ 		return (error);
+ 
+ #if defined TPM_HARVEST || defined RANDOM_ENABLE_TPM
+-	taskqueue_enqueue_timeout(taskqueue_thread, &sc->harvest_task,
+-	    hz * TPM_HARVEST_INTERVAL);
++	if (!sc->no_harvest)
++		taskqueue_enqueue_timeout(taskqueue_thread, &sc->harvest_task,
++		    hz * TPM_HARVEST_INTERVAL);
+ #endif
+ 	return (0);
+ }
+@@ -369,7 +374,7 @@ tpm20_suspend(device_t dev)
+ out:
+ 	sx_xunlock(&sc->dev_lock);
+ #if defined TPM_HARVEST || defined RANDOM_ENABLE_TPM
+-	if (error != 0)
++	if (error != 0 && !sc->no_harvest)
+ 		taskqueue_enqueue_timeout(taskqueue_thread, &sc->harvest_task,
+ 		    hz * TPM_HARVEST_INTERVAL);
+ #endif
+diff --git sys/dev/tpm/tpm20.h sys/dev/tpm/tpm20.h
+index f4dcb2fe4e9a..2ff195264ba8 100644
+--- sys/dev/tpm/tpm20.h
++++ sys/dev/tpm/tpm20.h
+@@ -150,6 +150,7 @@ struct tpm_sc {
+ 	bool		common_initialized;
+ 	bool		dying;
+ 	bool		suspended;
++	bool		no_harvest;	/* Set by the transport before tpm20_init() */
+ 
+ 	struct tpm_priv *internal_priv;
+ 
 diff --git sys/dev/tpm/tpm_crb.c sys/dev/tpm/tpm_crb.c
-index df47f88f79fd..249368f016f4 100644
+index df47f88f79fd..92f163559b51 100644
 --- sys/dev/tpm/tpm_crb.c
 +++ sys/dev/tpm/tpm_crb.c
-@@ -89,8 +89,12 @@ struct tpmcrb_sm_cfg {
+@@ -28,6 +28,10 @@
+ #include <sys/cdefs.h>
+ #include "tpm20.h"
+ 
++#if defined(__amd64__) || defined(__i386__)
++#include <x86/cputypes.h>
++#endif
++
+ /*
+  * PTP locality registers, relative to the start of the ACPI memory resource.
+  * TCG PC Client PTP 1.03, section 5.5.3.1, Table 23.
+@@ -89,8 +93,12 @@ struct tpmcrb_sm_cfg {
  	sm_detach_t		*sm_detach;
  	sm_statechange_t	*sm_statechange;
  	sm_statechange_t	*sm_cmdready;
@@ -15,7 +89,7 @@ index df47f88f79fd..249368f016f4 100644
  static sm_attach_t		pluton_attach;
  static sm_detach_t		pluton_detach;
  static sm_statechange_t		pluton_doorbell;
-@@ -106,6 +110,16 @@ static const struct tpmcrb_sm_cfg_map {
+@@ -106,6 +114,16 @@ static const struct tpmcrb_sm_cfg_map {
  		.desc = "Trusted Platform Module 2.0, CRB mode",
  		.sm_cfg = { NULL },	/* No notifications required */
  	},
@@ -32,7 +106,7 @@ index df47f88f79fd..249368f016f4 100644
  	{
  		.acpi_sm = ACPI_TPM2_COMMAND_BUFFER_WITH_PLUTON,
  		.desc = "Trusted Platform Module 2.0, CRB mode (Pluton)",
-@@ -138,6 +152,7 @@ struct tpmcrb_sc {
+@@ -138,6 +156,7 @@ struct tpmcrb_sc {
  			bus_space_handle_t	start_bsh;
  			bus_space_handle_t	reply_bsh;
  		} pluton;
@@ -40,7 +114,7 @@ index df47f88f79fd..249368f016f4 100644
  	};
  	bus_space_tag_t	bst;
  	struct tpmcrb_mapping ctrl;
-@@ -564,6 +579,8 @@ tpmcrb_cancel_cmd(struct tpmcrb_sc *crb_sc)
+@@ -564,6 +583,8 @@ tpmcrb_cancel_cmd(struct tpmcrb_sc *crb_sc)
  	uint32_t mask = ~0;
  
  	tpmcrb_ctrl_write_4(crb_sc, TPM_CRB_CTRL_CANCEL, TPM_CRB_CTRL_CANCEL_CMD);
@@ -49,7 +123,7 @@ index df47f88f79fd..249368f016f4 100644
  	if (!tpmcrb_ctrl_wait(crb_sc, TPM_CRB_CTRL_START,
  		    mask, ~mask, TPM_TIMEOUT_B)) {
  		device_printf(crb_sc->base.dev,
-@@ -604,6 +621,8 @@ tpmcrb_state_idle(struct tpmcrb_sc *crb_sc, bool wait)
+@@ -604,6 +625,8 @@ tpmcrb_state_idle(struct tpmcrb_sc *crb_sc, bool wait)
  {
  	int mask, timeout;
  
@@ -58,7 +132,7 @@ index df47f88f79fd..249368f016f4 100644
  	timeout = wait ? TPM_TIMEOUT_C : 0;
  
  	tpmcrb_ctrl_write_4(crb_sc, TPM_CRB_CTRL_REQ, TPM_CRB_CTRL_REQ_GO_IDLE);
-@@ -627,6 +646,8 @@ tpmcrb_state_ready(struct tpmcrb_sc *crb_sc, bool wait)
+@@ -627,6 +650,8 @@ tpmcrb_state_ready(struct tpmcrb_sc *crb_sc, bool wait)
  {
  	int mask, timeout;
  
@@ -67,7 +141,7 @@ index df47f88f79fd..249368f016f4 100644
  	timeout = wait ? TPM_TIMEOUT_C : 0;
  
  	tpmcrb_ctrl_write_4(crb_sc, TPM_CRB_CTRL_REQ, TPM_CRB_CTRL_REQ_GO_READY);
-@@ -724,9 +745,7 @@ tpmcrb_transmit(device_t dev, struct tpm_priv *priv, size_t length)
+@@ -724,9 +749,7 @@ tpmcrb_transmit(device_t dev, struct tpm_priv *priv, size_t length)
  	command_started = true;
  
  	if (!tpmcrb_notify_cmdready(crb_sc, timeout)) {
@@ -78,7 +152,7 @@ index df47f88f79fd..249368f016f4 100644
  		if (!tpmcrb_cancel_cmd(crb_sc)) {
  			error = EIO;
  			goto out;
-@@ -797,6 +816,64 @@ tpmcrb_transmit(device_t dev, struct tpm_priv *priv, size_t length)
+@@ -797,6 +820,72 @@ tpmcrb_transmit(device_t dev, struct tpm_priv *priv, size_t length)
  
  /* StartMethod Implementation Details */
  
@@ -110,6 +184,14 @@ index df47f88f79fd..249368f016f4 100644
 +		return (false);
 +	}
 +	crb_sc->acpi_start_handle = handle;
++#if defined(__amd64__) || defined(__i386__)
++	/* AMD advisory PA-410: fTPM commands can stall every CPU. */
++	if (cpu_vendor_id == CPU_VENDOR_AMD) {
++		device_printf(crb_sc->base.dev,
++		    "Not used as an entropy source (AMD PA-410)\n");
++		crb_sc->base.no_harvest = true;
++	}
++#endif
 +	return (true);
 +}
 +
