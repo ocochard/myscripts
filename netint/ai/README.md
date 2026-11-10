@@ -751,7 +751,7 @@ In git: the three trained filters, their weights and ONNX exports, in [`models/`
 Not in git (too large, and frames from commercial films):
 - `toolkit-host:~/netint_ai/`: toolkit tarball and tree (`tk/`), container context (`ctx/`), work directory (`work/`): `pipe_test/`, `tonemap/tm_pairs*` (HDR halves and Hable targets), `tonemap/pl_pairs/` (libplacebo pair set, links to the HDR halves), the `run*` directories (trained models, `.onnx`, `.nb`), the logs.
 - `quadra-host:~/ai_test/`: `nbinfo`, the `.nb` files, the test clips (`eh_1080p_hdr10.hevc`, `sl/`), the libplacebo clip references (`ref_pl_eh.yuv`, `ref_pl_sl.yuv`), `tm_frames*/`, `tm_pairs*/`.
-- `gpu-host:/tmp/`: keyframes (`tm_frames*`), libplacebo work (`pl/`), Sol Levante 1080p encodes (`sollevante/`). **`/tmp` may be cleared at reboot**: copy anything worth keeping elsewhere.
+- `gpu-host:$DOWNLOADS/netint_ai/` (moved from `/tmp` on 2026-11-10): keyframes (`tm_frames*`), libplacebo work and targets (`pl/`), Sol Levante 1080p encodes (`sollevante/`: HDR10 `.hevc` and `.mkv`, colorist SDR grade), film lists, Jellyfin queries and logs (`misc/`).
 - Sources: films under `$FILMS`, Sol Levante masters under `$DOWNLOADS`.
 
 ## 11. References

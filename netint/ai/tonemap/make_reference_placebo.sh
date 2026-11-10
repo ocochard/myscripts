@@ -24,12 +24,12 @@ for f in "$@"; do
 	n=$(basename "$f" .yuv)
 	n=${n#hdr_}
 	h=${HEIGHT:-$(( $(wc -c < "$f") / (WIDTH * 3) ))}
-	tmp=$(mktemp -t placebo).hevc
+	tmp=$(mktemp -t placebo)
 	ffmpeg -nostdin -hide_banner -loglevel error -y -f rawvideo \
 	    -pix_fmt yuv420p10le -s ${WIDTH}x$h -color_range tv -color_primaries bt2020 \
 	    -color_trc smpte2084 -colorspace bt2020nc -i "$f" -c:v libx265 \
 	    -x265-params "lossless=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:range=limited:$MD:log-level=error" \
-	    "$tmp"
+	    -f hevc "$tmp"
 	ffmpeg -nostdin -hide_banner -loglevel error -y -init_hw_device vulkan \
 	    -i "$tmp" -vf "$PL" -f rawvideo "$out/sdr_$n.yuv"
 	rm -f "$tmp"
