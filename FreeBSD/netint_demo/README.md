@@ -113,6 +113,12 @@ Chain for an HDR10 source (all on the card):
   BT.709, no SEI. With two tonemap streams the AI load is 94% and `tm48`
   runs at 25.7 fps: real time, with little margin (one short producer lag
   logged in testing).
+- Browser test, `tm48`, H.265 1080p, Chrome on macOS, the whole 4.4 min
+  video: startup 6.2 s. At 25.5 fps for a 24 fps source the initial 12 s
+  burst cannot build up, so the player sits at the live edge: four 0.0 s
+  "stalls" at segment boundaries in the first 30 s (not visible), producer
+  lag for 78 s, then a 6 s lead. One real stall of 0.5 s at 218 s, 5 of 2022
+  frames dropped. Watchable; `tm32` and `tm48u8` have more margin.
 - One tonemap stream keeps one of the two NPU cores busy: two streams run at
   full speed, a third slows all of them (measured 1 to 4 sessions: 27, 53,
   53, 55 fps in total). Hence `DEMO_MAX_TONEMAP` (2). Tonemaps count in
