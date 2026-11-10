@@ -705,6 +705,7 @@ All in this directory ([`netint/ai/`](./)). "Where" is the host each tool runs o
 | `tonemap/diagnose_frames.py` | toolkit-host (container) | Float vs NPU vs reference per frame, saturation of the worst frame | 8.1 |
 | `tonemap/encode_sdr.sh` | quadra-host | The full HDR10-to-SDR encode on the card | 8.4 |
 | `tonemap/make_compare.sh` | gpu-host | Side-by-side and error-map images of the filters | 8.5 |
+| `models/` | quadra-host | The three trained filters (`.nb`), their weights (`.pt`) and ONNX exports | 8.5 |
 
 One-off commands not kept as scripts:
 - PNG preview of a raw frame: `ffmpeg -f rawvideo -pix_fmt yuv420p10le -s WxH -i f.yuv -vf "select=eq(n\,N),scale=960:540:in_color_matrix=bt709:out_range=pc,format=rgb24" -frames:v 1 f.png`. Use `in_color_matrix=bt2020` for HDR samples, and remember they are still PQ, so they look washed out (section 6.4).
@@ -744,6 +745,8 @@ One-off commands not kept as scripts:
 | Three filters (width 48, width 32, uint8) on Sol Levante, side-by-side images | width 48 invisible, width 32 one patch slightly less red, uint8 visible red-to-orange shift | 8.5 |
 
 ### 10.3 Where the data is
+
+In git: the three trained filters, their weights and ONNX exports, in [`models/`](models/).
 
 Not in git (too large, and frames from commercial films):
 - `toolkit-host:~/netint_ai/`: toolkit tarball and tree (`tk/`), container context (`ctx/`), work directory (`work/`): `pipe_test/`, `tonemap/tm_pairs*` (HDR halves and Hable targets), `tonemap/pl_pairs/` (libplacebo pair set, links to the HDR halves), the `run*` directories (trained models, `.onnx`, `.nb`), the logs.

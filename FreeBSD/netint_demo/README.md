@@ -79,8 +79,8 @@ fetching segments (network, HTTP serving).
 
 Three filters convert an HDR10 picture to SDR with our own neural network on
 the card's AI engine. How they were built, trained and measured:
-[netint/ai/README.md](../../netint/ai/README.md). The network binaries go in
-`models/` (not in git: they are built from that tutorial):
+[netint/ai/README.md](../../netint/ai/README.md). Copy the network binaries
+from [netint/ai/models/](../../netint/ai/models/) into `models/`:
 
 | Filter | Model file | fps per stream (1080p, card) |
 |---|---|---|
