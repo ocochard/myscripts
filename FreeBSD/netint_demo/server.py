@@ -35,6 +35,9 @@ MAX_4K_OUT = int(os.environ.get("DEMO_MAX_4K_OUT", "2"))  # 2160p output
 MAX_4K = int(os.environ.get("DEMO_MAX_4K", "6"))  # sources above 1080p
 MODELS = Path(os.environ.get("DEMO_MODELS", BASE / "models"))
 MAX_AI = int(os.environ.get("DEMO_MAX_AI", "6"))
+# A tonemap stream keeps one of the two NPU cores busy (27 fps for the
+# width-48 network at 1080p; a third stream slows all of them).
+MAX_TONEMAP = int(os.environ.get("DEMO_MAX_TONEMAP", "2"))
 # 0 = no time limit: a session lasts as long as the video (played once).
 SESSION_SECONDS = int(os.environ.get("DEMO_SESSION_SECONDS", "0"))
 # A session whose video reached the end keeps its files this long (seconds
@@ -81,7 +84,8 @@ RATE_MODES = {
 FILTERS = {
     "none": ("No filter",
              "Hardware decode, scale and encode only. The baseline to compare "
-             "the other filters against."),
+             "the other filters against. On an HDR10 video: the HDR picture "
+             "shown as SDR without tonemapping, washed out."),
     "hvsplus": ("AI enhance (hvsplus)",
                 "NETINT's built-in AI filter, run by the card's AI engine "
                 "(level 2 of 3, no model file needed). It modifies the "
@@ -101,8 +105,35 @@ FILTERS = {
     "flip": ("Horizontal flip",
              "Mirrors the picture. Runs on the card, no AI: shows that simple "
              "filters are done in hardware too."),
+    "tm48": ("HDR to SDR: AI tonemap, quality (width 48)",
+             "Our own neural network converts the HDR10 picture to SDR on the "
+             "card's AI engine (int16, 10-bit in and out), trained to copy "
+             "libplacebo's BT.2390 tonemapping. 27 fps per stream; the card "
+             "runs two such streams. Compare with 'No filter' to see the "
+             "washed-out picture it fixes."),
+    "tm32": ("HDR to SDR: AI tonemap, faster (width 32)",
+             "A smaller version of the same network: 37 fps per stream. "
+             "Looks the same except in very saturated areas (explosions), "
+             "where some reds come out slightly less red."),
+    "tm48u8": ("HDR to SDR: AI tonemap, uint8 inside",
+               "The width-48 network with 8-bit arithmetic inside: 40 fps per "
+               "stream, but the 10-bit input loses precision. Watch the "
+               "explosions: deep reds turn orange."),
 }
-AI_FILTERS = {"hvsplus", "ai_pre", "roi"}  # use the card AI engine
+# Tonemap filter -> network binary (1920x1080 in and out, 10-bit planes).
+TONEMAP = {"tm48": "tonemap_w48_int16_1920x1080.nb",
+           "tm32": "tonemap_w32_int16_1920x1080.nb",
+           "tm48u8": "tonemap_w48_uint8_1920x1080.nb"}
+AI_FILTERS = {"hvsplus", "ai_pre", "roi"} | set(TONEMAP)  # card AI engine
+# HDR10 sources get "No filter" (the PQ picture shown as SDR) and the
+# tonemaps; the other filters and models expect 8-bit SDR frames.
+HDR_FILTERS = {"none"} | set(TONEMAP)
+SDR_FILTERS = set(FILTERS) - set(TONEMAP)
+# Delete the HDR metadata right after the decoder: otherwise the encoder
+# writes it as SEI (mastering display, light level) into the SDR stream.
+STRIP_HDR = ",".join(f"sidedata=mode=delete:type={t}" for t in (
+    "MASTERING_DISPLAY_METADATA", "CONTENT_LIGHT_LEVEL", "DOVI_RPU_BUFFER",
+    "DOVI_METADATA"))
 # id -> (label, card encoder, extra args). hvc1 tag: Safari needs it.
 CODECS = {
     "h264": ("H.264", "h264_ni_quadra_enc", []),
@@ -171,7 +202,8 @@ def log(msg):
 # --------------------------------------------------------------- videos
 
 def scan_videos():
-    """Keep only files the card can decode (8-bit 4:2:0 H.264/HEVC/VP9)."""
+    """Keep only files the card can decode: 8-bit 4:2:0 H.264/HEVC/VP9, and
+    10-bit HEVC when it is HDR10 (PQ), for the tonemap filters."""
     found = {}
     if not VIDEO_DIR.is_dir():
         return found
@@ -181,7 +213,7 @@ def scan_videos():
         try:
             out = subprocess.run(
                 [FFPROBE, "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "stream=codec_name,width,height,pix_fmt:format=duration",
+                 "-show_entries", "stream=codec_name,width,height,pix_fmt,color_transfer:format=duration",
                  "-of", "json", str(p)],
                 capture_output=True, text=True, timeout=20, check=True).stdout
             probe = json.loads(out)
@@ -191,12 +223,14 @@ def scan_videos():
                 ValueError):
             log(f"skip {p.name}: ffprobe failed")
             continue
-        if s["codec_name"] not in DECODERS or s.get("pix_fmt") not in (
-                "yuv420p", "yuvj420p"):
+        hdr = (s["codec_name"] == "hevc" and s.get("pix_fmt") == "yuv420p10le"
+               and s.get("color_transfer") == "smpte2084")
+        if s["codec_name"] not in DECODERS or not hdr and s.get(
+                "pix_fmt") not in ("yuv420p", "yuvj420p"):
             log(f"skip {p.name}: {s['codec_name']} {s.get('pix_fmt')} "
-                "not supported")
+                f"{s.get('color_transfer', '')} not supported")
             continue
-        found[p.stem] = {"path": p, "codec": s["codec_name"],
+        found[p.stem] = {"path": p, "codec": s["codec_name"], "hdr": hdr,
                          "w": int(s["width"]), "h": int(s["height"]), "dur": dur}
     return found
 
@@ -264,7 +298,9 @@ class Session:
         else:                       # cbr: close to the bitrate, no spikes
             rc = "RcEnable=1:cuLevelRCEnable=1:bitrateMode=1:vbvBufferSize=500"
         enc_params = ["-xcoder-params", rc]
-        if self.flt == "hvsplus":
+        if v["hdr"]:
+            vf, enc_params = self.hdr_filters(v, width, height, rc)
+        elif self.flt == "hvsplus":
             if height > 1080:
                 # The AI engine cannot sustain 30 fps at 2160p (about 25 fps,
                 # and a second stream drops to 22): enhance at 1080p, upscale.
@@ -309,6 +345,35 @@ class Session:
             "-hls_segment_filename", str(self.dir / "seg%d.m4s"),
             str(self.dir / "index.m3u8"),
         ]
+
+    def hdr_filters(self, v, width, height, rc):
+        """Filter chain and encoder parameters for an HDR10 source."""
+        bt709 = ("setparams=color_primaries=bt709:color_trc=bt709:"
+                 "colorspace=bt709")
+        enc = ["-xcoder-params", rc + ":colorPri=1:colorTrc=1:colorSpc=1"]
+        if self.flt not in TONEMAP:
+            # No tonemap: 10-bit PQ samples cut to 8 bits and tagged BT.709,
+            # the washed-out picture the tonemap filters fix. Left with the
+            # source's BT.2020/PQ tags, an HDR-capable browser would show it
+            # correctly and the comparison would depend on the screen.
+            return (f"{STRIP_HDR},ni_quadra_scale={width}:{height}:"
+                    f"format=yuv420p,{bt709}", enc)
+        # The network takes exactly 1920x1080: fit the picture inside,
+        # centred, padded with black (letterbox or pillarbox).
+        fit = ""
+        if (v["w"], v["h"]) != (1920, 1080):
+            if v["w"] * 1080 >= v["h"] * 1920:
+                sw, sh = 1920, (1920 * v["h"] // v["w"] + 1) // 2 * 2
+            else:
+                sw, sh = (1080 * v["w"] // v["h"] + 1) // 2 * 2, 1080
+            fit = (f"ni_quadra_scale={sw}:{sh},ni_quadra_pad=1920:1080:"
+                   f"{(1920 - sw) // 4 * 2}:{(1080 - sh) // 4 * 2},")
+        # After the network the frame is 16:9 (padding included).
+        w169 = max(2, round(height * 16 / 9 / 2) * 2)
+        vf = (f"{STRIP_HDR},{fit}ni_quadra_ai_pre=nb="
+              f"{MODELS / TONEMAP[self.flt]},"
+              f"ni_quadra_scale={w169}:{height}:format=yuv420p,{bt709}")
+        return vf, enc
 
     def run(self):
         self.dir.mkdir(parents=True, mode=0o700)
@@ -408,6 +473,10 @@ def start_session(ip, name, resolution, flt, codec, addr="", ua="",
                 1 for x in live if x.flt in AI_FILTERS) >= MAX_AI:
             return None, (503, "AI filter slots are busy, try another "
                                "filter or retry in a minute")
+        if flt in TONEMAP and sum(
+                1 for x in live if x.flt in TONEMAP) >= MAX_TONEMAP:
+            return None, (503, "the HDR tonemap slots are busy (one per AI "
+                               "core), try 'No filter' or retry in a minute")
         if videos[name]["h"] > 1080 and sum(
                 1 for x in live if x.heavy) >= MAX_4K:
             return None, (503, "4K video slots are busy, try a 1080p video "
@@ -703,13 +772,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/videos":
             return self.send_json(200, {
                 "videos": list(videos),
+                "hdr": [k for k, v in videos.items() if v["hdr"]],
                 "codecs": {k: v[0] for k, v in CODECS.items()},
                 "resolutions": list(RESOLUTIONS),
                 "auto_kbps": AUTO_KBPS,
                 "bitrates": BITRATES_KBPS,
                 "rates": {k: {"label": v[0], "desc": v[1]}
                           for k, v in RATE_MODES.items()},
-                "filters": {k: {"label": v[0], "desc": v[1]}
+                "filters": {k: {"label": v[0], "desc": v[1],
+                                "hdr": k in HDR_FILTERS,
+                                "sdr": k in SDR_FILTERS}
                             for k, v in FILTERS.items()},
                 "max": MAX_SESSIONS, "host": HOST})
         if path == "/api/stats":
@@ -802,6 +874,14 @@ class Handler(BaseHTTPRequestHandler):
                     or (kb != 0 and (not isinstance(kb, int)
                                      or kb not in BITRATES_KBPS)):
                 return self.send_json(400, {"error": "bad parameters"})
+            if f not in (HDR_FILTERS if videos[name]["hdr"] else SDR_FILTERS):
+                return self.send_json(400, {"error": "this filter does not "
+                                            "apply to this video"})
+            if f in TONEMAP and RESOLUTIONS[q] > 1080:
+                # The network works at 1080p; upscaled 2160p output ran at
+                # 23.6 fps, below the 24 fps source, and adds no detail.
+                return self.send_json(400, {"error": "the HDR tonemap runs at "
+                                            "1080p: choose 1080p or lower"})
             s, err = start_session(self.client_ip(), name, q, f, codec,
                                    self.client_ip(raw=True),
                                    parse_ua(self.headers.get(

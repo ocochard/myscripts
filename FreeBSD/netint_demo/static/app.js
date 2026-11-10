@@ -175,7 +175,15 @@ async function init() {
   fill($("filter"), Object.entries(o.filters).map(([k, f]) => [k, f.label]));
   const showDesc = () => { $("fdesc").firstChild.textContent = o.filters[$("filter").value].desc; };
   $("filter").addEventListener("change", showDesc);
-  showDesc();
+  // HDR10 videos take only "No filter" and the tonemaps; SDR videos the rest.
+  const fitFilters = () => {
+    const kind = (o.hdr || []).includes($("video").value) ? "hdr" : "sdr";
+    for (const opt of $("filter").options) opt.disabled = !o.filters[opt.value][kind];
+    if ($("filter").selectedOptions[0].disabled) $("filter").value = "none";
+    showDesc();
+  };
+  $("video").addEventListener("change", fitFilters);
+  fitFilters();
   fill($("codec"), Object.entries(o.codecs));
   for (const opt of $("codec").options) {
     if (!canPlay(opt.value)) { opt.disabled = true; opt.text += " (not playable in this browser)"; }

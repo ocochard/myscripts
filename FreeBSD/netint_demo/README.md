@@ -10,6 +10,8 @@ Pipeline per visitor (everything but packaging runs on the card):
         -vf ni_quadra_scale=WxH[,ni_quadra_hvsplus | ni_quadra_flip] -c:v h264_ni_quadra_enc -b:v N
         -f hls (6 s segments, keyframe every 2 s)
 
+HDR10 sources (HEVC Main 10, PQ) use their own chain, see "HDR to SDR".
+
 ## Platform
 
 FreeBSD only for now. The encoding and streaming core is portable, but the
@@ -20,14 +22,15 @@ FFmpeg 7.1 or later.
 
 ## Run
 
-    mkdir videos        # put freely licensed H.264/HEVC/VP9 8-bit 4:2:0 files here
+    mkdir videos        # freely licensed H.264/HEVC/VP9 8-bit 4:2:0 files,
+                        # and HEVC Main 10 HDR10 (PQ) files for the tonemaps
     sudo python3 -I server.py
 
-Files the card cannot decode (10-bit, AV1, other codecs) are skipped at
-startup, with a log line. Restart to rescan.
+Files the card cannot decode (AV1, ProRes, other codecs, 10-bit that is not
+HDR10 HEVC) are skipped at startup, with a log line. Restart to rescan.
 
 Environment: `DEMO_VIDEOS`, `DEMO_HLS` (use a tmpfs), `DEMO_PORT` (8080), `DEMO_BIND` (`::`),
-`DEMO_MAX_SESSIONS` (20), `DEMO_MAX_AI` (6), `DEMO_MAX_4K` (6), `DEMO_MAX_4K_OUT` (2), `DEMO_MAX_MBPS` (400, total bitrate of live sessions), `DEMO_PER_IP` (1), `DEMO_SESSION_SECONDS` (180),
+`DEMO_MAX_SESSIONS` (20), `DEMO_MAX_AI` (6), `DEMO_MAX_TONEMAP` (2), `DEMO_MAX_4K` (6), `DEMO_MAX_4K_OUT` (2), `DEMO_MAX_MBPS` (400, total bitrate of live sessions), `DEMO_PER_IP` (1), `DEMO_SESSION_SECONDS` (180),
 `DEMO_IDLE_SECONDS` (30), `DEMO_IFACE` (re0), `DEMO_TRUST_PROXY=1` (use
 `X-Forwarded-For` when the peer is the local reverse proxy).
 
@@ -71,6 +74,54 @@ Per stream: 4K decode about 7 % of the card, 1080p decode about 1.75 %,
 process. Caps: 20 sessions, at most 6 with a 4K source, at most 2 with 2160p
 output, at most 6 with the AI filter: worst case about 67 % decoder and 55 % encoder. Not measured: clients
 fetching segments (network, HTTP serving).
+
+## HDR to SDR: AI tonemap filters
+
+Three filters convert an HDR10 picture to SDR with our own neural network on
+the card's AI engine. How they were built, trained and measured:
+[netint/ai/README.md](../../netint/ai/README.md). The network binaries go in
+`models/` (not in git: they are built from that tutorial):
+
+| Filter | Model file | fps per stream (1080p, card) |
+|---|---|---|
+| `tm48` quality | `tonemap_w48_int16_1920x1080.nb` | 27 |
+| `tm32` faster | `tonemap_w32_int16_1920x1080.nb` | 37 |
+| `tm48u8` uint8 inside | `tonemap_w48_uint8_1920x1080.nb` | 40 (deep reds turn orange) |
+
+Chain for an HDR10 source (all on the card):
+
+    -c:v h265_ni_quadra_dec -xcoder-params out=hw -i video
+    -vf sidedata=mode=delete:type=... (mastering display, light level, Dolby Vision),
+        [ni_quadra_scale + ni_quadra_pad to 1920x1080 when the source is another size,]
+        ni_quadra_ai_pre=nb=models/tonemap_....nb,
+        ni_quadra_scale=WxH:format=yuv420p,
+        setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709
+    -c:v <encoder> -xcoder-params "<rate control>:colorPri=1:colorTrc=1:colorSpc=1"
+
+- Without the `sidedata` filters the encoder copies the HDR metadata into
+  the SDR stream as SEI 137/144, and players treat it as HDR.
+- On an HDR10 source, "No filter" cuts the 10-bit PQ samples to 8 bits
+  without tonemapping and tags them BT.709: the washed-out picture the
+  tonemaps fix. Without the tags the encoder keeps the source's BT.2020/PQ
+  tags, and an HDR-capable browser shows the picture correctly. The other
+  filters (hvsplus, GentleAIEnhance, ROI, flip) expect 8-bit SDR and are not
+  offered; the page greys them out and the server refuses them.
+- Output 1080p or lower only. The network works at 1080p, and an upscaled
+  2160p output ran at 23.6 fps (H.264 and AV1), below the 24 fps source.
+- Measured through the demo (1080p H.264, one stream): `tm48` 25.6 fps and
+  47% AI load, `tm32` about 34 fps, `tm48u8` about 35 fps; output tagged
+  BT.709, no SEI. With two tonemap streams the AI load is 94% and `tm48`
+  runs at 25.7 fps: real time, with little margin (one short producer lag
+  logged in testing).
+- One tonemap stream keeps one of the two NPU cores busy: two streams run at
+  full speed, a third slows all of them (measured 1 to 4 sessions: 27, 53,
+  53, 55 fps in total). Hence `DEMO_MAX_TONEMAP` (2). Tonemaps count in
+  `DEMO_MAX_AI` too; running them next to hvsplus or ROI streams is not
+  measured.
+- Source used: *Sol Levante* (Netflix Open Content, CC BY 4.0), the HDR10
+  ProRes master scaled to 1920x1080 and encoded with x265 (CRF 10, BT.2020
+  PQ color tags, no mastering metadata: the master has none). The card
+  cannot decode the ProRes `.mov` itself.
 
 ## Encoder settings (resolution, bitrate, rate control)
 
