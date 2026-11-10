@@ -580,6 +580,77 @@ Why so little from an "18 TOPS" engine: the Vivante NPU is built for small-input
 
 **Trap: `ffprobe -of csv=p=0:s=x` for the frame size.** When the stream has side data, the csv writer adds a separator (`3840x1632x`), which broke the size parsing. `encode_sdr.sh` and `eval_clip.sh` read width and height with `-of default=nw=1:nk=1`, one value per line.
 
+### 8.5 Three filters, and what "dB" means to a viewer (verified 2026-11-10)
+
+**Three filters** from the same training (1780 libplacebo pairs: films, animation, synthetic; 30 000 iterations), all fused graph, int16 at the inputs and outputs:
+
+| Filter | `.nb` on `quadra-host` | fps (decode + network) | Event Horizon Y | Sol Levante Y | Sol worst frame Y | Sol vs colorist Y |
+|---|---|---|---|---|---|---|
+| quality: width 48, int16 | `tonemap_pl3_w48d2.nb` | 27 | 49.80 | 41.71 | 33.8 | 27.73 |
+| speed: width 32, int16 | `tonemap_pl4_w32d2.nb` | 37 | 45.94 | 38.26 | 34.2 | 27.90 |
+| fastest: width 48, uint8 inside (`HYBRID=2`) | `tonemap_pl3_w48d2_u8.nb` | 40 | 40.90 | 35.63 | 22.5 | 29.99 |
+
+PSNR against libplacebo in dB, except the last column. With two NPU cores, the card runs two sessions of each, so double the fps for the whole card (section 8.4).
+
+**What PSNR is.** PSNR (peak signal-to-noise ratio) compares two pictures pixel by pixel. It takes the mean squared error and expresses it on a log scale against the largest possible value (1023 for 10-bit): `PSNR = 10 log10(1023² / MSE)`. Higher means closer. The log scale means differences, not values, are what count:
+- **every 10 dB less multiplies the error power by 10**;
+- **4 dB less multiplies the error power by 2.5, and the typical (RMS) error per pixel by 1.6**;
+- **6 dB less doubles the typical error.**
+
+**In pixel values.** The typical error is `1023 / 10^(PSNR/20)` in 10-bit levels. Divided by 4, that is the error on the final 8-bit SDR scale (0 to 255):
+
+| PSNR | Typical error, 10-bit | Typical error, 8-bit levels | Example |
+|---|---|---|---|
+| 49.8 dB | 3.3 | 0.8 | width 48 on Event Horizon |
+| 45.9 dB | 5.2 | 1.3 | width 32 on Event Horizon |
+| 41.7 dB | 8.4 | 2.1 | width 48 on Sol Levante |
+| 38.3 dB | 12.4 | 3.1 | width 32 on Sol Levante |
+| 35.6 dB | 17.0 | 4.2 | uint8 on Sol Levante |
+| 27.7 dB | 42.1 | 10.5 | libplacebo against the colorist |
+
+An error of about one 8-bit level is at the edge of what anyone can see, even with two pictures side by side. But PSNR is an average: the error is not spread evenly, it sits in the hardest areas (very saturated, very bright). So a good average can hide one visibly wrong region, and the pictures below matter more than the numbers.
+
+**Side by side.** Four frames of Sol Levante (frames 2920, 2936, 2960 and 3400 of the 1080p clip). Top row: the HDR samples shown without tonemapping, libplacebo (the training target), and Netflix's colorist SDR grade. Bottom row: the three filters on the card. [`make_compare.sh`](tonemap/make_compare.sh) builds them (on `gpu-host`, because it needs `drawtext`).
+
+Per-frame PSNR against libplacebo (Y, dB):
+
+| Frame | width 48 | width 32 | uint8 | colorist |
+|---|---|---|---|---|
+| 2920, face close-up | 41.6 | 38.4 | 37.5 | 30.6 |
+| 2936, explosion (worst) | 38.8 | 34.7 | 24.9 | 20.9 |
+| 2960, purple orb | 43.7 | 39.5 | 36.4 | 29.7 |
+| 3400, blue underwater | 39.2 | 36.9 | 37.1 | 33.0 |
+
+The explosion, the hardest frame:
+
+![Sol Levante frame 2936: no tonemap, libplacebo, colorist; NPU width 48, width 32, uint8](images/sollevante_compare_56.jpg)
+
+The difference of each filter from libplacebo, luma only, multiplied by 8 so that it shows (black: no difference; white: 128 or more 10-bit levels, 32 or more 8-bit levels):
+
+![Error maps for frame 2936](images/sollevante_errors_56.jpg)
+
+The face, and the error maps for it:
+
+![Sol Levante frame 2920](images/sollevante_compare_40.jpg)
+
+![Error maps for frame 2920](images/sollevante_errors_40.jpg)
+
+The purple orb and the blue scene:
+
+![Sol Levante frame 2960](images/sollevante_compare_80.jpg)
+
+![Sol Levante frame 3400](images/sollevante_compare_520.jpg)
+
+What a viewer sees:
+- **width 48 int16:** cannot be told apart from libplacebo on any of the four frames. Its error map is almost black.
+- **width 32 int16:** on the face, the orb and the blue scene, also not visibly different. On the explosion, one saturated red patch at lower left comes out a little less red (the grey area in its error map). Seen alone, without libplacebo next to it, that would most likely go unnoticed.
+- **uint8 inside:** on the explosion, the deep reds become orange over large areas (white in its error map). This is visible without a side-by-side: the picture has another color. The 10-bit input squeezed through 8 bits loses the precision that the tonemap curve needs in saturated colors. The other frames look close.
+- **The colorist** is far from all of them: warmer, more yellow, softer reds. The choice of tonemapping curve changes the picture much more than the choice of filter. The uint8 filter even scores closer to the colorist (30.0 dB) than the others, by accident: its orange shift goes in the colorist's direction.
+
+**Choice:** width 48 int16 for quality, width 32 int16 when one more stream per card matters more than the last few dB on extreme colors. The uint8 build is not worth its 3 fps over width 32.
+
+Images: frames from *Sol Levante*, Netflix Open Content, licensed CC BY 4.0 (https://opencontent.netflix.com/). Changed: scaled to 1080p, tonemapped by the filters above, cropped into grids, labelled.
+
 ## 9. Status
 
 | Step | Status |
@@ -597,6 +668,7 @@ Why so little from an "18 TOPS" engine: the Vivante NPU is built for small-input
 | Training set with more animation and saturated colors | done: animation alone no help; synthetic colors +9 dB Y on Sol Levante, -2 to 3 dB on live action |
 | Recover live-action quality (bigger model, longer training) | done: width 48 depth 2, 49.8 dB Y Event Horizon, 41.7 Sol Levante, 27 fps |
 | Full encode pipeline (BT.709 tags, HDR SEI removed) | done: `encode_sdr.sh`, 24 fps 4K HDR10 in, 1080p SDR H.264 out, no HDR metadata left |
+| Three filters compared, images (Sol Levante, CC BY 4.0) | done: width 48 int16 (quality), width 32 int16 (speed); uint8 rejected |
 
 Training runs on the CPU only. toolkit-host has a Strix Halo GPU (Radeon 8060S, `gfx1151`), but the toolkit's PyTorch 1.5.1 predates it, the toolkit's GPU wheel is NVIDIA CUDA only, and ROCm faults on this chip. The model has about 2 500 weights, so the CPU is enough.
 
@@ -632,6 +704,7 @@ All in this directory ([`netint/ai/`](./)). "Where" is the host each tool runs o
 | `tonemap/eval_clip.sh` | quadra-host | PSNR of NPU / no-tonemap against a reference and a colorist grade | 8.1 |
 | `tonemap/diagnose_frames.py` | toolkit-host (container) | Float vs NPU vs reference per frame, saturation of the worst frame | 8.1 |
 | `tonemap/encode_sdr.sh` | quadra-host | The full HDR10-to-SDR encode on the card | 8.4 |
+| `tonemap/make_compare.sh` | gpu-host | Side-by-side and error-map images of the filters | 8.5 |
 
 One-off commands not kept as scripts:
 - PNG preview of a raw frame: `ffmpeg -f rawvideo -pix_fmt yuv420p10le -s WxH -i f.yuv -vf "select=eq(n\,N),scale=960:540:in_color_matrix=bt709:out_range=pc,format=rgb24" -frames:v 1 f.png`. Use `in_color_matrix=bt2020` for HDR samples, and remember they are still PQ, so they look washed out (section 6.4).
@@ -668,6 +741,7 @@ One-off commands not kept as scripts:
 | 8-bit conversion on the card vs software | 71.3 dB Y, truncation | 8.4 |
 | `-frames:v N` with the AI filter | segfault on exit, output complete | 8.4 |
 | 1 to 4 parallel network sessions | aggregate saturates at about 54 fps (2 NPU cores x 27); decoder 7%, encoder 0% | 8.4 |
+| Three filters (width 48, width 32, uint8) on Sol Levante, side-by-side images | width 48 invisible, width 32 one patch slightly less red, uint8 visible red-to-orange shift | 8.5 |
 
 ### 10.3 Where the data is
 
