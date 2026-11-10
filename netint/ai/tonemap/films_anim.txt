@@ -1,0 +1,19 @@
+# tag|path (relative to $FILMS, the film library root)  (second set: animation and saturated colors, HDR10 HEVC, mastered
+# at 1000 nits; Toy Story films left out because Toy Story 3 is a validation film)
+akira|Animation/Akira.1988.2160p.mkv
+ghostshell|Animation/Ghost.in.the.Shell.1995.2160p.mkv
+yourname|Animation/Your.name.2016.2160p.mkv
+violet|Animation/Violet.Evergarden.2021.2160p.mkv
+heron|Animation/Le.Garçon.et.le.Héron.2023.2160p.mkv
+marsexpress|Animation/Mars.Express.2023.2160p.mkv
+spiderverse|Animation/Spider-Man.Across.The.Spider-Verse.2023.2160p.mkv
+flow|Animation/Flow.2024.2160p.mkv
+mario|Animation/The.Super.Mario.Bros.Movie.2023.2160p.mkv
+encanto|Dessin.Anime/Encanto.2021.2160p.mkv
+coco|Dessin.Anime/Coco.2017.2160p.mkv
+elemental|Dessin.Anime/Elemental.2023.2160p.mkv
+turningred|Dessin.Anime/Turning.Red.2022.2160p.mkv
+trolls|Dessin.Anime/Trolls.2016.2160p.mkv
+insideout2|Dessin.Anime/Inside.Out.2.2024.2160p.mkv
+moana2|Dessin.Anime/Moana.2.2024.2160p.mkv
+aladdin|Dessin.Anime/Aladdin.1992.2160p.mkv

@@ -9,4 +9,5 @@ Somes of my notes and scripts:
 - [MacOS](MacOS/README.md)
 - [Windows](Windows/README.md)
 - [tools](tools/README.md)
+- [netint](netint/ai/README.md)
 - [network](network)

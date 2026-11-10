@@ -1,0 +1,23 @@
+# tag|path (relative to $FILMS, the film library root)  (HDR10 HEVC, mastered at 1000 nits; from the Jellyfin database)
+startrek4|Fantastique.SF/Star.Trek.IV.The.voyage.home.1986.2160p.mkv
+hulk|Fantastique.SF/The.Incredible.Hulk.2008.2160p.mkv
+shapeofwater|Fantastique.SF/The.Shape.of.Water.2017.2160p.mkv
+godzillakong|Fantastique.SF/Godzilla.x.Kong.The.New.Empire.2024.2160p.mkv
+freeguy|Fantastique.SF/Free.Guy.2021.2160p.mkv
+ballerina|Divers/Ballerina.2025.2160p.mkv
+diehard|Divers/Die.Hard.1988.2160p.mkv
+thefirm|Divers/The.Firm.1993.2160p.mkv
+bridgetjones|Divers/Bridget.Jones's.Diary.2001.2160p.mkv
+jaws2|Horreur/Jaws.2.1978.2160p.mkv
+hellraiser2|Horreur/Hellraiser.II.les.ecorches.1988.2160p.mkv
+journeyspace|Documentaires/Journey.to.Space.2015.2160p.mkv
+rohirrim|Animation/The.Lord.Of.The.Rings.The.War.Of.the.Rohirrim.2024.2160p.mkv
+bluesbrothers|Divers/The.Blues.Brothers.1980.2160p.mkv
+soho|Fantastique.SF/Last.Night.in.Soho.2021.2160p.mkv
+toystory3|Dessin.Anime/Toy.Story.3.2010.2160p.mkv
+ghostelephants|Documentaires/Ghost.Elephants.2026.2160p.mkv
+obiwan|Documentaires/Obi-Wan.Kenobi.A.Jedi's.Return.2022.2160p.mkv
+tombstone|Western/Tombstone.1993.2160p.mkv
+u571|Guerre/U-571.2000.2160p.mkv
+revenant|Divers/The.Revenant.2015.2160p.mkv
+billieeilish|Documentaires/Billie.Eilish.Hit.Me.Hard.and.Soft.The.Tour.2026.2160p.mkv

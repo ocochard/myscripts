@@ -493,3 +493,4 @@ The supported way to get custom behaviour out of this card is NETINT's SDK (libx
 - ffmpeg fork: https://github.com/NETINT-Technologies/netint_ffmpeg
 - NVMe base specification (admin command set, firmware commit/download): nvmexpress.org
 - FreeBSD: `nvme(4)`, `nvmecontrol(8)`, `pciconf(8)`, `shm_open(2)`, `aio(4)`
+- Custom AI filter (HDR to SDR tonemap on the NPU): [netint/ai/README.md](../../netint/ai/README.md)

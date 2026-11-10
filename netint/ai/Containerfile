@@ -1,0 +1,23 @@
+# NETINT AI Toolkit 4.5 (Acuity 6.12.7): Ubuntu 20.04 + Python 3.8.
+# Toolkit tree is bind-mounted at /root/NETINT_toolkit.
+FROM docker.io/library/ubuntu:20.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	python3 python3-pip python3-dev build-essential libgl1 libglib2.0-0 \
+	libsm6 libxext6 libxrender1 git ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt acuity_bin_cpu-6.12.7-cp38-cp38-manylinux2010_x86_64.whl /tmp/
+RUN python3 -m pip install --upgrade pip==21.0.1 && \
+	pip3 install --no-cache-dir -r /tmp/requirements.txt && \
+	pip3 install --no-cache-dir /tmp/acuity_bin_cpu-6.12.7-cp38-cp38-manylinux2010_x86_64.whl
+ENV TF_CPP_MIN_LOG_LEVEL=3 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+	ACUITY_PATH=/root/NETINT_toolkit/toolkit-whl-6.12.7/bin \
+	VIVANTE_BASE=/root/NETINT_toolkit/VivanteIDE5.7.2 \
+	VIVANTE_VIP_HOME=/root/NETINT_toolkit/VivanteIDE5.7.2 \
+	VIVANTE_SDK_DIR=/root/NETINT_toolkit/VivanteIDE5.7.2/cmdtools/vsimulator \
+	NETINT_TOOLS=/root/NETINT_toolkit/tools \
+	LMX_LICENSE_PATH=/root/NETINT_toolkit/VivanteIDE5.7.2/license/Netint_VIP8000NanoQiPlus_License_20211021.lic \
+	VSIMULATOR_CONFIG=VIP8000NANOQI_PLUS_PID0XB1 \
+	LD_LIBRARY_PATH=/root/NETINT_toolkit/VivanteIDE5.7.2/cmdtools/vsimulator/lib \
+	USE_IDE_LIB=1 NBINFO=/root/NETINT_toolkit/NB_Info_v1.2.10
+ENV PATH=$PATH:$ACUITY_PATH:$ACUITY_PATH/tools:$VIVANTE_VIP_HOME/cmdtools/common/bin:$NETINT_TOOLS:$VIVANTE_BASE:$VIVANTE_BASE/ide:$NBINFO
+WORKDIR /root/NETINT_toolkit
