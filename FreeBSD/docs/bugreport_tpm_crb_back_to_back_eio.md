@@ -479,8 +479,19 @@ then does not release.
 |---|---|
 | `make` in `sys/modules/tpm`, main at `86861520613f` | Builds, no warnings |
 | Same, plus `tpm_crb_acpi_start_method.patch` on top | Applies (offsets only), builds, no warnings |
+| ser6 (Ryzen 7 7735HS, method 2), both patches: sweep, no gap, 8 runs of 2000 | 0 failures of 16000 |
+| ser6, both patches: sweep, 0.5 to 50 ms gaps, 8 runs of 2000 | 0 failures of 16000 |
+| ser6, both patches: `tpmcrb0` kernel messages during the sweep | None: only the attach line |
 | Framework 13, method 13, patched | **Untested** |
 | Framework Desktop, method 7, patched | **Untested**: `has_locality` is unchanged for method 7, so behaviour should match #15 in section 4 |
+
+The ser6 kernel is GENERIC-NODEBUG from main at `86861520613f` with both
+patches, built on bigone and booted once with `nextboot -k kernel.tpm2`.
+`dmesg` shows `tpmcrb0: <Trusted Platform Module 2.0, CRB mode (ACPI start)>`.
+The sweep was `tpm_crb_sweep.py 2000 0 0 0 0 0 0 0 0 0.5 1 2 3 5 10 20 50`.
+It shows that the two patches work together and that method 2 commands
+survive the section 3 idle wait.  It says nothing about Pluton: ser6 has no
+locality registers with or without this patch.
 
 ### 7.6 Open
 
