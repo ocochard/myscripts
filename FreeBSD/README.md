@@ -15,6 +15,7 @@ Install / system setup:
 - [install-server.sh](install-server.sh) — post-install setup for a FreeBSD server
 - [install-desktop.sh](install-desktop.sh) — post-install setup for a FreeBSD desktop
 - [update-fbsd.sh](update-fbsd.sh) — FreeBSD update helper
+- [upgrade-from-memstick.md](upgrade-from-memstick.md) — upgrade an installed root-on-ZFS system from a live memstick into a new boot environment, without a source tree
 - [knobs.sh](knobs.sh) — apply tuning knobs / sysctls
 
 Test & benchmark orchestration:
@@ -376,6 +377,8 @@ NAS   25.7T  24.8T  25.7T  /NAS
 
 
 ### Boot Environment (BE)
+
+Upgrade from a live memstick into a new BE: [upgrade-from-memstick.md](upgrade-from-memstick.md)
 
 Fixing mess with broken snapshot:
 1. Reboot, and in loader screen, choose previous be
