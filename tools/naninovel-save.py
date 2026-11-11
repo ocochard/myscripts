@@ -4,6 +4,8 @@
 A .nson file is raw DEFLATE over UTF-8 (BOM) JSON. Variables live in:
   - GameSaveNNN.nson: CustomVariableManager LocalVariableMap (+ rollback snapshots)
   - GlobalSave.nson:  CustomVariableManager GlobalVariableMap (G_* names)
+  Newer Naninovel versions use LocalVariables/GlobalVariables instead: a list
+  of {name, value: {type, stringValue, numericValue, booleanValue}}.
   - gameInfo (game-specific, optional): exposed as gameInfo.<key>[.<subkey>]
 
 Usage:
@@ -22,7 +24,10 @@ import time
 import zlib
 
 VARMGR = "Naninovel.CustomVariableManager+"
-MAPS = ("LocalVariableMap", "GlobalVariableMap")
+MAPS = ("LocalVariableMap", "GlobalVariableMap",
+        "LocalVariables", "GlobalVariables")
+# Field holding the value of a typed list entry, indexed by value.type.
+TYPED_FIELDS = ("stringValue", "numericValue", "booleanValue")
 
 
 def load(path):
@@ -56,7 +61,12 @@ def read_vars(state):
     out = {}
     for _, _, name, decoded in var_maps(state):
         vm = decoded[name]
-        out.update(zip(vm["keys"], vm["values"]))
+        if isinstance(vm, list):
+            for e in vm:
+                v = e["value"]
+                out[e["name"]] = v[TYPED_FIELDS[v["type"]]]
+        else:
+            out.update(zip(vm["keys"], vm["values"]))
     gi = state.get("gameInfo")
     if isinstance(gi, str) and gi:
         for k, v in json.loads(gi).items():
@@ -96,11 +106,20 @@ def write_vars(state, changes):
     for m, i, name, decoded in var_maps(state):
         vm = decoded[name]
         hit = False
-        for j, k in enumerate(vm["keys"]):
-            if k in changes:
-                vm["values"][j] = changes[k]
-                done.add(k)
-                hit = True
+        if isinstance(vm, list):
+            for e in vm:
+                if e["name"] in changes:
+                    v = e["value"]
+                    field = TYPED_FIELDS[v["type"]]
+                    v[field] = _coerce(v[field], changes[e["name"]])
+                    done.add(e["name"])
+                    hit = True
+        else:
+            for j, k in enumerate(vm["keys"]):
+                if k in changes:
+                    vm["values"][j] = changes[k]
+                    done.add(k)
+                    hit = True
         if hit:
             m["values"][i] = json.dumps(decoded, ensure_ascii=False,
                                         separators=(",", ":"))
