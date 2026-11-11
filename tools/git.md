@@ -206,6 +206,11 @@ Undo the last local commit, discard changes:
 git reset --hard HEAD~1
 ```
 
+Erase an older local commit from history (later commits kept):
+```
+git rebase --onto <hash>^ <hash>  # replay everything after <hash> onto its parent
+```
+
 Reset a local branch to match its upstream (`@{u}` = upstream shorthand):
 ```
 git reset --hard @{u}
@@ -215,6 +220,13 @@ Revert a bad rebase (still known via reflog):
 ```
 git reflog
 git reset --hard HEAD@{N}
+```
+
+Undo a pushed commit without rewriting history (safe on main):
+```
+git revert <hash>                 # new commit that inverts <hash>
+git revert -m 1 <merge-hash>      # merge commit: keep parent 1's side
+git revert --no-commit <a>..<b>   # commits after <a> up to <b>, then one commit
 ```
 
 Force-overwrite a pushed working branch (**never on main**):
