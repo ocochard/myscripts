@@ -10,14 +10,13 @@ both hosts, `--ctx-size 131072` (matches daily-use), no `--no-host` flag (A/B
 proved it's a no-op on this stack — see "The `--no-host` non-finding" below).**
 Harness: `LLM/bench-all.sh`.
 
-**Update 2026-08-04 — b10267 (`7bd8282c3`) re-bench of the `agents-a1-mtp`
-slot only** (the default coding recipe). Rebuilt on both hosts; only the
-Agents-A1-MTP Q8_0 rows were re-measured, so numbers tagged **(b10267)** below
-supersede the b9925 values for that one model — every other model's rows are
-still b9925. FreeBSD gained ~5-7 % MoE-MTP decode (topk_moe sqrt(softplus)
-fusion + MTP accepted-token-replay fix, PRs #26124 / #26320); Ubuntu was flat
-within noise. `--spec-draft-n-max 5` and the N≥8 cliff are unchanged, so
-`llmsrv.sh` defaults still hold. See the "b10267 re-bench" tables at the end.
+**Update 2026-11-11 — b12278 (`582eab718`) re-bench of the `agents-a1-mtp`
+slot only** (the default coding recipe), both hosts. Numbers tagged
+**(b12278)** below supersede older values for that one model; every other
+model's rows are still b9925. PP gained 23-55 %, decode is flat.
+`--spec-draft-n-max 5` and the N≥8 cliff are unchanged; the new
+`--spec-draft-sampling probabilistic` adds ~4 % at temp 0.6. See the
+"b12278 re-bench" section at the end.
 
 > New to these numbers? **[Concepts](#concepts-what-the-numbers-in-this-document-mean)**
 > defines PP / TG / TTFT / Total TPS, what MTP draft *acceptance* is and whether
@@ -25,8 +24,8 @@ within noise. `--spec-draft-n-max 5` and the N≥8 cliff are unchanged, so
 
 ## TL;DR
 
-- **Default coding recipe: `MODEL=agents-a1-mtp`** — b10267: **79 t/s** Total
-  TPS at ~4 k on FreeBSD, **71 t/s** on Ubuntu (was 75 / 73 on b9925).
+- **Default coding recipe: `MODEL=agents-a1-mtp`** — b12278: **76 t/s** Total
+  TPS at ~4 k on FreeBSD, **74 t/s** on Ubuntu, at temp 0.
   Q8 MoE (Mixture-of-Experts) + MTP (Multi-Token Prediction) + agentic
   fine-tune. Beats plain Q4 on speed **and** quality.
 - **TG is OS-neutral** (memory-bandwidth bound at ~250 GB/s). **PP
@@ -58,7 +57,7 @@ formatted `frwk-bsd / frwk-linux`.
 
 | Recipe (`MODEL=`)    | Model                           | Total TPS @ ~4 k prompt | Total TPS @ ~32 k prompt | Notes                                        |
 |----------------------|---------------------------------|------------------------:|-------------------------:|----------------------------------------------|
-| **`agents-a1-mtp`** ★| Agents-A1 Q8 + MTP N=5          |     **79 / 71** (b10267) |     **60 / 59** (b10267) | Default. Q8 + agentic fine-tune. b9925 was 75/73, 56/61. |
+| **`agents-a1-mtp`** ★| Agents-A1 Q8 + MTP N=5          |     **76 / 74** (b12278) |     **61 / 58** (b12278) | Default. Q8 + agentic fine-tune. |
 | `agents-a1`          | Agents-A1 Q4_K_M                |            66 / 67      |            55 / 56       | Q4 + agentic tuning; half the disk.          |
 | `moe`                | Qwen3.6-35B-A3B Q4_K_XL         |            56 / 56      |            48 / 48       | Older Q4 baseline.                           |
 | `moe-q8`             | Qwen3.6-35B-A3B Q8_K_XL         |            44 / 45      |            39 / 40       | Plain Q8. `USAGE=doc` alias.                 |
@@ -630,71 +629,144 @@ sh bench-all.sh   # ~2.5 h; produces /tmp/bench-all.md + .jsonl
 Full script: `~/myscripts/LLM/bench-all.sh`. Model registry lives at the top
 of the file; add slots there to bench new GGUFs.
 
-## b10267 re-bench — `agents-a1-mtp` only (2026-08-04)
+## b12278 re-bench — `agents-a1-mtp` only (2026-11-10/11)
 
-Scope: **Agents-A1-MTP Q8_0 slot only**, both hosts, llama.cpp **b10267
-(`7bd8282c3`)**. Same recipe as the b9925 run above (Vulkan, fa on, b=2048,
-ub=512, `--ctx-size 131072 --parallel 1`, `-t 256 -r 2`, no `--no-host`). Motive:
-b10267 landed a topk_moe `sqrt(softplus)` fusion (#26124) on the Vulkan MoE hot
-path and a server MTP accepted-token-replay correctness fix (#26320); this
-measures whether either moved the default coding recipe. Every other model in
-the doc is still b9925 — only the rows here are b10267.
+Scope: **Agents-A1-MTP Q8_0 slot only**, both hosts, llama.cpp **b12278
+(`582eab718`)**. `frwk-bsd`: FreeBSD 16.0-CURRENT n290543, drm-latest-kmod
+6.12.85. `frwk-linux`: Ubuntu, Mesa 26.0.8, Vulkan SDK 1.4.350.1. Same recipe
+as the b9925 run above (Vulkan, fa on, b=2048, ub=512, `--ctx-size 131072`).
+Replaces the b10267 re-bench. Every other model in the doc is still b9925.
 
-Ran via `ONLY=agents-a1-mtp sh bench-all.sh`. (These runs originally needed a
-trailing colon — `ONLY="agents-a1-mtp:"` — because `filter_only`'s whitespace
-split left the colon on `$1` for colon-adjacent slot names. Fixed 2026-08-04 by
-adding `:` to that `gsub` class; the bare slot name now matches.)
+Ran via `ONLY=agents-a1-mtp STAGES=llama-bench,mtp-sweep sh bench-all.sh`.
+llama-bench in this build rejects `--mmap 1` ("invalid parameter for argument:
+--mmap", deprecated by #28334 in favour of `-lm/--load-mode`); `bench-all.sh`
+now passes `--load-mode mmap`. Before that fix every llama-bench row read
+`crash`. Pitfall: the stray-process guard (`pgrep -f 'llama-(server|cli|bench)'`)
+also matches the launching shell when its command line holds
+`STAGES=llama-bench`, e.g. `ssh host 'STAGES=llama-bench sh bench-all.sh'`;
+start it from a script file instead.
 
 ### llama-bench — depth sweep
 
-| Host       | depth | pp4096            | tg128         |
-|------------|------:|------------------:|--------------:|
-| frwk-bsd   |     0 |  1072.62 ± 24.06  | 54.74 ± 0.06  |
-| frwk-bsd   |  8192 |   935.07 ± 18.23  | 52.20 ± 0.08  |
-| frwk-bsd   | 32768 |   670.06 ± 3.81   | 46.01 ± 0.01  |
-| frwk-linux |     0 |   944.08 ± 11.92  | 52.51 ± 0.07  |
-| frwk-linux |  8192 |   806.99 ± 7.29   | 49.35 ± 0.12  |
-| frwk-linux | 32768 |   586.11 ± 0.46   | 44.20 ± 0.07  |
+| Host       | depth | pp4096            | tg128         | b10267 pp / tg |
+|------------|------:|------------------:|--------------:|---------------:|
+| frwk-bsd   |     0 |  1514.37 ± 10.88  | 55.02 ± 0.02  | 1073 / 54.7    |
+| frwk-bsd   |  8192 |  1266.37 ± 0.26   | 52.35 ± 0.05  |  935 / 52.2    |
+| frwk-bsd   | 32768 |   823.89 ± 1.10   | 46.57 ± 0.04  |  670 / 46.0    |
+| frwk-linux |     0 |  1467.45 ± 4.58   | 54.05 ± 0.58  |  944 / 52.5    |
+| frwk-linux |  8192 |  1161.00 ± 3.71   | 50.98 ± 0.87  |  807 / 49.4    |
+| frwk-linux | 32768 |   770.73 ± 0.87   | 45.35 ± 0.34  |  586 / 44.2    |
 
-Raw tg128 is ~2 % higher than b9925 on frwk-bsd (54.7 vs 53.5 at d=0), flat on
-frwk-linux — consistent with the fusion helping the FreeBSD Mesa 26 path slightly.
+PP is up 23-41 % on FreeBSD and 32-55 % on Ubuntu; TG is flat (+0-3 %): decode
+stays memory-bandwidth bound. FreeBSD keeps a 3-9 % PP and ~2 % TG lead.
+Likely PP sources in the range: RDNA3/4 split-K matmul tuning (#30280, #30146)
+and the AMD strided-KV copy (#27703).
 
 ### llama-server + bench_model.py — MTP on/off (N=5)
 
-| Host       | MTP    | Depth | TTFT (ms) | PP t/s | Total TPS | b9925 was |
-|------------|--------|-------|----------:|-------:|----------:|----------:|
-| frwk-bsd   | off    |  ~4 k |   4410.1  |  919.1 |   52.7    |   51.4    |
-| frwk-bsd   | on N=5 |  ~4 k |   3810.4  | 1062.1 | **78.7**  |   75.2    |
-| frwk-bsd   | off    | ~32 k |  38498.8  |  855.6 |   45.4    |   44.5    |
-| frwk-bsd   | on N=5 | ~32 k |  39644.0  |  831.9 | **59.8**  |   55.7    |
-| frwk-linux | off    |  ~4 k |   4711.2  |  853.2 |   50.7    |   51.2    |
-| frwk-linux | on N=5 |  ~4 k |   4464.7  |  935.7 | **71.0**  |   72.5    |
-| frwk-linux | off    | ~32 k |  43589.7  |  755.9 |   44.1    |   44.7    |
-| frwk-linux | on N=5 | ~32 k |  45507.3  |  725.0 | **59.1**  |   61.0    |
+| Host       | MTP    | Depth | TTFT (ms) | PP t/s | Total TPS | Draft accept |
+|------------|--------|-------|----------:|-------:|----------:|-------------:|
+| frwk-bsd   | off    |  ~4 k |   2627.5  | 1533.3 |   51.0    | -            |
+| frwk-bsd   | on N=5 |  ~4 k |   2792.4  | 1435.6 | **76.5**  | 0.730        |
+| frwk-bsd   | off    | ~32 k |  29032.7  | 1134.2 |   44.5    | -            |
+| frwk-bsd   | on N=5 | ~32 k |  31752.7  | 1038.1 | **60.5**  | 0.689        |
+| frwk-linux | off    |  ~4 k |   2745.3  | 1459.2 |   51.0    | -            |
+| frwk-linux | on N=5 |  ~4 k |   3042.4  | 1343.6 | **73.5**  | 0.730        |
+| frwk-linux | off    | ~32 k |  31192.1  | 1057.3 |   43.8    | -            |
+| frwk-linux | on N=5 | ~32 k |  34648.7  |  950.8 | **58.2**  | 0.689        |
 
-MTP multiplier (on/off): frwk-bsd **1.49×** @4k, **1.32×** @32k (was 1.46× /
-1.25×); frwk-linux **1.40×** / **1.34×** (was 1.42× / 1.36×).
+Server PP gained 40-65 % (frwk-bsd TTFT at ~4 k 3.8 s down to 2.8 s, at ~32 k
+39.6 s down to 31.8 s), but Total TPS at `-t 256` is flat (b10267 MTP on:
+78.7 / 59.8 frwk-bsd, 71.0 / 59.1 frwk-linux) because the 256 decoded tokens
+dominate the wall clock. MTP multiplier: 1.50× / 1.36× (frwk-bsd), 1.44× /
+1.33× (frwk-linux) at ~4 k / ~32 k.
 
 ### `--spec-draft-n-max` sweep at ~4 k (Total TPS)
 
-| n_max | frwk-bsd | frwk-linux |
-|------:|---------:|-----------:|
-|     2 |   72.5   |    70.1    |
-|     3 |   73.3   |    70.4    |
-|     4 | **79.9** |  **77.3**  |
-|     5 |   79.9   |    73.3    |
-|     8 |   45.0   |    38.8    |
-|    16 |   34.5   |    29.5    |
+| n_max | frwk-bsd | frwk-linux | Draft accept |
+|------:|---------:|-----------:|-------------:|
+|     2 |   74.7   |    71.7    | 0.889        |
+|     3 |   69.1   |    65.9    | 0.693        |
+|     4 |   72.8   |    70.0    | 0.695-0.720  |
+|     5 | **76.3** |  **73.5**  | 0.730        |
+|     8 |   54.9   |    51.0    | 0.536        |
+|    16 |   36.6   |    34.3    | 0.256        |
 
-N=4/5 remain the plateau; N≥8 is still a hard cliff on both. Keep
-`--spec-draft-n-max 5` in `llmsrv.sh`.
+N=5 is still the peak and N≥8 still a cliff on both: keep
+`--spec-draft-n-max 5`. The frwk-bsd sweep's first N=4 server came up with a
+dead draft head (0 of 1010 drafts accepted, 20.2 t/s, no GPU fault in dmesg);
+three cold restarts at N=4 were all healthy (72.8-72.9 t/s), so the row above
+is from those. Same coin-flip dead-head symptom as noted in `llmsrv.sh`; not
+seen on frwk-linux.
+
+### `--spec-draft-sampling greedy` vs `probabilistic` (new in #27694)
+
+`probabilistic` samples the MTP draft at the request temperature and verifies by
+rejection sampling; `greedy` (default) drafts the argmax. N=5, server
+`--top-p 0.95 --top-k 20 --min-p 0.0` (the `llmsrv.sh` preset), 4 series of
+`-r 3` per host. Total TPS, mean of the 4 series (min-max):
+
+| Host       | Temp | Depth | greedy            | probabilistic     | Gain  |
+|------------|-----:|-------|------------------:|------------------:|------:|
+| frwk-bsd   |  0.6 |  ~4 k | 72.2 (68.0-74.2)  | 75.4 (73.1-77.6)  | +4 %  |
+| frwk-bsd   |  0.6 | ~32 k | 60.9 (58.9-64.1)  | 63.1 (60.2-67.8)  | +4 %  |
+| frwk-linux |  0.6 |  ~4 k | 71.0 (69.5-72.7)  | 73.6 (71.2-75.6)  | +4 %  |
+| frwk-linux |  0.6 | ~32 k | 59.3 (58.9-59.7)  | 62.3 (59.9-64.0)  | +5 %  |
+
+At temp 0 both modes are identical on both hosts (within 0.1-1 t/s; same
+acceptance 0.732 / 0.689), as expected. At temp 0.6 `probabilistic` won 14 of
+16 paired series, by ~4 %; the ranges overlap because every temp 0.6 request
+samples a different answer. A first single series on frwk-bsd showed +14 %:
+that was a low greedy outlier (68.0 t/s, accept 0.596; later series
+0.647-0.664). The `bench-all.sh` numbers above are all temp 0, so they do not
+show this effect.
+
+Same A/B on `qwen38-mtp` (the `llmsrv.sh` default: Qwen3.8-27B Q8_0 + Q8_0
+sidecar head, N=4), temp 0.6, ~4 k, 2 alternating series of `-r 3`: greedy
+17.8 / 18.5 vs probabilistic 19.1 / 17.6 t/s on frwk-bsd (+1 %), greedy
+17.7 / 18.1 vs probabilistic 19.6 / 17.9 on frwk-linux (+5 %); acceptance
+0.56-0.60 vs 0.58-0.63. No loss, so `llmsrv.sh` now passes
+`--spec-draft-sampling probabilistic` for that slot. Not for `flashnext`: its
+PR #28243 build (`~/llama.cpp-mtp`) predates the flag.
+
+### FreeBSD kernel profile (hwpmc, `ls_not_halted_cyc`, system-wide)
+
+Kernel time is not a bottleneck for inference:
+
+- **llama-server, MTP on, under load**: the server used 0.37 cores (~4 k) and
+  0.23 cores (~32 k), of which 3.7 % in the kernel. The top CPU consumer is
+  user-space `ggml_vk_wait_for_fence` (38-45 % of samples): llama.cpp polls the
+  fence while the GPU works. The memory map stayed at 1383 entries, +0-1 per
+  second.
+- **`FreeBSD/docs/amdgpu_map_cost_linear_scans.patch` would not help**:
+  `amdgpu_map_cost_profile.sh` measured the five scan functions at 0.01 % of
+  samples (~4 k) and 0.16 % (~32 k). That patch targets workloads with tens of
+  thousands of buffer mappings; llama.cpp keeps ~1.4 k.
+- **The kernel cost is buffer create/destroy, i.e. model load/unload.** A
+  load + exit of the 35 GB model takes 5.3 s wall, 3.4 s sys. On create,
+  `ttm_pool_alloc` → `linux_alloc_pages` → `vm_page_alloc_noobj_contig_domain`
+  zeroes every page (`pagezero_erms`); Linux zeroes too (`__GFP_ZERO`). On
+  destroy, `ttm_bo_delayed_delete` → `linux_free_pages` frees each high-order
+  chunk one 4 KiB page at a time, and each page takes the domain free lock in
+  `vm_page_free_toq` (contiguous pages bypass the per-CPU cache). With several
+  delete workers (3 CPUs here) this spins in `lock_delay`: ~82 k samples, an
+  estimated 0.5-1 CPU-second per 35 GB unload (the window held 1-2 unloads).
+  A batched free (one lock + `vm_phys_free_contig` per chunk) would remove it,
+  but it only shortens model swaps, not inference.
+- Kernel `memmove_erms` in the server profile is `sndbuf_feed` in the hdac1
+  interrupt thread, not llama.cpp. `virtual_oss` (rc.conf) keeps `/dev/dsp4`
+  open for play and record even with no client, and the kernel sizes the
+  hardware blocks from `hw.snd.latency=2` (`chn_calclatency()`): play 1024 B
+  (5.33 ms, 187.5/s) and record 256 B (1.33 ms, 750/s), so 937 interrupts/s
+  for silence. `hw.snd.latency=5` would give 2048 B blocks both ways (~188/s,
+  computed, not tested).
 
 ### Verdict
 
-FreeBSD gained a real **+4.7 % @4k / +7.4 % @32k** on the default coding recipe;
-Ubuntu moved **−2 % / −3 %**, inside run-to-run noise (`-r 2`), i.e. unchanged.
-No config change warranted — b10267 is a free modest win on FreeBSD and neutral
-on Ubuntu.
+b12278 is a large free PP win on both OSes (+23-55 % llama-bench, TTFT
+-20-26 %) and flat on decode. Keep `--spec-draft-n-max 5`. `--spec-draft-sampling probabilistic` is a
+small (1-5 %) but consistent win at the temp 0.6 preset; `llmsrv.sh` now sets
+it on `qwen38-mtp`.
 
 ## Qwen3.8-27B (`qwen38-mtp` slot) — Q4 pair unstable; Q8 pair works (2026-08-15, updated 2026-09-05)
 

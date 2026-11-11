@@ -236,7 +236,9 @@ case "${MODEL}" in
       echo "fetch it, or run MODEL=qwen38-q8 for the spec-off fallback" >&2
       exit 1
     fi
-    model_extra="--jinja --model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 4"
+    # probabilistic drafts at the request temp (0.6 here): +1-5 % on this slot,
+    # ~4 % on agents-a1-mtp (b12278). Needs llama.cpp with #27694.
+    model_extra="--jinja --model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 4 --spec-draft-sampling probabilistic"
     ;;
   flashnext)
     # Qwen3.8-Flash-Next, 125B/6B-active `qwen4exp` MoE, UD-IQ3_XXS (82 GB) +

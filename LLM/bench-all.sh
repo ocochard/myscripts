@@ -274,7 +274,7 @@ stage_llama_bench() {
           --batch-size 2048 --ubatch-size 512 \
           --n-prompt 4096 --n-gen 128 \
           --n-depth "${depth}" \
-          --mmap 1 --threads "$(nproc_portable)" \
+          --load-mode mmap --threads "$(nproc_portable)" \
           --repetitions 2 \
           --output md 2>&1) && break
         # cold-start GTT OOM (observed on FreeBSD Mesa 26 Q8 dense): retry once
