@@ -389,9 +389,10 @@ changes attach for every CRB machine with two ranges.  Not in this patch.
 **Skip the harvest on every AMD fTPM.**  Another major OS skips it on every
 AMD x86 machine except Pluton, so also for method 7, the Framework Desktop
 included.  This patch skips it only for method 2 on AMD.  The wider rule would
-stop the harvest on machines that use it today, without a measurement showing
-that they stall.  That belongs in its own patch, with the stall probe run on a
-method 7 machine first.
+stop the harvest on machines that use it today, and the one method 7 machine
+measured does not stall: the Framework Desktop showed no freeze on all CPUs
+and no SMI, idle or with a command every millisecond (section 4).  So the
+narrow rule matches what was measured.  Other method 7 firmware is untested.
 
 ### What the patch does NOT fix
 
@@ -403,7 +404,8 @@ method 7 machine first.
 * **Interrupts.**  The driver still polls.
 * **AMD fTPM stalls on other start methods.**  The patch stops the 10 s
   harvest for method 2 on AMD only (item 7 above).  An AMD machine using
-  method 7 still harvests, and nobody has measured whether it stalls.
+  method 7 still harvests.  The Framework Desktop does not stall (section
+  4), but other method 7 firmware has not been measured.
   Commands sent from userland, through `/dev/tpm0`, still cause the stalls
   measured in section 4.  Only the periodic kernel harvest is gone.
 
@@ -524,6 +526,18 @@ raw data is in `tpm_stall_data/`.  Measured on ser6 on 2026-11-10:
 | Patched, idle, 180 s (harvest only) | 18 | 36, all during a TPM command |
 | Patched, `TPM2_GetRandom` every 1 ms, 60 s | 4006 | 9, all during a TPM command |
 | Patched with item 7 (no harvest), idle, 180 s | 0 | 0 (longest single-CPU gap 1.2 ms) |
+
+The same probe on the Framework Desktop (AMD Ryzen AI Max+ 395, start method
+7, Pluton firmware, 32 CPUs), stock kernel `main-n290543-584f44221f45`, which
+still harvests:
+
+| Run | TPM commands | Stalls on 8 or more CPUs | SMIs (`ls_smi_rx`, CPU 0) |
+|---|---|---|---|
+| Idle, 180 s (harvest only) | 18, 3 ms each | 0 (longest single-CPU gap 1.6 ms) | 0 in a 65 s run |
+| `TPM2_GetRandom` every 1 ms, 60 s | 12006 | 0 (longest single-CPU gap 22.6 ms, on one CPU only) | 0 |
+
+The 5 failed commands of 12000 in the load run are the back-to-back `EIO`
+bug, not stalls.  The files are `tpm_stall_data/framework_*.txt`.
 
 In the idle run there are two patterns:
 
