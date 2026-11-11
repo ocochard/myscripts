@@ -1,7 +1,8 @@
 # Plan: a FreeBSD driver for the Cirrus Logic CS35L54 speaker amplifiers
 
 Machine: HP ZBook Ultra G1a 14 (subsystem 103C:8D01), see [../HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md).
-Status: plan only, no driver code yet. Facts below were measured on 2026-11-11
+Status: phases 1 and 1b done (2026-11-11): the userland tool [cs35l54_tool.c](cs35l54_tool.c) downloads the DSP firmware and the speakers play on FreeBSD.
+No kernel driver yet. Facts below were measured on 2026-11-11
 (FreeBSD main-n290939, and Ubuntu with Linux 7.0.0-43 on the same laptop)
 or read in Linux (tree of 2026-07-28) and linux-firmware (69e51bb, 2026-11-09).
 The speakers work under Ubuntu: the hardware path is confirmed.
@@ -35,7 +36,9 @@ Resources, from the raw AML bytes of `SPKR._CRS` and `SPKR._DSD`, and confirmed 
 | `_DSD` `cirrus,dev-index` | {0x30, 0x31, 0x32, 0x33} | amplifier index per I2C address |
 | `_DSD` `reset-gpios` | 4 references to `SPKR` resource 0 | one reset GPIO shared by all four |
 
-The I2C controller is `ig4iic1` (`\_SB_.I2CB`, AMDI0010), so the bus is `iicbus1` and the generic node is `/dev/iic1`.
+The I2C controller is `ig4iic1` (`\_SB_.I2CB`, AMDI0010).
+Its `iicbus`/`iic` unit numbers are not stable: `/dev/iic1` without amdgpu, `/dev/iic18` when amdgpu loads at boot and adds its display buses first.
+Find the node from the ACPI path (`dev.ig4iic.N.%location`), as the tool does.
 
 ### What FreeBSD does with it today
 
@@ -59,10 +62,30 @@ Registers have 32-bit addresses and 32-bit big-endian values (Linux `cs35l56_reg
 
 - All four amplifiers answer on FreeBSD today, without any driver.
 - REVID 0xB0: B0 silicon, which matches the linux-firmware file names (`cs35l54-b0-...`).
-- DEVID reads 0 instead of the expected 0x35A54.
-  Linux reads DEVID only after the wake sequence and a check of `DSP1_HALO_STATE` (0x28021E0);
-  the probe did neither.
-  In the Linux trace (section 3), the same register reads `0x00035a54` after those steps.
+- DEVID reads 0 instead of the expected 0x35A54 (Linux reads `0x00035a54`).
+  The cause is a FreeBSD read problem, not the chip state, see "The ig4 read problem" below.
+  REVID only looked right by chance.
+
+### The ig4 read problem
+
+Through FreeBSD `ig4`, the first 32-bit word of every read from these amplifiers is stale:
+it is the word after the end of the previous read. The following words are correct.
+Example, three reads of the reset-default ASP registers (default 0x4804 = 0x28, 0x4808 = 0x18180200):
+
+```
+0x0004804: 00000061 18180200 18180200
+0x0004808: 18180200 00000002 00000002
+```
+
+- A 1 ms pause between the address write and the read changes nothing; a split transfer (STOP between) changes nothing.
+- Linux reads the same chips correctly with the same protocol (write 4 address bytes, repeated start, read).
+- `ig4` sets up fast mode (400 kHz) per `ig4_iic.c`, below the 1 MHz the ACPI table allows; bus speed not measured.
+- Root cause not found.
+
+Workaround used by the tool: read two words starting at reg - 4 and keep the second.
+It returns the right value with or without the problem.
+DEVID (reg 0) cannot be read this way.
+A kernel driver must use the same workaround until `ig4` is fixed.
 
 ### Firmware and calibration data
 
@@ -147,14 +170,14 @@ Mailbox commands go to `DSP_VIRTUAL1_MBOX_1` (0x11020); Linux reads it back unti
 | 0.014 | R 0x190F0 = 0; R 0x10 = 4; R 0x34000D8 = 1; R 0x2800010 = 0x30404 | not secured, OTP 4, `FIRMWARE_MISSING` set, ROM firmware 3.4.4 |
 | 0.015 | mbox 0x02000007, then register patch, then ASP1 setup (0x4804-0x4840, 0x4C20-0x4C2C) | `SYSTEM_RESET`, `cs35l56_set_patch()`, `cs35l56_hda_dai_config[]` |
 | 0.028 | mbox 0x02000005 | `SHUTDOWN` before the download |
-| 0.031-1.366 | block writes to 0x2000000-0x2C00xxx and 0x34xxxxx (1463 words) | wmfw program, then bin tuning and calibration |
+| 0.031-1.366 | block writes to 0x2000000-0x2C00xxx and 0x34xxxxx (1463 words) | wmfw program, then bin tuning; no write to program memory (0x3800000), see phase 1b |
 | 1.525 | mbox 0x02000007, then `AUDIO_REINIT` 0x0B000003 | reset into the new firmware, reinit |
 | 6.858 | mbox 0x02000003; `AUDIO_PLAY` 0x0B000001; R 0x3400150 = 0; W 0x4800 = 0x00030001 | play: PS0 reached at once, ASP1 RX1+RX2 and TX1 enabled |
 | 12.884 | `AUDIO_PAUSE` 0x0B000002; W 0x4800 = 0 | stop |
 
 `PROTECTION_STATUS` = 1 means the ROM firmware runs unpatched,
 so in Linux's logic the wmfw and bin files are mandatory on this laptop (`cs35l56_hda_fw_load()`).
-Whether the ROM firmware alone outputs sound is not known: phase 1 tests it.
+Phase 1 confirmed it: the ROM firmware alone outputs no sound.
 
 ## 4. Choice: LinuxKPI port or native driver
 
@@ -171,34 +194,74 @@ The LinuxKPI route still needs a FreeBSD-specific HDA hook and three new LinuxKP
 and the result can never be in base.
 The native driver needs only a subset: a wmfw and bin loader for the Halo DSP, but no SoundWire, no SPI, no ALSA controls, no factory calibration.
 The wmfw loader is the largest part (format parsing, memory region mapping, algorithm table); it is still a fraction of `cs_dsp.c`, which supports several DSP generations.
+The phase 1b loader in `cs35l54_tool.c` is about 360 lines of C.
 Write it from the register behaviour and the documented file formats, without copying GPL code.
 
 ## 5. Phases
 
 Each phase ends with a test that proves it on this laptop.
-Keep the speaker volume low during tests: phases 1-3 run the amplifiers on ROM firmware, without tuning or calibration,
-so only the ROM default speaker protection applies.
+Keep the speaker volume low during tests until phase 4: calibration is not applied, so the speaker protection uses default values.
 
-### Phase 1: userland prototype through /dev/iic1
+### Phase 1: userland prototype through the I2C node (done, no sound)
 
-Extend `cs35l54_probe.c` into a tool that replays the non-download part of the Linux trace, for each amplifier:
+[cs35l54_tool.c](cs35l54_tool.c) replays the non-download part of the Linux trace, for each amplifier:
 
 1. Wake: two reads of 0xE004, 1 ms apart, then 2.2 ms wait.
-2. Poll `DSP1_HALO_STATE` (0x28021E0) until 2 (`BOOT_DONE`, 1 ms steps, 250 ms timeout), then read DEVID (expect 0x35A54), `PROTECTION_STATUS`, `DSP1_FW_VER`.
-3. Mailbox `PREVENT_AUTO_HIBERNATE`, write the ASP1 setup (the 0x4804-0x4840 and 0x4C20-0x4C2C writes of the trace).
-4. Mailbox `AUDIO_PLAY`, poll 0x3400150 for 0 (PS0), write 0x4800 = 0x00030001.
+2. Poll `DSP1_HALO_STATE` (0x28021E0) until 2 (`BOOT_DONE`, 1 ms steps, 250 ms timeout), then read `PROTECTION_STATUS` and `DSP1_FW_VER`.
+3. Mailbox `PREVENT_AUTO_HIBERNATE`, register patch, `MAIN_RENDER_USER_VOLUME`, ASP1 setup (the 0x4804-0x4840 and 0x4C20-0x4C2C writes of the trace).
+4. Mailbox `AUDIO_PLAY`, poll 0x3400150 for 0 (PS0), write 0x4800 = 0x00030000 | BIT(amp index).
 
-Test: play a tone into `pcm4` at low `mixer vol`, run the tool, listen.
-This answers the biggest unknown without kernel code: does the ROM firmware play at all?
+Commands: `reset` (pulse of GPIO 139, needs `amdgpio`), `info`, `play [-v dB]`, `stop`, `tone [Hz [s [dBFS]]]`, `read`, `write`.
+`MAIN_RENDER_USER_VOLUME` (0x340002C) takes 0.25 dB steps from -100 to +12 dB in bits 6-15 (signed); the tool defaults to -20 dB.
 
-- Sound: phases 2-3 can ship ROM-only speakers, and the wmfw loader moves to phase 4.
-- Silence: the wmfw download is required for any sound; phase 1 must then also replay the download (block writes of the trace, or a first wmfw parser) before phase 2.
+Results on ROM firmware 3.4.4, all with a 440 Hz tone on the speaker pcm, nothing heard:
 
-### Phase 1b: firmware download in userland
+| Test | Result |
+|---|---|
+| Normal play (DSP path) | amps reach PS0, ROM firmware sets the routing (`DACPCM1_INPUT` = DSP1TX5, `DSP1RX1/2_INPUT` = ASP1RX1/2), silence |
+| DSP bypass on the woofers (`DACPCM1_INPUT` = ASP1RX1) | silence |
+| Both tests again with the codec speaker pin fed from converter 0x03 (as on Linux) instead of 0x02 | silence |
 
-Parse the wmfw and bin files in the userland tool and write them over `/dev/iic1`.
-Compare the writes with the trace: same addresses, same word counts (1463 words for AMP1).
-A byte-exact match with the Linux trace proves the parser before it moves into the kernel.
+Conclusion: the ROM firmware is a boot loader; `FIRMWARE_MISSING` means what it says.
+
+### Phase 1b: firmware download in userland (done, sound)
+
+`cs35l54_tool load [-nsv] DIR` parses the wmfw and bin files and writes them over I2C, then `play` gives sound (2026-11-11, heard on the laptop at -30 dB amp volume).
+
+Sequence per amplifier, as in the Linux trace:
+
+1. Wake, wait for boot, `PREVENT_AUTO_HIBERNATE`, system reset (HALO_STATE = 0, mailbox `SYSTEM_RESET`), wait for boot, patch, ASP setup.
+2. If `PROTECTION_STATUS` bit 0 (`FIRMWARE_MISSING`): mailbox `SHUTDOWN`, poll `PM_CUR_STATE` (0x2804308) for 1.
+3. wmfw: 70 regions. XM/YM unpacked: base + offset * 4. XM/YM packed: (base + offset * 3) & ~3. PM packed: 0x3800000 + offset * 5.
+4. Read the algorithm table at 0x2800000: a 10-word header (core, block rev, vendor, firmware id, version, XM base/size, YM base/size, count), 41 entries of 6 words, terminator 0x00BEDEAD.
+   The firmware id (0x1A00D6) also owns XM/YM regions, like each algorithm: one bin block per amp targets it.
+5. bin: 35 blocks per amp, each at its algorithm's XM or YM base (converted as in step 3) plus the block offset.
+6. System reset, wait for boot, `PREVENT_AUTO_HIBERNATE`, patch, ASP setup, `AUDIO_REINIT`.
+
+After step 6: `PROTECTION_STATUS` = 0, `HALO_STATE` = 2, `PM_CUR_STATE` = 2, and the mailbox answers.
+
+Checks against the Linux trace (`-n` prints the wmfw writes without touching the amps):
+
+- The wmfw and bin writes for AMP1 match the trace in address, word count and first word.
+- One difference in chunking: Linux writes a 624-word region in one transfer; the tool no longer splits writes at 768 bytes.
+- Program memory: the trace has no write to 0x3800000, yet the file has a 14600-byte PM region.
+  Without it (the first attempt, which matched the trace exactly), the new firmware never boots: `HALO_STATE` stays 0 and the mailbox is not taken.
+  With it, the firmware boots and plays.
+  Probable reason: the trace covers a rebind under Linux, when the amplifiers still held the program from the boot-time load; not verified.
+  The tool now writes it by default; `-s` skips it, to reproduce the failure.
+
+Usage:
+
+```sh
+kldload amdgpio
+cs35l54_tool reset
+cs35l54_tool load /path/to/firmware      # cs35l54-b0-dsp1-misc-103c8d01.wmfw, -amp1..4.bin
+cs35l54_tool play -v -30
+cs35l54_tool tone 440 5 -20              # or any audio on pcm4
+cs35l54_tool stop
+```
+
+`stop` allows auto-hibernation; a hibernating amp does not answer I2C until woken, and the firmware survives it (the next `play` works without a new `load`).
 
 ### Phase 2: kernel driver skeleton
 
@@ -209,7 +272,8 @@ A byte-exact match with the Linux trace proves the parser before it moves into t
   parse the GpioIo resource from `_CRS` and call `gpio_pin_get_by_bus_pinnum()` (`sys/dev/gpio/gpiobusvar.h:154`) on the `amdgpio(4)` gpiobus.
   `amdgpio` is not loaded by default.
 - Interrupt (GPIO 130): skip. Linux works without it, and FreeBSD x86 cannot deliver GpioInt yet (see [x86_gpio_intr_mtl.md](x86_gpio_intr_mtl.md)).
-- Port phase 1 into the attach routine; expose `dev.cs35l54.0.play` as a sysctl for manual tests.
+- Port phases 1 and 1b into the attach routine: firmware download at attach (from a taskqueue), then `dev.cs35l54.0.play` as a sysctl for manual tests.
+- Use the read workaround from "The ig4 read problem".
 
 Test: `kldload`, `sysctl dev.cs35l54.0.play=1` while `pcm4` plays: sound. `=0`: silence.
 Model the iicbus usage on `ipmi_ssif` ([IPMI_SSIF.md](IPMI_SSIF.md)).
@@ -229,17 +293,17 @@ Either way the link between amp and codec comes from ACPI: CSC3554 exists and th
 
 Test: play and stop audio in Chromium; sound starts and stops without the sysctl.
 
-### Phase 4: DSP program, tuning and calibration
+### Phase 4: calibration
 
-- Load `cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw` and `-ampN.bin` with `firmware_get()`; FreeBSD loads raw files from `/boot/firmware/` (`try_binary_file()`, `sys/kern/subr_firmware.c:270`).
-- Download sequence from the trace: `SHUTDOWN`, wmfw blocks, bin blocks, calibration, `SYSTEM_RESET`, wait for boot, `AUDIO_REINIT`.
-- The `.bin` (WMDR) blocks address coefficients by DSP algorithm ID and offset,
-  so the driver must first read the algorithm list from the DSP memory (Linux reads 246 words at 0x2800028 after the download).
-- Move the phase 1b parser into the kernel.
+The DSP program and tuning download moved to phases 1b and 2 (no sound without them).
+Remaining:
+
+- Firmware files from `/boot/firmware/` with `firmware_get()` (`try_binary_file()`, `sys/kern/subr_firmware.c:270`), instead of a path given to the tool.
 - Read `CirrusSmartAmpCalibrationData` with `efi_var_get()` (`sys/sys/efi.h:370`, needs `efirt`) and write the per-amp values to the protection algorithm.
+  The control offsets come from the wmfw `ALGORITHM_DATA` regions (coefficient names), which the tool skips today.
 - Send `AUDIO_REINIT` after the writes.
 
-Test: the driver logs the tuning file and calibration it applied; sound quality should match Linux on the same laptop.
+Test: the driver logs the calibration it applied; sound quality should match Linux on the same laptop.
 
 ### Phase 5: power management and polish
 
@@ -251,15 +315,12 @@ Test: the driver logs the tuning file and calibration it applied; sound quality 
 
 ## 6. Risks and open questions
 
-- ROM firmware alone may not play: then the wmfw loader becomes a prerequisite (phase 1 decides).
-- The ALC245 may need extra codec setup to send audio to the amplifiers; Linux applies no 8D01-specific codec fixup besides the mute LED, so probably not.
-  Compare `/proc/asound/card1/codec#0` from Ubuntu with FreeBSD `sysctl dev.hdaa.1` if phase 1 stays silent.
-- Amplifier channel mapping: Linux enables one ASP TX slot per amp (`asp_tx_mask = BIT(index)`);
-  woofer/tweeter filtering and left/right selection come from the `.bin` tuning, so ROM-only output may sound wrong (full range on tweeters, odd balance) until phase 4.
-  Keep the volume especially low for the tweeters (AMP2, AMP3).
+- The `ig4` stale-read problem: the workaround works, but the root cause is unknown and may affect other I2C devices on AMD laptops.
+- Codec setup: FreeBSD feeds the speaker pin from converter 0x02, Linux from 0x03. With firmware loaded, sound works on 0x02, so no codec change is needed.
+- Sound quality not judged yet: left/right balance and the woofer/tweeter split come from the tuning, which is loaded, but nobody compared with Linux.
 - Speaker safety without calibration: limited test volume until phase 4.
 - Clean-room discipline: no copied Linux code in the native driver; register names and values are hardware facts.
 
 ## 7. Next step
 
-Phase 1: extend `cs35l54_probe.c` with the wake sequence, confirm DEVID 0x35A54 on all four amplifiers, then try ROM-only playback.
+Phase 2: kernel driver skeleton on the `olivier-cs35l54` branch of the FreeBSD fork, porting `cs35l54_tool.c` (wake, reset, download, play/stop sysctl).

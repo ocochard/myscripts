@@ -20,7 +20,7 @@ document that explains them.
 
 ## Driver plans
 
-- [cs35l54_speaker_amp_plan.md](cs35l54_speaker_amp_plan.md): plan for a driver for the Cirrus CS35L54 speaker amplifiers of the HP ZBook Ultra G1a (silent speakers). Read-only probe: [cs35l54_probe.c](cs35l54_probe.c), Linux I2C trace: [cs35l54_linux_i2c_trace_amp1.txt](cs35l54_linux_i2c_trace_amp1.txt)
+- [cs35l54_speaker_amp_plan.md](cs35l54_speaker_amp_plan.md): plan for a driver for the Cirrus CS35L54 speaker amplifiers of the HP ZBook Ultra G1a (silent speakers). Userland tool that makes them play: [cs35l54_tool.c](cs35l54_tool.c), read-only probe: [cs35l54_probe.c](cs35l54_probe.c), Linux I2C trace: [cs35l54_linux_i2c_trace_amp1.txt](cs35l54_linux_i2c_trace_amp1.txt)
 
 ## Kernel concepts
 
