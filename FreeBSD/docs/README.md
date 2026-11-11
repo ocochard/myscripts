@@ -13,9 +13,11 @@ document that explains them.
 - [ithwm_amdpower.md](ithwm_amdpower.md): `ithwm(4)` (ITE IT87xx) and `amdpower(4)` sensor drivers for the NAS
 - [x86_gpio_intr_mtl.md](x86_gpio_intr_mtl.md): GPIO interrupts on x86 (Meteor Lake GPIO driver, x86 GPIO pseudo-PIC, ACPI GpioInt for I2C HID) so the X1 Carbon touchpad stops polling. Patch: [x86_gpio_intr_mtl.patch](x86_gpio_intr_mtl.patch)
 - [tun_destroy_deadlock_case_study.md](tun_destroy_deadlock_case_study.md): `tun_destroy()` parking a global sx-lock, from reproduction to fix. Patch: [tun_destroy_ebusy.patch](tun_destroy_ebusy.patch)
+- [tcp_sent_too_much_rxtshift.md](tcp_sent_too_much_rxtshift.md): `panic: tcp_do_segment: sent too much` (PR 282605) after an RTO, from a kernel dump to a packetdrill reproducer: the limited transmit KASSERT assumed a cwnd reset that does not happen while `t_rxtshift > 0`. Patch: [tcp_sent_too_much_rxtshift.patch](tcp_sent_too_much_rxtshift.patch), reproducer: [tcp_sent_too_much_rxtshift.pkt](tcp_sent_too_much_rxtshift.pkt)
 - [kevent_filter_zero_guard.md](kevent_filter_zero_guard.md): the one-line filter-zero guard in kevent(2) that prevents an out-of-bounds read
 - [bugreport_tpm_crb_back_to_back_eio.md](bugreport_tpm_crb_back_to_back_eio.md): tpm_crb returns `EIO` on back-to-back commands on a Pluton TPM (Framework Desktop), because it doesn't wait for idle or the locality release. Patch: [tpm_crb_settle_before_next_command.patch](tpm_crb_settle_before_next_command.patch), reproducer: [tpm_crb_sweep.py](tpm_crb_sweep.py)
 - [tpm_crb_acpi_start_method.md](tpm_crb_acpi_start_method.md): how `tpm_crb` works, and adding TPM2 start method 2 (ACPI start) so the AMD fTPM on ser6 gets a driver. Patch: [tpm_crb_acpi_start_method.patch](tpm_crb_acpi_start_method.patch)
+- [cs35l54_speaker_amp.md](cs35l54_speaker_amp.md): a driver for the Cirrus Logic CS35L54 smart speaker amplifiers (HP ZBook Ultra G1a): firmware download, factory calibration, an hdaa event to follow the speaker stream, and ACPI support in fwget(8). Patch: [cs35l54_speaker_amp.patch](cs35l54_speaker_amp.patch)
 - [vnode_pager_getpages_async_completion.md](vnode_pager_getpages_async_completion.md): how a CBMC proof led to a wrong VM patch, and what the getpages completion path really does
 
 ## Driver plans
