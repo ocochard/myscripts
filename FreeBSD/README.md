@@ -9,6 +9,7 @@ Development notes and tutorials: [docs/README.md](docs/README.md) (kernel patche
 Hardware / platform notes:
 - [Framework Desktop (Strix Halo) setup notes](Framework-desktop.md) — see also the cross-OS llama.cpp results in [../LLM/benches.FrameWork-Desktop.md](../LLM/benches.FrameWork-Desktop.md)
 - [ThinkPad X1 Carbon Gen 12: devices without driver](X1.Carbon.Gen.12.md)
+- [HP ZBook Ultra G1a (Strix Halo laptop): devices without driver](HP.ZBook.Ultra.G1a.md)
 - [NETINT Quadra VPU on FreeBSD](docs/netint_quadra.md) — how the card works, libxcoder / FFmpeg / GStreamer port results, firmware upgrade tool; live demo in [netint_demo/](netint_demo/)
 
 Install / system setup:
