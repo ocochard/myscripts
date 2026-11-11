@@ -1,8 +1,10 @@
 # Plan: a FreeBSD driver for the Cirrus Logic CS35L54 speaker amplifiers
 
 Machine: HP ZBook Ultra G1a 14 (subsystem 103C:8D01), see [../HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md).
-Status: phases 1 and 1b done (2026-11-11): the userland tool [cs35l54_tool.c](cs35l54_tool.c) downloads the DSP firmware and the speakers play on FreeBSD.
-No kernel driver yet. Facts below were measured on 2026-11-11
+Status (2026-11-11): phases 1 to 4 done. The kernel driver `cs35l54` (branch `olivier-cs35l54` of the FreeBSD fork) downloads the firmware,
+applies the factory calibration, and follows the HDA speaker stream: YouTube in Chromium plays on the speakers.
+Phase 5 (firmware port, `fwget(8)`, boot, power management) in progress.
+Facts below were measured on 2026-11-11
 (FreeBSD main-n290939, and Ubuntu with Linux 7.0.0-43 on the same laptop)
 or read in Linux (tree of 2026-07-28) and linux-firmware (69e51bb, 2026-11-09).
 The speakers work under Ubuntu: the hardware path is confirmed.
@@ -310,22 +312,139 @@ Remaining:
 
 Test: the driver logs the calibration it applied; sound quality should match Linux on the same laptop.
 
-### Phase 5: power management and polish
+### Phases 2-4: status (2026-11-11)
 
-- Suspend/resume: re-run wake, patch and tuning on resume.
-- Let the amplifiers hibernate when idle (drop `PREVENT_AUTO_HIBERNATE`, wake before play).
+All three work on the laptop, in branch `olivier-cs35l54` of the FreeBSD fork:
+
+| Commit | Change | Test |
+|---|---|---|
+| 59860263319a | `sound: Add cs35l54 driver for HDA side speaker amplifiers` | `kldload`, then `sysctl dev.cs35l54.0.play=1`: sound |
+| 233e4e34f4f0 | `hdaa: Add an event for internal speaker stream start and stop` | needs a new kernel: `snd_hda` is in GENERIC |
+| 883f8fcc1e6e | `cs35l54: Follow the HDA speaker stream` | test tone, YouTube in Chromium, pause/resume: sound follows the stream |
+| f07a18056622 | `cs35l54: Apply the factory speaker calibration` | control addresses and AMP1 values equal the Linux trace; each amp matched its UEFI entry by silicon id |
+
+Phase 3 design: `hdaa_channel_trigger()` fires the `hdaa_speaker` event (new `hdaa_speaker.h`) after a playback channel whose association holds a fixed internal speaker pin starts or stops, outside the hdaa lock.
+The amp driver matches the codec subsystem id with its `_SUB` and queues the I2C work to a taskqueue.
+
+Kernel trap met on the way: `device_get_property()` on an `acpi_iicbus` child hangs the machine,
+because acpi(4) takes the child ivars (`struct acpi_iicbus_ivars`) for `struct acpi_device`.
+The driver evaluates `_DSD` itself.
+
+### Phase 5: firmware packaging, boot, power management
+
+#### Firmware lookup (done in the driver, not committed yet)
+
+Per `firmware(9)`, `firmware_get()` loads a missing image from a kernel module named after the image,
+then from the raw file `/boot/firmware/<imagename>`.
+A module name cannot contain `/`, so for each linux-firmware file `cirrus/<file>` the driver tries:
+
+1. the module image `cirrus_<file>` with `/`, `-` and `.` replaced by `_`,
+   e.g. `cirrus_cs35l54_b0_dsp1_misc_103c8d01_wmfw`, one module per file (as `gpu-firmware-amd-kmod`), loaded on demand;
+2. the raw file `cirrus/<file>` in `/boot/firmware/` (as `net/wifi-firmware-*-kmod`, which install raw files).
+
+Both lookups use `FIRMWARE_GET_NOWARN`; the driver prints one line if both fail.
+Tested: raw files; the module path waits for the port.
+
+#### Load at boot (done in the driver, not committed yet)
+
+- At attach, if `root_mounted()` is false, the download waits for the `mountroot` event; otherwise it starts at once.
+- The module is listed in `sys/modules/sound/driver/Makefile` (amd64 and i386, next to `cmi`).
+- Load it with `kld_list="snd_cs35l54"` in `/etc/rc.conf`, after `amdgpio` (reset GPIO). Not in `loader.conf`: the speakers are not needed to boot.
+- Not tested yet: attach at boot.
+
+#### Firmware port
+
+- New port, for example `audio/cirrus-amp-firmware-kmod`, from linux-firmware `cirrus/` under LICENSE.cirrus, following `net/wifi-firmware-kmod` (distfiles fetched per file from git.kernel.org at a linux-firmware tag).
+- Resolve the `WHENCE` `Link:` lines: `cs35l54-b0-dsp1-misc-103c8d01.wmfw` is a link to `cs35l56/CS35L56_Rev3.11.18.wmfw`, and several HP ids share tuning files.
+- Flavors per chip (`cs35l54`), or one package with all CS35L54 files: they are small (7.5 KB per tuning file, 33 KB per program).
+- Install as firmware modules (on-demand loading, loader preload) or as raw files (simpler); the driver accepts both.
+
+#### fwget(8): ACPI device support
+
+`fwget(8)` installs firmware packages for detected hardware, but knows only PCI and USB:
+`usr.sbin/fwget/fwget.sh` sources one script per subsystem (`pci`, `usb`), which scans `pciconf -l` or `usbconfig`
+and sources per-vendor scripts (`pci_network_intel`, `usb_ralink`, ...) that call `addpkg`.
+These amplifiers are an ACPI device without PCI or USB id.
+
+Add an `acpi` subsystem:
+
+- `usr.sbin/fwget/acpi/acpi`: list ACPI hardware ids with `devinfo -v` (`_HID=` fields, attached or not),
+  map the id prefix to a vendor (`CSC` -> `cirrus`), and source `acpi_<vendor>`.
+- `usr.sbin/fwget/acpi/acpi_cirrus`: `CSC3554` -> `addpkg "<firmware port package>"`.
+- Hook it into `usr.sbin/fwget/Makefile` (`SUBDIR`) and the default subsystem list in `fwget.sh` (today `pci usb`), and document it in `fwget.8`.
+- Open question: the tuning files depend on the platform (`_SUB`); with one package for all CS35L54 files, `fwget` needs only the `_HID`.
+
+#### Power management
+
+- No S3 on this laptop: `hw.acpi.supported_sleep_state` lists S4 and S5 only, and `kern.power.suspend` is `suspend_to_idle`, still experimental on FreeBSD.
+- Suspend/resume methods: stop playback on suspend; on resume, reload the firmware if `PROTECTION_STATUS` reports `FIRMWARE_MISSING`, otherwise redo the setup.
+- Testing may hang the laptop: ask before each test.
+
+#### Other laptops and chips
+
+linux-firmware 69e51bb has 626 files for CS35L54/56/57 (links from `WHENCE` included), for 114 chip and platform pairs.
+Counted from the file names:
+
+| Chip, revision, vendor (subsystem prefix) | Files |
+|---|---|
+| CS35L56 B0, Dell (1028) | 104 |
+| CS35L56 B0, Lenovo (17aa) | 88 |
+| CS35L56 B0, Asus (1043) | 77 |
+| CS35L54 B0, HP (103c) | 61 |
+| CS35L56 B0, HP (103c) | 28 |
+| CS35L57 B2, Dell (1028) | 22 |
+| CS35L57 B2, Lenovo (17aa) | 15 |
+| CS35L56 B2, Dell (1028) | 8 |
+| CS35L57 B2, Samsung (144d) | 4 |
+
+- 68 platforms use HDA-style names (`-ampN`): amplifiers on I2C or SPI behind an HDA codec, the case of this driver.
+- 34 platforms use SoundWire names (`-lXuY`).
+- 59 platforms have speaker-id variants (`-spkidN`).
+- The 17 HP CS35L54 platforms: 103C8D01, 8D08, 8D85, 8D86, 8D8C, 8D8D, 8D8E, 8D8F, 8D91, 8E14, 8E15, 8E16, 8E17, 8E18, 8E19, 8E1A, 900C.
+
+What varies, and what the driver needs for it:
+
+| Variation | Driver today | Needed |
+|---|---|---|
+| Platform (subsystem id in the file names) | names built from `_SUB` | nothing; other HP CS35L54 laptops should work once the firmware is installed (untested) |
+| Chip: CS35L54/56/57, HID CSC3554/3556/3557 | CSC3554 only, `cs35l54` in the names | HID table giving the chip type and file prefix; rename the driver `cs35l56` (family name, as Linux) |
+| Silicon revision B0/B2, secured parts (`-s`) | B0 only, REVID checked | register tables per revision: some firmware registers move on B2 (`PM_CUR_STATE` 0x2804308 becomes 0x2804678), and the system reset sequence differs |
+| Speaker id (`-spkidN`) | not supported | read it from `spk-id-gpios` in `_DSD`, or from the HP `HPSpeakerID` / Lenovo `SdwSpeaker` UEFI variables; add `-spkidN` to the names |
+| Number of amplifiers (2 or 4) | from `cirrus,dev-index` | nothing |
+| Calibration variable | Cirrus GUID only | also try the vendor variables Linux tries (HP `SmartAmpCalibrationData`, ...) |
+| Platform quirks (missing or wrong `_DSD`) | none | small quirk table by subsystem id, as Linux `cs35l56_hda_apply_platform_fixups()` |
+| SPI-attached amplifiers | not supported | SPI attachment; check FreeBSD SPI controller support on those laptops first |
+| SoundWire-attached amplifiers | not supported | out of scope: FreeBSD has no SoundWire stack |
+| HDA codec quirks (for example ThinkPad DAC binding, Linux `alc287_fixup_bind_dacs`) | the `hdaa_speaker` hook is generic | per-model `hdaa` quirks, when a tester reports them |
+
+Firmware names follow Linux's search order:
+`<chip>-<rev>[-s]-dsp1-misc-<sub>[-spkidN]-ampN.bin`, then the platform file without `-ampN`, then the generic file without platform.
+
+Packaging: one port with a flavor per chip (`cs35l54`, `cs35l56`, `cs35l57`), each with all the platforms of that chip.
+The files are small, and `fwget(8)` then needs only the `_HID` (`CSC3554` -> `cs35l54` flavor).
+Flavors per vendor or platform would make smaller packages, but `fwget` would also need `_SUB`.
+
+Testing is the limit: only this laptop (CS35L54 B0, HP, I2C, no speaker id) is available.
+A wrong register table or tuning file means silence or a badly driven tweeter.
+Proposed scope:
+
+1. First upstream submission: I2C-attached CS35L54/56/57 with B0 and B2 tables, `-spkidN`, and the extra calibration variables; platforms other than this laptop marked untested, with a call for testers.
+2. Later: SPI attachment.
+3. Out of scope: SoundWire.
+
+#### Other items
+
 - Man page `cs35l54.4`.
-- Port for the firmware files (`audio/cirrus-amp-firmware` or a flavor of an existing firmware port), from linux-firmware `cirrus/` under LICENSE.cirrus.
-- Other laptops: linux-firmware has `.bin` files for other HP IDs (103C8D08, 103C8D85, ...); keep system name and amp count data-driven from ACPI.
+- Tutorial document required with the patch (`freebsd-src` checklist).
 
 ## 6. Risks and open questions
 
 - The `ig4` stale-read problem: the workaround works, but the root cause is unknown and may affect other I2C devices on AMD laptops.
 - Codec setup: FreeBSD feeds the speaker pin from converter 0x02, Linux from 0x03. With firmware loaded, sound works on 0x02, so no codec change is needed.
 - Sound quality not judged yet: left/right balance and the woofer/tweeter split come from the tuning, which is loaded, but nobody compared with Linux.
-- Speaker safety without calibration: limited test volume until phase 4.
+- Speaker behavior at high volume with calibration not tested.
 - Clean-room discipline: no copied Linux code in the native driver; register names and values are hardware facts.
 
 ## 7. Next step
 
-Phase 2: kernel driver skeleton on the `olivier-cs35l54` branch of the FreeBSD fork, porting `cs35l54_tool.c` (wake, reset, download, play/stop sysctl).
+Phase 5: commit the firmware lookup and boot changes, then the `fwget(8)` ACPI subsystem, then the firmware port.
