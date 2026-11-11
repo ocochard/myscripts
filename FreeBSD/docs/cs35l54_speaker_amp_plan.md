@@ -271,7 +271,12 @@ cs35l54_tool stop
   FreeBSD has no ACPI GpioIo lookup for a device that is not a gpiobus child:
   parse the GpioIo resource from `_CRS` and call `gpio_pin_get_by_bus_pinnum()` (`sys/dev/gpio/gpiobusvar.h:154`) on the `amdgpio(4)` gpiobus.
   `amdgpio` is not loaded by default.
-- Interrupt (GPIO 130): skip. Linux works without it, and FreeBSD x86 cannot deliver GpioInt yet (see [x86_gpio_intr_mtl.md](x86_gpio_intr_mtl.md)).
+- Interrupt (GPIO 130): skip.
+  Linux requests it but treats it as optional (`if (cs35l56->base.irq)` in `cs35l56_hda.c`), and the userland tool plays without it.
+  It only reports amp errors (short circuit, over-temperature).
+  It needs GpioInt support in `amdgpio(4)` and `acpi_iicbus`, which FreeBSD x86 lacks
+  ([x86_gpio_intr_mtl.md](x86_gpio_intr_mtl.md) covers the Intel Meteor Lake controller, not `amdgpio`).
+  No dependency: the driver does not wait for that work.
 - Port phases 1 and 1b into the attach routine: firmware download at attach (from a taskqueue), then `dev.cs35l54.0.play` as a sysctl for manual tests.
 - Use the read workaround from "The ig4 read problem".
 
