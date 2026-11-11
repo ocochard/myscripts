@@ -437,6 +437,23 @@ Proposed scope:
 - Man page `cs35l54.4`.
 - Tutorial document required with the patch (`freebsd-src` checklist).
 
+### Patches to land, in order
+
+| # | Item | Branch commits | Repository, review by | Status | Depends on |
+|---|---|---|---|---|---|
+| 1 | hdaa: event for internal speaker stream start/stop (`hdaa.c`, new `hdaa_speaker.h`) | 233e4e34f4f0 | src, sound maintainers | done, tested | nothing |
+| 2 | New `snd_cs35l54` driver (squash for review): driver, stream following, calibration, firmware lookup and root deferral, suspend/resume, PnP info, man page, module build list | 59860263319a, 883f8fcc1e6e, f07a18056622, ca5f2f5c4a5d, fa9021e7594a, f33829929b16, 3bfdd8bf074d | src, sound maintainers | done, tested on one laptop | 1 |
+| 3 | fwget: ACPI device support (`acpi` subsystem, `acpi_cirrus`) | 2c7615313857 | src, fwget maintainers | done, dry run only | package name of 4 |
+| 4 | Port `audio/sound-firmware-cirrus-kmod` (`cs35l54` flavor) | uncommitted in the ports tree | ports, committed by the author | done, poudriere and `pkg add` tested | 2 accepted |
+| 5 | amdgpio: add ACPI PnP info so that devmatch(8) loads it (reset line available without `kld_list`) | to write | src | optional | nothing |
+| 6 | acpi: `device_get_property()` on an `acpi_iicbus` child hangs the machine | to write | src, ACPI | bug, reproduced | nothing |
+| 7 | ig4: first 32-bit word of each read is stale with these amplifiers | to write | src, ig4 | bug, cause unknown; the driver works around it | nothing |
+
+1-4 are needed for working speakers, 5 is a convenience, 6 and 7 are bugs met on the way that the driver does not need fixed.
+Multi-chip support (CS35L56/57, B2, speaker id) comes after 2.
+
+Boot: with the PnP info, `devmatch -a` selects `snd_cs35l54.ko` when the module is built with the kernel options (`KERNBUILDDIR`; a stand-alone module build gets an empty `opt_acpi.h` and no PnP table). A real boot is not tested yet.
+
 ## 6. Risks and open questions
 
 - The `ig4` stale-read problem: the workaround works, but the root cause is unknown and may affect other I2C devices on AMD laptops.
