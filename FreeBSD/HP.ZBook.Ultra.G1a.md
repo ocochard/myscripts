@@ -14,7 +14,7 @@ Sources, collected on 2026-11-11: `pciconf -lv`, `devinfo -v`, `usbconfig`, `/va
 |---|---|---|
 | GPU, display | 1002:1586 Radeon 8060S | `amdgpu` from `graphics/drm-latest-kmod` + `gpu-firmware-amd-kmod` |
 | HDMI/DP audio | 1002:1640 | `hdac0`, 4 `pcm` outputs |
-| Speakers, headphone jack | 1022:15e3 + Realtek ALC245 codec | `hdac1`, `pcm4` (default), `pcm5` (headphones) |
+| Headphone jack | 1022:15e3 + Realtek ALC245 codec | `hdac1`, `pcm5` (headphones); `pcm4` (default) feeds the speakers, silent (see below) |
 | NVMe | Samsung PM9A1 2 TB (144d:a80a) | `nvme`/`nda` |
 | USB 3 | four xHCI (1022:1587, 1588, 1589, 158b) | `xhci` |
 | Touchpad | Synaptics SYNA3133 (I2C HID) | `iichid0`, polling mode (see below) |
@@ -28,7 +28,9 @@ Sources, collected on 2026-11-11: `pciconf -lv`, `devinfo -v`, `usbconfig`, `/va
 | Keyboard | HPQ8002 | `atkbdc` |
 | Ethernet | none built in; tested with a USB-C dock (RTL8153) | `ure` |
 
-Audio outputs attach, but I did not listen to them.
+Audio outputs attach, but I did not listen to the headphone or HDMI outputs.
+Sound device nodes are `root:audio` 0660 and DRM nodes `root:video` 0660 since main of May 2026 (a6aa95eba6ee):
+add desktop users to both groups, or sound and GPU acceleration fail.
 The `/boot/loader.conf` hint `hint.pcib.7.disabled="1"` from older kernels is no longer needed:
 without it, `pcib7` attaches the xHCI at 197:0:0 and the boot does not hang (2026-11-11).
 
@@ -36,17 +38,19 @@ without it, `pcib7` attaches the xHCI at 197:0:0 and the boot does not hang (202
 
 Source: `pciconf -lv | grep -A4 '^none'`.
 
-| pciconf | Address | ID | Device |
-|---|---|---|---|
-| none0 | 0:0:2 | 1022:1508 | IOMMU |
-| none1 | 193:0:0 | 14c3:7925 | MediaTek MT7925 Wi-Fi 7 (Filogic 360) |
-| none2 | 195:0:2 | 1022:17e0 | CCP/ASP: crypto coprocessor and AMD Secure Processor (PSP) |
-| none3 | 195:0:5 | 1022:15e2 | Audio Coprocessor (ACP) |
-| none4 | 195:0:7 | 1022:164a | Sensor Fusion Hub (SFH) |
-| none5 | 196:0:0 | 1022:150d | PCIe dummy function |
-| none6 | 196:0:1 | 1022:17f0 | Neural Processing Unit (XDNA 2) |
-| none7 | 197:0:5 | 1022:158d | USB4 host router 0 |
-| none8 | 197:0:6 | 1022:158e | USB4 host router 1 |
+| pciconf | Address | ID | Device | Purpose | Missing on FreeBSD |
+|---|---|---|---|---|---|
+| none0 | 0:0:2 | 1022:1508 | IOMMU | DMA protection, PCI passthrough | nothing: `amdiommu` exists, off by default |
+| none1 | 193:0:0 | 14c3:7925 | MediaTek MT7925 (Filogic 360) | Wi-Fi 7 | Wi-Fi |
+| none2 | 195:0:2 | 1022:17e0 | CCP/ASP | security processor (PSP) and crypto offload | crypto offload, nothing visible |
+| none3 | 195:0:5 | 1022:15e2 | Audio Coprocessor (ACP) | DSP for the internal digital microphones | internal microphone (probably) |
+| none4 | 195:0:7 | 1022:164a | Sensor Fusion Hub (SFH) | accelerometer, lid angle, ambient light | rotation, auto-brightness |
+| none5 | 196:0:0 | 1022:150d | PCIe dummy function | placeholder that carries the NPU function | nothing |
+| none6 | 196:0:1 | 1022:17f0 | NPU (XDNA 2) | low-power AI inference | NPU offload |
+| none7 | 197:0:5 | 1022:158d | USB4 host router 0 | USB4/Thunderbolt fabric, PCIe tunneling | eGPU, PCIe docks |
+| none8 | 197:0:6 | 1022:158e | USB4 host router 1 | same, second set of USB-C ports | same |
+
+Details for each device are in "Device purpose and impact" below.
 
 ## USB devices without a working driver
 
@@ -65,6 +69,7 @@ Source: `devinfo -v | grep 'unknown pnpinfo'`, without the `PWRS` power resource
 
 | HID | Path | Purpose |
 |---|---|---|
+| CSC3554 | `\_SB_.I2CB.SPKR` (I2C 0x30) | Cirrus Logic CS35L54 smart amplifier for the internal speakers: no speaker sound without it |
 | AMDI0030 | `\_SB_.GPIO` | GPIO controller. `amdgpio(4)` exists as a module but is not loaded by default |
 | AMDI0105 | `\_SB_.PMF_` | Platform Management Framework: power and fan policy from firmware tables |
 | AMDI0201 | `\_SB_.ISP1` | Image Signal Processor 4.1 for the cameras |
@@ -78,7 +83,7 @@ Source: `devinfo -v | grep 'unknown pnpinfo'`, without the `PWRS` power resource
 | MSFT0201 | `\_SB_.MHSP` | Microsoft hardware security processor (Pluton), from the name; not checked |
 | DRTM0001 | `\_SB_.DRTM` | Dynamic Root of Trust for Measurement |
 | HPIC000C | `\_SB_.E180` | unknown HP device |
-| PS8835xx, PS8836xx, PX88xxxx | `\_SB_.I2CD.*` | 32 entries at I2C addresses 0x08-0x17 and 0x30-0x4f. The prefix suggests Parade PS883x USB4 retimers, but 32 is far more than the ports need; not checked |
+| PS8835xx, PS8836xx, PX88xxxx | `\_SB_.I2CD.*` | 48 entries at I2C addresses 0x08-0x17 and 0x30-0x4f. The prefix suggests Parade PS883x USB4 retimers, but 48 is far more than the ports need; not checked |
 | PNP0800, PNP0000 | `LPCB.SPKR`, `LPCB.PIC_` | legacy PC speaker and 8259 PIC: nothing to do |
 
 HP WMI (`acpi_wmi0`, `acpi_wmi1`) attaches; `acpi_hp(4)` exists as a module and might handle hotkeys. Not tested.
@@ -120,6 +125,14 @@ On AMD laptops the internal microphones go through the ACP, not through the HDA 
 Linux: ASoC drivers in `sound/soc/amd` (ACP 7.x on Strix).
 Impact: probably no internal microphone; the headset jack goes through the ALC245 codec (`pcm4` record).
 Not tested.
+
+### Internal speakers: Cirrus CS35L54 amplifier (CSC3554)
+
+The ALC245 codec does not drive the speakers directly: a CS35L54 smart amplifier on I2C (`\_SB_.I2CB`, address 0x30) does.
+The amplifier needs the OS to load its DSP firmware and tuning before it outputs sound.
+Linux: `cs35l56_hda_i2c` side-codec driver (`{ "CSC3554", 0 }`) with firmware `cirrus/cs35l54-*.wmfw` and `.bin`.
+Test 2026-11-11: Chromium plays through PulseAudio into `dsp4` (sink RUNNING, not muted, 85%), the hardware channel takes data with 0 underruns, and the speakers stay silent.
+Impact: no speaker sound; use the headphone jack (`pcm5`), HDMI/DP, or a USB headset.
 
 ### Sensor Fusion Hub (195:0:7)
 
@@ -188,12 +201,15 @@ The same gap on Meteor Lake is described in [docs/x86_gpio_intr_mtl.md](docs/x86
    The biggest gap, but upstream work is in progress: mt7925 needs LinuxKPI IDR and page pool changes first (see the Wi-Fi section).
    Best action: follow PR 273623 and test when the mt7925 call for testing comes out.
    Building `sys/modules/mt76/mt7925` by hand today is not tested and unlikely to work.
-2. Touch interrupts (amdgpio + GpioInt in acpi_iicbus).
+2. Speaker amplifier (CS35L54).
+   No speaker sound without it.
+   Large effort: I2C control, DSP firmware download, and binding to the HDA codec stream.
+3. Touch interrupts (amdgpio + GpioInt in acpi_iicbus).
    Gives lower latency on the first touch after idle and no dropped reports during fast movement.
    Builds on the Meteor Lake GpioInt work.
-3. MediaTek Bluetooth firmware loader.
+4. MediaTek Bluetooth firmware loader.
    A small `ubt` companion like `rtlbtfw`; needs the MediaTek firmware download protocol.
-4. Internal microphone (ACP).
+5. Internal microphone (ACP).
    Needed for calls without a headset; ASoC-style driver, medium to large effort.
 
 Skip for laptop use:
