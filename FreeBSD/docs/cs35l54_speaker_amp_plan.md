@@ -83,6 +83,9 @@ Example, three reads of the reset-default ASP registers (default 0x4804 = 0x28, 
 - Linux reads the same chips correctly with the same protocol (write 4 address bytes, repeated start, read).
 - `ig4` sets up fast mode (400 kHz) per `ig4_iic.c`, below the 1 MHz the ACPI table allows; bus speed not measured.
 - Root cause not found.
+- The stale word comes from the amplifier, not from the controller FIFO: read amp 0x30 (next word: its CAL_R 0x1BE8), then amp 0x31: 0x31 returns its own next word (0x61), not 0x1BE8.
+- Not the timings: an ig4 build with the 150 MHz AMD input clock, then also with the firmware SDA TX hold and a non-zero RX hold (as Linux i2c-designware), still returns the stale word.
+- Remaining hypothesis: the amplifier sees an ACK instead of a NACK on the last byte of each read and prefetches the next word. Proving it needs a logic analyzer on the bus.
 
 Workaround used by the tool: read two words starting at reg - 4 and keep the second.
 It returns the right value with or without the problem.
@@ -445,9 +448,9 @@ Proposed scope:
 | 2 | New `snd_cs35l54` driver (squash for review): driver, stream following, calibration, firmware lookup and root deferral, suspend/resume, PnP info, man page, module build list | 59860263319a, 883f8fcc1e6e, f07a18056622, ca5f2f5c4a5d, fa9021e7594a, f33829929b16, 3bfdd8bf074d | src, sound maintainers | done, tested on one laptop | 1 |
 | 3 | fwget: ACPI device support (`acpi` subsystem, `acpi_cirrus`) | 2c7615313857 | src, fwget maintainers | done, dry run only | package name of 4 |
 | 4 | Port `audio/sound-firmware-cirrus-kmod` (`cs35l54` flavor) | uncommitted in the ports tree | ports, committed by the author | done, poudriere and `pkg add` tested | 2 accepted |
-| 5 | amdgpio: add ACPI PnP info so that devmatch(8) loads it (reset line available without `kld_list`) | to write | src | optional | nothing |
-| 6 | acpi: `device_get_property()` on an `acpi_iicbus` child hangs the machine | to write | src, ACPI | bug, reproduced | nothing |
-| 7 | ig4: first 32-bit word of each read is stale with these amplifiers | to write | src, ig4 | bug, cause unknown; the driver works around it | nothing |
+| 5 | amdgpio: add ACPI PnP info so that devmatch(8) loads it (reset line available without `kld_list`) | 84decd870fae (branch `olivier-amdgpio-pnp`) | src | done; `devmatch -a` selects `amdgpio.ko`; also enables `_AEI` handling on AMD systems at boot | nothing |
+| 6 | acpi: refuse property requests for children of other buses (`device_get_property()` on an `acpi_iicbus` child hung the machine) | 8d068f278a79 (branch `olivier-acpi-prop-child`) | src, ACPI | written, not tested yet (needs a kernel build and a reboot) | nothing |
+| 7 | ig4: use the 150 MHz input clock of AMDI0010 controllers (Linux value; ig4 assumed 100 MHz, about 600 kHz instead of 400 kHz) | acc424d82791 (branch `olivier-ig4-amd-clock`) | src, ig4 | done; touchpad, touchscreen and amplifiers reattach; does not fix the stale read | nothing |
 
 1-4 are needed for working speakers, 5 is a convenience, 6 and 7 are bugs met on the way that the driver does not need fixed.
 Multi-chip support (CS35L56/57, B2, speaker id) comes after 2.
