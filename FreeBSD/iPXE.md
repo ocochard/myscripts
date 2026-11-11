@@ -1899,6 +1899,236 @@ for the 15.1 mini-memstick):
 On the RamDisk path with a disc1 ISO, the two backup-GPT sectors edk2
 writes differ from the published image (bug report, section 4).
 
+### (g) A boot menu: several FreeBSD images, plus Ubuntu
+
+The scripts so far boot one thing. iPXE's `menu`, `item` and `choose`
+commands (`MENU_CMD`, on by default in `config/general.h`) turn the server
+script into a boot menu. The script below is the one served as
+`nas:/tftpboot/autoexec.ipxe`, reached through the `EMBED=` chain of §5b. It
+offers a custom FreeBSD memstick, the stock 15.1 mini-memstick, and the Ubuntu
+26.04.1 live server and desktop images.
+
+```
+=== Netboot from nas (QEMU Standard PC (i440FX + PIIX, 1996)) ===
+FreeBSD
+  Custom memstick (freebsd/custom-memstick.img.xz)        (15)
+  15.1-RELEASE mini-memstick (download.freebsd.org)
+Ubuntu 26.04.1 (whole ISO copied into RAM, tmpfs = half of RAM)
+  Live server installer (needs 8 GB+ RAM)
+  Desktop live (needs 16 GB+ RAM)
+Other
+  iPXE shell
+  Exit to firmware
+```
+
+#### Serve the images over HTTP
+
+TFTP still delivers `ipxe.efi` and the script, because that is all the
+firmware speaks. Everything after that is better over HTTP, for two reasons:
+
+- `memdisk=` is downloaded through iPXE, not through the loader's own
+  network code: `stand/efi/loader/memdisk.c` calls
+  `ipxe_download->Start()` with the URL. So any scheme iPXE knows works,
+  including plain `http://` to a LAN server. A 500 MB image over TFTP is
+  slow.
+- Ubuntu's casper fetches its ISO with `wget` from inside the initramfs.
+  That is HTTP, never TFTP.
+
+`darkhttpd` serves the existing TFTP root as is, so one directory holds both
+views:
+
+```console
+# pkg install darkhttpd
+# sysrc darkhttpd_enable=YES darkhttpd_dir=/tftpboot
+# service darkhttpd start
+```
+
+The whole of `/tftpboot` is then readable over HTTP on the LAN, with
+directory listings.
+
+```
+/tftpboot/
+├── ipxe.efi                       snponly EMBED=chain.ipxe (§5b)
+├── autoexec.ipxe                  the menu below
+├── loader.x64.efi                 loader with the §7f fixes
+├── freebsd/
+│   └── custom-memstick.img.xz     overwrite to update, no script change
+└── ubuntu/
+    ├── ubuntu-26.04.1-live-server-amd64.iso
+    ├── ubuntu-26.04.1-desktop-amd64.iso
+    ├── 26.04.1-server/{vmlinuz,initrd}
+    └── 26.04.1-desktop/{vmlinuz,initrd}
+```
+
+#### Ubuntu: kernel and initrd from the ISO's `casper/`
+
+iPXE boots a Linux kernel directly, unlike a FreeBSD one (§7c). The
+initramfs then needs `ip=dhcp url=<iso>`: casper downloads the whole ISO
+into a tmpfs and mounts it as the live root.
+
+Take `vmlinuz` and `initrd` from the very ISO that `url=` names. bsdtar
+reads ISO 9660 directly:
+
+```console
+$ mkdir 26.04.1-server
+$ tar -xf ubuntu-26.04.1-live-server-amd64.iso -C 26.04.1-server \
+      --strip-components 1 casper/vmlinuz casper/initrd
+```
+
+Do not use `releases.ubuntu.com/26.04/netboot/amd64/` instead. That
+directory follows the latest point release, so a script pinned to one ISO
+name eventually boots a kernel that does not match the ISO's modules.
+The desktop ISO also has its own initrd, distinct from the server one.
+
+#### The script
+
+```
+#!ipxe
+# Boot menu served from nas:/tftpboot (TFTP via inetd, HTTP via darkhttpd).
+# FreeBSD entries chain the patched loader.x64.efi, which fetches memdisk=
+# itself through iPXE's download protocol. Ubuntu entries load casper
+# kernel+initrd; casper then pulls the whole ISO into RAM (url=).
+
+set base http://192.168.100.1
+
+dhcp net0 || goto nodhcp
+echo iPXE ${version} MAC ${net0/mac} ip ${net0/ip} gw ${net0/gateway}
+
+# Serial console (IPMI SoL on COM2) only on the Supermicro boards; on a
+# machine without COM2, boot_serial would send the installer to a missing port.
+clear fbsd_extra
+clear linux_extra
+iseq ${smbios/manufacturer} Supermicro && set fbsd_extra console=comconsole,efi comconsole_speed=115200 comconsole_port=0x2f8 boot_multicons=YES boot_serial=YES ||
+iseq ${smbios/manufacturer} Supermicro && set linux_extra console=tty0 console=ttyS1,115200n8 ||
+
+:menu
+menu Netboot from nas (${smbios/manufacturer} ${smbios/product})
+item --gap FreeBSD
+item fbsd_custom    Custom memstick (freebsd/custom-memstick.img.xz)
+item fbsd_151       15.1-RELEASE mini-memstick (download.freebsd.org)
+item --gap Ubuntu 26.04.1 (whole ISO copied into RAM, tmpfs = half of RAM)
+item ubuntu_server  Live server installer (needs 8 GB+ RAM)
+item ubuntu_desktop Desktop live (needs 16 GB+ RAM)
+item --gap Other
+item shell          iPXE shell
+item exit           Exit to firmware
+choose --default fbsd_custom --timeout 15000 target || goto menu
+goto ${target}
+
+:fbsd_custom
+set memdisk ${base}/freebsd/custom-memstick.img.xz
+goto fbsd_boot
+
+:fbsd_151
+set memdisk https://download.freebsd.org/releases/amd64/amd64/ISO-IMAGES/15.1/FreeBSD-15.1-RELEASE-amd64-mini-memstick.img.xz
+goto fbsd_boot
+
+:fbsd_boot
+echo memdisk=${memdisk} ${fbsd_extra}
+imgfetch --name loader ${base}/loader.x64.efi || goto fail
+chain --replace loader memdisk=${memdisk} ${fbsd_extra} || goto fail
+goto fail
+
+:ubuntu_server
+set udir ${base}/ubuntu/26.04.1-server
+set iso ubuntu-26.04.1-live-server-amd64.iso
+goto ubuntu_boot
+
+:ubuntu_desktop
+set udir ${base}/ubuntu/26.04.1-desktop
+set iso ubuntu-26.04.1-desktop-amd64.iso
+goto ubuntu_boot
+
+# imgfree: iPXE hands every registered image (this script included) to
+# the kernel as one concatenated initrd, so drop them first.
+# cloud-config-url=/dev/null: else cloud-init treats url= as its config
+# source and downloads the ISO a second time.
+:ubuntu_boot
+imgfree
+kernel ${udir}/vmlinuz initrd=initrd ip=dhcp url=${base}/ubuntu/${iso} cloud-config-url=/dev/null ${linux_extra} || goto fail
+initrd --name initrd ${udir}/initrd || goto fail
+boot || goto fail
+
+:shell
+shell
+goto menu
+
+:exit
+exit
+
+:nodhcp
+echo !! DHCP failed on net0
+:fail
+echo !! boot failed, back to menu in 10 s (any key for shell)
+prompt --timeout 10000 && shell ||
+goto menu
+```
+
+A failed entry returns to the menu instead of dying in a shell, so one bad
+URL does not strand a machine that has no keyboard attached.
+
+#### Trap 1: `imgfree` before `kernel`, or the initramfs is garbage
+
+Without the `imgfree` line, the Ubuntu kernel downloads, starts, and panics
+three seconds later:
+
+```
+Trying to unpack rootfs image as initramfs...
+Initramfs unpacking failed: invalid magic at start of compressed archive
+...
+Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0)
+```
+
+The initrd file itself is fine: its md5 over HTTP matches the one on disk,
+and its segments are well formed (three cpio archives, then a zstd one at
+`28 b5 2f fd`). The fault is in what iPXE hands the kernel. Under UEFI, the
+kernel's EFI stub asks for its initrd through the `LoadFile2` protocol, and
+iPXE answers with `efi_file_read_initrd()` (`interface/efi/efi_file.c`),
+which concatenates **every registered image that is not hidden**. The
+running menu script is a registered image. So the kernel receives
+`#!ipxe ...` text followed by the real initrd, and the unpacker rejects the
+first byte.
+
+`imgfree` with no argument unregisters all images. The script keeps running
+because `image_exec()` (`core/image.c`) holds a temporary reference to the
+image it is executing. Then `kernel` and
+`initrd` register only the two images that should be there.
+
+The FreeBSD entries do not need this: `loader.efi` is a PE image started by
+`LoadImage()`, and it never asks iPXE for an initrd.
+
+#### Trap 2: RAM must be about twice the ISO
+
+casper downloads the ISO into a tmpfs, and that tmpfs is capped at half of
+RAM. With 6 GB, the 2.9 GB server ISO stops at 73% and the boot falls to
+the initramfs shell:
+
+```
+wget: short write: No space left on device
+Unable to find a live file system on the network
+```
+
+Hence the labels in the menu: 8 GB for the server ISO (2.9 GB) and 16 GB for
+the desktop ISO (6.5 GB).
+
+`cloud-config-url=/dev/null` is a separate guard. Without it, cloud-init
+also reads `url=` from the kernel command line, takes it for its own
+config source, and downloads the ISO a second time.
+
+#### Verified
+
+Measured 2026-11-11 under qemu (edk2, `-netdev user`), booting the served
+`ipxe.efi` and this script. The only test edits were the default entry and
+a serial console argument. Real hardware is not yet tested.
+
+| Entry | VM RAM | Result |
+|---|---|---|
+| Custom memstick (16.0-CURRENT, 528 MB `.img.xz`) | 4 GB | `Downloaded 527688884 bytes, actual size 1050366464 -- registering ramdisk`, then `Welcome to FreeBSD!` / `Console type [vt100]:` |
+| Ubuntu live server | 6 GB | `wget: short write: No space left on device` (trap 2) |
+| Ubuntu live server | 8 GB | systemd reached `getty.target`, then `waiting for cloud-init...` when the 420 s test timeout stopped it. The subiquity screen was not seen |
+| Ubuntu desktop | 16 GB | `ubuntu login:` on the serial console. The graphical session was not checked |
+| 15.1 mini-memstick | | not retested. It is the same `chain` line as before the menu, with the URL moved into `${memdisk}` |
+
 ---
 
 ## 8. Escape hatch: iPXE from a local ESP
@@ -2579,6 +2809,8 @@ pflash.
 | `NBP filesize is 0 Bytes` / `PXE-E23` although option 67 names the right file | firmware appended the DHCP END byte to the filename and asked for `<name>\xff`. Check the RRQ hex before blaming the DHCP server, whose reply is usually well formed; hardlink the 0xFF name (§9) |
 | replaced `ipxe.efi` but the machine still boots the old binary | the 0xFF hardlink is a second name on the same inode; `mv` over one name leaves the other on the old bytes. Repoint both, verify by inode and md5 (§9) |
 | "unsupported" / image-load failure | wrong architecture in the PE machine field (i386 binary on x86_64 firmware, or vice versa) |
+| Linux booted by iPXE: `Initramfs unpacking failed: invalid magic at start of compressed archive`, then `VFS: Unable to mount root fs` | iPXE passed the running script along with the initrd: `LoadFile2` concatenates every registered image. Run `imgfree` before `kernel` (§7g) |
+| Ubuntu casper: `wget: short write: No space left on device`, `Unable to find a live file system on the network` | casper's tmpfs is half of RAM and the ISO does not fit. Give the machine about twice the ISO size in RAM (§7g) |
 | iPXE loads iPXE in a loop | DHCP returns the same filename to both firmware and iPXE; needs option-77 matching (§5b). Without it (SLIRP, Freebox), serve an `EMBED=` build that chains `autoexec.ipxe` itself (§5b) |
 | chained iPXE prints `file:/autoexec.ipxe... Not found` and never tries TFTP | an iPXE started by another iPXE finds a filesystem first and only tries `file:`; a server-side `autoexec.ipxe` cannot reach it. Use the `EMBED=` chain script (§5b) |
 | iPXE starts but ignores your script | no embedded script (the packaged binary has none, §5a), no `bootfile=` for iPXE's own DHCP (§5d), and no `autoexec.ipxe` on the boot filesystem (§5e) |
