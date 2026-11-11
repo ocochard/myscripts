@@ -1,7 +1,11 @@
 # Silent laptop speakers: a driver for the Cirrus Logic CS35L54 amplifiers
 
-Patch: [cs35l54_speaker_amp.patch](cs35l54_speaker_amp.patch), the 8 commits of branch `olivier-cs35l54`
-on top of FreeBSD main 6e87733f73ff (2026-11-11).
+Patch: [cs35l54_speaker_amp.patch](cs35l54_speaker_amp.patch), the 10 commits of branch
+[`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) on top of FreeBSD main 6e87733f73ff (2026-11-11).
+Related fixes found on the way, one commit each:
+[`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) (devmatch loads amdgpio),
+[`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) (the `device_get_property()` hang of section 3.4),
+[`olivier-ig4-amd-clock`](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock) (ig4 ran the AMD I2C bus at about 494 kHz instead of 400 kHz).
 Machine: HP ZBook Ultra G1a 14 (AMD Ryzen AI Max+ PRO 395, Realtek ALC245 codec, subsystem 103C:8D01).
 Investigation log and measurements: [cs35l54_speaker_amp_plan.md](cs35l54_speaker_amp_plan.md).
 Firmware port (not committed yet): `audio/sound-firmware-cirrus-kmod`.

@@ -20,10 +20,10 @@ index 4a39645fcba3..1444ef02c9f7 100644
  _superio.4=	superio.4
 diff --git share/man/man4/snd_cs35l54.4 share/man/man4/snd_cs35l54.4
 new file mode 100644
-index 000000000000..221059e8e106
+index 000000000000..ca1e357086e5
 --- /dev/null
 +++ share/man/man4/snd_cs35l54.4
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,152 @@
 +.\"
 +.\" SPDX-License-Identifier: BSD-2-Clause
 +.\"
@@ -57,10 +57,13 @@ index 000000000000..221059e8e106
 +.Nm snd_cs35l54
 +.Nd "Cirrus Logic CS35L54 speaker amplifier driver"
 +.Sh SYNOPSIS
-+To load the driver as a module at boot time, place the following line in
++The driver is loaded at boot by
++.Xr devmatch 8
++when the amplifiers are present.
++To load it explicitly, place the following line in
 +.Xr rc.conf 5 :
 +.Bd -literal -offset indent
-+kld_list="amdgpio snd_cs35l54"
++kld_list="snd_cs35l54"
 +.Ed
 +.Sh DESCRIPTION
 +Some laptops route the internal speakers through smart amplifiers that sit
@@ -140,6 +143,7 @@ index 000000000000..221059e8e106
 +.Xr gpio 4 ,
 +.Xr snd_hda 4 ,
 +.Xr sound 4 ,
++.Xr devmatch 8 ,
 +.Xr fwget 8 ,
 +.Xr firmware 9
 +.Sh HISTORY
@@ -154,10 +158,13 @@ index 000000000000..221059e8e106
 +driver and this manual page were written by
 +.An Olivier Cochard-Labbe Aq Mt olivier@FreeBSD.org .
 +.Sh CAVEATS
-+The reset line is a GPIO of the AMD GPIO controller, so the
++The reset line is a GPIO of the AMD GPIO controller.
++If the
 +.Cm amdgpio
-+module must be loaded first; without it, the driver only wakes the
-+amplifiers.
++module is not loaded before the driver attaches, the driver only wakes
++the amplifiers and cannot reset them; add it to
++.Va kld_list
++to use the reset line.
 +.Pp
 +The amplifier interrupt is not used.
 +.Sh BUGS
@@ -171,10 +178,10 @@ index 000000000000..221059e8e106
 +attachment are not supported.
 diff --git sys/dev/sound/pci/hda/cs35l54.c sys/dev/sound/pci/hda/cs35l54.c
 new file mode 100644
-index 000000000000..b01fa0df2ae4
+index 000000000000..a3ac1bb1c88c
 --- /dev/null
 +++ sys/dev/sound/pci/hda/cs35l54.c
-@@ -0,0 +1,1214 @@
+@@ -0,0 +1,1222 @@
 +/*-
 + * SPDX-License-Identifier: BSD-2-Clause
 + *
@@ -1257,13 +1264,20 @@ index 000000000000..b01fa0df2ae4
 +	}
 +}
 +
++static const struct {
++	const char	*hid;
++} cs35l54_ids[] = {
++	{ "CSC3554" },
++	{ NULL },
++};
++
 +static int
 +cs35l54_probe(device_t dev)
 +{
 +	ACPI_HANDLE handle;
 +
 +	if ((handle = acpi_get_handle(dev)) == NULL ||
-+	    acpi_MatchHid(handle, "CSC3554") == ACPI_MATCHHID_NOMATCH)
++	    acpi_MatchHid(handle, cs35l54_ids[0].hid) == ACPI_MATCHHID_NOMATCH)
 +		return (ENXIO);
 +	device_set_desc(dev, "Cirrus Logic CS35L54 speaker amplifiers");
 +	return (BUS_PROBE_DEFAULT);
@@ -1389,6 +1403,7 @@ index 000000000000..b01fa0df2ae4
 +MODULE_DEPEND(cs35l54, gpiobus, 1, 1, 1);
 +MODULE_DEPEND(cs35l54, firmware, 1, 1, 1);
 +MODULE_VERSION(cs35l54, 1);
++IICBUS_ACPI_PNP_INFO(cs35l54_ids);
 diff --git sys/dev/sound/pci/hda/hdaa.c sys/dev/sound/pci/hda/hdaa.c
 index b91864d45dba..1504b44aafe2 100644
 --- sys/dev/sound/pci/hda/hdaa.c
