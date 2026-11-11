@@ -1,0 +1,42 @@
+diff --git sys/netinet/tcp_input.c sys/netinet/tcp_input.c
+index 5ebcad5eae43..e3f12295356e 100644
+--- sys/netinet/tcp_input.c
++++ sys/netinet/tcp_input.c
+@@ -2707,6 +2707,7 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+ 				tcp_seq oldsndmax = tp->snd_max;
+ 				u_int sent;
+ 				int avail;
++				bool cwnd_is_flight = false;
+ 
+ 				KASSERT(tp->t_dupacks == 1 ||
+ 				    tp->t_dupacks == 2,
+@@ -2715,9 +2716,11 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+ 				if (tp->t_dupacks == 1)
+ 					tp->snd_limited = 0;
+ 				if ((tp->snd_nxt == tp->snd_max) &&
+-				    (tp->t_rxtshift == 0))
++				    (tp->t_rxtshift == 0)) {
+ 					tp->snd_cwnd =
+ 					    SEQ_SUB(tp->snd_nxt, tp->snd_una);
++					cwnd_is_flight = true;
++				}
+ 				tp->snd_cwnd +=
+ 				    (tp->t_dupacks - tp->snd_limited) * maxseg;
+ 				tp->snd_cwnd -= tcp_sack_adjust(tp);
+@@ -2736,7 +2739,15 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+ 				}
+ 				sent = SEQ_SUB(tp->snd_max, oldsndmax);
+ 				if (sent > maxseg) {
+-					KASSERT((tp->t_dupacks == 2 &&
++					/*
++					 * Without the reset to the flight size
++					 * above (snd_nxt behind snd_max, or
++					 * t_rxtshift not yet cleared after an
++					 * RTO), the old cwnd may allow more
++					 * than one segment.
++					 */
++					KASSERT(!cwnd_is_flight ||
++					   (tp->t_dupacks == 2 &&
+ 					    tp->snd_limited == 0) ||
+ 					   (sent == maxseg + 1 &&
+ 					    tp->t_flags & TF_SENTFIN) ||
