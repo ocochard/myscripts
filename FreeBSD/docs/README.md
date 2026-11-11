@@ -18,6 +18,10 @@ document that explains them.
 - [tpm_crb_acpi_start_method.md](tpm_crb_acpi_start_method.md): how `tpm_crb` works, and adding TPM2 start method 2 (ACPI start) so the AMD fTPM on ser6 gets a driver. Patch: [tpm_crb_acpi_start_method.patch](tpm_crb_acpi_start_method.patch)
 - [vnode_pager_getpages_async_completion.md](vnode_pager_getpages_async_completion.md): how a CBMC proof led to a wrong VM patch, and what the getpages completion path really does
 
+## Driver plans
+
+- [cs35l54_speaker_amp_plan.md](cs35l54_speaker_amp_plan.md): plan for a driver for the Cirrus CS35L54 speaker amplifiers of the HP ZBook Ultra G1a (silent speakers). Read-only probe: [cs35l54_probe.c](cs35l54_probe.c)
+
 ## Kernel concepts
 
 - [netisr_kernel_service.md](netisr_kernel_service.md): netisr(9), the deferred network dispatch service
