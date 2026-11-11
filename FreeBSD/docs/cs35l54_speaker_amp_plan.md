@@ -450,7 +450,7 @@ Proposed scope:
 | 4 | Port `audio/sound-firmware-cirrus-kmod` (`cs35l54` flavor) | uncommitted in the ports tree | ports, committed by the author | done, poudriere and `pkg add` tested | 2 accepted |
 | 5 | amdgpio: add ACPI PnP info so that devmatch(8) loads it (reset line available without `kld_list`) | 84decd870fae (branch `olivier-amdgpio-pnp`) | src | done; `devmatch -a` selects `amdgpio.ko`; also enables `_AEI` handling on AMD systems at boot | nothing |
 | 6 | acpi: refuse property requests for children of other buses (`device_get_property()` on an `acpi_iicbus` child hung the machine) | 8d068f278a79 (branch `olivier-acpi-prop-child`) | src, ACPI | done; on a test kernel, the call that froze the laptop returns -1 and the system stays up | nothing |
-| 7 | ig4: use the 150 MHz input clock of AMDI0010 controllers (Linux value; ig4 assumed 100 MHz, about 600 kHz instead of 400 kHz) | acc424d82791 (branch `olivier-ig4-amd-clock`) | src, ig4 | done; touchpad, touchscreen and amplifiers reattach; does not fix the stale read | nothing |
+| 7 | ig4: use the 150 MHz input clock of AMDI0010 controllers (Linux value; ig4 assumed 100 MHz) | branch `olivier-ig4-amd-clock` | src, ig4 | done; measured bus clock 494 kHz before, 359 kHz after (200 reads of 1 KB, overhead included); touchpad, touchscreen and amplifiers reattach; does not fix the stale read | nothing |
 
 1-4 are needed for working speakers, 5 is a convenience, 6 and 7 are bugs met on the way that the driver does not need fixed.
 Multi-chip support (CS35L56/57, B2, speaker id) comes after 2.
