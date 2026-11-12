@@ -215,8 +215,13 @@ is broken platform-wide:
   timers work; `shutdown -r` hangs on a black screen; only a forced power
   off recovers.
 
-Do not suspend this laptop on FreeBSD until this is fixed. Next things to
-try: load `amdsmu(4)`, and look at nvme(4) resume.
+Do not suspend this laptop on FreeBSD until this is fixed.
+`amdsmu(4)` cannot help yet: `kldload amdsmu` succeeds but nothing attaches,
+because the driver only knows the Cezanne, Rembrandt, Phoenix and Krackan
+Point root complexes (`amdsmu_reg.h`), skips Strix Point on purpose (no S0i3
+idle mask), and this Strix Halo root complex is 1022:1507. Supporting it
+means adding Strix Halo's SMU mailbox to `amdsmu(4)`; the nvme(4) failure
+on resume may be a separate bug.
 
 ## Touchpad and touchscreen interrupts
 
