@@ -217,9 +217,44 @@ Same mesh of three AP units: one in the same room (`6b:85` 2.4 GHz,
 | iperf3 `-P 4` | 34 Mbit/s total, same as 1 stream | not a per-connection window limit |
 | ping during the run | 390 ms average (5 ms idle) | a deep queue fills: the link drains TCP at about 33 Mbit/s while it drained UDP at 67 |
 
-The difference between the TCP and UDP runs is the ACK traffic in the
-other direction: next suspect is the TX path slowing down when RX traffic is
-present (shared taskqueue, lock, or TX completion latency in LinuxKPI).
+UDP offered at 60 Mbit/s on the 5 GHz channel 100 link also stalls at
+42 to 47 Mbit/s without loss, so the limit is not TCP-specific.
+
+### TX path trace: the hardware starves (5 GHz channel 100, `hw_crypto=1`)
+
+DTrace over a 10 s TCP run, then a 10 s UDP run:
+
+| Function (thread) | TCP | UDP |
+|---|---|---|
+| `lkpi_80211_txq_task` (`thread taskq`) | 508 runs, 126 ms total, max 1.8 ms | 51345 runs (1 frame each), 194 ms |
+| `lkpi_80211_txq_tx_one` | 38710 frames, 81 ms total | 51387 frames, 114 ms |
+| `mt76_txq_schedule` (`mt76-tx` worker) | 251916 calls | 315980 calls |
+| `mt76_dma_rx_poll` (`ndev napi taskq`) | 66681 | 69316 (TX completions come back through the RX ring) |
+
+The CPU is idle and LinuxKPI hands frames to mt76 quickly. But sampling
+`mt76/xmit-queues` during the TCP run shows the data DMA ring (`WFDMA0`)
+holding only 0 to 3 frames, and `mt76/acq` shows the firmware AC queues
+empty, while the ping RTT shows a 390 ms backlog upstream.
+
+The cause is in how mt76 meters frames without an airtime estimate:
+`mt76_txq_send_burst()` stops when `wcid->non_aql_packets >=
+MT_MAX_NON_AQL_PKT` (16), and a frame counts as non-AQL when
+`info->tx_time_est == 0` (`tx.c:309`). On Linux, mac80211's Airtime Queue
+Limits fill `tx_time_est` for every frame, so this cap only applies to
+special frames. LinuxKPI never sets `tx_time_est`, so on FreeBSD every frame
+counts and a station never has more than 16 frames in flight.
+
+Test with `MT_MAX_NON_AQL_PKT` raised to 256 (test only):
+
+| Cap | TCP TX | TCP RX |
+|---|---|---|
+| 16 (stock) | 41.5 | 74.9 |
+| 256 | 69.4 | 77.9 |
+
+TX gains 67%, still far from Linux (577): there is a further limit.
+The proper fix belongs in LinuxKPI: an airtime estimate per frame (what
+mac80211's `ieee80211_calc_expected_tx_airtime()` does) plus AQL-style
+limits, rather than a bigger driver constant.
 
 Background on sequence numbers: `mt7925_mac_write_txwi()` hands the host's
 802.11 sequence number to the firmware (`MT_TXD3_SN_VALID`) only for frames
@@ -255,6 +290,12 @@ sudo dd if=/tmp/debug/mt76/tx_stats bs=65536 2>/dev/null
 ```
 
 `cat` fails on these files with EOPNOTSUPP, `dd` with a large block works.
+
+3. The `mt76` debugfs directory survives `kldunload`: mt76 creates it under
+   `wiphy->debugfsdir` (the debugfs root on FreeBSD), and nothing removes it
+   the way cfg80211 does on Linux. After a reload, reading an old entry
+   panics (page fault in `seq_read()` calling a show function from the
+   unloaded module). Reboot, or never read the old entries after a reload.
 
 
 ## How to reproduce
@@ -308,8 +349,9 @@ start slower than what the LinuxKPI driver already scans with.
 
 ## Plan
 
-1. Throughput: find why TCP TX stays at 23 to 26 Mbit/s when UDP TX reaches
-   67 (Linux: TCP matches UDP), then suspend/resume.
+1. Throughput: give LinuxKPI frames an airtime estimate (`tx_time_est`) so
+   mt76's 16-frame non-AQL cap stops throttling TX, then find the next limit
+   (69 Mbit/s with the cap raised, Linux 577); then suspend/resume.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
    rc.conf) and document it; `country FR` was enough for channel 100.
 3. The wiki's "LinuxKPI IDR updates" was at least the teardown panic fixed
@@ -337,3 +379,5 @@ start slower than what the LinuxKPI driver already scans with.
 | 2026-11-12 | same + `compat.linuxkpi.80211.hw_crypto=1` | `ampdu` on; 5 GHz 26.0/51.7, 2.4 GHz 23.1/35.3 Mbit/s; UDP TX 66.7 Mbit/s |
 | 2026-11-12 | Ubuntu, Linux 7.0.0-43 | same APs: 152/139 (2.4 GHz), 199/195 (5 GHz far), 577/426 Mbit/s (5 GHz ch 100 near) |
 | 2026-11-12 | kernel.mt76, debugfs modules, `country FR` | mt76 `tx_stats`: BA miss 0; TCP Retr 0, `-P 4` 34 total, 390 ms ping under load; ch 100 VHT80: 41.5/74.9 Mbit/s |
+| 2026-11-12 | same, DTrace + `xmit-queues` sampling | DMA ring holds 0 to 3 frames under load: mt76 non-AQL cap of 16 frames |
+| 2026-11-12 | same + `MT_MAX_NON_AQL_PKT` 256 | 69.4/77.9 Mbit/s; then panic reading a stale debugfs entry after module reload |
