@@ -600,8 +600,39 @@ rows; lindebugfs also had dumbbell@ (Jean-Sébastien Pédron) on 3521cce445d4.
 Rows 8 and 9 change behaviour for every LinuxKPI wireless driver: tested
 with iwlwifi (see the iwlwifi regression test), not with rtw88 or rtw89.
 Still open, no commit yet: a page-crossing DMA map that works without the
-`skb.mem_limit=1` tunable, AQL limits in LinuxKPI, removing the mt76
-debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
+`skb.mem_limit=1` tunable (until then the firmware package sets it, see
+[Boot settings from the firmware package](#boot-settings-from-the-firmware-package)),
+flow queueing and AQL in LinuxKPI, removing the mt76 debugfs directory on
+unload.
+
+## Boot settings from the firmware package
+
+The series still needs two loader tunables, and both are off by default on
+purpose:
+
+- `compat.linuxkpi.80211.hw_crypto=1`: bz@ added hardware crypto offload
+  in 11db70b6057e (2025-02-18) behind a tunable that "remains off until
+  wider testing has shown no problems". Without it LinuxKPI disables RX
+  A-MPDU.
+- `compat.linuxkpi.skb.mem_limit=1`: keeps every LinuxKPI skb below 4 GB,
+  machine-wide, because busdma cannot bounce a multi-page buffer as one
+  segment (e6c91f8e5be6). Commit 7 of the series makes it cheap.
+
+FreeBSD enables them per chip through the firmware package:
+`net/wifi-firmware-kmod/Makefile.inc` writes `/boot/loader.conf.d/` files
+for the flavours a port lists in `COMPAT_LINUXKPI_HWCRYPTO_HT_VHT`
+(iwlwifi: `22000 ax210 bz`) and for ports that set
+`COMPAT_LINUXKPI_SKB_MEM_LIMIT` (rtw88, rtw89). The mt76 firmware port set
+neither. [mt7925_wifi_firmware_port.patch](mt7925_wifi_firmware_port.patch)
+adds `COMPAT_LINUXKPI_SKB_MEM_LIMIT=1` (every mt76 PCI chip sets a 32-bit
+DMA mask: mt7615, mt7915, mt7921, mt7925; mt7996 36-bit data, 32-bit
+coherent) and `COMPAT_LINUXKPI_HWCRYPTO_HT_VHT= mt7925` (the only flavour
+tested), with `PORTREVISION=1`. Poudriere `testport` and `bulk` pass; the
+mt7925 package installs `mt7925.conf` (`mem_limit=1`) and
+`mt76-mt7925.conf` (`hw_crypto=1` and the 11n/11ac enables), the mt7921
+package only `mt7921.conf`. portlint reports the same structural errors as
+the unmodified port (child Makefile of a shared `Makefile.inc`) plus a
+false "new ports should not set PORTREVISION". Not committed.
 
 ## Next steps
 
