@@ -171,12 +171,48 @@ loop that checks why it woke and idles again. Compared with Linux:
 
 These are leads, not verified causes.
 
+## GPIO wake fix: not enough
+
+Branch `olivier-s2idle-wake` (main 83c8ec72ac6a, not pushed) has two commits:
+
+- `acpi: let drivers add wake interrupts for suspend-to-idle`: `do_idle()`
+  unmasked only the SCI; drivers can now register up to four more wake
+  interrupts that stay unmasked.
+- `amdgpio: arm the _AEI wake pins for suspend-to-idle`: reads the wake
+  capable `_AEI` pins (trigger, polarity) at attach and registers the GPIO
+  controller interrupt (IRQ 7, separate from the SCI on IRQ 9); on suspend
+  arms them as Linux does (interrupt enabled and unmasked, S0i3/S3 wake
+  bits, no debounce; an asserted level pin is skipped since nothing runs
+  `_EVT` to clear it), masks the others; on resume restores them.
+
+Tested with both modules loaded (DTrace showed IRQ 7 registered): the
+laptop sleeps, but neither the power button nor the space key wakes it.
+The power LED keeps blinking, the Caps Lock LED lights only while the key
+is held (the EC, not FreeBSD, which would latch it), the fans spin up,
+forced power off. The system never resumed: the wake reached the EC, but
+nothing brought the SoC and the CPUs back.
+
+## Lead: the CPUs never idle below C1
+
+```
+hw.acpi.cpu.cx_lowest: C1
+dev.cpu.0.cx_supported: C1/1/1 C2/2/18 C3/3/350
+dev.cpu.0.cx_method: C1/mwait C2/io C3/io
+dev.cpu.0.cx_usage: 100.00% 0.00% 0.00%
+```
+
+S0i3 needs every core in its deepest idle state (CC6, reached here through
+the I/O port C-states). FreeBSD keeps all cores in C1, and `do_idle()` only
+calls `cpu_idle(0)` once on the boot CPU, while `amdsmu(4)` tells the SMU
+the OS is ready to sleep; Linux idles every core in its deepest state
+during suspend-to-idle. The sleep hint itself matches Linux (message 0x03,
+argument 1).
+
 ## Next steps
 
-1. `amdgpio(4)`: on suspend, keep the wake-capable `_AEI` pins enabled with
-   their S0i3/S3 wake bits set (from the `_AEI` wake flags), mask only the
-   others, and restore on resume; load it with the suspend test (power
-   button = pin 54).
+1. Set `hw.acpi.cpu.cx_lowest=Cmax`, check that the cores reach C2/C3 and
+   stay stable, then retry one suspend with the `olivier-s2idle-wake`
+   kernel, amdgpio and amdsmu.
 2. Arm the EC GPE for wake during suspend-to-idle, as Linux does, and turn
    `do_idle()` into the loop its comment describes.
 3. Look at nvme(4) suspend/resume on this controller (it failed even
@@ -196,3 +232,4 @@ These are leads, not verified causes.
 | 2026-11-12 | patched amdsmu, `zzz` | sleeps, does not wake (key, power button), fans spin up; forced power off |
 | 2026-11-13 | Ubuntu, Linux 7.0.0-43 | S0i3 success, 32.4 s; woken by space key via EC GPE 03; resume clean |
 | 2026-11-13 | FreeBSD, `kldload amdgpio`, `_AEI` decode | the six `_AEI` pins are all wake capable; `amdgpio_suspend()` disables them and no code sets their wake bits |
+| 2026-11-13 | `olivier-s2idle-wake` kernel + amdgpio + amdsmu, `zzz` | IRQ 7 registered; no wake by power button or key, power LED keeps blinking, fans spin up; forced power off |
