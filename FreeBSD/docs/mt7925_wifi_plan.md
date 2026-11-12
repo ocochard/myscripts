@@ -16,7 +16,7 @@ Patch: [mt7925_page_pool.patch](mt7925_page_pool.patch).
 | Registers with net80211 (`net.wlan.devices: mt79250`) | no | yes |
 | `ifconfig wlan0 create`, scan | no | yes, 2.4 GHz and 5 GHz APs seen |
 | WPA2 association, DHCP | no | yes, 2.4 GHz 11ng HT20 and 5 GHz 11ac VHT80 |
-| Throughput (iperf3, TCP, 10 s) | no | TX 232 to 254, RX 79 Mbit/s (5 GHz ch 100, Linux 577/426), see [Throughput](#throughput) |
+| Throughput (iperf3, TCP, 10 s) | no | TX 474 to 509, RX 289 to 314 Mbit/s (5 GHz ch 100, Linux 577/426), see [Throughput](#throughput) |
 | Disconnect, reconnect, BSS switch, `kldunload` | no | yes (needs the idr fix below) |
 | Failure handling | `kldload` hangs forever, reboot needed | attach fails with ENXIO, `kldunload` works |
 
@@ -442,7 +442,20 @@ only requests status when someone waits for it.
 
 Fix (commit 9 below): request status only for EAPOL, `M_TXCB` and non-data
 frames; frames that come back with no status information are not counted as
-TX errors. Built, not tested yet.
+TX errors.
+
+Measured (5 GHz channel 100, stock mt76, 10 s runs):
+
+| Test | Before | After | Linux, same AP |
+|---|---|---|---|
+| TCP RX | 72 to 79 | 308, 289, 314 | 426 |
+| TCP TX | 232 to 254 | 509, 483, 474 | 577 |
+| ping under load, RX / TX | 24 / 40 to 75 ms | 11 to 13 / 24 ms | |
+| UDP RX with the 3300 pkt/s small uplink | 45 | 242 | |
+
+WPA2 still associates (EAPOL keeps its status request); skb zones at 0 in
+use after 440000 allocations. `ifconfig wlan0 list sta` still shows 360M:
+net80211's rate is never updated from the firmware.
 
 The `tx_stats` A-MPDU histogram cannot help here: its range registers
 (`MT_MIB_ARNG`) read back bounds that make no sense on this chip.
@@ -516,7 +529,7 @@ Pédron) on 3521cce445d4.
 | 6 | LinuxKPI skbuff: with `skb.mem_limit`, take skb data up to a page from size-aligned UMA zones below the limit instead of one `contigmalloc()` per skb | `linux_skbuff.c` | done, tested: no `contigmalloc()` in the TX path, throughput no longer decays | nothing |
 | 7 | LinuxKPI page pool without `PAGE_IS_LKPI_PAGE`: side table for pool pages, and skb free returns recycled frags and heads to the pool | `linuxkpi_page_pool.c`, `linux_skbuff.c` | done, tested; a stopgap until bz@'s `struct page` rework, discuss before sending | nothing (5 and 6 touch the same file) |
 | 8 | LinuxKPI 802.11: airtime estimate (`tx_time_est`) on dequeued frames, so mt76 does not cap each station at 16 frames in flight | `linux_80211.c` | done, tested: TCP TX 36 to 232-254 Mbit/s with the stock driver | nothing |
-| 9 | LinuxKPI 802.11: request TX status only for EAPOL, `M_TXCB` and non-data frames (mt76 sends status frames outside the BA session); a missing status is not a TX error | `linux_80211.c` | done, built, not tested yet | 8 (same function area) |
+| 9 | LinuxKPI 802.11: request TX status only for EAPOL, `M_TXCB` and non-data frames (mt76 sends status frames outside the BA session); a missing status is not a TX error | `linux_80211.c` | done, tested: TCP RX 79 to 289-314, TX 474-509 Mbit/s; WPA2 still associates | 8 (same function area) |
 
 Rows 8 and 9 change behaviour for every LinuxKPI wireless driver (iwlwifi,
 rtw88, rtw89): test at least iwlwifi before sending.
@@ -526,9 +539,9 @@ debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 
 ## Plan
 
-1. Throughput: find why TCP RX stays at 70 to 80 Mbit/s while UDP RX
-   reaches 274, add AQL limits in LinuxKPI for latency under load (40 to
-   75 ms now), then suspend/resume.
+1. Test commits 8 and 9 with iwlwifi (they change every LinuxKPI wireless
+   driver), then suspend/resume; AQL limits for latency under load (11 to
+   24 ms now) are optional.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
    rc.conf) and document it; `country FR` was enough for channel 100.
 3. The wiki's "LinuxKPI IDR updates" was at least the teardown panic fixed
@@ -563,3 +576,4 @@ debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 | 2026-11-12 | + `napi_consume_skb()` fix | no leak; cap 4096: TX 165/276/195, RX 72 Mbit/s |
 | 2026-11-12 | + `tx_time_est` estimate, stock cap 16 | TX 244/254/232, RX 79 Mbit/s; ping under load 40 to 75 ms; no leak |
 | 2026-11-12 | same, TCP RX diagnosis | `-w 4M` no change; UDP RX 252 drops to 45 with a 3300 pkt/s small uplink: status-requested frames leave outside the BA session |
+| 2026-11-12 | + TX status only when needed | TCP TX 509/483/474, RX 308/289/314 Mbit/s; ping under load 11 to 24 ms |

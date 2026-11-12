@@ -113,7 +113,7 @@ mt7925 comes next and "needs LinuxKPI IDR updates";
 all mt76 chips wait on a LinuxKPI rework for Linux page pools.
 Impact: no Wi-Fi; use USB or dock Ethernet. Track PR 273623 (mt76 meta-bug).
 Experiment (2026-11-12): with a LinuxKPI page pool side table, an init-failure fix, an idr fix and
-`compat.linuxkpi.skb.mem_limit=1` (plus `compat.linuxkpi.80211.hw_crypto=1` for A-MPDU), WPA2 works on 2.4 and 5 GHz (11ac), at 232 to 254 Mbit/s TX and 79 Mbit/s RX (Linux: 577/426);
+`compat.linuxkpi.skb.mem_limit=1` (plus `compat.linuxkpi.80211.hw_crypto=1` for A-MPDU), WPA2 works on 2.4 and 5 GHz (11ac), at 474 to 509 Mbit/s TX and 289 to 314 Mbit/s RX (Linux: 577/426);
 see [docs/mt7925_wifi_plan.md](docs/mt7925_wifi_plan.md).
 
 ### IOMMU (0:0:2)
@@ -229,7 +229,7 @@ The same gap on Meteor Lake is described in [docs/x86_gpio_intr_mtl.md](docs/x86
 
 1. Wi-Fi (MT7925).
    The biggest gap. Built by hand with an experimental LinuxKPI patch it associates and passes traffic,
-   TX reaches 40 to 45% of Linux, RX a fifth (232 to 254 and 79 Mbit/s against 577/426 on the same AP).
+   TX reaches 82 to 88% of Linux, RX 68 to 74% (474 to 509 and 289 to 314 Mbit/s against 577/426 on the same AP).
    Status, patches and plan: [docs/mt7925_wifi_plan.md](docs/mt7925_wifi_plan.md).
    Upstream: follow PR 273623 (mt76 meta-bug).
 2. Speaker amplifier (CS35L54).
