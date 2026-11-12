@@ -468,7 +468,9 @@ All measurements were made on main 6e87733f73ff, because a full
 `buildkernel` of newer main then failed in the ZFS module. The series was
 rebased on main 83c8ec72ac6a (2026-11-12) without conflicts (`git range-diff`:
 all 9 patches identical); there each commit builds, and a full `buildkernel`
-with modules succeeds again. Not rerun on the laptop on the new base yet.
+with modules succeeds again. Rerun on the laptop with that kernel: TCP TX
+530/483, RX 325/326 Mbit/s, ping under load 12 to 24 ms, UDP RX 243 Mbit/s
+with the small uplink, no skb leak, amdgpu still loads.
 The page pool code is compiled into the kernel (`options COMPAT_LINUXKPI`), so
 the test needs a kernel, not just modules.
 
@@ -529,7 +531,7 @@ rows; lindebugfs also had dumbbell@ (Jean-Sébastien Pédron) on 3521cce445d4.
 | # | Commit | Patch | Files | Status | Depends on |
 |---|---|---|---|---|---|
 | 1 | LinuxKPI: idr: allow lookups after idr_destroy() (fixes a panic in mt76 station teardown) | [0001](mt7925/0001-LinuxKPI-idr-allow-lookups-after-idr_destroy.patch) [c1c5bf89ef34](https://github.com/ocochard/freebsd-src/commit/c1c5bf89ef34) | `linux_idr.c` | done, tested: forced BSS switch no longer panics | nothing |
-| 2 | lindebugfs: export debugfs_create_devm_seqfile() (implemented in 3521cce445d4, missing from `EXPORT_SYMS`) | [0002](mt7925/0002-lindebugfs-export-debugfs_create_devm_seqfile.patch) [df5b2876a023](https://github.com/ocochard/freebsd-src/commit/df5b2876a023) | `sys/modules/lindebugfs/Makefile` | done; `nm` shows `T`, not yet loaded with it (needs a reboot past amdgpu) | nothing |
+| 2 | lindebugfs: export debugfs_create_devm_seqfile() (implemented in 3521cce445d4, missing from `EXPORT_SYMS`) | [0002](mt7925/0002-lindebugfs-export-debugfs_create_devm_seqfile.patch) [df5b2876a023](https://github.com/ocochard/freebsd-src/commit/df5b2876a023) | `sys/modules/lindebugfs/Makefile` | done, tested: the debugfs-enabled `if_mt7925.ko` loads against it (rebased kernel) | nothing |
 | 3 | mt76: mt7925: depend on lindebugfs when debugfs is built | [0003](mt7925/0003-mt76-mt7925-depend-on-lindebugfs-when-debugfs-is-bui.patch) [f368e52cb3f7](https://github.com/ocochard/freebsd-src/commit/f368e52cb3f7) | `mt7925/debugfs.c` | done, tested: `if_mt7925.ko` loads with `MT7925_DEBUGFS=1` | 2 |
 | 4 | mt76: mt7925: do not hang kldload when hardware init fails | [0004](mt7925/0004-mt76-mt7925-do-not-hang-kldload-when-hardware-init-f.patch) [60f4eb35e004](https://github.com/ocochard/freebsd-src/commit/60f4eb35e004) | `mt7925/init.c` | done, tested: attach returns ENXIO, `kldunload` works; mt7915, mt7921, mt7996 have the same wait, not fixed | nothing |
 | 5 | LinuxKPI: skbuff: make napi_consume_skb() free the skb (was an empty `SKB_TODO()`, leaked every mt7925 TX skb) | [0005](mt7925/0005-LinuxKPI-skbuff-make-napi_consume_skb-free-the-skb.patch) [fa47aa0b426f](https://github.com/ocochard/freebsd-src/commit/fa47aa0b426f) | `skbuff.h` | done, tested: 0 skbs in use after 636000 allocations | nothing |
@@ -584,3 +586,4 @@ debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 | 2026-11-12 | + `tx_time_est` estimate, stock cap 16 | TX 244/254/232, RX 79 Mbit/s; ping under load 40 to 75 ms; no leak |
 | 2026-11-12 | same, TCP RX diagnosis | `-w 4M` no change; UDP RX 252 drops to 45 with a 3300 pkt/s small uplink: status-requested frames leave outside the BA session |
 | 2026-11-12 | + TX status only when needed | TCP TX 509/483/474, RX 308/289/314 Mbit/s; ping under load 11 to 24 ms |
+| 2026-11-12 | series rebased on main 83c8ec72ac6a | TCP TX 530/483, RX 325/326 Mbit/s; ping under load 12 to 24 ms; debugfs modules load; no leak |
