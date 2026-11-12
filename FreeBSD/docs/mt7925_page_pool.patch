@@ -219,6 +219,18 @@ index 93e649faafd7..bfdad95992d4 100644
 +	return (dma);
  #endif
  }
+diff --git sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c
+index e2498659c884..086a9ca5b2e9 100644
+--- sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c
++++ sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c
+@@ -317,3 +317,7 @@ int mt7925_init_debugfs(struct mt792x_dev *dev)
+ 
+ 	return 0;
+ }
++
++#if defined(__FreeBSD__)
++MODULE_DEPEND(mt7925_pci, lindebugfs, 1, 1, 1);
++#endif
 diff --git sys/contrib/dev/mediatek/mt76/mt7925/init.c sys/contrib/dev/mediatek/mt76/mt7925/init.c
 index 3b7c1668dc61..8a7b49ebcda5 100644
 --- sys/contrib/dev/mediatek/mt76/mt7925/init.c
@@ -278,3 +290,15 @@ index 3b7c1668dc61..8a7b49ebcda5 100644
  #endif
  
  	return 0;
+diff --git sys/modules/lindebugfs/Makefile sys/modules/lindebugfs/Makefile
+index 44041011b407..34acaf875ec8 100644
+--- sys/modules/lindebugfs/Makefile
++++ sys/modules/lindebugfs/Makefile
+@@ -9,6 +9,7 @@ CFLAGS+= ${LINUXKPI_INCLUDES}
+ EXPORT_SYMS=	debugfs_create_atomic_t
+ EXPORT_SYMS+=	debugfs_create_blob
+ EXPORT_SYMS+=	debugfs_create_bool
++EXPORT_SYMS+=	debugfs_create_devm_seqfile
+ EXPORT_SYMS+=	debugfs_create_dir
+ EXPORT_SYMS+=	debugfs_create_file
+ EXPORT_SYMS+=	debugfs_create_file_size

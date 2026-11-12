@@ -113,7 +113,7 @@ mt7925 comes next and "needs LinuxKPI IDR updates";
 all mt76 chips wait on a LinuxKPI rework for Linux page pools.
 Impact: no Wi-Fi; use USB or dock Ethernet. Track PR 273623 (mt76 meta-bug).
 Experiment (2026-11-12): with a LinuxKPI page pool side table, an init-failure fix, an idr fix and
-`compat.linuxkpi.skb.mem_limit=1` (plus `compat.linuxkpi.80211.hw_crypto=1` for A-MPDU), WPA2 works on 2.4 and 5 GHz (11ac), at 26 Mbit/s TX and 52 Mbit/s RX at best;
+`compat.linuxkpi.skb.mem_limit=1` (plus `compat.linuxkpi.80211.hw_crypto=1` for A-MPDU), WPA2 works on 2.4 and 5 GHz (11ac), at 41 Mbit/s TX and 75 Mbit/s RX at best (Linux: 577/426);
 see [docs/mt7925_wifi_plan.md](docs/mt7925_wifi_plan.md).
 
 ### IOMMU (0:0:2)
@@ -228,9 +228,10 @@ The same gap on Meteor Lake is described in [docs/x86_gpio_intr_mtl.md](docs/x86
 ## Which drivers are worth the work
 
 1. Wi-Fi (MT7925).
-   The biggest gap, but upstream work is in progress: mt7925 needs LinuxKPI IDR and page pool changes first (see the Wi-Fi section).
-   Best action: follow PR 273623 and test when the mt7925 call for testing comes out.
-   Building `sys/modules/mt76/mt7925` by hand today is not tested and unlikely to work.
+   The biggest gap. Built by hand with an experimental LinuxKPI patch it associates and passes traffic,
+   but at a tenth of Linux's throughput (41/75 Mbit/s against 577/426 on the same AP).
+   Status, patches and plan: [docs/mt7925_wifi_plan.md](docs/mt7925_wifi_plan.md).
+   Upstream: follow PR 273623 (mt76 meta-bug).
 2. Speaker amplifier (CS35L54).
    Done, waiting for review: branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54), see the speaker section.
 3. Touch interrupts (amdgpio + GpioInt in acpi_iicbus).

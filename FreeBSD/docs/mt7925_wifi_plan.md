@@ -183,8 +183,79 @@ iperf3 to a wired host, 10 s, TCP unless noted, Mbit/s:
 - `lkpi_ic_addba_request: mo_ampdu_action returned AMPDU_TX_START_IMMEDIATE`
   is informational: LinuxKPI logs it and continues with net80211's ADDBA
   request.
-- The 5 GHz AP is weak at the test position (RSSI 23 to 29), which limits
-  the 5 GHz numbers too.
+- The 5 GHz AP FreeBSD used is the middle-distance unit of the mesh (about
+  -73 dBm). The unit in the same room has its 5 GHz radio on channel 100,
+  which FreeBSD never listed in a scan; FreeBSD defaulted to
+  `regdomain FCC country US` while Linux runs `country FR: DFS-ETSI`.
+
+### Linux comparison (same laptop, Ubuntu, Linux 7.0.0-43, `mt7925e`)
+
+Same mesh of three AP units: one in the same room (`6b:85` 2.4 GHz,
+`6b:86` 5 GHz), one at middle distance (`6b:a3`, `6b:a4`), one far
+(`6b:a6`, `6b:a7`). Linux pinned to each BSSID with
+`nmcli con modify cocacola 802-11-wireless.bssid`.
+
+| AP | Linux link | Linux TCP TX / RX | Linux UDP TX | FreeBSD link | FreeBSD TCP TX / RX | FreeBSD UDP TX |
+|---|---|---|---|---|---|---|
+| `6b:85` 2.4 GHz, near, -48 dBm | HE, 287M | 152 / 139 | 143 | HT20, 130M | 23 / 35 | 67 |
+| `6b:a4` 5 GHz ch 36, far, -67 dBm | HE80, 324M | 199 / 195 | 174 | VHT80, 360M | 26 / 52 | not run |
+| `6b:86` 5 GHz ch 100, near, -49 dBm | HE80, 961M | 577 / 426 | not run | VHT80, 360M (`country FR`) | 41.5 / 74.9 | not measured |
+
+- net80211 has no 802.11ax (HE), so FreeBSD links at HT/VHT rates.
+- UDP TX efficiency is similar on both (about half the PHY rate), so the
+  radio path works; TCP TX at a third of UDP is FreeBSD-specific (Linux TCP
+  matches its UDP).
+- Channel 100 shows up on FreeBSD after `ifconfig wlan0 country FR`
+  (default was `regdomain FCC country US`, which hid it).
+
+### Where the TCP TX time goes (2.4 GHz near AP, `hw_crypto=1`)
+
+| Check | Result | Meaning |
+|---|---|---|
+| mt76 debugfs `tx_stats`, before and after a 10 s TCP TX run | `BA miss count: 0`, A-MPDU length histogram +45000 in a large bin | firmware builds aggregates and gets block acks; no sign of a sequence number / BA window mismatch |
+| iperf3 sender `Retr` | 0 | TCP sees no loss |
+| iperf3 `-P 4` | 34 Mbit/s total, same as 1 stream | not a per-connection window limit |
+| ping during the run | 390 ms average (5 ms idle) | a deep queue fills: the link drains TCP at about 33 Mbit/s while it drained UDP at 67 |
+
+The difference between the TCP and UDP runs is the ACK traffic in the
+other direction: next suspect is the TX path slowing down when RX traffic is
+present (shared taskqueue, lock, or TX completion latency in LinuxKPI).
+
+Background on sequence numbers: `mt7925_mac_write_txwi()` hands the host's
+802.11 sequence number to the firmware (`MT_TXD3_SN_VALID`) only for frames
+marked `IEEE80211_TX_CTL_INJECTED`; the firmware numbers all others itself,
+while LinuxKPI assigns net80211's sequence number
+(`ieee80211_output_seqno_assign()`) and takes the ADDBA start sequence from
+net80211 (`params.ssn = tap->txa_start`). Linux avoids the question with
+802.3 encapsulation offload (`SUPPORTS_TX_ENCAP_OFFLOAD`), where the
+firmware owns the whole header. The counters above show no BA trouble, but
+this is worth keeping in mind.
+
+### Reading the mt76 debugfs on FreeBSD
+
+The modules build without debugfs by default; `MT76_DEBUGFS=1` and
+`MT7925_DEBUGFS=1` turn it on, and two upstream bugs then stop
+`if_mt7925.ko` from loading:
+
+1. `sys/modules/lindebugfs/Makefile` does not list
+   `debugfs_create_devm_seqfile` (added in 3521cce445d4) in `EXPORT_SYMS`,
+   so the symbol stays local (`nm` shows `t`) and is undefined for callers.
+2. `mt7925/debugfs.c` has no `MODULE_DEPEND(mt7925_pci, lindebugfs, ...)`
+   (only mt76_core declares one), and the kernel linker resolves symbols only
+   through a module's own dependencies: `debugfs_create_file undefined`.
+
+Since lindebugfs could not be swapped while amdgpu used it, the test carried
+a renamed private copy of the helper in mt76_core instead of fixing 1.
+Then:
+
+```sh
+sudo kldload lindebugfs
+mkdir -p /tmp/debug && sudo mount -t lindebugfs lindebugfs /tmp/debug
+sudo dd if=/tmp/debug/mt76/tx_stats bs=65536 2>/dev/null
+```
+
+`cat` fails on these files with EOPNOTSUPP, `dd` with a large block works.
+
 
 ## How to reproduce
 
@@ -195,7 +266,7 @@ the test needs a kernel, not just modules.
 
 ```sh
 cd ~/freebsd-mt76
-git apply ~/myscripts/FreeBSD/docs/mt7925_page_pool.patch
+git apply -p0 ~/myscripts/FreeBSD/docs/mt7925_page_pool.patch
 env MAKEOBJDIRPREFIX=$HOME/obj-mt76 make -j32 buildkernel \
     KERNCONF=GENERIC-NODEBUG WITHOUT_CCACHE_BUILD=yes
 sudo env MAKEOBJDIRPREFIX=$HOME/obj-mt76 make installkernel \
@@ -238,18 +309,21 @@ start slower than what the LinuxKPI driver already scans with.
 ## Plan
 
 1. Throughput: find why TCP TX stays at 23 to 26 Mbit/s when UDP TX reaches
-   67, compare with Linux on the same AP, then suspend/resume.
-2. Check what the FreeBSD wiki said was still missing (LinuxKPI IDR updates)
-   once traffic flows: the scan and firmware start did not hit it.
-3. Fix the DMA mapping properly instead of relying on the loader tunable:
+   67 (Linux: TCP matches UDP), then suspend/resume.
+2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
+   rc.conf) and document it; `country FR` was enough for channel 100.
+3. The wiki's "LinuxKPI IDR updates" was at least the teardown panic fixed
+   above; audit the other idr entry points (`idr_replace`, `idr_alloc*`) for
+   the same use-after-destroy.
+4. Fix the DMA mapping properly instead of relying on the loader tunable:
    either set `mem_limit` from the device's DMA mask, or let
    `dma_map_single()` handle multi-segment and non-contiguous buffers.
-4. Rebase on current main, retest, and send to bz@ (owner of LinuxKPI 802.11
+5. Rebase on current main, retest, and send to bz@ (owner of LinuxKPI 802.11
    and the page pool work) as input for his `struct page` rework: the side
    table is a stopgap until `PAGE_IS_LKPI_PAGE` exists, not a replacement.
-5. The init-failure hang fix and the idr fix stand on their own: extend the
+6. The init-failure hang fix and the idr fix stand on their own: extend the
    hang fix to mt7915, mt7921 and mt7996, and submit both separately.
-6. Report results on PR 273623 (mt76 meta-bug).
+7. Report results on PR 273623 (mt76 meta-bug).
 
 ## Test log
 
@@ -261,3 +335,5 @@ start slower than what the LinuxKPI driver already scans with.
 | 2026-11-12 | same | WPA2 on 2.4 GHz HT20: 27.8/26.2 Mbit/s; forced BSS switch: error 95 then panic in `idr_remove()` |
 | 2026-11-12 | same + idr fix | WPA2 on 5 GHz VHT80: 22.4/35.4 Mbit/s; disconnect, reconnect, BSS switch and `kldunload` clean |
 | 2026-11-12 | same + `compat.linuxkpi.80211.hw_crypto=1` | `ampdu` on; 5 GHz 26.0/51.7, 2.4 GHz 23.1/35.3 Mbit/s; UDP TX 66.7 Mbit/s |
+| 2026-11-12 | Ubuntu, Linux 7.0.0-43 | same APs: 152/139 (2.4 GHz), 199/195 (5 GHz far), 577/426 Mbit/s (5 GHz ch 100 near) |
+| 2026-11-12 | kernel.mt76, debugfs modules, `country FR` | mt76 `tx_stats`: BA miss 0; TCP Retr 0, `-P 4` 34 total, 390 ms ping under load; ch 100 VHT80: 41.5/74.9 Mbit/s |
