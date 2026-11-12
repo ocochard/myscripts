@@ -280,7 +280,7 @@ DMA32 pages for skbs up to a page, `contigmalloc()` only for the rare larger
 ones such as firmware chunks), or make the DMA mapping of a page-crossing
 buffer work without `contigmalloc()`.
 
-### The allocator fix (in the patch, not yet measured)
+### The allocator fix
 
 `linuxkpi_alloc_skb()` with `compat.linuxkpi.skb.mem_limit` set now takes
 the skb data buffer from one of five UMA zones (256, 512, 1024, 2048 and
@@ -299,6 +299,29 @@ the skb data buffer from one of five UMA zones (256, 512, 1024, 2048 and
 - The free side finds the zone again from `skb->end - skb->head`, the size
   the buffer was allocated with (both are only set at allocation, and copied
   together in `__skb_linearize`).
+
+Measured (5 GHz channel 100, `hw_crypto=1`, 10 s TCP runs):
+
+| mt76 non-AQL cap | TCP TX | TCP RX | `contigmalloc()` calls in an 8 s TX run |
+|---|---|---|---|
+| 16 (stock) | 36.2 | 66.8 | 0 (zones served 56k + 30k requests, no failure) |
+| 4096 (test) | 227, 160, 237 (three runs) | 78.2 | not measured |
+
+Throughput no longer decays with time. With the stock cap TX is now held
+by the 16-frame non-AQL limit alone.
+
+### TX skb leak: `napi_consume_skb()` is a stub
+
+With the cap at 4096 the `skbuff` and `lkpiskb 2048` zones showed 490000
+items in use after a few runs, about 1 GB, and the count did not drop when
+idle. mt7925 completes TX frames from its TX-free event: mt76 passes a
+`free_list` in the TX status, LinuxKPI appends the skb to it, and
+`mt7925_mac_tx_free()` frees the list with `napi_consume_skb(skb, 1)`.
+LinuxKPI's `napi_consume_skb()` (also on current main) is
+`SKB_TRACE(); SKB_TODO();`: it frees nothing. The patch makes it call
+`consume_skb()` (after a NULL check), which is what it does on Linux minus
+the NAPI skb cache. After the fix, 556000 more allocations left the in-use
+counts unchanged; TCP TX 165, 276, 195 Mbit/s.
 
 ### RX: TCP capped, UDP is not
 
@@ -410,10 +433,10 @@ start slower than what the LinuxKPI driver already scans with.
 
 ## Plan
 
-1. Throughput: replace the `skb.mem_limit=1` workaround with a cached DMA32
-   allocator (or a working page-crossing DMA map), give LinuxKPI frames an
-   airtime estimate (`tx_time_est`) so mt76's 16-frame non-AQL cap stops
-   throttling TX, then remeasure TX, TCP RX (ACK path) and suspend/resume.
+1. Throughput: give LinuxKPI frames an airtime estimate (`tx_time_est`)
+   so mt76's 16-frame non-AQL cap stops throttling TX (the test raised the
+   constant instead), then find why TCP RX stays at 70 to 80 Mbit/s while
+   UDP RX reaches 274; then suspend/resume.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
    rc.conf) and document it; `country FR` was enough for channel 100.
 3. The wiki's "LinuxKPI IDR updates" was at least the teardown panic fixed
@@ -444,3 +467,5 @@ start slower than what the LinuxKPI driver already scans with.
 | 2026-11-12 | same, DTrace + `xmit-queues` sampling | DMA ring holds 0 to 3 frames under load: mt76 non-AQL cap of 16 frames |
 | 2026-11-12 | same + `MT_MAX_NON_AQL_PKT` 256 | 69.4/77.9 Mbit/s; then panic reading a stale debugfs entry after module reload |
 | 2026-11-12 | same + cap 4096 | TCP TX 230 once on fresh memory, then 35 to 42; `contigmalloc()` 7.4 s of 8 s; UDP RX 274, TCP RX 84 |
+| 2026-11-12 | + cached DMA32 skb zones | no `contigmalloc()`; cap 16: 36/67; cap 4096: 227/160/237 TX, 78 RX; 490000 skbs leaked |
+| 2026-11-12 | + `napi_consume_skb()` fix | no leak; cap 4096: TX 165/276/195, RX 72 Mbit/s |

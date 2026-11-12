@@ -1,3 +1,19 @@
+diff --git sys/compat/linuxkpi/common/include/linux/skbuff.h sys/compat/linuxkpi/common/include/linux/skbuff.h
+index 77ef47064fa5..c3a4897d5b34 100644
+--- sys/compat/linuxkpi/common/include/linux/skbuff.h
++++ sys/compat/linuxkpi/common/include/linux/skbuff.h
+@@ -1141,7 +1141,10 @@ napi_consume_skb(struct sk_buff *skb, int budget)
+ {
+ 
+ 	SKB_TRACE(skb);
+-	SKB_TODO();
++	if (skb == NULL)
++		return;
++	/* No NAPI skb cache; budget only selects it on Linux. */
++	consume_skb(skb);
+ }
+ 
+ static inline struct sk_buff *
 diff --git sys/compat/linuxkpi/common/src/linux_idr.c sys/compat/linuxkpi/common/src/linux_idr.c
 index 7e5f0d28867e..c8852cf7ef05 100644
 --- sys/compat/linuxkpi/common/src/linux_idr.c
