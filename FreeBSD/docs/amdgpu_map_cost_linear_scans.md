@@ -60,8 +60,9 @@ flowchart TD
     A --> H["GPU"]
 ```
 
-The game stores its textures and geometry in *buffer objects*, which are blocks
-of memory the GPU can use.  Each one needs two kinds of *mapping*, a record saying
+The game and the drivers under it keep textures, geometry and the GPU's commands in
+*buffer objects*, which are blocks of memory the GPU can use.  Section 1.5 shows
+that most of them hold commands.  Each one needs two kinds of *mapping*, a record saying
 "this address means this memory":
 
 - a **CPU mapping**, created with `mmap`, so the program can write into the buffer;
@@ -98,6 +99,63 @@ function was running.  A function that shows up in 20% of the samples used about
 
 Half of the machine's work was walking two lists.  The GPU driver itself used only
 about 1%.
+
+### 1.5 Where all these buffers come from
+
+A benchmark that draws a lot does not trigger the problem.  GravityMark 1.89 can draw
+millions of asteroids, so we tried it, in its Linux build with Vulkan and its Windows
+build with Direct3D 12 through vkd3d-proton.  With 2,000,000 asteroids it created 54
+and 190 buffer objects, and the Linux build held about 460 mappings for the whole run.  It
+draws all the asteroids from a few large buffers.  The number of objects on screen does
+not matter: what matters is how many separate buffers the program asks the kernel for.
+
+So we counted the game's buffers with DTrace, on the patched kernel, by tracing the
+`ioctl` that creates them (`amdgpu_gem_create_ioctl`) and recording the program code that
+called it.  In 20 minutes of play the game created 60,774 buffers and freed 7,054:
+
+| Size of a buffer | Buffers |
+|---|---|
+| 16 to 32 KiB | 27,925 |
+| 64 to 128 KiB | 28,388 |
+| 128 to 256 KiB | 2,581 |
+| 2 MiB or more | about 1,200 |
+
+Almost every buffer got one GPU mapping and one CPU mapping (60,750 and 60,278).  The
+small ones are not
+textures.  vkd3d-proton already places small textures and buffers inside large blocks
+(16 or 32 MiB), so a 16 KiB texture never becomes a buffer of its own.  The game's
+memory came to 721 buffers for 10 GB in a later 15-minute trace.
+
+The small buffers come from the GPU's command lists.  A program records the GPU's work
+in *command buffers*, and the Vulkan driver, Mesa RADV, gives each command buffer two
+kernel buffers: one of 64 to 128 KiB for the commands, allocated with the command buffer,
+and one of 16 KiB for data, allocated when recording starts.  These two kinds were 74%
+of the buffers in that 15-minute trace.
+
+The number of command buffers grows because nothing is given back:
+
+- Direct3D 12 programs record commands through *command allocators*.  The game (Unreal
+  Engine 5) creates new ones as it plays, and almost never destroys them: 19 created
+  and 2 destroyed in 10 minutes, while 229 were in use.
+- vkd3d-proton turns each command allocator into a Vulkan command pool.  When the game
+  resets an allocator, vkd3d-proton keeps its command buffers for reuse, up to 256 per
+  allocator, instead of freeing them.  New allocators received up to 64 each.
+- RADV keeps the two kernel buffers of a command buffer for as long as the command
+  buffer exists.
+
+Over those 10 minutes, the mappings stayed flat at about 18,400 while no allocator was
+created, and rose by about 800 in the two minutes that created 19 allocators and 357
+command buffers.  Each new command buffer adds about two buffers, and so about four
+kernel mappings.
+
+None of these layers does anything wrong on its own.  We do not know what makes the game create
+more allocators.  One guess, not checked: Unreal Engine creates one when all the others
+are still waiting for the GPU, so a slow frame would lead to more allocators, more
+buffers, and slower searches on the unpatched kernel.
+
+The amount also varies between sessions: one reached 32,000 mappings after 6 minutes
+and 77,000 later, another stayed near 19,000 after 30 minutes.  This is why section 3.9
+started its profiles at the same number of mappings.
 
 ---
 
