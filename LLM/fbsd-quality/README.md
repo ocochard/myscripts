@@ -19,8 +19,9 @@ then cost.
 | 1 | claude-opus-4-5 | — | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | PASS | **6/6** | 99 | reference; 1 rep per tier |
 | 2 | Qwen3.8-Flash-Next | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 1/3 | 3/3 | PASS | **14/16** | 1 740 | best local; 17× Opus wall time |
 | 3 | Qwen3.8-27B | Q8_0 MTP | 4/10 | 3/7 | 2/5 | 1/3 | 0/3 | PASS | **10/28** | 1 646 | fewest t6 steps of the locals (36) |
-| 4 | Swift-Qwen3.8-27B-Uncensored | Q8_0 | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | abliterated; ignores the spec |
-| 5 | Qwen3-Coder-Next 80B-A3B | UD-Q4_K_XL | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | fastest (0.7 h/sweep) and still zero |
+| 4 | Qwen3.8-27B | UD3.1 UD-Q4_K_XL | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | not run | **6/15** | 1 600 | no MTP, ~11 t/s; tree 1600031, see below |
+| 5 | Swift-Qwen3.8-27B-Uncensored | Q8_0 | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | abliterated; ignores the spec |
+| 6 | Qwen3-Coder-Next 80B-A3B | UD-Q4_K_XL | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | fastest (0.7 h/sweep) and still zero |
 
 Tier 6 is `--reps 1` for every model, so it is reported PASS/— rather than as a
 rate.
@@ -36,6 +37,19 @@ Both zero-scoring models fail on *autonomous tool use*, not kernel C. Their
 modules compile and load; the marker never appears. Coder-Next additionally
 stalls without writing a file at all in a third of runs. Neither is usable for
 agent work.
+
+**Qwen3.8-27B UD3.1 Q4_K_XL** (run-id `v38-q38-ud31-q4`, 2026-11-12) is the
+same model as row 3 at half the bits, without MTP. It ranks below row 3 on t6
+alone, which it did not run: on t1-t5 both clear four tiers, and 6/15 against
+10/28 is within noise. It traded t4 (0/3) for t5 (1/3, which the Q8 model never
+cleared). 8 of its 9 failures are `no_progress` with no source file written:
+the model reads headers until the 40-step limit and never commits to a file,
+and the same tier flipped between reps (t1, t2). The ninth (t3 rep 2) is a
+client timeout: one reply ran past the 1800 s request limit, so it is scored
+`harness`. Not directly comparable to the older rows: the tree moved from
+`__FreeBSD_version` 1600022 to 1600031 (new guest image
+`fbsdq-1600031.img`), and the harness gained the symbol checks after row 3's
+early runs.
 
 Compare models on **`model_s`** and `tokens_out`, never on steps: a
 `ToolCallingAgent` step is one tool call, a `CodeAgent` step is one Python block
