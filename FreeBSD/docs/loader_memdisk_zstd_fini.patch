@@ -1,0 +1,21 @@
+loader.efi: clear dctx->zstdstrm in zstd_fini(), as xz_fini() does, so the
+second decomp_fini() of do_download_ramdisk()'s error paths does not free
+the ZSTD DStream again.
+
+Tutorial: FreeBSD/docs/loader_memdisk_zstd_fini.md
+Test: FreeBSD/docs/loader_memdisk_zstd_fini_test.sh
+Reported by: llm-postcr, POSTCR-a2adf568cdfe83d8aca49f9eb9ba7891e88ff3cd-1
+Base: main at 29b24020f6fa (2026-11-12).
+
+diff --git a/stand/efi/loader/decompress.c b/stand/efi/loader/decompress.c
+index c90634037260..704b5288123d 100644
+--- a/stand/efi/loader/decompress.c
++++ b/stand/efi/loader/decompress.c
+@@ -426,6 +426,7 @@ static void
+ zstd_fini(decomp_state *dctx, bool flush)
+ {
+ 	ZSTD_freeDStream(dctx->zstdstrm);
++	dctx->zstdstrm = NULL;
+ 	if (!flush)
+ 		return;
+ 	free_buffer(dctx);
