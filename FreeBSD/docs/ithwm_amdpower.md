@@ -151,7 +151,7 @@ Attaches once system-wide, under the first matching AMD root complex
 (`hostb`), on Family 17h, 19h and 1Ah CPUs.
 
 ```
-$ sysctl dev.amdpower.0.interval_ms dev.amdpower.0.pkg_power dev.amdpower.0.core0_power
+# sysctl dev.amdpower.0.interval_ms dev.amdpower.0.pkg_power dev.amdpower.0.core0_power
 dev.amdpower.0.interval_ms: 250
 dev.amdpower.0.pkg_power: 4257
 dev.amdpower.0.core0_power: 16
@@ -165,6 +165,15 @@ threads).
 | `pkg_power` | mW | MSR `0xC001029B`, package energy |
 | `coreN_power` | mW | MSR `0xC001029A`, one per **physical** core (the description names the logical CPU used) |
 | `interval_ms` | ms | read-write, 10..60000, default 250 |
+
+`pkg_power` and `coreN_power` are readable only by root outside a jail
+(`priv_check(PRIV_DRIVER)`). Per-core power is a side channel into code
+running on other cores, the same issue as CVE-2020-12912 in Linux's
+`amd_energy` driver. Tested on nas on 2026-11-12: as a normal user, or as
+root inside a jail, `sysctl dev.amdpower.0.pkg_power` prints nothing and
+exits 0, and `sysctl -a` leaves both nodes out. So a script that reads
+them without root gets an empty string, not an error. The previous module
+is saved on nas as `/boot/modules/amdpower.ko.bak-20261112`.
 
 How it works:
 
