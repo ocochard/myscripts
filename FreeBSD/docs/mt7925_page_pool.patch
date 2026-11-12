@@ -15,10 +15,25 @@ index 77ef47064fa5..c3a4897d5b34 100644
  
  static inline struct sk_buff *
 diff --git sys/compat/linuxkpi/common/src/linux_80211.c sys/compat/linuxkpi/common/src/linux_80211.c
-index cde4b820b4dd..a4eed95513e1 100644
+index cde4b820b4dd..a249450cd320 100644
 --- sys/compat/linuxkpi/common/src/linux_80211.c
 +++ sys/compat/linuxkpi/common/src/linux_80211.c
-@@ -9079,6 +9079,33 @@ linuxkpi_ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
+@@ -6152,7 +6152,13 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
+ 	skb_set_queue_mapping(skb, ac);
+ 
+ 	info = IEEE80211_SKB_CB(skb);
+-	info->flags |= IEEE80211_TX_CTL_REQ_TX_STATUS;
++	/*
++	 * Like mac80211, only ask for TX status when someone waits for it:
++	 * mt76 sends frames with a status request outside the BA session.
++	 */
++	if (!ieee80211_is_data(hdr->frame_control) ||
++	    (m->m_flags & (M_EAPOL | M_TXCB)) != 0)
++		info->flags |= IEEE80211_TX_CTL_REQ_TX_STATUS;
+ 	/* Slight delay; probably only happens on scanning so fine? */
+ 	if (c == NULL || c == IEEE80211_CHAN_ANYC)
+ 		c = ic->ic_curchan;
+@@ -9079,6 +9085,33 @@ linuxkpi_ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
  	return (sta);
  }
  
@@ -52,7 +67,7 @@ index cde4b820b4dd..a4eed95513e1 100644
  struct sk_buff *
  linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
      struct ieee80211_txq *txq)
-@@ -9108,6 +9135,8 @@ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
+@@ -9108,6 +9141,8 @@ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
  	if (skb != NULL)
  		ltxq->frms_dequeued++;
  	LKPI_80211_LTXQ_UNLOCK(ltxq);
@@ -61,6 +76,19 @@ index cde4b820b4dd..a4eed95513e1 100644
  
  stopped:
  	return (skb);
+@@ -9211,8 +9246,11 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
+ 		status = 1;
+ 		txs.status = IEEE80211_RATECTL_TX_FAIL_UNSPECIFIED;
+ 	}
++	/* No status was requested or reported: unknown, not a failure. */
++	if (txstat->info == NULL)
++		status = 0;
+ 
+-	if (ni != NULL) {
++	if (ni != NULL && txstat->info != NULL) {
+ 		txs.pktlen = skb->len;
+ 		txs.flags |= IEEE80211_RATECTL_STATUS_PKTLEN;
+ 		if (info->status.rates[0].count > 1) {
 diff --git sys/compat/linuxkpi/common/src/linux_idr.c sys/compat/linuxkpi/common/src/linux_idr.c
 index 7e5f0d28867e..c8852cf7ef05 100644
 --- sys/compat/linuxkpi/common/src/linux_idr.c

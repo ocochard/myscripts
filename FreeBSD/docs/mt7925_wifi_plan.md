@@ -415,6 +415,38 @@ sudo dd if=/tmp/debug/mt76/tx_stats bs=65536 2>/dev/null
    unloaded module). Reboot, or never read the old entries after a reload.
 
 
+### TCP RX: every ACK goes out alone
+
+With the airtime estimate in place, TCP RX stays at 72 to 79 Mbit/s:
+
+| Check | Result |
+|---|---|
+| `iperf3 -R -w 4M` | 75 Mbit/s, same as default: not the receive window |
+| `netstat -s -p tcp` delta | no out-of-order growth; 315000 ACK segments sent |
+| frames sent by the laptop during a 10 s TCP RX run | 31642 (3200/s) |
+| UDP RX at 300 Mbit/s offered, alone | 252 Mbit/s |
+| same, plus a 64-byte UDP uplink at 3300 packets/s (1.4 Mbit/s, the ACK rate) | 45 Mbit/s |
+
+So a small uplink stream at the TCP ACK rate takes most of the airtime:
+each of those frames costs far more than a 64-byte frame should.
+
+The cause: LinuxKPI sets `IEEE80211_TX_CTL_REQ_TX_STATUS` on every frame
+(`lkpi_80211_txq_tx_one()`). For a frame that asks for status, mt76
+allocates a packet id (`mt76_tx_status_skb_add()`, up to 127 per station)
+and mt7925 sets `MT_TXD3_BA_DISABLE` and clears hardware A-MSDU
+(`mt7925_mac_write_txwi()`): the frame leaves outside the block-ack session,
+alone, and is acknowledged on its own. Bulk TX escapes partly (past 127
+outstanding frames the id table is full and frames aggregate again); a TCP
+ACK stream never has 127 outstanding, so every ACK is sent alone. mac80211
+only requests status when someone waits for it.
+
+Fix (commit 9 below): request status only for EAPOL, `M_TXCB` and non-data
+frames; frames that come back with no status information are not counted as
+TX errors. Built, not tested yet.
+
+The `tx_stats` A-MPDU histogram cannot help here: its range registers
+(`MT_MIB_ARNG`) read back bounds that make no sense on this chip.
+
 ## How to reproduce
 
 Tested on the old-base worktree `~/freebsd-mt76` (6e87733f73ff), because a full
@@ -464,6 +496,34 @@ Its firmware is the linux-firmware files renamed.
 A port would follow the iwx(4) precedent (2ad0f7e91582, 2025), but it would
 start slower than what the LinuxKPI driver already scans with.
 
+## Commits to land, in order
+
+All changes live in one worktree on the test laptop (`~/freebsd-mt76`,
+base 6e87733f73ff) and are combined in
+[mt7925_page_pool.patch](mt7925_page_pool.patch); no branch is pushed yet.
+Split for review as below. Almost all of this code is bz@'s (LinuxKPI 802.11,
+skbuff, page pool, mt76 imports: 178 of the `linux_80211.c` commits since
+2024), so he reviews all rows; lindebugfs also had dumbbell@ (Jean-Sébastien
+Pédron) on 3521cce445d4.
+
+| # | Commit | Files | Status | Depends on |
+|---|---|---|---|---|
+| 1 | LinuxKPI idr: lookups on a destroyed idr return NULL, as on Linux (fixes a panic in mt76 station teardown) | `linux_idr.c` | done, tested: forced BSS switch no longer panics | nothing |
+| 2 | lindebugfs: export `debugfs_create_devm_seqfile()` (implemented in 3521cce445d4, missing from `EXPORT_SYMS`) | `sys/modules/lindebugfs/Makefile` | done; `nm` shows `T`, not yet loaded with it (needs a reboot past amdgpu) | nothing |
+| 3 | mt7925: `MODULE_DEPEND` on lindebugfs when debugfs is built | `mt7925/debugfs.c` | done, tested: `if_mt7925.ko` loads with `MT7925_DEBUGFS=1` | 2 |
+| 4 | mt7925: wake `mt7925_register_device()` when init fails and return ENXIO (`kldload` hung forever) | `mt7925/init.c` | done, tested: attach returns ENXIO, `kldunload` works; mt7915, mt7921, mt7996 have the same wait, not fixed | nothing |
+| 5 | LinuxKPI skbuff: `napi_consume_skb()` frees the skb (was an empty `SKB_TODO()`, leaked every mt7925 TX skb) | `skbuff.h` | done, tested: 0 skbs in use after 636000 allocations | nothing |
+| 6 | LinuxKPI skbuff: with `skb.mem_limit`, take skb data up to a page from size-aligned UMA zones below the limit instead of one `contigmalloc()` per skb | `linux_skbuff.c` | done, tested: no `contigmalloc()` in the TX path, throughput no longer decays | nothing |
+| 7 | LinuxKPI page pool without `PAGE_IS_LKPI_PAGE`: side table for pool pages, and skb free returns recycled frags and heads to the pool | `linuxkpi_page_pool.c`, `linux_skbuff.c` | done, tested; a stopgap until bz@'s `struct page` rework, discuss before sending | nothing (5 and 6 touch the same file) |
+| 8 | LinuxKPI 802.11: airtime estimate (`tx_time_est`) on dequeued frames, so mt76 does not cap each station at 16 frames in flight | `linux_80211.c` | done, tested: TCP TX 36 to 232-254 Mbit/s with the stock driver | nothing |
+| 9 | LinuxKPI 802.11: request TX status only for EAPOL, `M_TXCB` and non-data frames (mt76 sends status frames outside the BA session); a missing status is not a TX error | `linux_80211.c` | done, built, not tested yet | 8 (same function area) |
+
+Rows 8 and 9 change behaviour for every LinuxKPI wireless driver (iwlwifi,
+rtw88, rtw89): test at least iwlwifi before sending.
+Still open, no commit yet: a page-crossing DMA map that works without the
+`skb.mem_limit=1` tunable, AQL limits in LinuxKPI, removing the mt76
+debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
+
 ## Plan
 
 1. Throughput: find why TCP RX stays at 70 to 80 Mbit/s while UDP RX
@@ -502,3 +562,4 @@ start slower than what the LinuxKPI driver already scans with.
 | 2026-11-12 | + cached DMA32 skb zones | no `contigmalloc()`; cap 16: 36/67; cap 4096: 227/160/237 TX, 78 RX; 490000 skbs leaked |
 | 2026-11-12 | + `napi_consume_skb()` fix | no leak; cap 4096: TX 165/276/195, RX 72 Mbit/s |
 | 2026-11-12 | + `tx_time_est` estimate, stock cap 16 | TX 244/254/232, RX 79 Mbit/s; ping under load 40 to 75 ms; no leak |
+| 2026-11-12 | same, TCP RX diagnosis | `-w 4M` no change; UDP RX 252 drops to 45 with a 3300 pkt/s small uplink: status-requested frames leave outside the BA session |
