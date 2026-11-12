@@ -462,6 +462,31 @@ net80211's rate is never updated from the firmware.
 The `tx_stats` A-MPDU histogram cannot help here: its range registers
 (`MT_MIB_ARNG`) read back bounds that make no sense on this chip.
 
+### AQL experiment: correct, but no latency gain
+
+[mt7925_aql_experiment.patch](mt7925_aql_experiment.patch) (on top of the
+series, not part of it) adds mac80211-style Airtime Queue Limits to
+LinuxKPI: each dequeued frame's `tx_time_est` is charged to its station and
+AC and to a device total, refunded in `_lkpi_ieee80211_free_txskb()` (every
+TX status and dropped frame goes through it, like mac80211's
+`ieee80211_report_used_skb()`), and `linuxkpi_ieee80211_next_txq()` skips a
+station above 5 ms pending (12 ms while the device total is under 24 ms),
+mac80211's defaults. `sysctl compat.linuxkpi.80211.aql` switches the limit
+at run time; `dump_stas_queues` shows the pending airtime.
+
+| AQL | TCP TX | ping under TX load | TCP RX | ping under RX load |
+|---|---|---|---|---|
+| on | 485, 483 | 31, 35 ms | 323, 324 | 11, 13 ms |
+| off | 523 | 21 ms | 323 | 14 ms |
+
+The accounting holds: pending airtime returns to 0 on every AC when idle,
+no skb leak after 3.2 million allocations. During a TX run the station
+stays at 7 to 16 ms pending and LinuxKPI's TID 0 queue is almost always
+empty, so the latency under load is not in LinuxKPI's queues and AQL cannot
+remove it; it costs 5 to 8% of TX. Linux pairs AQL with fq_codel in
+mac80211's TXQs, which LinuxKPI does not have; and our estimate uses
+net80211's stale rate (360M), so it overstates airtime. Not proposed.
+
 ## How to reproduce
 
 All measurements were made on main 6e87733f73ff, because a full
@@ -548,9 +573,10 @@ debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 
 ## Plan
 
-1. Test commits 8 and 9 with iwlwifi (they change every LinuxKPI wireless
-   driver), then suspend/resume; AQL limits for latency under load (11 to
-   24 ms now) are optional.
+1. Test commits 8 and 9 with iwlwifi on the X1 Carbon (`iwlwifi0`, Intel
+   CNVi), then suspend/resume. AQL alone did not lower latency under load
+   (see the AQL experiment); a real fix needs flow queueing (fq_codel) in
+   LinuxKPI's TXQs and the firmware's TX rate in net80211.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
    rc.conf) and document it; `country FR` was enough for channel 100.
 3. The wiki's "LinuxKPI IDR updates" was at least the teardown panic fixed
@@ -587,3 +613,4 @@ debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 | 2026-11-12 | same, TCP RX diagnosis | `-w 4M` no change; UDP RX 252 drops to 45 with a 3300 pkt/s small uplink: status-requested frames leave outside the BA session |
 | 2026-11-12 | + TX status only when needed | TCP TX 509/483/474, RX 308/289/314 Mbit/s; ping under load 11 to 24 ms |
 | 2026-11-12 | series rebased on main 83c8ec72ac6a | TCP TX 530/483, RX 325/326 Mbit/s; ping under load 12 to 24 ms; debugfs modules load; no leak |
+| 2026-11-12 | + AQL experiment | AQL on: TX 485/483, ping under TX load 31 to 35 ms; off: TX 523, 21 ms; RX 323 both; counters back to 0 |

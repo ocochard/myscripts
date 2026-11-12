@@ -1,0 +1,158 @@
+diff --git sys/compat/linuxkpi/common/include/linux/skbuff.h sys/compat/linuxkpi/common/include/linux/skbuff.h
+index c3a4897d5b34..d71de2cbb2b8 100644
+--- sys/compat/linuxkpi/common/include/linux/skbuff.h
++++ sys/compat/linuxkpi/common/include/linux/skbuff.h
+@@ -183,6 +183,7 @@ struct sk_buff {
+ 	uint16_t		_flags;		/* Internal flags. */
+ #define	_SKB_FLAGS_SKBEXTFRAG	0x0001
+ #define	_SKB_PP_RECYCLE		0x0010
++#define	_SKB_AQL		0x0020	/* airtime charged to the sta */
+ 	uint16_t		l3hdroff;	/* network header offset from *head */
+ 	uint16_t		l4hdroff;	/* transport header offset from *head */
+ 	uint16_t		mac_header;	/* offset of mac_header */
+diff --git sys/compat/linuxkpi/common/src/linux_80211.c sys/compat/linuxkpi/common/src/linux_80211.c
+index a249450cd320..1f8ea52af3db 100644
+--- sys/compat/linuxkpi/common/src/linux_80211.c
++++ sys/compat/linuxkpi/common/src/linux_80211.c
+@@ -114,6 +114,14 @@ static bool lkpi_order_scanlist = false;
+ SYSCTL_BOOL(_compat_linuxkpi_80211, OID_AUTO, order_scanlist, CTLFLAG_RW,
+     &lkpi_order_scanlist, 0, "Enable LinuxKPI 802.11 scan list shuffeling");
+ 
++/* Airtime Queue Limits, mac80211 defaults (us). */
++#define	LKPI_AQL_LIMIT_LOW	5000
++#define	LKPI_AQL_LIMIT_HIGH	12000
++#define	LKPI_AQL_THRESHOLD	24000
++static bool lkpi_aql = true;
++SYSCTL_BOOL(_compat_linuxkpi_80211, OID_AUTO, aql, CTLFLAG_RW,
++    &lkpi_aql, 0, "Enable LinuxKPI 802.11 airtime queue limits");
++
+ #if defined(LKPI_80211_HW_CRYPTO)
+ static bool lkpi_hwcrypto = false;
+ SYSCTL_BOOL(_compat_linuxkpi_80211, OID_AUTO, hw_crypto, CTLFLAG_RDTUN,
+@@ -391,6 +399,11 @@ lkpi_80211_dump_lvif_stas(struct lkpi_vif *lvif, struct sbuf *s, bool dump_queue
+ 		/* Dump queue information. */
+ 		sbuf_printf(s, " Queue information:\n");
+ 		sbuf_printf(s, "  frms direct tx %ju\n", lsta->frms_tx);
++		sbuf_printf(s, "  aql pending us BE %u BK %u VI %u VO %u\n",
++		    lsta->aql_pending[IEEE80211_AC_BE],
++		    lsta->aql_pending[IEEE80211_AC_BK],
++		    lsta->aql_pending[IEEE80211_AC_VI],
++		    lsta->aql_pending[IEEE80211_AC_VO]);
+ 		for (tid = 0; tid <= IEEE80211_NUM_TIDS; tid++) {
+ 			struct lkpi_txq *ltxq;
+ 
+@@ -9112,6 +9125,63 @@ lkpi_80211_txq_set_time_est(struct ieee80211_txq *txq, struct sk_buff *skb)
+ 	info->tx_time_est = MAX(1, MIN(howmany(us, 4), 1023));
+ }
+ 
++/*
++ * AQL: charge the estimate of each dequeued frame to its station and AC
++ * until the frame is reported back, as mac80211 does.
++ */
++static void
++lkpi_80211_aql_charge(struct ieee80211_hw *hw, struct sk_buff *skb)
++{
++	struct ieee80211_node *ni;
++	struct lkpi_sta *lsta;
++	u_int us;
++
++	if (skb->m == NULL)
++		return;
++	ni = ((struct mbuf *)skb->m)->m_pkthdr.PH_loc.ptr;
++	if (ni == NULL || (lsta = ni->ni_drv_data) == NULL)
++		return;
++	us = IEEE80211_SKB_CB(skb)->tx_time_est * 4;
++	atomic_add_int(&lsta->aql_pending[skb_get_queue_mapping(skb)], us);
++	atomic_add_int(&HW_TO_LHW(hw)->aql_total, us);
++	skb->_flags |= _SKB_AQL;
++}
++
++static void
++lkpi_80211_aql_refund(struct ieee80211_hw *hw, struct sk_buff *skb,
++    struct ieee80211_node *ni)
++{
++	struct lkpi_sta *lsta;
++	u_int us;
++
++	if ((skb->_flags & _SKB_AQL) == 0)
++		return;
++	skb->_flags &= ~_SKB_AQL;
++	us = IEEE80211_SKB_CB(skb)->tx_time_est * 4;
++	lsta = ni->ni_drv_data;
++	if (lsta != NULL)
++		atomic_subtract_int(
++		    &lsta->aql_pending[skb_get_queue_mapping(skb)], us);
++	atomic_subtract_int(&HW_TO_LHW(hw)->aql_total, us);
++}
++
++/* mac80211's ieee80211_txq_airtime_check(). */
++static bool
++lkpi_80211_aql_ok(struct lkpi_hw *lhw, struct lkpi_txq *ltxq)
++{
++	struct lkpi_sta *lsta;
++	u_int pending;
++
++	if (!lkpi_aql || ltxq->txq.sta == NULL)
++		return (true);
++	lsta = STA_TO_LSTA(ltxq->txq.sta);
++	pending = atomic_load_int(&lsta->aql_pending[ltxq->txq.ac]);
++	if (pending < LKPI_AQL_LIMIT_LOW)
++		return (true);
++	return (atomic_load_int(&lhw->aql_total) < LKPI_AQL_THRESHOLD &&
++	    pending < LKPI_AQL_LIMIT_HIGH);
++}
++
+ struct sk_buff *
+ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
+     struct ieee80211_txq *txq)
+@@ -9141,8 +9211,10 @@ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
+ 	if (skb != NULL)
+ 		ltxq->frms_dequeued++;
+ 	LKPI_80211_LTXQ_UNLOCK(ltxq);
+-	if (skb != NULL)
++	if (skb != NULL) {
+ 		lkpi_80211_txq_set_time_est(txq, skb);
++		lkpi_80211_aql_charge(hw, skb);
++	}
+ 
+ stopped:
+ 	return (skb);
+@@ -9196,6 +9268,8 @@ _lkpi_ieee80211_free_txskb(struct ieee80211_hw *hw, struct sk_buff *skb,
+ 
+ 	if (m != NULL) {
+ 		ni = m->m_pkthdr.PH_loc.ptr;
++		if (ni != NULL)
++			lkpi_80211_aql_refund(hw, skb, ni);
+ 		/* Status: 0 is ok, != 0 is error. */
+ 		ieee80211_tx_complete(ni, m, status);
+ 		/* ni & mbuf were consumed. */
+@@ -9791,6 +9865,9 @@ linuxkpi_ieee80211_next_txq(struct ieee80211_hw *hw, uint8_t ac)
+ 		goto out;
+ 	if ((ltxq->flags & (LKPI_TXQ_STOPPED|LKPI_TXQ_STOPPED_BA)) != 0)
+ 		goto out;
++	/* Over its airtime limit: stay scheduled, completions reschedule. */
++	if (!lkpi_80211_aql_ok(lhw, ltxq))
++		goto out;
+ 
+ 	IMPROVE("check AIRTIME_FAIRNESS");
+ 
+diff --git sys/compat/linuxkpi/common/src/linux_80211.h sys/compat/linuxkpi/common/src/linux_80211.h
+index 8d6b0a23cad3..aab0c98bd65f 100644
+--- sys/compat/linuxkpi/common/src/linux_80211.h
++++ sys/compat/linuxkpi/common/src/linux_80211.h
+@@ -203,6 +203,7 @@ struct lkpi_sta {
+ 
+ 	struct station_info	sinfo;				/* statistics */
+ 	uint64_t		frms_tx;			/* (*tx) */
++	u_int			aql_pending[IEEE80211_NUM_ACS];	/* us, atomic */
+ 
+ 	/* Must be last! */
+ 	struct ieee80211_sta	sta __aligned(CACHE_LINE_SIZE);
+@@ -257,6 +258,7 @@ struct lkpi_vif {
+ 
+ struct lkpi_hw {	/* name it mac80211_sc? */
+ 	const struct ieee80211_ops	*ops;
++	u_int				aql_total;	/* us, atomic */
+ 	struct ieee80211_scan_request	*hw_req;
+ 	struct workqueue_struct		*workq;
+ 
