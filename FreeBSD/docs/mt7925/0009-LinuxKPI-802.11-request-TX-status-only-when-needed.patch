@@ -1,4 +1,4 @@
-From 6e635093f3ad5f3f20b81427f3510c0203d901f7 Mon Sep 17 00:00:00 2001
+From e87dbee448cb1a55f9ce85b6cfb6b1440750f1b2 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:32 +0000
 Subject: [PATCH 9/9] LinuxKPI: 802.11: request TX status only when needed

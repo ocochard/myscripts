@@ -1,4 +1,4 @@
-From 0852e5450e08afa854645843f00d19ac977eac3c Mon Sep 17 00:00:00 2001
+From 60f4eb35e0043c1f17cf568a70491a5eaee0bdc4 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
 Subject: [PATCH 4/9] mt76: mt7925: do not hang kldload when hardware init

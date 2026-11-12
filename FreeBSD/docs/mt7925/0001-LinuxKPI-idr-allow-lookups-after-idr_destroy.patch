@@ -1,4 +1,4 @@
-From a2e9ee8f6afbd24348c8e5a7b8aa5d379e32e468 Mon Sep 17 00:00:00 2001
+From c1c5bf89ef348b19797f10e646daca1f7de25db8 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
 Subject: [PATCH 1/9] LinuxKPI: idr: allow lookups after idr_destroy()

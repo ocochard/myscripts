@@ -1,4 +1,4 @@
-From b32f98067b1ac4945bf3a885133bf95fecdcc9fa Mon Sep 17 00:00:00 2001
+From daf8335a06d6df15bb426a0d0f1905d25c5cbf30 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:32 +0000
 Subject: [PATCH 8/9] LinuxKPI: 802.11: set an airtime estimate on dequeued

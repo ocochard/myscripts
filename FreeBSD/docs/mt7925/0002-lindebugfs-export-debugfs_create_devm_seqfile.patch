@@ -1,4 +1,4 @@
-From 9eaa5b948f6ea4525721eb7fe76e23f824711d73 Mon Sep 17 00:00:00 2001
+From df5b2876a02387c3488b78bf04add743173fcf61 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
 Subject: [PATCH 2/9] lindebugfs: export debugfs_create_devm_seqfile()

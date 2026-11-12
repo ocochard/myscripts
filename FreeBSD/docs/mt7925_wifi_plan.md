@@ -464,8 +464,11 @@ The `tx_stats` A-MPDU histogram cannot help here: its range registers
 
 ## How to reproduce
 
-Tested on the old-base worktree `~/freebsd-mt76` (6e87733f73ff), because a full
-`buildkernel` on newer main failed in the ZFS module for an unrelated reason.
+All measurements were made on main 6e87733f73ff, because a full
+`buildkernel` of newer main then failed in the ZFS module. The series was
+rebased on main 83c8ec72ac6a (2026-11-12) without conflicts (`git range-diff`:
+all 9 patches identical); there each commit builds, and a full `buildkernel`
+with modules succeeds again. Not rerun on the laptop on the new base yet.
 The page pool code is compiled into the kernel (`options COMPAT_LINUXKPI`), so
 the test needs a kernel, not just modules.
 
@@ -515,7 +518,7 @@ start slower than what the LinuxKPI driver already scans with.
 
 All changes are on branch
 [olivier-mt7925](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925)
-(base 6e87733f73ff, pushed 2026-11-12), one commit per row;
+(rebased on main 83c8ec72ac6a and force-pushed 2026-11-12), one commit per row;
 each row links its `git format-patch` file in [mt7925/](mt7925/), and
 [mt7925_wifi_series.patch](mt7925_wifi_series.patch) is the whole series as one
 diff. Every commit builds (kernel and mt76 modules) on its own.
@@ -525,15 +528,15 @@ rows; lindebugfs also had dumbbell@ (Jean-Sébastien Pédron) on 3521cce445d4.
 
 | # | Commit | Patch | Files | Status | Depends on |
 |---|---|---|---|---|---|
-| 1 | LinuxKPI: idr: allow lookups after idr_destroy() (fixes a panic in mt76 station teardown) | [0001](mt7925/0001-LinuxKPI-idr-allow-lookups-after-idr_destroy.patch) [a2e9ee8f6afb](https://github.com/ocochard/freebsd-src/commit/a2e9ee8f6afb) | `linux_idr.c` | done, tested: forced BSS switch no longer panics | nothing |
-| 2 | lindebugfs: export debugfs_create_devm_seqfile() (implemented in 3521cce445d4, missing from `EXPORT_SYMS`) | [0002](mt7925/0002-lindebugfs-export-debugfs_create_devm_seqfile.patch) [9eaa5b948f6e](https://github.com/ocochard/freebsd-src/commit/9eaa5b948f6e) | `sys/modules/lindebugfs/Makefile` | done; `nm` shows `T`, not yet loaded with it (needs a reboot past amdgpu) | nothing |
-| 3 | mt76: mt7925: depend on lindebugfs when debugfs is built | [0003](mt7925/0003-mt76-mt7925-depend-on-lindebugfs-when-debugfs-is-bui.patch) [3deff8f22c97](https://github.com/ocochard/freebsd-src/commit/3deff8f22c97) | `mt7925/debugfs.c` | done, tested: `if_mt7925.ko` loads with `MT7925_DEBUGFS=1` | 2 |
-| 4 | mt76: mt7925: do not hang kldload when hardware init fails | [0004](mt7925/0004-mt76-mt7925-do-not-hang-kldload-when-hardware-init-f.patch) [0852e5450e08](https://github.com/ocochard/freebsd-src/commit/0852e5450e08) | `mt7925/init.c` | done, tested: attach returns ENXIO, `kldunload` works; mt7915, mt7921, mt7996 have the same wait, not fixed | nothing |
-| 5 | LinuxKPI: skbuff: make napi_consume_skb() free the skb (was an empty `SKB_TODO()`, leaked every mt7925 TX skb) | [0005](mt7925/0005-LinuxKPI-skbuff-make-napi_consume_skb-free-the-skb.patch) [1cf981ca2914](https://github.com/ocochard/freebsd-src/commit/1cf981ca2914) | `skbuff.h` | done, tested: 0 skbs in use after 636000 allocations | nothing |
-| 6 | LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE (side table for pool pages; skb free returns recycled frags and heads to the pool) | [0006](mt7925/0006-LinuxKPI-page-pool-work-without-PAGE_IS_LKPI_PAGE.patch) [194e81fa4500](https://github.com/ocochard/freebsd-src/commit/194e81fa4500) | `linuxkpi_page_pool.c`, `linux_skbuff.c` | done, tested; a stopgap until bz@'s `struct page` rework, discuss before sending | nothing |
-| 7 | LinuxKPI: skbuff: cache skb data allocations below mem_limit (size-aligned UMA zones instead of one `contigmalloc()` per skb) | [0007](mt7925/0007-LinuxKPI-skbuff-cache-skb-data-allocations-below-mem.patch) [fe93d7443c57](https://github.com/ocochard/freebsd-src/commit/fe93d7443c57) | `linux_skbuff.c` | done, tested: no `contigmalloc()` in the TX path, throughput no longer decays | 6 (same file) |
-| 8 | LinuxKPI: 802.11: set an airtime estimate on dequeued frames (mt76 capped each station at 16 frames in flight) | [0008](mt7925/0008-LinuxKPI-802.11-set-an-airtime-estimate-on-dequeued-.patch) [b32f98067b1a](https://github.com/ocochard/freebsd-src/commit/b32f98067b1a) | `linux_80211.c` | done, tested: TCP TX 36 to 232-254 Mbit/s with the stock driver | nothing |
-| 9 | LinuxKPI: 802.11: request TX status only when needed (mt76 sends status frames outside the BA session); a missing status is not a TX error | [0009](mt7925/0009-LinuxKPI-802.11-request-TX-status-only-when-needed.patch) [6e635093f3ad](https://github.com/ocochard/freebsd-src/commit/6e635093f3ad) | `linux_80211.c` | done, tested: TCP RX 79 to 289-314, TX 474-509 Mbit/s; WPA2 still associates | 8 (same file) |
+| 1 | LinuxKPI: idr: allow lookups after idr_destroy() (fixes a panic in mt76 station teardown) | [0001](mt7925/0001-LinuxKPI-idr-allow-lookups-after-idr_destroy.patch) [c1c5bf89ef34](https://github.com/ocochard/freebsd-src/commit/c1c5bf89ef34) | `linux_idr.c` | done, tested: forced BSS switch no longer panics | nothing |
+| 2 | lindebugfs: export debugfs_create_devm_seqfile() (implemented in 3521cce445d4, missing from `EXPORT_SYMS`) | [0002](mt7925/0002-lindebugfs-export-debugfs_create_devm_seqfile.patch) [df5b2876a023](https://github.com/ocochard/freebsd-src/commit/df5b2876a023) | `sys/modules/lindebugfs/Makefile` | done; `nm` shows `T`, not yet loaded with it (needs a reboot past amdgpu) | nothing |
+| 3 | mt76: mt7925: depend on lindebugfs when debugfs is built | [0003](mt7925/0003-mt76-mt7925-depend-on-lindebugfs-when-debugfs-is-bui.patch) [f368e52cb3f7](https://github.com/ocochard/freebsd-src/commit/f368e52cb3f7) | `mt7925/debugfs.c` | done, tested: `if_mt7925.ko` loads with `MT7925_DEBUGFS=1` | 2 |
+| 4 | mt76: mt7925: do not hang kldload when hardware init fails | [0004](mt7925/0004-mt76-mt7925-do-not-hang-kldload-when-hardware-init-f.patch) [60f4eb35e004](https://github.com/ocochard/freebsd-src/commit/60f4eb35e004) | `mt7925/init.c` | done, tested: attach returns ENXIO, `kldunload` works; mt7915, mt7921, mt7996 have the same wait, not fixed | nothing |
+| 5 | LinuxKPI: skbuff: make napi_consume_skb() free the skb (was an empty `SKB_TODO()`, leaked every mt7925 TX skb) | [0005](mt7925/0005-LinuxKPI-skbuff-make-napi_consume_skb-free-the-skb.patch) [fa47aa0b426f](https://github.com/ocochard/freebsd-src/commit/fa47aa0b426f) | `skbuff.h` | done, tested: 0 skbs in use after 636000 allocations | nothing |
+| 6 | LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE (side table for pool pages; skb free returns recycled frags and heads to the pool) | [0006](mt7925/0006-LinuxKPI-page-pool-work-without-PAGE_IS_LKPI_PAGE.patch) [dd884476f683](https://github.com/ocochard/freebsd-src/commit/dd884476f683) | `linuxkpi_page_pool.c`, `linux_skbuff.c` | done, tested; a stopgap until bz@'s `struct page` rework, discuss before sending | nothing |
+| 7 | LinuxKPI: skbuff: cache skb data allocations below mem_limit (size-aligned UMA zones instead of one `contigmalloc()` per skb) | [0007](mt7925/0007-LinuxKPI-skbuff-cache-skb-data-allocations-below-mem.patch) [3ebdcb27d5c5](https://github.com/ocochard/freebsd-src/commit/3ebdcb27d5c5) | `linux_skbuff.c` | done, tested: no `contigmalloc()` in the TX path, throughput no longer decays | 6 (same file) |
+| 8 | LinuxKPI: 802.11: set an airtime estimate on dequeued frames (mt76 capped each station at 16 frames in flight) | [0008](mt7925/0008-LinuxKPI-802.11-set-an-airtime-estimate-on-dequeued-.patch) [daf8335a06d6](https://github.com/ocochard/freebsd-src/commit/daf8335a06d6) | `linux_80211.c` | done, tested: TCP TX 36 to 232-254 Mbit/s with the stock driver | nothing |
+| 9 | LinuxKPI: 802.11: request TX status only when needed (mt76 sends status frames outside the BA session); a missing status is not a TX error | [0009](mt7925/0009-LinuxKPI-802.11-request-TX-status-only-when-needed.patch) [e87dbee448cb](https://github.com/ocochard/freebsd-src/commit/e87dbee448cb) | `linux_80211.c` | done, tested: TCP RX 79 to 289-314, TX 474-509 Mbit/s; WPA2 still associates | 8 (same file) |
 
 Rows 8 and 9 change behaviour for every LinuxKPI wireless driver (iwlwifi,
 rtw88, rtw89): test at least iwlwifi before sending.
