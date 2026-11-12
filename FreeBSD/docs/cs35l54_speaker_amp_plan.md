@@ -453,6 +453,23 @@ Proposed scope:
 | 7 | ig4: use the 150 MHz input clock of AMDI0010 controllers (Linux value; ig4 assumed 100 MHz) | [olivier-ig4-amd-clock](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock): a2b6c19d0bba | src, ig4 | done; measured bus clock 494 kHz before, 359 kHz after (200 reads of 1 KB, overhead included); touchpad, touchscreen and amplifiers reattach; does not fix the stale read | nothing |
 
 1-4 are needed for working speakers, 5 is a convenience, 6 and 7 are bugs met on the way that the driver does not need fixed.
+
+### Who to contact
+
+From `MAINTAINERS` (advisory, last changed f492ef8318f5 on 2026-09-26) and from the git log of `freebsd/main` up to 29b24020f6fa (2026-11-12).
+`MAINTAINERS` has entries only for `sys/dev/sound` and `share/man`; for the other paths, its own header says to check recent logs.
+
+| # | Contact first | Also | Source |
+|---|---|---|---|
+| 1-2 | Christos Margiolis (christos@) | Alexander Ziaee (ziaee@) for `snd_cs35l54.4`; David Bidner; Alexander Motin (mav@) | `MAINTAINERS`: `sys/dev/sound christos, Pre-commit review recommended` and `share/man ziaee, Pre-commit review please`; git log: christos 297 commits in `sound/pcm` and 27 in `pci/hda` since 2023; David Bidner changes `hdaa.c` now (43bbd71ac785, 2026-11-05, amplifier settings); mav@ co-wrote `snd_hda` |
+| 3 | Bjoern A. Zeeb (bz@) | Emmanuel Vadot (manu@); ziaee@ for `fwget.8` | git log: bz@ 15 `fwget` commits since 2023, manu@ wrote `fwget`; `MAINTAINERS`: `share/man` |
+| 4 | the author (port maintainer) | bz@ for the layout | the port follows `net/wifi-firmware-kmod` |
+| 5 | Aymeric Wibo (obiwac@) | Warner Losh (imp@) | git log: recent `amdgpio` commits; obiwac@ is also the top `acpi.c` committer since 2023, and the `_AEI` side effect is ACPI; Oleksandr Tymoshenko (gonzo@) wrote the driver (2018) |
+| 6 | John Baldwin (jhb@) | obiwac@; Olivier Certner (olce@) | git log: jhb@ 28 `acpi.c` commits since 2023, newbus; the `_DSD` property code is from Bartlomiej Grzesik (Semihalf, 2021: b91fc6c43a81, 3f9a00e3b577) |
+| 7 | Vladimir Kondratyev (wulf@) | mav@; Ahmad Khalifa | git log: wulf@ wrote the timing table (885128387e1c, 2019) and `acpi_iicbus`; Ahmad Khalifa has recent `ichiic`/`acpi_iicbus` commits |
+
+Before sending: rebase the branches onto current `main` (they start at 6e87733f73ff, 2026-11-11; `hdaa.c` and `ig4` change often).
+One review per row, with 1 and 2 together.
 Multi-chip support (CS35L56/57, B2, speaker id) comes after 2.
 
 Boot: with the PnP info, `devmatch -a` selects `snd_cs35l54.ko` when the module is built with the kernel options (`KERNBUILDDIR`; a stand-alone module build gets an empty `opt_acpi.h` and no PnP table). A real boot is not tested yet.
