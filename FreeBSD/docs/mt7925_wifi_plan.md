@@ -252,6 +252,47 @@ Test with `MT_MAX_NON_AQL_PKT` raised to 256 (test only):
 | 256 | 69.4 | 77.9 |
 
 TX gains 67%, still far from Linux (577): there is a further limit.
+
+### Second TX limit: `skb.mem_limit=1` makes every skb a `contigmalloc()`
+
+With the cap at 4096 (effectively off), one TCP TX run right after a module
+reload reached 230 Mbit/s, then later runs fell back to 35 to 42 Mbit/s and
+the kernel logged `lkpi_80211_txq_tx_one: skb alloc failed 0 + 162`.
+DTrace on `contigmalloc()` during an 8 s TCP TX run at 41.8 Mbit/s:
+
+| | |
+|---|---|
+| calls | 29352 (one per skb) |
+| calls taking 2 to 4 ms | 2844 |
+| total time | 7.4 s of the 8 s run |
+| failures | 3 |
+
+`compat.linuxkpi.skb.mem_limit=1` (the workaround for blocker 3) allocates
+every skb data buffer with `contigmalloc()` below 4 GB, rounded up to a power
+of two. Once low memory fragments, each allocation scans for free pages and
+takes milliseconds, on the single `taskqueue_thread` that carries all TX
+frames (and all RX frames into net80211). That explains the 230 Mbit/s on
+fresh memory and the decay afterwards.
+
+Fix direction: drop the global tunable; keep data buffers below 4 GB only
+for devices whose DMA mask needs it, from a cached allocator (a UMA zone of
+DMA32 pages for skbs up to a page, `contigmalloc()` only for the rare larger
+ones such as firmware chunks), or make the DMA mapping of a page-crossing
+buffer work without `contigmalloc()`.
+
+### RX: TCP capped, UDP is not
+
+| Test (5 GHz ch 100, cap 4096) | Result |
+|---|---|
+| TCP RX, 1 stream / 4 streams | 79 / 84 Mbit/s total, sender `Retr 0` |
+| UDP RX at 400 Mbit/s offered | 274 Mbit/s received (28% loss) |
+| ping during TCP RX | 22 ms average (4 ms idle) |
+| `mt76_dma_rx_poll` | 0 or 1 frames per poll, 110k polls for 70k frames |
+| `ieee80211_input_mimo` | runs on `thread taskq`, the same thread as TX |
+
+The radio and RX path carry 274 Mbit/s; TCP RX is held by its ACK stream,
+which goes out through the same TX path and the same `taskqueue_thread`
+that spends its time in `contigmalloc()`.
 The proper fix belongs in LinuxKPI: an airtime estimate per frame (what
 mac80211's `ieee80211_calc_expected_tx_airtime()` does) plus AQL-style
 limits, rather than a bigger driver constant.
@@ -349,9 +390,10 @@ start slower than what the LinuxKPI driver already scans with.
 
 ## Plan
 
-1. Throughput: give LinuxKPI frames an airtime estimate (`tx_time_est`) so
-   mt76's 16-frame non-AQL cap stops throttling TX, then find the next limit
-   (69 Mbit/s with the cap raised, Linux 577); then suspend/resume.
+1. Throughput: replace the `skb.mem_limit=1` workaround with a cached DMA32
+   allocator (or a working page-crossing DMA map), give LinuxKPI frames an
+   airtime estimate (`tx_time_est`) so mt76's 16-frame non-AQL cap stops
+   throttling TX, then remeasure TX, TCP RX (ACK path) and suspend/resume.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
    rc.conf) and document it; `country FR` was enough for channel 100.
 3. The wiki's "LinuxKPI IDR updates" was at least the teardown panic fixed
@@ -381,3 +423,4 @@ start slower than what the LinuxKPI driver already scans with.
 | 2026-11-12 | kernel.mt76, debugfs modules, `country FR` | mt76 `tx_stats`: BA miss 0; TCP Retr 0, `-P 4` 34 total, 390 ms ping under load; ch 100 VHT80: 41.5/74.9 Mbit/s |
 | 2026-11-12 | same, DTrace + `xmit-queues` sampling | DMA ring holds 0 to 3 frames under load: mt76 non-AQL cap of 16 frames |
 | 2026-11-12 | same + `MT_MAX_NON_AQL_PKT` 256 | 69.4/77.9 Mbit/s; then panic reading a stale debugfs entry after module reload |
+| 2026-11-12 | same + cap 4096 | TCP TX 230 once on fresh memory, then 35 to 42; `contigmalloc()` 7.4 s of 8 s; UDP RX 274, TCP RX 84 |
