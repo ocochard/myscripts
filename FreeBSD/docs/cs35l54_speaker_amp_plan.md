@@ -468,7 +468,11 @@ From `MAINTAINERS` (advisory, last changed f492ef8318f5 on 2026-09-26) and from 
 | 6 | John Baldwin (jhb@) | obiwac@; Olivier Certner (olce@) | git log: jhb@ 28 `acpi.c` commits since 2023, newbus; the `_DSD` property code is from Bartlomiej Grzesik (Semihalf, 2021: b91fc6c43a81, 3f9a00e3b577) |
 | 7 | Vladimir Kondratyev (wulf@) | mav@; Ahmad Khalifa | git log: wulf@ wrote the timing table (885128387e1c, 2019) and `acpi_iicbus`; Ahmad Khalifa has recent `ichiic`/`acpi_iicbus` commits |
 
-Branches rebased onto `main` 29b24020f6fa on 2026-11-12 and force-pushed; compile-checked, not re-tested on the laptop. Rebase again just before sending: `hdaa.c` and `ig4` change often.
+Branches rebased onto `main` 29b24020f6fa on 2026-11-12 and force-pushed.
+Retested the rebased driver on the laptop the same day: on the stock kernel, firmware from the package files, calibration, and sound through the `play` sysctl;
+on the test kernel with the `hdaa` hook (built from the old base), `play` follows a test tone 0 -> 1 -> 0 and the speakers play.
+A full `buildkernel` of the new base stops in the ZFS module, in code the patches do not touch.
+Rebase again just before sending: `hdaa.c` and `ig4` change often.
 One review per row, with 1 and 2 together.
 Multi-chip support (CS35L56/57, B2, speaker id) comes after 2.
 

@@ -15,7 +15,8 @@ Linux comparison: Ubuntu with Linux 7.0.0-43 on the same laptop, same day (`lspc
 |---|---|---|
 | GPU, display | 1002:1586 Radeon 8060S | `amdgpu` from `graphics/drm-latest-kmod` + `gpu-firmware-amd-kmod` |
 | HDMI/DP audio | 1002:1640 | `hdac0`, 4 `pcm` outputs |
-| Headphone jack | 1022:15e3 + Realtek ALC245 codec | `hdac1`, `pcm5` (headphones); `pcm4` (default) feeds the speakers, silent (see below) |
+| Headphone jack | 1022:15e3 + Realtek ALC245 codec | `hdac1`, `pcm5` (headphones) |
+| Internal speakers | `pcm4` (ALC245) + 4 Cirrus Logic CS35L54 amplifiers (CSC3554) | not in FreeBSD yet: `snd_cs35l54` from branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) + firmware port (see below) |
 | NVMe | Samsung PM9A1 2 TB (144d:a80a) | `nvme`/`nda` |
 | USB 3 | four xHCI (1022:1587, 1588, 1589, 158b) | `xhci` |
 | Touchpad | Synaptics SYNA3133 (I2C HID) | `iichid0`, polling mode (see below) |
@@ -141,9 +142,15 @@ The ALC245 codec does not drive the speakers directly: four CS35L54 smart amplif
 Under Linux they drive the left woofer (AMP1), left tweeter (AMP2), right tweeter (AMP3) and right woofer (AMP4), per the tuning file names in the Linux log.
 The OS must download a DSP program and tuning into each amplifier, then send it a "play" command.
 Linux: `cs35l56-hda` side-codec driver with `cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw` and `-amp1..4.bin`; the speakers work under Ubuntu (tested 2026-11-11).
-Test on FreeBSD, 2026-11-11: Chromium plays through PulseAudio into `dsp4` (sink RUNNING, not muted, 85%), the hardware channel takes data with 0 underruns, and the speakers stay silent.
-Impact: no speaker sound; use the headphone jack (`pcm5`), HDMI/DP, or a USB headset.
-Driver plan: [docs/cs35l54_speaker_amp_plan.md](docs/cs35l54_speaker_amp_plan.md).
+Stock FreeBSD: Chromium plays through PulseAudio into `dsp4` (sink RUNNING, not muted, 85%), the hardware channel takes data with 0 underruns, and the speakers stay silent.
+
+Driver (not in FreeBSD yet): `snd_cs35l54`, branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) of the FreeBSD fork.
+It downloads the firmware, applies the factory calibration from UEFI, and starts or pauses the amplifiers with the speaker stream, through a new `hdaa` event (so it needs a kernel built from the branch: `snd_hda` is in GENERIC).
+Firmware: the `audio/sound-firmware-cirrus-kmod` port (not committed yet) installs the linux-firmware files under `/boot/firmware/cirrus/`.
+Tested 2026-11-11 and, after the rebase onto `main` 29b24020f6fa, 2026-11-12: test tone, YouTube in Chromium, pause/resume.
+
+- How it works, step by step: [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md)
+- Investigation log, measurements and the list of patches to land: [docs/cs35l54_speaker_amp_plan.md](docs/cs35l54_speaker_amp_plan.md)
 
 ### Sensor Fusion Hub / MP2 (195:0:7)
 
@@ -222,8 +229,7 @@ The same gap on Meteor Lake is described in [docs/x86_gpio_intr_mtl.md](docs/x86
    Best action: follow PR 273623 and test when the mt7925 call for testing comes out.
    Building `sys/modules/mt76/mt7925` by hand today is not tested and unlikely to work.
 2. Speaker amplifier (CS35L54).
-   No speaker sound without it.
-   Large effort: I2C control, DSP firmware download, and binding to the HDA codec stream.
+   Done, waiting for review: branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54), see the speaker section.
 3. Touch interrupts (amdgpio + GpioInt in acpi_iicbus).
    Gives lower latency on the first touch after idle and no dropped reports during fast movement.
    Builds on the Meteor Lake GpioInt work.

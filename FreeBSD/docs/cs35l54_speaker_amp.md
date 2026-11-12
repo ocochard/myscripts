@@ -212,13 +212,15 @@ The driver now evaluates `_DSD` itself with `AcpiEvaluateObjectTyped()`.
 ## 4. Tested
 
 On the HP ZBook Ultra G1a, FreeBSD main 6e87733f73ff plus the patch, 2026-11-11.
-The rebase onto 29b24020f6fa (2026-11-12) was compile-checked only (modules, style, and a kernel without modules; a full `buildkernel` stops in the ZFS module, in code the patch does not touch):
+After the rebase onto 29b24020f6fa (2026-11-12), the modules, the style check and a kernel without modules build
+(a full `buildkernel` stops in the ZFS module, in code the patch does not touch),
+and the rebased driver passed the rows marked "rebased" below:
 
 | Configuration | Result |
 |---|---|
-| `kldload`, firmware from raw files | `cs35l540: 4 amplifiers, firmware 3.11.18`, `dev.cs35l54.0.loaded: 1` |
-| `sysctl dev.cs35l54.0.play=1` with a 440 Hz tone on `pcm4` | sound (heard) |
-| Test kernel with the hdaa hook, tone with no sysctl | `play` goes 0 -> 1 -> 0 with the stream; sound (heard) |
+| `kldload`, firmware from raw files | `cs35l540: 4 amplifiers, firmware 3.11.18`, `dev.cs35l54.0.loaded: 1` (also rebased) |
+| `sysctl dev.cs35l54.0.play=1` with a 440 Hz tone on `pcm4` | sound (heard; also rebased, on the stock kernel) |
+| Test kernel with the hdaa hook, tone with no sysctl | `play` goes 0 -> 1 -> 0 with the stream; sound (heard; also rebased driver, on the old-base test kernel) |
 | YouTube in Chromium through PulseAudio | sound; pause/resume restarts at once |
 | Calibration | each amplifier matched its UEFI entry by silicon id; control addresses and values for AMP1 equal the Linux driver's |
 | Firmware from the `audio/sound-firmware-cirrus-kmod` package (poudriere testport and bulk, then `pkg add`) | download and calibration complete |
