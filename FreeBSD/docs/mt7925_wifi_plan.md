@@ -16,7 +16,7 @@ Patch: [mt7925_page_pool.patch](mt7925_page_pool.patch).
 | Registers with net80211 (`net.wlan.devices: mt79250`) | no | yes |
 | `ifconfig wlan0 create`, scan | no | yes, 2.4 GHz and 5 GHz APs seen |
 | WPA2 association, DHCP | no | yes, 2.4 GHz 11ng HT20 and 5 GHz 11ac VHT80 |
-| Throughput (iperf3, TCP, 10 s) | no | best: TX 26, RX 52 Mbit/s (5 GHz, `hw_crypto=1`), see [Throughput](#throughput) |
+| Throughput (iperf3, TCP, 10 s) | no | TX 232 to 254, RX 79 Mbit/s (5 GHz ch 100, Linux 577/426), see [Throughput](#throughput) |
 | Disconnect, reconnect, BSS switch, `kldunload` | no | yes (needs the idr fix below) |
 | Failure handling | `kldload` hangs forever, reboot needed | attach fails with ENXIO, `kldunload` works |
 
@@ -323,7 +323,7 @@ LinuxKPI's `napi_consume_skb()` (also on current main) is
 the NAPI skb cache. After the fix, 556000 more allocations left the in-use
 counts unchanged; TCP TX 165, 276, 195 Mbit/s.
 
-### Airtime estimate for dequeued frames (in the patch, not yet measured)
+### Airtime estimate for dequeued frames
 
 `linuxkpi_ieee80211_tx_dequeue()` now sets `info->tx_time_est` on every
 frame it hands to the driver, as mac80211 does in `ieee80211_tx_dequeue()`:
@@ -343,6 +343,18 @@ Two limits of this version:
   load was 30 to 60 ms with the cap raised, against 4 ms idle. Real AQL in
   LinuxKPI (pending airtime per station and AC, decremented on TX status,
   dequeue refused above the limit) is the follow-up.
+
+Measured with the stock mt76 (cap 16, no driver edit), 5 GHz channel 100:
+
+| Run | TCP TX | ping under load avg / max |
+|---|---|---|
+| 1 | 244 Mbit/s | 75 / 152 ms |
+| 2 | 254 Mbit/s | 59 / 105 ms |
+| 3 | 232 Mbit/s | 40 / 77 ms |
+| TCP RX | 78.8 Mbit/s | 24 / 42 ms |
+
+Same modules without the estimate: 36 Mbit/s TX. Skb zones back to 0 in use
+after 636747 allocations: no leak.
 
 ### RX: TCP capped, UDP is not
 
@@ -454,9 +466,9 @@ start slower than what the LinuxKPI driver already scans with.
 
 ## Plan
 
-1. Throughput: measure the `tx_time_est` estimate with the stock mt76 cap,
-   add AQL limits in LinuxKPI for latency, then find why TCP RX stays at 70
-   to 80 Mbit/s while UDP RX reaches 274; then suspend/resume.
+1. Throughput: find why TCP RX stays at 70 to 80 Mbit/s while UDP RX
+   reaches 274, add AQL limits in LinuxKPI for latency under load (40 to
+   75 ms now), then suspend/resume.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
    rc.conf) and document it; `country FR` was enough for channel 100.
 3. The wiki's "LinuxKPI IDR updates" was at least the teardown panic fixed
@@ -489,3 +501,4 @@ start slower than what the LinuxKPI driver already scans with.
 | 2026-11-12 | same + cap 4096 | TCP TX 230 once on fresh memory, then 35 to 42; `contigmalloc()` 7.4 s of 8 s; UDP RX 274, TCP RX 84 |
 | 2026-11-12 | + cached DMA32 skb zones | no `contigmalloc()`; cap 16: 36/67; cap 4096: 227/160/237 TX, 78 RX; 490000 skbs leaked |
 | 2026-11-12 | + `napi_consume_skb()` fix | no leak; cap 4096: TX 165/276/195, RX 72 Mbit/s |
+| 2026-11-12 | + `tx_time_est` estimate, stock cap 16 | TX 244/254/232, RX 79 Mbit/s; ping under load 40 to 75 ms; no leak |
