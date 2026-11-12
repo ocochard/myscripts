@@ -1,7 +1,7 @@
 # Silent laptop speakers: a driver for the Cirrus Logic CS35L54 amplifiers
 
 Patch: [cs35l54_speaker_amp.patch](cs35l54_speaker_amp.patch), the 10 commits of branch
-[`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) on top of FreeBSD main 6e87733f73ff (2026-11-11).
+[`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) on top of FreeBSD main 29b24020f6fa (rebased 2026-11-12).
 Related fixes found on the way, one commit each:
 [`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) (devmatch loads amdgpio),
 [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) (the `device_get_property()` hang of section 3.4),
@@ -211,7 +211,8 @@ The driver now evaluates `_DSD` itself with `AcpiEvaluateObjectTyped()`.
 
 ## 4. Tested
 
-On the HP ZBook Ultra G1a, FreeBSD main 6e87733f73ff plus the patch, 2026-11-11:
+On the HP ZBook Ultra G1a, FreeBSD main 6e87733f73ff plus the patch, 2026-11-11.
+The rebase onto 29b24020f6fa (2026-11-12) was compile-checked only (modules, style, and a kernel without modules; a full `buildkernel` stops in the ZFS module, in code the patch does not touch):
 
 | Configuration | Result |
 |---|---|
