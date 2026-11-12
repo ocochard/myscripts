@@ -1,0 +1,132 @@
+## uname
+Linux zbook 7.0.0-43-generic #43-Ubuntu SMP PREEMPT_DYNAMIC Fri Oct 23 13:25:25 UTC 2026 x86_64 GNU/Linux
+## s0ix_stats
+=== S0ix statistics ===
+S0ix Entry Time: 4619365092
+S0ix Exit Time: 6175547718
+Residency Time: 32420471
+## smu_fw_info
+
+=== SMU Statistics ===
+Table Version: 3
+Hint Count: 1
+Last S0i3 Status: Success
+Time (in us) to S0i3: 587776
+Time (in us) in S0i3: 32420471
+Time (in us) to resume from S0i3: 334255
+
+=== Active time (in us) ===
+DISPLAY  : 0
+VDD      : 0
+VDD_CCX  : 0
+VCN_0    : 0
+VCN_1    : 0
+ISP      : 0
+DF       : 0
+USB3_0   : 0
+USB3_1   : 0
+USB4_RT0 : 0
+USB4_RT1 : 0
+USB4_0   : 0
+USB4_1   : 30064771073
+MPM      : 0
+JPEG_0   : 1228
+JPEG_1   : 8749
+IPU      : 0
+UMSCH    : 0
+VPE      : 0
+## idlemask
+SMU idlemask : 0x5f73398c
+## suspend_stats
+/sys/power/suspend_stats/fail:0
+/sys/power/suspend_stats/failed_freeze:0
+/sys/power/suspend_stats/failed_prepare:0
+/sys/power/suspend_stats/failed_resume:0
+/sys/power/suspend_stats/failed_resume_early:0
+/sys/power/suspend_stats/failed_resume_noirq:0
+/sys/power/suspend_stats/failed_suspend:0
+/sys/power/suspend_stats/failed_suspend_late:0
+/sys/power/suspend_stats/failed_suspend_noirq:0
+/sys/power/suspend_stats/last_failed_errno:0
+/sys/power/suspend_stats/last_hw_sleep:32420471
+/sys/power/suspend_stats/max_hw_sleep:18446744073709551615
+/sys/power/suspend_stats/success:1
+/sys/power/suspend_stats/total_hw_sleep:32420471
+## pm_wakeup_irq
+9
+## /proc/acpi/wakeup
+Device	S-state	  Status   Sysfs node
+GP11	  S4	*enabled   pci:0000:00:01.1
+SWUS	  S4	*disabled
+GP12	  S4	*enabled   pci:0000:00:01.2
+SWUS	  S4	*disabled
+GP23	  S5	*enabled   pci:0000:00:02.3
+XHC1	  S4	*enabled   pci:0000:c3:00.4
+XHC0	  S3	*enabled   pci:0000:c5:00.0
+XHC3	  S3	*enabled   pci:0000:c5:00.3
+XHC4	  S3	*enabled   pci:0000:c5:00.4
+NHI0	  S3	*enabled   pci:0000:c5:00.5
+NHI1	  S3	*enabled   pci:0000:c5:00.6
+## gpe counters non-zero
+/sys/firmware/acpi/interrupts/gpe03:     962  EN     enabled      unmasked
+/sys/firmware/acpi/interrupts/gpe_all:     962
+## dmesg suspend
+[   56.521535] MARK-LINUX-S2IDLE
+[   59.990023] PM: suspend entry (s2idle)
+[   59.997265] Filesystems sync: 0.007 seconds
+[   60.001514] Freezing user space processes
+[   60.016804] Freezing user space processes completed (elapsed 0.015 seconds)
+[   60.016807] OOM killer disabled.
+[   60.016808] Freezing remaining freezable tasks
+[   60.018030] Freezing remaining freezable tasks completed (elapsed 0.001 seconds)
+[   60.018032] printk: Suspending console(s) (use no_console_suspend to debug)
+[   60.445598] ACPI: EC: interrupt blocked
+[   93.998163] ACPI: EC: interrupt unblocked
+[   95.418217] pci 0000:00:00.0: enhanced atomics disabled
+[   95.421654] nvme nvme0: D3 entry latency set to 10 seconds
+[   95.422579] amdgpu 0000:c3:00.0: [drm] PCIE GART of 512M enabled (table at 0x00000087FFB00000).
+[   95.422611] amdgpu 0000:c3:00.0: SMU is resuming...
+[   95.428307] nvme nvme0: 32/0/0 default/read/poll queues
+[   95.432998] amdgpu 0000:c3:00.0: SMU is resumed successfully!
+[   95.440137] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.3: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw: format 3 timestamp 0x66300c2d
+[   95.440141] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.3: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw: Mon 29 Apr 2024 22:07:57 GMT Daylight Time
+[   95.458505] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.1: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw: format 3 timestamp 0x66300c2d
+[   95.458509] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.1: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw: Mon 29 Apr 2024 22:07:57 GMT Daylight Time
+[   95.459262] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.2: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw: format 3 timestamp 0x66300c2d
+[   95.459267] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.2: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw: Mon 29 Apr 2024 22:07:57 GMT Daylight Time
+[   95.483765] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.0: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw: format 3 timestamp 0x66300c2d
+[   95.483772] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.0: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01.wmfw: Mon 29 Apr 2024 22:07:57 GMT Daylight Time
+[   95.762676] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.3: DSP1: Firmware: 1a00d6 vendor: 0x2 v3.11.18, 41 algorithms
+[   95.780468] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.3: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01-amp4.bin (v1): v3.11.18
+[   95.780472] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.3: DSP1: misc: C:\ProductSetting\HP\Chiron\Tuning_Relese\20250216\init\Right_Woofer (131118.360000.80216)-init.bin
+[   95.861311] amdgpu 0000:c3:00.0: ring gfx_0.0.0 uses VM inv eng 0 on hub 0
+[   95.861314] amdgpu 0000:c3:00.0: ring comp_1.0.0 uses VM inv eng 1 on hub 0
+[   95.861315] amdgpu 0000:c3:00.0: ring comp_1.1.0 uses VM inv eng 4 on hub 0
+[   95.861316] amdgpu 0000:c3:00.0: ring comp_1.2.0 uses VM inv eng 6 on hub 0
+[   95.861317] amdgpu 0000:c3:00.0: ring comp_1.3.0 uses VM inv eng 7 on hub 0
+[   95.861318] amdgpu 0000:c3:00.0: ring comp_1.0.1 uses VM inv eng 8 on hub 0
+[   95.861319] amdgpu 0000:c3:00.0: ring comp_1.1.1 uses VM inv eng 9 on hub 0
+[   95.861319] amdgpu 0000:c3:00.0: ring comp_1.2.1 uses VM inv eng 10 on hub 0
+[   95.861320] amdgpu 0000:c3:00.0: ring comp_1.3.1 uses VM inv eng 11 on hub 0
+[   95.861321] amdgpu 0000:c3:00.0: ring sdma0 uses VM inv eng 12 on hub 0
+[   95.861321] amdgpu 0000:c3:00.0: ring vcn_unified_0 uses VM inv eng 0 on hub 8
+[   95.861322] amdgpu 0000:c3:00.0: ring vcn_unified_1 uses VM inv eng 1 on hub 8
+[   95.861323] amdgpu 0000:c3:00.0: ring jpeg_dec_0 uses VM inv eng 4 on hub 8
+[   95.861323] amdgpu 0000:c3:00.0: ring jpeg_dec_1 uses VM inv eng 6 on hub 8
+[   95.861324] amdgpu 0000:c3:00.0: ring mes_kiq_3.1.0 uses VM inv eng 13 on hub 0
+[   95.861325] amdgpu 0000:c3:00.0: ring vpe uses VM inv eng 7 on hub 8
+[   95.944630] OOM killer enabled.
+[   95.944631] Restarting tasks: Starting
+[   95.945147] Restarting tasks: Done
+[   95.945157] efivarfs: resyncing variable state
+[   95.948912] efivarfs: finished resyncing variable state
+[   95.948943] random: crng reseeded on system resumption
+[   95.957956] PM: suspend exit
+[   96.244672] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.1: DSP1: Firmware: 1a00d6 vendor: 0x2 v3.11.18, 41 algorithms
+[   96.246664] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.2: DSP1: Firmware: 1a00d6 vendor: 0x2 v3.11.18, 41 algorithms
+[   96.487016] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.1: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01-amp2.bin (v1): v3.11.18
+[   96.487020] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.1: DSP1: misc: C:\ProductSetting\HP\Chiron\Tuning_Relese\20250216\init\Left_Tweeter (131118.360300.80216)-init.bin
+[   96.487668] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.0: DSP1: Firmware: 1a00d6 vendor: 0x2 v3.11.18, 41 algorithms
+[   96.503214] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.2: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01-amp3.bin (v1): v3.11.18
+[   96.503218] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.2: DSP1: misc: C:\ProductSetting\HP\Chiron\Tuning_Relese\20250216\init\Right_Tweeter (131118.360100.80216)-init.bin
+[   96.540739] cs35l56-hda i2c-CSC3554:00-cs35l54-hda.0: DSP1: cirrus/cs35l54-b0-dsp1-misc-103c8d01-amp1.bin (v1): v3.11.18

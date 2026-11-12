@@ -216,12 +216,11 @@ is broken platform-wide:
   off recovers.
 
 Do not suspend this laptop on FreeBSD until this is fixed.
-`amdsmu(4)` cannot help yet: `kldload amdsmu` succeeds but nothing attaches,
-because the driver only knows the Cezanne, Rembrandt, Phoenix and Krackan
-Point root complexes (`amdsmu_reg.h`), skips Strix Point on purpose (no S0i3
-idle mask), and this Strix Halo root complex is 1022:1507. Supporting it
-means adding Strix Halo's SMU mailbox to `amdsmu(4)`; the nvme(4) failure
-on resume may be a separate bug.
+Stock `amdsmu(4)` does not attach (its table lacks the Strix Halo root
+complex 1022:1507); with a one-row patch it attaches, but suspend then
+hangs with no wake at all. Linux reaches S0i3 and wakes on a key on the
+same laptop. Patch, Linux reference data and analysis:
+[docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md).
 
 ## Touchpad and touchscreen interrupts
 
