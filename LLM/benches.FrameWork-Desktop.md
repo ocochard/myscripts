@@ -233,6 +233,40 @@ number alone tells you whether MTP is worth enabling.**
   `--ctx-size` reserves it up front, so a large context costs memory even when
   unused.
 
+### Quantization quality: KLD, Δp, PPL
+
+Speed tables say how fast a quant is. These figures say how much the smaller
+file changed the model's answers. They come from `llama-perplexity
+--kl-divergence`, which runs the same text through a **reference** (the
+unquantized BF16 model) and the **quant**, and compares, at every token
+position, the probability each one gives to every possible next token.
+
+- **KLD (Kullback-Leibler divergence)**: one number per token position for
+  how different the two probability distributions are. 0 means identical.
+  Lower is better. It sees changes that do not yet flip the chosen word, so it
+  is the most sensitive of these figures.
+  - **Mean KLD** is the headline. Rough scale on this model: ~0.0007 is
+    near-lossless (Q8), ~0.005 is a good 4-bit quant.
+  - **Median / 99.0 % / 99.9 % / Max KLD**: the distribution of the per-token
+    values. Median is the typical token; 99 % and 99.9 % are the worst 1 in
+    100 and 1 in 1000 tokens, where a quant goes off the rails; Max is the
+    single worst token and is noisy.
+- **Same top token %**: how often the quant's most likely next token is the
+  reference's most likely token. 96.6 % means about 1 token in 30 would come
+  out differently under greedy decoding. Higher is better.
+- **Δp (delta p)**: for the token that actually comes next in the text, the
+  quant's probability minus the reference's. **RMS Δp** (root mean square)
+  is its typical size ignoring sign: 2 % means the quant is usually about 2
+  percentage points more or less confident than the reference.
+- **PPL (perplexity)**: how surprised the model is by the text; lower means it
+  predicted the text better. **PPL(Q)/PPL(base)** is the quant's perplexity
+  divided by the reference's. 1.000 is no change. A value *below* 1.000 does
+  **not** mean the quant is better than the original; it is noise, because
+  errors that raise and lower confidence cancel out in the average. Rank
+  quants on KLD, not PPL.
+- **`±` values** are standard errors. A gap smaller than about 2× the
+  combined error is not a real difference.
+
 ## Methodology
 
 Driven by `~/myscripts/LLM/bench-all.sh`. Two harnesses:
@@ -914,6 +948,81 @@ is also more accurate is an open question**; answering it means re-running
 `~/score_models.py` (4 fact-dense chapters × 3 reps), and note its
 "same `UD-Q8_K_XL` quant for every model" fairness axis cannot hold for
 Agents-A1 (Q8_0) or Flash-Next (IQ3_XXS only).
+
+## Qwen3.8-27B Unsloth Dynamic V3.1 vs V3: Q4_K_XL (2026-11-12)
+
+Scope: `frwk-bsd` only, llama.cpp **b12278 (`582eab718`)**, Mesa 26.2.2.
+`unsloth/Qwen3.8-27B-GGUF` re-uploaded its 2-6 bit quants as "Unsloth Dynamic
+V3.1" on 2026-11-10/11, claiming "5-10% accuracy at the same size". The test
+compares the same-name file from both uploads:
+
+| File | HF revision | Size |
+|---|---|---:|
+| UD3 `UD-Q4_K_XL` | `4ca720788` (2026-08-20) | 17 559 178 144 B |
+| UD3.1 `UD-Q4_K_XL` | `acb953b12` (2026-11-11) | 17 659 407 264 B |
+
+### llama-bench: UD3.1 Q4_K_XL vs Q8_K_XL (fa 1, b 2048, ub 512, r 2)
+
+| Quant | depth | pp4096 | tg128 |
+|---|---:|---:|---:|
+| UD3.1 Q4_K_XL (16.44 GiB) | 0 | 406.44 ± 0.58 | 12.46 ± 0.01 |
+| UD3.1 Q4_K_XL | 8192 | 362.83 ± 0.28 | 12.05 ± 0.01 |
+| UD3.1 Q4_K_XL | 32768 | 260.78 ± 2.23 | 11.08 ± 0.00 |
+| UD Q8_K_XL (29.29 GiB) | 0 | 400.96 ± 0.21 | 7.28 ± 0.00 |
+| UD Q8_K_XL | 8192 | 353.74 ± 0.40 | 7.12 ± 0.01 |
+| UD Q8_K_XL | 32768 | 255.98 ± 2.36 | 6.78 ± 0.00 |
+
+Q4 decodes 63-71 % faster (size ratio 1.78×); PP is within 2 %, compute bound.
+llama-bench labels the Q8_K_XL file "Q4_K - Medium": that is Unsloth's
+`general.file_type` metadata, the 29.29 GiB size is the real quant. UD3 was
+not speed-benched; it is 0.6 % smaller.
+
+### KL-divergence vs BF16
+
+Metric definitions: see [Quantization quality: KLD, Δp,
+PPL](#quantization-quality-kld-δp-ppl). Lower KLD is better.
+
+```sh
+llama-perplexity -m <BF16> -f wiki.test.raw --device Vulkan0 -fa on \
+  -b 2048 -ub 512 -c 512 --chunks 100 --kl-divergence-base bf16.kld
+llama-perplexity -m <quant> --device Vulkan0 -fa on -b 2048 -ub 512 \
+  -c 512 --chunks 100 --kl-divergence-base bf16.kld --kl-divergence
+```
+
+wikitext-2 test (md5 `7c0137fc034ddbc56a296bce31b4f7fb`), 100 chunks × 512
+tokens. Reference: Unsloth BF16 (2 shards, 54.7 GB), PPL 6.7440 ± 0.10317.
+`bf16.kld` is 12.7 GB.
+
+| vs BF16 | Q8_K_XL | UD3 Q4_K_XL | UD3.1 Q4_K_XL |
+|---|---:|---:|---:|
+| Mean KLD | 0.000689 ± 0.000065 | **0.005053 ± 0.000090** | 0.005750 ± 0.000204 |
+| Median KLD | 0.000228 | 0.002129 | 0.002256 |
+| 99.0 % KLD | 0.005666 | 0.051480 | 0.056007 |
+| 99.9 % KLD | 0.031785 | 0.190578 | 0.233276 |
+| Max KLD | 1.416482 | 0.824358 | 4.133566 |
+| Same top token | 98.941 ± 0.064 % | **96.863 ± 0.109 %** | 96.604 ± 0.113 % |
+| RMS Δp | 0.800 ± 0.096 % | 2.072 ± 0.058 % | 2.126 ± 0.073 % |
+| PPL(Q)/PPL(base) | 1.000965 | 1.000056 | 0.998721 |
+
+A first pass against `UD-Q8_K_XL` as reference gave the same ranking (mean
+KLD 0.005441 UD3 vs 0.005970 UD3.1). It was re-run on BF16 because the Q8 file
+comes from the same UD3 pipeline, which could favour UD3. The BF16 run rules
+that out: Q8_K_XL is 7× closer to BF16 than either Q4.
+
+### Verdict
+
+- **On this test UD3.1 is worse, not better.** Mean KLD is 14 % higher (about
+  3 standard errors); same-top-token is 0.26 points lower (about 1.6 standard
+  errors, not significant).
+- UD3.1's max KLD of 4.13 is one outlier token, not a trend: its median and
+  99 % KLD are only 5-9 % above UD3.
+- PPL below the BF16 reference is noise, not quality; read KLD instead.
+- **Limits:** English prose at 512 context. Unsloth's claim is about agentic and
+  coding benchmarks at 128K-256K context, which this does not test. The
+  `fbsd-quality` run (`fbsd-quality/README.md`, run-id `v38-q38-ud31-q4`)
+  covers the agentic side.
+- If running Q4_K_XL, the August UD3 file is the safer choice until a
+  long-context test says otherwise.
 
 ## Huihui abliterated 27B: Qwen3.8 vs Qwen3.6-MTP (Q8_0, 2026-08-20)
 
