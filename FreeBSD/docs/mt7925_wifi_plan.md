@@ -15,18 +15,22 @@ Patch: [mt7925_page_pool.patch](mt7925_page_pool.patch).
 | WM (RAM code) firmware start | no | yes, `WM Firmware Version: ____000000, Build Time: 20260106153120` |
 | Registers with net80211 (`net.wlan.devices: mt79250`) | no | yes |
 | `ifconfig wlan0 create`, scan | no | yes, 2.4 GHz and 5 GHz APs seen |
-| WPA association, traffic | no | not tested yet (no credentials on the test host) |
+| WPA2 association, DHCP | no | yes, 2.4 GHz 11ng HT20 and 5 GHz 11ac VHT80 |
+| Throughput (iperf3, TCP, 10 s) | no | best: TX 26, RX 52 Mbit/s (5 GHz, `hw_crypto=1`), see [Throughput](#throughput) |
+| Disconnect, reconnect, BSS switch, `kldunload` | no | yes (needs the idr fix below) |
 | Failure handling | `kldload` hangs forever, reboot needed | attach fails with ENXIO, `kldunload` works |
 
 The scan reports rates up to 54M; that is net80211's scan list column, not a measured link rate.
+Throughput is far below the PHY rate (130M on 2.4 GHz, 360M on 5 GHz), see
+[Throughput](#throughput).
 
 ## Why the stock driver does not work
 
 FreeBSD has the mt76 sources (`sys/contrib/dev/mediatek/mt76`) and module
 Makefiles (`sys/modules/mt76/core`, `sys/modules/mt76/mt7925`), but
 `sys/modules/Makefile` does not list `mt76`, so nothing is built.
-Building the modules by hand and loading them shows three separate problems,
-each hiding the next one.
+Building the modules by hand and loading them shows separate problems,
+each hiding the next one (a fourth one shows up once traffic flows).
 
 ### 1. No page pool: the driver gets no receive buffers
 
@@ -127,6 +131,61 @@ A related latent bug: `dma_map_single()` maps `vtophys()` of the buffer start
 for the whole length, which is only correct if the buffer is physically
 contiguous. `__kmalloc()` of more than a page does not guarantee that.
 
+### 4. Station teardown panics in idr_remove()
+
+Forcing a switch from one BSS to another (`wpa_cli bssid` + `reassociate`)
+made LinuxKPI refuse the transition
+(`lkpi_iv_newstate: error 95 during state transition 2 (AUTH) -> 2 (AUTH)`)
+and tear the station down, which panicked:
+
+```
+__mtx_lock_sleep
+idr_remove (id=-1)          linux_idr.c:276
+mt76_tx_status_skb_get
+mt76_wcid_cleanup
+__mt76_sta_remove
+mt76_sta_state
+lkpi_80211_mo_sta_state
+lkpi_sta_auth_to_scan
+```
+
+mt76 cleans the same station entry (`wcid`) twice, which is fine on Linux:
+there an idr has no lock and `idr_destroy()` only frees the tree, leaving an
+empty idr that can still be searched.
+LinuxKPI's `idr_destroy()` also destroys the idr's mutex, so the second
+cleanup locks a destroyed mutex and faults.
+LinuxKPI already guards a second `idr_destroy()` with
+`IDR_LOCK_INITALIZED()`; the patch adds the same guard to `idr_remove()`,
+`idr_find()` and `idr_get_next()`, which then return NULL like on an empty
+idr. With it, the same BSS switch logs error 95 and reconnects, no panic.
+`idr_for_each()` needs nothing: it does not lock and a destroyed idr has no
+tree.
+
+## Throughput
+
+iperf3 to a wired host, 10 s, TCP unless noted, Mbit/s:
+
+| Link | `hw_crypto=0` TX / RX | `hw_crypto=1` TX / RX |
+|---|---|---|
+| 2.4 GHz ch 11, HT20, PHY 130M, -49 dBm | 27.8 / 26.2 | 23.1 / 35.3 |
+| 5 GHz ch 36, VHT80, PHY 360M, about -73 dBm | 22.4 / 35.4 | 26.0 / 51.7 |
+| 2.4 GHz, UDP TX at 300M offered | | 66.7 delivered |
+
+- With `compat.linuxkpi.80211.hw_crypto=0` (the default) CCMP runs in
+  software and `linux_80211.c` disables RX A-MPDU
+  (`ifconfig -v wlan0` shows `-ampdurx`), because modern firmware cannot
+  aggregate frames it cannot decrypt.
+  The loader tunable `compat.linuxkpi.80211.hw_crypto=1` turns `ampdu` on in
+  both directions and lifts RX by 35 to 45%.
+- TX stays at 23 to 26 Mbit/s with TCP whatever the link, but UDP pushes 67
+  Mbit/s on the 2.4 GHz HT20 link: the radio path is not the limit, the TCP
+  TX path is. Not found yet.
+- `lkpi_ic_addba_request: mo_ampdu_action returned AMPDU_TX_START_IMMEDIATE`
+  is informational: LinuxKPI logs it and continues with net80211's ADDBA
+  request.
+- The 5 GHz AP is weak at the test position (RSSI 23 to 29), which limits
+  the 5 GHz numbers too.
+
 ## How to reproduce
 
 Tested on the old-base worktree `~/freebsd-mt76` (6e87733f73ff), because a full
@@ -154,13 +213,17 @@ sudo install -m 555 $HOME/obj-mt76-mod$HOME/freebsd-mt76/amd64.amd64/sys/modules
     /boot/kernel.mt76/
 
 sudo pkg install wifi-firmware-mt76-kmod-mt7925
-sudo nextboot -k kernel.mt76 -e compat.linuxkpi.skb.mem_limit=1
+sudo nextboot -k kernel.mt76 -e compat.linuxkpi.skb.mem_limit=1 \
+    -e compat.linuxkpi.80211.hw_crypto=1
+# WPA2 config: ctrl_interface=/var/run/wpa_supplicant + network={ssid psk}
 sudo shutdown -r now
 
 # after the reboot
 sudo kldload mt76_core if_mt7925
 sudo ifconfig wlan0 create wlandev mt79250 up
 sudo ifconfig wlan0 scan
+sudo wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
+sudo dhclient wlan0
 ```
 
 ## Alternative: OpenBSD mwx(4)
@@ -174,8 +237,8 @@ start slower than what the LinuxKPI driver already scans with.
 
 ## Plan
 
-1. Association test with WPA2 on the test host (wpa_supplicant), then
-   throughput with iperf3, then suspend/resume and `kldunload`.
+1. Throughput: find why TCP TX stays at 23 to 26 Mbit/s when UDP TX reaches
+   67, compare with Linux on the same AP, then suspend/resume.
 2. Check what the FreeBSD wiki said was still missing (LinuxKPI IDR updates)
    once traffic flows: the scan and firmware start did not hit it.
 3. Fix the DMA mapping properly instead of relying on the loader tunable:
@@ -184,8 +247,8 @@ start slower than what the LinuxKPI driver already scans with.
 4. Rebase on current main, retest, and send to bz@ (owner of LinuxKPI 802.11
    and the page pool work) as input for his `struct page` rework: the side
    table is a stopgap until `PAGE_IS_LKPI_PAGE` exists, not a replacement.
-5. The init-failure hang fix stands on its own: extend it to mt7915, mt7921
-   and mt7996 and submit it separately.
+5. The init-failure hang fix and the idr fix stand on their own: extend the
+   hang fix to mt7915, mt7921 and mt7996, and submit both separately.
 6. Report results on PR 273623 (mt76 meta-bug).
 
 ## Test log
@@ -195,3 +258,6 @@ start slower than what the LinuxKPI driver already scans with.
 | 2026-11-12 | stock, modules built by hand | page pool warning, MCU timeouts, `hardware init failed`, kldload hung, reboot |
 | 2026-11-12 | kernel.mt76: page pool side table + init fix | MCU replies, `Failed to send patch: -12` x10, attach returns ENXIO, kldload returns |
 | 2026-11-12 | kernel.mt76 + `compat.linuxkpi.skb.mem_limit=1` | firmware up, `mt79250` registered, wlan0 scan lists 2.4 and 5 GHz APs |
+| 2026-11-12 | same | WPA2 on 2.4 GHz HT20: 27.8/26.2 Mbit/s; forced BSS switch: error 95 then panic in `idr_remove()` |
+| 2026-11-12 | same + idr fix | WPA2 on 5 GHz VHT80: 22.4/35.4 Mbit/s; disconnect, reconnect, BSS switch and `kldunload` clean |
+| 2026-11-12 | same + `compat.linuxkpi.80211.hw_crypto=1` | `ampdu` on; 5 GHz 26.0/51.7, 2.4 GHz 23.1/35.3 Mbit/s; UDP TX 66.7 Mbit/s |

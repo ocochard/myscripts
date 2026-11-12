@@ -112,9 +112,9 @@ mt7921 is in a call for testing since July 2026, with mixed results;
 mt7925 comes next and "needs LinuxKPI IDR updates";
 all mt76 chips wait on a LinuxKPI rework for Linux page pools.
 Impact: no Wi-Fi; use USB or dock Ethernet. Track PR 273623 (mt76 meta-bug).
-Experiment (2026-11-12): with a LinuxKPI page pool side table, an init-failure fix and
-`compat.linuxkpi.skb.mem_limit=1`, the firmware starts and `wlan0` scans 2.4 and 5 GHz;
-association not tested yet. See [docs/mt7925_wifi_plan.md](docs/mt7925_wifi_plan.md).
+Experiment (2026-11-12): with a LinuxKPI page pool side table, an init-failure fix, an idr fix and
+`compat.linuxkpi.skb.mem_limit=1` (plus `compat.linuxkpi.80211.hw_crypto=1` for A-MPDU), WPA2 works on 2.4 and 5 GHz (11ac), at 26 Mbit/s TX and 52 Mbit/s RX at best;
+see [docs/mt7925_wifi_plan.md](docs/mt7925_wifi_plan.md).
 
 ### IOMMU (0:0:2)
 
