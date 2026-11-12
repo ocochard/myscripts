@@ -14,6 +14,53 @@ index 77ef47064fa5..c3a4897d5b34 100644
  }
  
  static inline struct sk_buff *
+diff --git sys/compat/linuxkpi/common/src/linux_80211.c sys/compat/linuxkpi/common/src/linux_80211.c
+index cde4b820b4dd..a4eed95513e1 100644
+--- sys/compat/linuxkpi/common/src/linux_80211.c
++++ sys/compat/linuxkpi/common/src/linux_80211.c
+@@ -9079,6 +9079,33 @@ linuxkpi_ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
+ 	return (sta);
+ }
+ 
++/*
++ * mac80211 gives every frame it dequeues an airtime estimate (for AQL), and
++ * drivers such as mt76 throttle frames without one.  Estimate it from the
++ * node's net80211 TX rate; we have no AQL limits ourselves.
++ */
++static void
++lkpi_80211_txq_set_time_est(struct ieee80211_txq *txq, struct sk_buff *skb)
++{
++	struct ieee80211_tx_info *info;
++	struct ieee80211_node *ni;
++	uint32_t kbps, us;
++
++	kbps = 0;
++	if (txq->sta != NULL) {
++		ni = STA_TO_LSTA(txq->sta)->ni;
++		if (ni != NULL &&
++		    ni->ni_txrate.type != IEEE80211_NODE_TXRATE_UNDEFINED)
++			kbps = ieee80211_node_get_txrate_kbit(ni);
++	}
++	if (kbps == 0)
++		kbps = 6000;
++	us = howmany((uint64_t)skb->len * 8 * 1000, kbps);
++	/* 10 bit field in 4us units. */
++	info = IEEE80211_SKB_CB(skb);
++	info->tx_time_est = MAX(1, MIN(howmany(us, 4), 1023));
++}
++
+ struct sk_buff *
+ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
+     struct ieee80211_txq *txq)
+@@ -9108,6 +9135,8 @@ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
+ 	if (skb != NULL)
+ 		ltxq->frms_dequeued++;
+ 	LKPI_80211_LTXQ_UNLOCK(ltxq);
++	if (skb != NULL)
++		lkpi_80211_txq_set_time_est(txq, skb);
+ 
+ stopped:
+ 	return (skb);
 diff --git sys/compat/linuxkpi/common/src/linux_idr.c sys/compat/linuxkpi/common/src/linux_idr.c
 index 7e5f0d28867e..c8852cf7ef05 100644
 --- sys/compat/linuxkpi/common/src/linux_idr.c

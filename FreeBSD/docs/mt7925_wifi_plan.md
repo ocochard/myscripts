@@ -323,6 +323,27 @@ LinuxKPI's `napi_consume_skb()` (also on current main) is
 the NAPI skb cache. After the fix, 556000 more allocations left the in-use
 counts unchanged; TCP TX 165, 276, 195 Mbit/s.
 
+### Airtime estimate for dequeued frames (in the patch, not yet measured)
+
+`linuxkpi_ieee80211_tx_dequeue()` now sets `info->tx_time_est` on every
+frame it hands to the driver, as mac80211 does in `ieee80211_tx_dequeue()`:
+frame length divided by the node's net80211 TX rate
+(`ieee80211_node_get_txrate_kbit()`, 6 Mbit/s if unknown), stored in the
+10-bit field in 4 µs units. mt76 only tests the field for non-zero, so this
+alone lifts the 16-frame non-AQL cap.
+
+Two limits of this version:
+
+- The rate is net80211's view of the link; LinuxKPI does not update
+  `ni_txrate` from the firmware's rate control, so the estimate is rough.
+- LinuxKPI has no Airtime Queue Limits. On Linux, mac80211 stops dequeuing
+  once a station has about 5 to 12 ms of estimated airtime in flight. Here,
+  frames flow until mt76 stops the queue because the DMA ring is nearly
+  full, so the queue (and latency) moves into the hardware ring: ping under
+  load was 30 to 60 ms with the cap raised, against 4 ms idle. Real AQL in
+  LinuxKPI (pending airtime per station and AC, decremented on TX status,
+  dequeue refused above the limit) is the follow-up.
+
 ### RX: TCP capped, UDP is not
 
 | Test (5 GHz ch 100, cap 4096) | Result |
@@ -433,10 +454,9 @@ start slower than what the LinuxKPI driver already scans with.
 
 ## Plan
 
-1. Throughput: give LinuxKPI frames an airtime estimate (`tx_time_est`)
-   so mt76's 16-frame non-AQL cap stops throttling TX (the test raised the
-   constant instead), then find why TCP RX stays at 70 to 80 Mbit/s while
-   UDP RX reaches 274; then suspend/resume.
+1. Throughput: measure the `tx_time_est` estimate with the stock mt76 cap,
+   add AQL limits in LinuxKPI for latency, then find why TCP RX stays at 70
+   to 80 Mbit/s while UDP RX reaches 274; then suspend/resume.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
    rc.conf) and document it; `country FR` was enough for channel 100.
 3. The wiki's "LinuxKPI IDR updates" was at least the teardown panic fixed
