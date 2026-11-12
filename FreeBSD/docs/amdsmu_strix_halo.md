@@ -110,11 +110,45 @@ One `systemctl suspend` on Ubuntu (Linux 7.0.0-43), woken with the space key:
   suspend Linux logged `ACPI: EC: interrupt blocked` and, on resume,
   `ACPI: EC: interrupt unblocked`.
 - GPIO pins armed for S0i3 wake by `pinctrl_amd`: #18 (edge), #54 (edge),
-  #58, #59, #61, #62 (level). #61 and #62 match the touchpad and
-  touchscreen GpioInt pins in the hardware doc.
+  #58, #59, #61, #62 (level): the `_AEI` pins, see below.
 - ACPI wake enabled (`/proc/acpi/wakeup`): PCIe root ports GP11, GP12,
   GP23; USB controllers XHC0, XHC1, XHC3, XHC4; USB4 NHI0, NHI1.
 - NVMe resumes normally (`nvme0: 32/0/0 default/read/poll queues`).
+
+## The GPIO wake pins
+
+`\_SB.GPIO` (AMDI0030, `amdgpio(4)`) has an `_AEI` (ACPI event interrupts)
+method in SSDT 20 that returns six GPIO interrupt descriptors as a raw
+buffer. Decoded (interrupt flags word: bit 0 edge, bits 1-2 polarity, bit 4
+wake capable), with what the `_EVT` handler does for each pin:
+
+| Pin | Flags | Trigger | `_EVT` | Wakes for |
+|---|---|---|---|---|
+| 18 | 0x0013 | edge, active low, ExclusiveAndWake | `Notify (\_SB.PCI0.GP23, 2)` | PCIe root port GP23 (the Wi-Fi slot, `GP23.NCRD`) |
+| 54 | 0x0011 | edge, active high, ExclusiveAndWake | `Notify (MP2C, 2)`, `PWRB 0x80` | the power button |
+| 58 | 0x0010 | level, active high, ExclusiveAndWake | `Notify (XHC0, 2)` | USB controller XHC0 |
+| 59 | 0x0010 | level, active high, ExclusiveAndWake | `Notify (XHC1, 2)` | USB controller XHC1 |
+| 61 | 0x0010 | level, active high, ExclusiveAndWake | `Notify (HDEF, 2)` | HD audio |
+| 62 | 0x0010 | level, active high, ExclusiveAndWake | `Notify (ACP, 2)` | audio coprocessor |
+
+These are exactly the six pins Linux arms for S0i3 wake. (The touchpad and
+touchscreen are on pins 8 and 0, not in `_AEI`.) On FreeBSD,
+`kldload amdgpio` finds the same set (`gpiobus0: <unknown device> at pins
+61-62,58-59,18,54`, the `gpio_aei` child), but:
+
+- `acpi_gpiobus_enumerate_aei()` copies the pin numbers and ignores each
+  descriptor's wake flag;
+- `amdgpio.h` defines the per-pin wake enables (`WAKE_CNTRL_OFF_S0I3` 13,
+  `_S3` 14, `_S4` 15), and nothing in the tree ever sets them;
+- `amdgpio_suspend()` masks and disables the interrupt of every pin, the
+  wake pins included ("In the future we should only mask non-wake
+  interrupts").
+
+So with FreeBSD no GPIO pin can wake the SoC from S0i3, the power button
+included. Linux's `pinctrl_amd` sets the S0i3/S3 wake bits of each
+wake-capable `_AEI` interrupt and masks only the other pins on suspend.
+Also, `amdgpio` is not loaded at boot without the PnP-info patch from the
+CS35L54 work, and it was not loaded in the FreeBSD suspend test.
 
 ## FreeBSD's suspend-to-idle path
 
@@ -131,9 +165,7 @@ loop that checks why it woke and idles again. Compared with Linux:
   woke the shallow idle), plus the `_PRW` wake GPEs from
   `acpi_wake_prep_walk()`. Whether S0i3 needs the GPE armed for wake is
   not known;
-- GPIO wake: Linux's `pinctrl_amd` sets the S0i3 wake bits of the pins
-  above; FreeBSD's `amdgpio(4)` has no wake support, and it was not even
-  loaded during the test (it has no PnP info yet, see the CS35L54 work);
+- GPIO wake: see the previous section; FreeBSD never arms the wake pins;
 - devices: Linux puts NVMe and others in D3 and brings them back; FreeBSD's
   NVMe controller failed on resume from the shallow idle already.
 
@@ -141,8 +173,10 @@ These are leads, not verified causes.
 
 ## Next steps
 
-1. Load `amdgpio` and check, without suspending, which pins `_AEI` and
-   GpioInt resources declare as wake capable.
+1. `amdgpio(4)`: on suspend, keep the wake-capable `_AEI` pins enabled with
+   their S0i3/S3 wake bits set (from the `_AEI` wake flags), mask only the
+   others, and restore on resume; load it with the suspend test (power
+   button = pin 54).
 2. Arm the EC GPE for wake during suspend-to-idle, as Linux does, and turn
    `do_idle()` into the loop its comment describes.
 3. Look at nvme(4) suspend/resume on this controller (it failed even
@@ -161,3 +195,4 @@ These are leads, not verified causes.
 | 2026-11-12 | patched amdsmu | attaches; SMU 100.7.0, 19 active IP blocks, metrics table version 3 |
 | 2026-11-12 | patched amdsmu, `zzz` | sleeps, does not wake (key, power button), fans spin up; forced power off |
 | 2026-11-13 | Ubuntu, Linux 7.0.0-43 | S0i3 success, 32.4 s; woken by space key via EC GPE 03; resume clean |
+| 2026-11-13 | FreeBSD, `kldload amdgpio`, `_AEI` decode | the six `_AEI` pins are all wake capable; `amdgpio_suspend()` disables them and no code sets their wake bits |
