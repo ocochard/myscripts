@@ -31,10 +31,137 @@ index 7e5f0d28867e..c8852cf7ef05 100644
  	for (; id <= idr_max(idr); id++) {
  		res = idr_find_locked(idr, id);
 diff --git sys/compat/linuxkpi/common/src/linux_skbuff.c sys/compat/linuxkpi/common/src/linux_skbuff.c
-index 6908101f25af..c1d0fb41d866 100644
+index 6908101f25af..3b806f17ef82 100644
 --- sys/compat/linuxkpi/common/src/linux_skbuff.c
 +++ sys/compat/linuxkpi/common/src/linux_skbuff.c
-@@ -351,11 +351,13 @@ linuxkpi_kfree_skb(struct sk_buff *skb)
+@@ -38,10 +38,14 @@
+ 
+ #include <sys/param.h>
+ #include <sys/types.h>
++#include <sys/domainset.h>
+ #include <sys/kernel.h>
+ #include <sys/malloc.h>
+ #include <sys/sysctl.h>
+ 
++#include <vm/vm.h>
++#include <vm/vm_extern.h>
++#include <vm/vm_kern.h>
+ #include <vm/uma.h>
+ 
+ #ifdef DDB
+@@ -88,8 +92,65 @@ SYSCTL_INT(_compat_linuxkpi_skb, OID_AUTO, mem_limit, CTLFLAG_RDTUN,
+     "1=32bit, 2=36bit, other=undef (currently 32bit)");
+ 
+ static MALLOC_DEFINE(M_LKPISKB, "lkpiskb", "Linux KPI skbuff compat");
++
++/*
++ * contigmalloc(9) for every skb gets slow once low memory fragments; serve
++ * sizes up to a page from per-size UMA zones backed by memory below the
++ * limit instead.  Items are aligned to their size so never cross a page.
++ */
++#define	LKPI_SKB_ZONE_MINSIZE	256
++static uma_zone_t lkpi_skb_zone[8];
++static char lkpi_skb_zone_name[8][16];
++static u_int lkpi_skb_nzones;
++static vm_paddr_t lkpi_skb_high;
++
++static void *
++lkpi_skb_slab_alloc(uma_zone_t zone, vm_size_t size, int domain,
++    uint8_t *pflag, int wait)
++{
++
++	*pflag = UMA_SLAB_KERNEL;
++	return ((void *)kmem_alloc_contig_domainset(DOMAINSET_FIXED(domain),
++	    size, wait, 0, lkpi_skb_high, PAGE_SIZE, 0, VM_MEMATTR_DEFAULT));
++}
++
++static void
++lkpi_skb_slab_free(void *item, vm_size_t size, uint8_t pflag)
++{
++
++	kmem_free(item, size);
++}
++
++static uma_zone_t
++lkpi_skb_zone_find(size_t len)
++{
++	u_int i;
++
++	for (i = 0; i < lkpi_skb_nzones; i++)
++		if (len <= (LKPI_SKB_ZONE_MINSIZE << i))
++			return (lkpi_skb_zone[i]);
++	return (NULL);
++}
+ #endif
+ 
++static void
++lkpi_skb_free_head(struct sk_buff *skb)
++{
++#ifdef	SKB_DMA32_MALLOC
++	uma_zone_t zone;
++
++	if (__predict_false(linuxkpi_skb_memlimit != 0)) {
++		zone = lkpi_skb_zone_find(skb->end - skb->head);
++		if (zone != NULL)
++			uma_zfree(zone, skb->head);
++		else
++			free(skb->head, M_LKPISKB);
++		return;
++	}
++#endif
++	kfree(skb->head);
++}
++
+ struct sk_buff *
+ linuxkpi_alloc_skb(size_t size, gfp_t gfp)
+ {
+@@ -115,22 +176,17 @@ linuxkpi_alloc_skb(size_t size, gfp_t gfp)
+ 	 * We assume no one calls kfree directly on the skb.
+ 	 */
+ 	if (__predict_false(linuxkpi_skb_memlimit != 0)) {
+-		vm_paddr_t high;
++		uma_zone_t zone;
+ 
+-		switch (linuxkpi_skb_memlimit) {
+-#ifdef __LP64__
+-		case 2:
+-			high = (0xfffffffff);	/* 1<<36 really. */
+-			break;
+-#endif
+-		case 1:
+-		default:
+-			high = (0xffffffff);	/* 1<<32 really. */
+-			break;
++		zone = lkpi_skb_zone_find(len);
++		if (zone != NULL) {
++			p = uma_zalloc(zone, linux_check_m_flags(gfp) | M_ZERO);
++		} else {
++			len = roundup_pow_of_two(len);
++			p = contigmalloc(len, M_LKPISKB,
++			    linux_check_m_flags(gfp) | M_ZERO, 0, lkpi_skb_high,
++			    PAGE_SIZE, 0);
+ 		}
+-		len = roundup_pow_of_two(len);
+-		p = contigmalloc(len, M_LKPISKB,
+-		    linux_check_m_flags(gfp) | M_ZERO, 0, high, PAGE_SIZE, 0);
+ 	} else
+ #endif
+ 	p = __kmalloc(len, linux_check_m_flags(gfp) | M_ZERO);
+@@ -272,12 +328,7 @@ lkpi___skb_linearize(struct sk_buff *skb)
+ 		skb->_flags &= ~_SKB_FLAGS_SKBEXTFRAG;
+ 	}
+ 
+-#ifdef	SKB_DMA32_MALLOC
+-	if (__predict_false(linuxkpi_skb_memlimit != 0))
+-		free(skb->head, M_LKPISKB);
+-	else
+-#endif
+-	kfree(skb->head);
++	lkpi_skb_free_head(skb);
+ 
+ 	skb->head = new->head;
+ 	skb->data = new->data;
+@@ -351,11 +402,13 @@ linuxkpi_kfree_skb(struct sk_buff *skb)
  			shinfo->frags[fragno].size = 0;
  			shinfo->frags[fragno].offset = 0;
  			shinfo->frags[fragno].page = NULL;
@@ -50,7 +177,7 @@ index 6908101f25af..c1d0fb41d866 100644
  				__free_page(p);
  			count++;
  		}
-@@ -365,7 +367,13 @@ linuxkpi_kfree_skb(struct sk_buff *skb)
+@@ -365,16 +418,17 @@ linuxkpi_kfree_skb(struct sk_buff *skb)
  		void *p;
  
  		p = skb->head;
@@ -64,6 +191,66 @@ index 6908101f25af..c1d0fb41d866 100644
 +			skb_free_frag(p);
  		skb->head = NULL;
  	}
+ 
+-#ifdef	SKB_DMA32_MALLOC
+-	if (__predict_false(linuxkpi_skb_memlimit != 0))
+-		free(skb->head, M_LKPISKB);
+-	else
+-#endif
+-	kfree(skb->head);
++	lkpi_skb_free_head(skb);
+ 	uma_zfree(skbzone, skb);
+ }
+ 
+@@ -385,6 +439,38 @@ lkpi_skbuff_init(void *arg __unused)
+ 	    sizeof(struct sk_buff) + sizeof(struct skb_shared_info),
+ 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
+ 	/* Do we need to apply limits? */
++
++#ifdef	SKB_DMA32_MALLOC
++	if (linuxkpi_skb_memlimit != 0) {
++		char *name;
++		size_t size;
++
++		switch (linuxkpi_skb_memlimit) {
++#ifdef __LP64__
++		case 2:
++			lkpi_skb_high = (0xfffffffff);	/* 1<<36 really. */
++			break;
++#endif
++		case 1:
++		default:
++			lkpi_skb_high = (0xffffffff);	/* 1<<32 really. */
++			break;
++		}
++		for (size = LKPI_SKB_ZONE_MINSIZE; size <= PAGE_SIZE &&
++		    lkpi_skb_nzones < nitems(lkpi_skb_zone); size <<= 1) {
++			name = lkpi_skb_zone_name[lkpi_skb_nzones];
++			snprintf(name, sizeof(lkpi_skb_zone_name[0]),
++			    "lkpiskb %zu", size);
++			lkpi_skb_zone[lkpi_skb_nzones] = uma_zcreate(name, size,
++			    NULL, NULL, NULL, NULL, size - 1, 0);
++			uma_zone_set_allocf(lkpi_skb_zone[lkpi_skb_nzones],
++			    lkpi_skb_slab_alloc);
++			uma_zone_set_freef(lkpi_skb_zone[lkpi_skb_nzones],
++			    lkpi_skb_slab_free);
++			lkpi_skb_nzones++;
++		}
++	}
++#endif
+ }
+ SYSINIT(linuxkpi_skbuff, SI_SUB_DRIVERS, SI_ORDER_FIRST, lkpi_skbuff_init, NULL);
+ 
+@@ -392,6 +478,10 @@ static void
+ lkpi_skbuff_destroy(void *arg __unused)
+ {
+ 	uma_zdestroy(skbzone);
++#ifdef	SKB_DMA32_MALLOC
++	while (lkpi_skb_nzones > 0)
++		uma_zdestroy(lkpi_skb_zone[--lkpi_skb_nzones]);
++#endif
+ }
+ SYSUNINIT(linuxkpi_skbuff, SI_SUB_DRIVERS, SI_ORDER_SECOND, lkpi_skbuff_destroy, NULL);
  
 diff --git sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c
 index 93e649faafd7..bfdad95992d4 100644

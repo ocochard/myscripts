@@ -280,6 +280,26 @@ DMA32 pages for skbs up to a page, `contigmalloc()` only for the rare larger
 ones such as firmware chunks), or make the DMA mapping of a page-crossing
 buffer work without `contigmalloc()`.
 
+### The allocator fix (in the patch, not yet measured)
+
+`linuxkpi_alloc_skb()` with `compat.linuxkpi.skb.mem_limit` set now takes
+the skb data buffer from one of five UMA zones (256, 512, 1024, 2048 and
+4096 bytes on amd64) instead of calling `contigmalloc()` every time:
+
+- UMA keeps freed buffers in per-CPU caches, so a typical TX skb (about
+  1.6 KB, the 2048 zone) is reused without touching the page allocator.
+- Each zone gets its slabs from `kmem_alloc_contig_domainset()` limited to
+  the same physical range as before (below 4 GB for `mem_limit=1`), so the
+  device's 32-bit DMA mask still holds without bouncing.
+- Each zone is created with an alignment equal to its item size, the trick
+  busdma's own `busdma_bufalloc` uses on arm/arm64 (not built on amd64), so
+  an item never crosses a page boundary and maps as one DMA segment.
+- Larger buffers (firmware chunks of 4096 bytes plus a header) still use
+  `contigmalloc()`; there are a few per firmware load.
+- The free side finds the zone again from `skb->end - skb->head`, the size
+  the buffer was allocated with (both are only set at allocation, and copied
+  together in `__skb_linearize`).
+
 ### RX: TCP capped, UDP is not
 
 | Test (5 GHz ch 100, cap 4096) | Result |
