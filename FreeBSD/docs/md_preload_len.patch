@@ -1,0 +1,30 @@
+md(4): read hint.md.N.len with resource_long_value() into a size_t, so a
+ram disk of 4 GiB or more attaches whole instead of truncated to len mod
+2^32, or skipped when the size is a multiple of 4 GiB.
+
+Tutorial: FreeBSD/docs/md_preload_len.md
+Reported by: llm-postcr, POSTCR-46c2d93c572865f6441788ad8416ff7ff971829a-2
+Base: main at 75734a4b6d0b (2026-11-08).
+
+diff --git a/sys/dev/md/md.c b/sys/dev/md/md.c
+index f29490d12b85..0875832d667b 100644
+--- a/sys/dev/md/md.c
++++ b/sys/dev/md/md.c
+@@ -2080,7 +2080,7 @@ g_md_init(struct g_class *mp __unused)
+ 	caddr_t mod;
+ 	u_char *ptr, *name, *type;
+ 	u_char scratch[40];
+-	unsigned len;
++	size_t len;
+ 	int i;
+ 	vm_offset_t paddr;
+ 
+@@ -2129,7 +2129,7 @@ g_md_init(struct g_class *mp __unused)
+ 	for (int i = 0; i < 32; i++) {
+ 		if (resource_long_value("md", i, "physaddr",
+ 			(long *) &paddr) != 0 ||
+-		    resource_int_value("md", i, "len", &len) != 0)
++		    resource_long_value("md", i, "len", (long *)&len) != 0)
+ 		        break;
+ 		/*
+ 		 * Map the memory into the kernel pmap, if not already present.

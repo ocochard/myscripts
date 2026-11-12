@@ -1768,27 +1768,33 @@ the module metadata, the same way Linux learns where its initrd is.
 
 #### The fallback needed four fixes (2026-09-28)
 
-On stock `main` the `md` path does not work. Four defects, all found on the
-hardware above, plus two found on 2026-10-19 booting the 15.1 disc1 ISO under
-bhyve. Patches and write-ups are in `FreeBSD/docs/`:
+Before 2026-11-08 the `md` path did not work on `main`. Four defects, all
+found on the hardware above, plus two found on 2026-10-19 booting the 15.1
+disc1 ISO under bhyve. Patches and write-ups are in `FreeBSD/docs/`:
 
 | # | patch | component | defect | symptom without it | write-up | in hosted `loader.x64.efi` | upstream |
 |---|---|---|---|---|---|---|---|
-| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (`EfiReservedMemoryType`, built 2026-11-08) | no |
-| 2 | [`loader_disk_parsedev.patch`](docs/loader_disk_parsedev.patch) | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | [`bugreport_loader_disk_parsedev_names.md`](docs/bugreport_loader_disk_parsedev_names.md) | yes | no |
-| 3 | [`loader_set_currdev_disk_devdesc.patch`](docs/loader_set_currdev_disk_devdesc.patch) | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | [`bugreport_loader_set_currdev_devsw_undersized.md`](docs/bugreport_loader_set_currdev_devsw_undersized.md) | yes | no |
-| 4 | [`loader_md_partition_probe.patch`](docs/loader_md_partition_probe.patch) | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md) | yes | no |
-| 5 | [`loader_memdisk_trim.patch`](docs/loader_memdisk_trim.patch) | loader | 4x-guessed decompression buffer never trimmed | 2 GiB lost to the kernel for the disc1 ISO; with #1 the ram disk can end up above the direct map and #6 fires | [`loader_memdisk_trim.md`](docs/loader_memdisk_trim.md) | yes (since 2026-10-19) | no |
-| 6 | [`md_preload_mapdev.patch`](docs/md_preload_mapdev.patch) | kernel (`md(4)`) | `pmap_map()` assumes the hint range is in the direct map | with #1, `Fatal trap 12` in `mdstart_preload` when the ram disk sits above `dmaplimit` | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md), section 3 | n/a: must be in the booted kernel | no |
+| 1 | [`loader_memdisk_memtype.patch`](docs/loader_memdisk_memtype.patch) | loader | ram disk allocated `EfiLoaderData` | boots, then userland decays: `invalid file format`, `file` says `data`, SIGSEGVs | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md) | yes (`EfiReservedMemoryType`, built 2026-11-08) | `46c2d93c5728` |
+| 2 | [`loader_disk_parsedev.patch`](docs/loader_disk_parsedev.patch) | loader | `disk_parsedev()` hardcodes `disk`/`vdisk` | `md0s2a:` can be printed, never parsed back | [`bugreport_loader_disk_parsedev_names.md`](docs/bugreport_loader_disk_parsedev_names.md) | yes | `d687c9fc7efe` |
+| 3 | [`loader_set_currdev_disk_devdesc.patch`](docs/loader_set_currdev_disk_devdesc.patch) | loader | `set_currdev_devsw()` passes a plain `devdesc` | plausible-looking device name built from stack garbage | [`bugreport_loader_set_currdev_devsw_undersized.md`](docs/bugreport_loader_set_currdev_devsw_undersized.md) | yes | `9ff8ab26dcac` |
+| 4 | [`loader_md_partition_probe.patch`](docs/loader_md_partition_probe.patch) | loader | `md_open()` never calls `disk_open()` | `MD not present` after a byte-perfect download | [`bugreport_loader_md_no_partition_probe.md`](docs/bugreport_loader_md_no_partition_probe.md) | yes | `6046a35b71c2` |
+| 5 | [`loader_memdisk_trim.patch`](docs/loader_memdisk_trim.patch) | loader | 4x-guessed decompression buffer never trimmed | 2 GiB lost to the kernel for the disc1 ISO; with #1 the ram disk can end up above the direct map and #6 fires | [`loader_memdisk_trim.md`](docs/loader_memdisk_trim.md) | yes (since 2026-10-19) | `a2adf568cdfe` |
+| 6 | [`md_preload_mapdev.patch`](docs/md_preload_mapdev.patch) | kernel (`md(4)`) | `pmap_map()` assumes the hint range is in the direct map | with #1, `Fatal trap 12` in `mdstart_preload` when the ram disk sits above `dmaplimit` | [`bugreport_loader_memdisk_memtype.md`](docs/bugreport_loader_memdisk_memtype.md), section 3 | n/a: must be in the booted kernel | `75734a4b6d0b` |
+| 7 | [`md_preload_len.patch`](docs/md_preload_len.patch) | kernel (`md(4)`) | `hint.md.N.len` read as a 32-bit `int` | a ram disk of 4 GiB or more attaches truncated (4.5 GiB gives 512 MiB), or not at all at exactly 4 GiB | [`md_preload_len.md`](docs/md_preload_len.md) | n/a: must be in the booted kernel | no |
 
-Upstream status checked against `freebsd/main` at `f2bba0192166`: all six
-still apply. #1 to #5 make up the loader; #6 only helps once a kernel built
-with it is the one being booted, so a stock release image still depends on
-#5 to avoid the panic.
+#1 to #6 were committed to `main` on 2026-11-08 (checked against
+`freebsd/main` at `c1dbf3f51352`); #7 is not committed yet. None is in
+stable/15, which has no `memdisk=` support at all. #1 to #5 make up the
+loader; #6 only helps once a kernel built with it is the one being booted,
+so a release kernel older than `75734a4b6d0b` still depends on #5 to avoid
+the panic. On arm64 and riscv, #1 without #6 should fault on every ram disk,
+because the direct map there covers only physmap, which skips Reserved
+memory (from the code, not tested on those platforms). Do not bisect between
+`46c2d93c5728` and `75734a4b6d0b`.
 
-Apply the patches in table order; the patch files are generated for it.
-#4 needs #2 and #3 first: alone it names the md device from stack garbage
-and fails on every image.
+The patch files stay here for trees older than these commits. Apply them in
+table order; they are generated for it. #4 needs #2 and #3 first: alone it
+names the md device from stack garbage and fails on every image.
 
 The first is the nastiest and is worth knowing about even if you never touch
 the others. `EfiLoaderData` becomes `EFI_MD_TYPE_DATA`, which
