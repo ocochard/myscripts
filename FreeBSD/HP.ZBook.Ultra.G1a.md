@@ -114,7 +114,7 @@ all mt76 chips wait on a LinuxKPI rework for Linux page pools.
 Impact: no Wi-Fi; use USB or dock Ethernet. Track PR 273623 (mt76 meta-bug).
 Experiment (2026-11-12): with a LinuxKPI page pool side table, an init-failure fix, an idr fix and
 `compat.linuxkpi.skb.mem_limit=1` (plus `compat.linuxkpi.80211.hw_crypto=1` for A-MPDU), WPA2 works on 2.4 and 5 GHz (11ac), at 474 to 509 Mbit/s TX and 289 to 314 Mbit/s RX (Linux: 577/426);
-see [docs/mt7925_wifi_plan.md](docs/mt7925_wifi_plan.md).
+see [docs/mt7925_wifi.md](docs/mt7925_wifi.md).
 
 ### IOMMU (0:0:2)
 
@@ -197,6 +197,27 @@ OS interface to the USB Type-C/PD controller: connector status, data and power r
 Linux: `ucsi_acpi` is loaded but not bound to the device on this laptop (no log line, use count 0).
 Impact: none for normal use; the EC handles PD negotiation.
 
+## Suspend
+
+Tested 2026-11-12 on main 83c8ec72ac6a: the firmware offers only S4/S5
+(`hw.acpi.supported_sleep_state: S4 S5`), so `zzz` uses suspend-to-idle
+(`kern.power.suspend: suspend_to_idle`). The laptop goes to sleep (power LED
+blinks slowly); the power button does not wake it, a key press does. Resume
+is broken platform-wide:
+
+- `acpi0: Resumed from suspend-to-idle on AMD processor but amdsmu(4) is not
+  attached; unable to verify S0i3 entry. It is unlikely the system entered a
+  deep sleep state.`
+- `nvme0: Complete Failed controller`, then queued writes resubmitted (the
+  ZFS pool was healthy after the next boot).
+- Every USB device detaches and reattaches; Bluetooth reset fails.
+- No network traffic afterwards, not even a ping to 127.0.0.1, although
+  timers work; `shutdown -r` hangs on a black screen; only a forced power
+  off recovers.
+
+Do not suspend this laptop on FreeBSD until this is fixed. Next things to
+try: load `amdsmu(4)`, and look at nvme(4) resume.
+
 ## Touchpad and touchscreen interrupts
 
 `dmesg` on every boot:
@@ -230,7 +251,7 @@ The same gap on Meteor Lake is described in [docs/x86_gpio_intr_mtl.md](docs/x86
 1. Wi-Fi (MT7925).
    The biggest gap. Built by hand with an experimental LinuxKPI patch it associates and passes traffic,
    TX reaches 82 to 88% of Linux, RX 68 to 74% (474 to 509 and 289 to 314 Mbit/s against 577/426 on the same AP).
-   Status, patches and plan: [docs/mt7925_wifi_plan.md](docs/mt7925_wifi_plan.md).
+   Status, patches and next steps: [docs/mt7925_wifi.md](docs/mt7925_wifi.md).
    Upstream: follow PR 273623 (mt76 meta-bug).
 2. Speaker amplifier (CS35L54).
    Done, waiting for review: branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54), see the speaker section.

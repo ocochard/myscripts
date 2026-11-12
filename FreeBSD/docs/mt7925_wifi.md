@@ -1,6 +1,6 @@
 # MT7925 Wi-Fi on FreeBSD (HP ZBook Ultra G1a)
 
-Status, test log and plan for the MediaTek MT7925 (Filogic 360, PCI `14c3:7925`)
+Status, analysis, patch series and test log for the MediaTek MT7925 (Filogic 360, PCI `14c3:7925`)
 on FreeBSD 16.0-CURRENT.
 Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md).
 Patches: one per commit in [mt7925/](mt7925/), listed in
@@ -603,10 +603,16 @@ Still open, no commit yet: a page-crossing DMA map that works without the
 `skb.mem_limit=1` tunable, AQL limits in LinuxKPI, removing the mt76
 debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 
-## Plan
+## Next steps
 
-1. Suspend/resume with mt7925; send the series to bz@ (iwlwifi tested, no
-   regression). AQL alone did not lower latency under load
+1. Send the series to bz@ (iwlwifi tested, no regression). Suspend/resume
+   with mt7925 is blocked: suspend-to-idle breaks the whole laptop on
+   resume (failed NVMe controller, no network at all, not even loopback;
+   see [Suspend](../HP.ZBook.Ultra.G1a.md#suspend)). Note for when it
+   works: mt76's Makefiles leave `CONFIG_PM`/`CONFIG_PM_SLEEP` undefined,
+   so `if_mt7925.ko` has no suspend or resume handler at all
+   (`MT76_CONFIG_PM?=0`, and mt7925 checks `CONFIG_PM_SLEEP`); iwlwifi sets
+   both. A build with both compiles and contains `mt7925_pm_ops`, untested. AQL alone did not lower latency under load
    (see the AQL experiment); a real fix needs flow queueing (fq_codel) in
    LinuxKPI's TXQs and the firmware's TX rate in net80211.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
@@ -647,3 +653,4 @@ debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 | 2026-11-12 | series rebased on main 83c8ec72ac6a | TCP TX 530/483, RX 325/326 Mbit/s; ping under load 12 to 24 ms; debugfs modules load; no leak |
 | 2026-11-12 | + AQL experiment | AQL on: TX 485/483, ping under TX load 31 to 35 ms; off: TX 523, 21 ms; RX 323 both; counters back to 0 |
 | 2026-11-12 | iwlwifi, X1 Carbon, stock vs series on 584f44221f45 | same AP: TX 78-98 vs 88-95, RX 29-53 vs 49-56 Mbit/s; no new messages, no leak |
+| 2026-11-12 | suspend-to-idle with mt7925 (no PM handlers) | laptop wakes on a key, but NVMe controller fails and no traffic passes on any interface; mt7925 logs nothing; blocked by the platform |
