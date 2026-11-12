@@ -553,6 +553,7 @@ sudo install -m 555 $HOME/obj-mt76-mod$HOME/freebsd-mt76/amd64.amd64/sys/modules
 sudo pkg install wifi-firmware-mt76-kmod-mt7925
 sudo nextboot -k kernel.mt76 -e compat.linuxkpi.skb.mem_limit=1 \
     -e compat.linuxkpi.80211.hw_crypto=1
+# (with the patched firmware package the two -e are not needed)
 # WPA2 config: ctrl_interface=/var/run/wpa_supplicant + network={ssid psk}
 sudo shutdown -r now
 
@@ -632,7 +633,13 @@ mt7925 package installs `mt7925.conf` (`mem_limit=1`) and
 `mt76-mt7925.conf` (`hw_crypto=1` and the 11n/11ac enables), the mt7921
 package only `mt7921.conf`. portlint reports the same structural errors as
 the unmodified port (child Makefile of a shared `Makefile.inc`) plus a
-false "new ports should not set PORTREVISION". Not committed.
+false "new ports should not set PORTREVISION". Submitted as
+[PR 300731](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=300731).
+
+Tested on the laptop: with the new package installed and the series kernel
+booted by a plain `nextboot -k` (no `-e`), `kenv` shows both tunables from
+`/boot/loader.conf.d/`, the firmware loads (`lkpi_pci_nseg1_fail: 0`),
+A-MPDU is on, and TCP TX/RX on channel 100 is 463/324 Mbit/s.
 
 ## Next steps
 
@@ -685,3 +692,4 @@ false "new ports should not set PORTREVISION". Not committed.
 | 2026-11-12 | + AQL experiment | AQL on: TX 485/483, ping under TX load 31 to 35 ms; off: TX 523, 21 ms; RX 323 both; counters back to 0 |
 | 2026-11-12 | iwlwifi, X1 Carbon, stock vs series on 584f44221f45 | same AP: TX 78-98 vs 88-95, RX 29-53 vs 49-56 Mbit/s; no new messages, no leak |
 | 2026-11-12 | suspend-to-idle with mt7925 (no PM handlers) | laptop wakes on a key, but NVMe controller fails and no traffic passes on any interface; mt7925 logs nothing; blocked by the platform |
+| 2026-11-12 | patched firmware package, no `-e` tunables | both tunables from `/boot/loader.conf.d/`; TCP TX 463, RX 324 Mbit/s |
