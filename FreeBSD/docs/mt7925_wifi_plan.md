@@ -487,6 +487,38 @@ remove it; it costs 5 to 8% of TX. Linux pairs AQL with fq_codel in
 mac80211's TXQs, which LinuxKPI does not have; and our estimate uses
 net80211's stale rate (360M), so it overstates airtime. Not proposed.
 
+### iwlwifi regression test (X1 Carbon Gen 12)
+
+The series changes LinuxKPI, which every LinuxKPI wireless driver shares
+(iwlwifi, rtw88, rtw89, mt76): only rows 2 to 4 are mt76 or lindebugfs
+specific. Rows 8 and 9 run on every frame of every driver that uses
+mac80211 TXQs: iwlwifi's mvm dequeues with `ieee80211_tx_dequeue()`
+(`mvm/mac80211.c`) and gets status requests decided by row 9. Row 1 (idr)
+is also used by drm.
+
+Laptop: Meteor Lake CNVi Wi-Fi (8086:7e40, `if_iwlwifi`, ax210 firmware
+package), `hw_crypto=1` from `/boot/loader.conf.d`. Two kernels built on
+bigone from the same base, stock main 584f44221f45 and the same base with
+the 9 commits cherry-picked (identical in `git range-diff`). Main
+83c8ec72ac6a does not boot on this laptop at all (stops between the loader
+and the kernel, with nothing logged); that is a separate problem, not
+investigated here.
+
+Pinned to the same AP (2.4 GHz channel 11, HT20, -48 dBm), 10 s TCP runs
+to a wired host, Mbit/s:
+
+| Kernel | TCP TX | TCP RX |
+|---|---|---|
+| stock 584f44221f45 | 77.7, 93.4, 86.4, 97.6 | 52.8, 28.6, 42.4 |
+| + series | 88.1, 95.3, 91.6, 93.4 | 55.9, 56.4, 48.6 |
+
+No regression: the series is in the same range or better. On both kernels:
+no iwlwifi or LinuxKPI message in `dmesg`, WPA2 association, 0 skbs in use
+afterwards, and the same slow reassociation after `wpa_cli reassociate`
+(still `ASSOCIATING` after 12 s). An unpinned first pass showed 72 and
+75 Mbit/s TX on the series kernel: channel noise, the pinned runs above
+do not reproduce it. Not covered: 5 GHz, rtw88 and rtw89.
+
 ## How to reproduce
 
 All measurements were made on main 6e87733f73ff, because a full
@@ -562,19 +594,19 @@ rows; lindebugfs also had dumbbell@ (Jean-Sébastien Pédron) on 3521cce445d4.
 | 5 | LinuxKPI: skbuff: make napi_consume_skb() free the skb (was an empty `SKB_TODO()`, leaked every mt7925 TX skb) | [0005](mt7925/0005-LinuxKPI-skbuff-make-napi_consume_skb-free-the-skb.patch) [fa47aa0b426f](https://github.com/ocochard/freebsd-src/commit/fa47aa0b426f) | `skbuff.h` | done, tested: 0 skbs in use after 636000 allocations | nothing |
 | 6 | LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE (side table for pool pages; skb free returns recycled frags and heads to the pool) | [0006](mt7925/0006-LinuxKPI-page-pool-work-without-PAGE_IS_LKPI_PAGE.patch) [dd884476f683](https://github.com/ocochard/freebsd-src/commit/dd884476f683) | `linuxkpi_page_pool.c`, `linux_skbuff.c` | done, tested; a stopgap until bz@'s `struct page` rework, discuss before sending | nothing |
 | 7 | LinuxKPI: skbuff: cache skb data allocations below mem_limit (size-aligned UMA zones instead of one `contigmalloc()` per skb) | [0007](mt7925/0007-LinuxKPI-skbuff-cache-skb-data-allocations-below-mem.patch) [3ebdcb27d5c5](https://github.com/ocochard/freebsd-src/commit/3ebdcb27d5c5) | `linux_skbuff.c` | done, tested: no `contigmalloc()` in the TX path, throughput no longer decays | 6 (same file) |
-| 8 | LinuxKPI: 802.11: set an airtime estimate on dequeued frames (mt76 capped each station at 16 frames in flight) | [0008](mt7925/0008-LinuxKPI-802.11-set-an-airtime-estimate-on-dequeued-.patch) [daf8335a06d6](https://github.com/ocochard/freebsd-src/commit/daf8335a06d6) | `linux_80211.c` | done, tested: TCP TX 36 to 232-254 Mbit/s with the stock driver | nothing |
-| 9 | LinuxKPI: 802.11: request TX status only when needed (mt76 sends status frames outside the BA session); a missing status is not a TX error | [0009](mt7925/0009-LinuxKPI-802.11-request-TX-status-only-when-needed.patch) [e87dbee448cb](https://github.com/ocochard/freebsd-src/commit/e87dbee448cb) | `linux_80211.c` | done, tested: TCP RX 79 to 289-314, TX 474-509 Mbit/s; WPA2 still associates | 8 (same file) |
+| 8 | LinuxKPI: 802.11: set an airtime estimate on dequeued frames (mt76 capped each station at 16 frames in flight) | [0008](mt7925/0008-LinuxKPI-802.11-set-an-airtime-estimate-on-dequeued-.patch) [daf8335a06d6](https://github.com/ocochard/freebsd-src/commit/daf8335a06d6) | `linux_80211.c` | done, tested: TCP TX 36 to 232-254 Mbit/s with the stock driver; no iwlwifi regression | nothing |
+| 9 | LinuxKPI: 802.11: request TX status only when needed (mt76 sends status frames outside the BA session); a missing status is not a TX error | [0009](mt7925/0009-LinuxKPI-802.11-request-TX-status-only-when-needed.patch) [e87dbee448cb](https://github.com/ocochard/freebsd-src/commit/e87dbee448cb) | `linux_80211.c` | done, tested: TCP RX 79 to 289-314, TX 474-509 Mbit/s; WPA2 still associates; no iwlwifi regression | 8 (same file) |
 
-Rows 8 and 9 change behaviour for every LinuxKPI wireless driver (iwlwifi,
-rtw88, rtw89): test at least iwlwifi before sending.
+Rows 8 and 9 change behaviour for every LinuxKPI wireless driver: tested
+with iwlwifi (see the iwlwifi regression test), not with rtw88 or rtw89.
 Still open, no commit yet: a page-crossing DMA map that works without the
 `skb.mem_limit=1` tunable, AQL limits in LinuxKPI, removing the mt76
 debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 
 ## Plan
 
-1. Test commits 8 and 9 with iwlwifi on the X1 Carbon (`iwlwifi0`, Intel
-   CNVi), then suspend/resume. AQL alone did not lower latency under load
+1. Suspend/resume with mt7925; send the series to bz@ (iwlwifi tested, no
+   regression). AQL alone did not lower latency under load
    (see the AQL experiment); a real fix needs flow queueing (fq_codel) in
    LinuxKPI's TXQs and the firmware's TX rate in net80211.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
@@ -614,3 +646,4 @@ debugfs directory on unload, the `hw_crypto=1` default for A-MPDU.
 | 2026-11-12 | + TX status only when needed | TCP TX 509/483/474, RX 308/289/314 Mbit/s; ping under load 11 to 24 ms |
 | 2026-11-12 | series rebased on main 83c8ec72ac6a | TCP TX 530/483, RX 325/326 Mbit/s; ping under load 12 to 24 ms; debugfs modules load; no leak |
 | 2026-11-12 | + AQL experiment | AQL on: TX 485/483, ping under TX load 31 to 35 ms; off: TX 523, 21 ms; RX 323 both; counters back to 0 |
+| 2026-11-12 | iwlwifi, X1 Carbon, stock vs series on 584f44221f45 | same AP: TX 78-98 vs 88-95, RX 29-53 vs 49-56 Mbit/s; no new messages, no leak |
