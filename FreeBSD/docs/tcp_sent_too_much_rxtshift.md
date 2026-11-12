@@ -490,11 +490,9 @@ against `main`:
  				if (sent > maxseg) {
 -					KASSERT((tp->t_dupacks == 2 &&
 +					/*
-+					 * Without the reset to the flight size
-+					 * above (snd_nxt behind snd_max, or
-+					 * t_rxtshift not yet cleared after an
-+					 * RTO), the old cwnd may allow more
-+					 * than one segment.
++					 * Unless snd_cwnd was reset to the
++					 * flight size above, the old cwnd may
++					 * allow more than one segment.
 +					 */
 +					KASSERT(!cwnd_is_flight ||
 +					   (tp->t_dupacks == 2 &&

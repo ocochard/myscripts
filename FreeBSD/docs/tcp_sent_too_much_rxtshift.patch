@@ -1,5 +1,5 @@
 diff --git sys/netinet/tcp_input.c sys/netinet/tcp_input.c
-index 5ebcad5eae43..e3f12295356e 100644
+index 5ebcad5eae43..8c3c80769453 100644
 --- sys/netinet/tcp_input.c
 +++ sys/netinet/tcp_input.c
 @@ -2707,6 +2707,7 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
@@ -23,17 +23,15 @@ index 5ebcad5eae43..e3f12295356e 100644
  				tp->snd_cwnd +=
  				    (tp->t_dupacks - tp->snd_limited) * maxseg;
  				tp->snd_cwnd -= tcp_sack_adjust(tp);
-@@ -2736,7 +2739,15 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
+@@ -2736,7 +2739,13 @@ tcp_do_segment(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th,
  				}
  				sent = SEQ_SUB(tp->snd_max, oldsndmax);
  				if (sent > maxseg) {
 -					KASSERT((tp->t_dupacks == 2 &&
 +					/*
-+					 * Without the reset to the flight size
-+					 * above (snd_nxt behind snd_max, or
-+					 * t_rxtshift not yet cleared after an
-+					 * RTO), the old cwnd may allow more
-+					 * than one segment.
++					 * Unless snd_cwnd was reset to the
++					 * flight size above, the old cwnd may
++					 * allow more than one segment.
 +					 */
 +					KASSERT(!cwnd_is_flight ||
 +					   (tp->t_dupacks == 2 &&
