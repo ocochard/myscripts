@@ -497,6 +497,113 @@ index 93e649faafd7..bfdad95992d4 100644
 +	return (dma);
  #endif
  }
+diff --git sys/contrib/dev/mediatek/mt76/debugfs.c sys/contrib/dev/mediatek/mt76/debugfs.c
+index 344ccdc98293..d94ab37b0309 100644
+--- sys/contrib/dev/mediatek/mt76/debugfs.c
++++ sys/contrib/dev/mediatek/mt76/debugfs.c
+@@ -109,6 +109,9 @@ mt76_register_debugfs_fops(struct mt76_phy *phy,
+ 	struct dentry *dir;
+ 
+ 	dir = debugfs_create_dir("mt76", phy->hw->wiphy->debugfsdir);
++#if defined(__FreeBSD__)
++	phy->debugfs_dir = dir;
++#endif
+ 
+ 	debugfs_create_u8("led_pin", 0600, dir, &phy->leds.pin);
+ 	debugfs_create_u32("regidx", 0600, dir, &dev->debugfs_reg);
+diff --git sys/contrib/dev/mediatek/mt76/mac80211.c sys/contrib/dev/mediatek/mt76/mac80211.c
+index 1f38b7ad6697..516fdebbb3aa 100644
+--- sys/contrib/dev/mediatek/mt76/mac80211.c
++++ sys/contrib/dev/mediatek/mt76/mac80211.c
+@@ -623,6 +623,11 @@ void mt76_unregister_phy(struct mt76_phy *phy)
+ 	if (!test_bit(MT76_STATE_REGISTERED, &phy->state))
+ 		return;
+ 
++#if defined(__FreeBSD__) && defined(CONFIG_MAC80211_DEBUGFS)
++	/* Linux removes it with the wiphy debugfs dir. */
++	debugfs_remove_recursive(phy->debugfs_dir);
++	phy->debugfs_dir = NULL;
++#endif
+ #if defined(CONFIG_MT76_LEDS)
+ 	if (IS_ENABLED(CONFIG_MT76_LEDS))
+ 		mt76_led_cleanup(phy);
+@@ -831,6 +836,11 @@ void mt76_unregister_device(struct mt76_dev *dev)
+ 	if (!test_bit(MT76_STATE_REGISTERED, &dev->phy.state))
+ 		return;
+ 
++#if defined(__FreeBSD__) && defined(CONFIG_MAC80211_DEBUGFS)
++	/* Linux removes it with the wiphy debugfs dir. */
++	debugfs_remove_recursive(dev->phy.debugfs_dir);
++	dev->phy.debugfs_dir = NULL;
++#endif
+ #if defined(CONFIG_MT76_LEDS)
+ 	if (IS_ENABLED(CONFIG_MT76_LEDS))
+ 		mt76_led_cleanup(&dev->phy);
+diff --git sys/contrib/dev/mediatek/mt76/mt76.h sys/contrib/dev/mediatek/mt76/mt76.h
+index ca26a4e43b92..4aefddc293fa 100644
+--- sys/contrib/dev/mediatek/mt76/mt76.h
++++ sys/contrib/dev/mediatek/mt76/mt76.h
+@@ -861,6 +861,9 @@ struct mt76_phy {
+ 	unsigned long state;
+ 	unsigned int num_sta;
+ 	u8 band_idx;
++#if defined(__FreeBSD__)
++	struct dentry *debugfs_dir;	/* No wiphy debugfs dir to remove it. */
++#endif
+ 
+ 	spinlock_t tx_lock;
+ 	struct list_head tx_list;
+diff --git sys/contrib/dev/mediatek/mt76/mt7921/init.c sys/contrib/dev/mediatek/mt76/mt7921/init.c
+index ece84a826ea4..44f79593fd16 100644
+--- sys/contrib/dev/mediatek/mt76/mt7921/init.c
++++ sys/contrib/dev/mediatek/mt76/mt7921/init.c
+@@ -234,6 +234,17 @@ static int mt7921_init_hardware(struct mt792x_dev *dev)
+ 	return 0;
+ }
+ 
++/*
++ * On FreeBSD mt7921_register_device() waits for the init work: wake it up
++ * when the work fails, it checks MT76_STATE_REGISTERED.
++ */
++static void mt7921_init_done(struct mt792x_dev *dev)
++{
++#if defined(__FreeBSD__)
++	complete(&dev->mt76.drv_start_complete);
++#endif
++}
++
+ static void mt7921_init_work(struct work_struct *work)
+ {
+ 	struct mt792x_dev *dev = container_of(work, struct mt792x_dev,
+@@ -241,8 +252,10 @@ static void mt7921_init_work(struct work_struct *work)
+ 	int ret;
+ 
+ 	ret = mt7921_init_hardware(dev);
+-	if (ret)
++	if (ret) {
++		mt7921_init_done(dev);
+ 		return;
++	}
+ 
+ 	mt76_set_stream_caps(&dev->mphy, true);
+ 	mt7921_set_stream_he_caps(&dev->phy);
+@@ -252,6 +265,7 @@ static void mt7921_init_work(struct work_struct *work)
+ 				   ARRAY_SIZE(mt76_rates));
+ 	if (ret) {
+ 		dev_err(dev->mt76.dev, "register device failed\n");
++		mt7921_init_done(dev);
+ 		return;
+ 	}
+ 
+@@ -364,6 +378,8 @@ int mt7921_register_device(struct mt792x_dev *dev)
+ 
+ #if defined(__FreeBSD__)
+ 	wait_for_completion(&dev->mt76.drv_start_complete);
++	if (!test_bit(MT76_STATE_REGISTERED, &dev->mphy.state))
++		return -ENXIO;
+ #endif
+ 
+ 	return 0;
 diff --git sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c
 index e2498659c884..086a9ca5b2e9 100644
 --- sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c

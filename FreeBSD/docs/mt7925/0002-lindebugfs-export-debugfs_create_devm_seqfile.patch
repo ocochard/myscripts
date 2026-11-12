@@ -1,7 +1,7 @@
 From df5b2876a02387c3488b78bf04add743173fcf61 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
-Subject: [PATCH 2/9] lindebugfs: export debugfs_create_devm_seqfile()
+Subject: [PATCH 02/11] lindebugfs: export debugfs_create_devm_seqfile()
 
 Added in 3521cce445d4 but missing from EXPORT_SYMS, so modules using it
 fail to load with an undefined symbol.

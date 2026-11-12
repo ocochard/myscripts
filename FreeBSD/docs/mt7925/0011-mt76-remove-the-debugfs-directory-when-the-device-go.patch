@@ -1,0 +1,73 @@
+From 0b64a1ff927c4599ca7232ff69726b8ee54b9839 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Thu, 12 Nov 2026 22:29:47 +0000
+Subject: [PATCH 11/11] mt76: remove the debugfs directory when the device goes
+ away
+
+On Linux it goes with the wiphy debugfs directory; LinuxKPI has none, so
+it stayed after kldunload and reading it after a reload panicked.
+---
+ sys/contrib/dev/mediatek/mt76/debugfs.c  |  3 +++
+ sys/contrib/dev/mediatek/mt76/mac80211.c | 10 ++++++++++
+ sys/contrib/dev/mediatek/mt76/mt76.h     |  3 +++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/sys/contrib/dev/mediatek/mt76/debugfs.c b/sys/contrib/dev/mediatek/mt76/debugfs.c
+index 344ccdc98293..d94ab37b0309 100644
+--- a/sys/contrib/dev/mediatek/mt76/debugfs.c
++++ b/sys/contrib/dev/mediatek/mt76/debugfs.c
+@@ -109,6 +109,9 @@ mt76_register_debugfs_fops(struct mt76_phy *phy,
+ 	struct dentry *dir;
+ 
+ 	dir = debugfs_create_dir("mt76", phy->hw->wiphy->debugfsdir);
++#if defined(__FreeBSD__)
++	phy->debugfs_dir = dir;
++#endif
+ 
+ 	debugfs_create_u8("led_pin", 0600, dir, &phy->leds.pin);
+ 	debugfs_create_u32("regidx", 0600, dir, &dev->debugfs_reg);
+diff --git a/sys/contrib/dev/mediatek/mt76/mac80211.c b/sys/contrib/dev/mediatek/mt76/mac80211.c
+index 1f38b7ad6697..516fdebbb3aa 100644
+--- a/sys/contrib/dev/mediatek/mt76/mac80211.c
++++ b/sys/contrib/dev/mediatek/mt76/mac80211.c
+@@ -623,6 +623,11 @@ void mt76_unregister_phy(struct mt76_phy *phy)
+ 	if (!test_bit(MT76_STATE_REGISTERED, &phy->state))
+ 		return;
+ 
++#if defined(__FreeBSD__) && defined(CONFIG_MAC80211_DEBUGFS)
++	/* Linux removes it with the wiphy debugfs dir. */
++	debugfs_remove_recursive(phy->debugfs_dir);
++	phy->debugfs_dir = NULL;
++#endif
+ #if defined(CONFIG_MT76_LEDS)
+ 	if (IS_ENABLED(CONFIG_MT76_LEDS))
+ 		mt76_led_cleanup(phy);
+@@ -831,6 +836,11 @@ void mt76_unregister_device(struct mt76_dev *dev)
+ 	if (!test_bit(MT76_STATE_REGISTERED, &dev->phy.state))
+ 		return;
+ 
++#if defined(__FreeBSD__) && defined(CONFIG_MAC80211_DEBUGFS)
++	/* Linux removes it with the wiphy debugfs dir. */
++	debugfs_remove_recursive(dev->phy.debugfs_dir);
++	dev->phy.debugfs_dir = NULL;
++#endif
+ #if defined(CONFIG_MT76_LEDS)
+ 	if (IS_ENABLED(CONFIG_MT76_LEDS))
+ 		mt76_led_cleanup(&dev->phy);
+diff --git a/sys/contrib/dev/mediatek/mt76/mt76.h b/sys/contrib/dev/mediatek/mt76/mt76.h
+index ca26a4e43b92..4aefddc293fa 100644
+--- a/sys/contrib/dev/mediatek/mt76/mt76.h
++++ b/sys/contrib/dev/mediatek/mt76/mt76.h
+@@ -861,6 +861,9 @@ struct mt76_phy {
+ 	unsigned long state;
+ 	unsigned int num_sta;
+ 	u8 band_idx;
++#if defined(__FreeBSD__)
++	struct dentry *debugfs_dir;	/* No wiphy debugfs dir to remove it. */
++#endif
+ 
+ 	spinlock_t tx_lock;
+ 	struct list_head tx_list;
+-- 
+2.56.0
+

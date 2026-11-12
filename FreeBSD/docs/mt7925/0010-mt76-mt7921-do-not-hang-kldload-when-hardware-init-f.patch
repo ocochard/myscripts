@@ -1,0 +1,66 @@
+From ca9637364497535b9a9a7ed3778b9fa916cd880e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Thu, 12 Nov 2026 22:25:35 +0000
+Subject: [PATCH 10/11] mt76: mt7921: do not hang kldload when hardware init
+ fails
+
+Same FreeBSD-only wait as mt7925: mt7921_register_device() was only woken
+on success; wake it on the failure paths too and return ENXIO.
+---
+ sys/contrib/dev/mediatek/mt76/mt7921/init.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/sys/contrib/dev/mediatek/mt76/mt7921/init.c b/sys/contrib/dev/mediatek/mt76/mt7921/init.c
+index ece84a826ea4..44f79593fd16 100644
+--- a/sys/contrib/dev/mediatek/mt76/mt7921/init.c
++++ b/sys/contrib/dev/mediatek/mt76/mt7921/init.c
+@@ -234,6 +234,17 @@ static int mt7921_init_hardware(struct mt792x_dev *dev)
+ 	return 0;
+ }
+ 
++/*
++ * On FreeBSD mt7921_register_device() waits for the init work: wake it up
++ * when the work fails, it checks MT76_STATE_REGISTERED.
++ */
++static void mt7921_init_done(struct mt792x_dev *dev)
++{
++#if defined(__FreeBSD__)
++	complete(&dev->mt76.drv_start_complete);
++#endif
++}
++
+ static void mt7921_init_work(struct work_struct *work)
+ {
+ 	struct mt792x_dev *dev = container_of(work, struct mt792x_dev,
+@@ -241,8 +252,10 @@ static void mt7921_init_work(struct work_struct *work)
+ 	int ret;
+ 
+ 	ret = mt7921_init_hardware(dev);
+-	if (ret)
++	if (ret) {
++		mt7921_init_done(dev);
+ 		return;
++	}
+ 
+ 	mt76_set_stream_caps(&dev->mphy, true);
+ 	mt7921_set_stream_he_caps(&dev->phy);
+@@ -252,6 +265,7 @@ static void mt7921_init_work(struct work_struct *work)
+ 				   ARRAY_SIZE(mt76_rates));
+ 	if (ret) {
+ 		dev_err(dev->mt76.dev, "register device failed\n");
++		mt7921_init_done(dev);
+ 		return;
+ 	}
+ 
+@@ -364,6 +378,8 @@ int mt7921_register_device(struct mt792x_dev *dev)
+ 
+ #if defined(__FreeBSD__)
+ 	wait_for_completion(&dev->mt76.drv_start_complete);
++	if (!test_bit(MT76_STATE_REGISTERED, &dev->mphy.state))
++		return -ENXIO;
+ #endif
+ 
+ 	return 0;
+-- 
+2.56.0
+

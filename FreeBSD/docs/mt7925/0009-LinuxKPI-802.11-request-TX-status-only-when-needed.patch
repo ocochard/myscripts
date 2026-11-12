@@ -1,7 +1,7 @@
 From e87dbee448cb1a55f9ce85b6cfb6b1440750f1b2 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:32 +0000
-Subject: [PATCH 9/9] LinuxKPI: 802.11: request TX status only when needed
+Subject: [PATCH 09/11] LinuxKPI: 802.11: request TX status only when needed
 
 mt76 sends frames that request status outside the BA session, so every
 TCP ACK went out alone; request it as mac80211 does and do not count a

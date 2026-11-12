@@ -1,7 +1,7 @@
 From fa47aa0b426f6c3f91f07d349c82892359ba3459 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
-Subject: [PATCH 5/9] LinuxKPI: skbuff: make napi_consume_skb() free the skb
+Subject: [PATCH 05/11] LinuxKPI: skbuff: make napi_consume_skb() free the skb
 
 It was an empty stub; mt7925 frees every completed TX skb through it.
 ---

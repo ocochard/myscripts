@@ -1,7 +1,8 @@
 From f368e52cb3f7a65ea2f3043290a2f50685e8b053 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
-Subject: [PATCH 3/9] mt76: mt7925: depend on lindebugfs when debugfs is built
+Subject: [PATCH 03/11] mt76: mt7925: depend on lindebugfs when debugfs is
+ built
 
 The kernel linker resolves symbols only through a module's own
 dependencies; only mt76_core declared lindebugfs.

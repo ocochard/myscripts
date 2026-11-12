@@ -1,7 +1,7 @@
 From dd884476f68339261f31d6329045a344a350b456 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
-Subject: [PATCH 6/9] LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE
+Subject: [PATCH 06/11] LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE
 
 Track pool pages and their DMA mapping in a side table until struct page
 can hold them, and return recycled skb frags and heads to the pool.

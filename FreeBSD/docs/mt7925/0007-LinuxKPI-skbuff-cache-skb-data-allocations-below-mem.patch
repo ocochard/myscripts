@@ -1,7 +1,7 @@
 From 3ebdcb27d5c5562f3dae22e55a1c2a50802f26a9 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
-Subject: [PATCH 7/9] LinuxKPI: skbuff: cache skb data allocations below
+Subject: [PATCH 07/11] LinuxKPI: skbuff: cache skb data allocations below
  mem_limit
 
 One contigmalloc() per skb takes milliseconds once low memory fragments

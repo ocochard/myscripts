@@ -414,7 +414,10 @@ sudo dd if=/tmp/debug/mt76/tx_stats bs=65536 2>/dev/null
    `wiphy->debugfsdir` (the debugfs root on FreeBSD), and nothing removes it
    the way cfg80211 does on Linux. After a reload, reading an old entry
    panics (page fault in `seq_read()` calling a show function from the
-   unloaded module). Reboot, or never read the old entries after a reload.
+   unloaded module). Fixed by commit 11, which keeps the directory and
+   removes it in `mt76_unregister_device()`/`mt76_unregister_phy()`
+   (`linux_80211.c` is in the kernel and lindebugfs is a module, so
+   LinuxKPI itself cannot create per-wiphy directories).
 
 
 ### TCP RX: every ACK goes out alone
@@ -591,20 +594,22 @@ rows; lindebugfs also had dumbbell@ (Jean-Sébastien Pédron) on 3521cce445d4.
 | 1 | LinuxKPI: idr: allow lookups after idr_destroy() (fixes a panic in mt76 station teardown) | [0001](mt7925/0001-LinuxKPI-idr-allow-lookups-after-idr_destroy.patch) [c1c5bf89ef34](https://github.com/ocochard/freebsd-src/commit/c1c5bf89ef34) | `linux_idr.c` | done, tested: forced BSS switch no longer panics | nothing |
 | 2 | lindebugfs: export debugfs_create_devm_seqfile() (implemented in 3521cce445d4, missing from `EXPORT_SYMS`) | [0002](mt7925/0002-lindebugfs-export-debugfs_create_devm_seqfile.patch) [df5b2876a023](https://github.com/ocochard/freebsd-src/commit/df5b2876a023) | `sys/modules/lindebugfs/Makefile` | done, tested: the debugfs-enabled `if_mt7925.ko` loads against it (rebased kernel) | nothing |
 | 3 | mt76: mt7925: depend on lindebugfs when debugfs is built | [0003](mt7925/0003-mt76-mt7925-depend-on-lindebugfs-when-debugfs-is-bui.patch) [f368e52cb3f7](https://github.com/ocochard/freebsd-src/commit/f368e52cb3f7) | `mt7925/debugfs.c` | done, tested: `if_mt7925.ko` loads with `MT7925_DEBUGFS=1` | 2 |
-| 4 | mt76: mt7925: do not hang kldload when hardware init fails | [0004](mt7925/0004-mt76-mt7925-do-not-hang-kldload-when-hardware-init-f.patch) [60f4eb35e004](https://github.com/ocochard/freebsd-src/commit/60f4eb35e004) | `mt7925/init.c` | done, tested: attach returns ENXIO, `kldunload` works; mt7915, mt7921, mt7996 have the same wait, not fixed | nothing |
+| 4 | mt76: mt7925: do not hang kldload when hardware init fails | [0004](mt7925/0004-mt76-mt7925-do-not-hang-kldload-when-hardware-init-f.patch) [60f4eb35e004](https://github.com/ocochard/freebsd-src/commit/60f4eb35e004) | `mt7925/init.c` | done, tested: attach returns ENXIO, `kldunload` works | nothing |
 | 5 | LinuxKPI: skbuff: make napi_consume_skb() free the skb (was an empty `SKB_TODO()`, leaked every mt7925 TX skb) | [0005](mt7925/0005-LinuxKPI-skbuff-make-napi_consume_skb-free-the-skb.patch) [fa47aa0b426f](https://github.com/ocochard/freebsd-src/commit/fa47aa0b426f) | `skbuff.h` | done, tested: 0 skbs in use after 636000 allocations | nothing |
 | 6 | LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE (side table for pool pages; skb free returns recycled frags and heads to the pool) | [0006](mt7925/0006-LinuxKPI-page-pool-work-without-PAGE_IS_LKPI_PAGE.patch) [dd884476f683](https://github.com/ocochard/freebsd-src/commit/dd884476f683) | `linuxkpi_page_pool.c`, `linux_skbuff.c` | done, tested; a stopgap until bz@'s `struct page` rework, discuss before sending | nothing |
 | 7 | LinuxKPI: skbuff: cache skb data allocations below mem_limit (size-aligned UMA zones instead of one `contigmalloc()` per skb) | [0007](mt7925/0007-LinuxKPI-skbuff-cache-skb-data-allocations-below-mem.patch) [3ebdcb27d5c5](https://github.com/ocochard/freebsd-src/commit/3ebdcb27d5c5) | `linux_skbuff.c` | done, tested: no `contigmalloc()` in the TX path, throughput no longer decays | 6 (same file) |
 | 8 | LinuxKPI: 802.11: set an airtime estimate on dequeued frames (mt76 capped each station at 16 frames in flight) | [0008](mt7925/0008-LinuxKPI-802.11-set-an-airtime-estimate-on-dequeued-.patch) [daf8335a06d6](https://github.com/ocochard/freebsd-src/commit/daf8335a06d6) | `linux_80211.c` | done, tested: TCP TX 36 to 232-254 Mbit/s with the stock driver; no iwlwifi regression | nothing |
 | 9 | LinuxKPI: 802.11: request TX status only when needed (mt76 sends status frames outside the BA session); a missing status is not a TX error | [0009](mt7925/0009-LinuxKPI-802.11-request-TX-status-only-when-needed.patch) [e87dbee448cb](https://github.com/ocochard/freebsd-src/commit/e87dbee448cb) | `linux_80211.c` | done, tested: TCP RX 79 to 289-314, TX 474-509 Mbit/s; WPA2 still associates; no iwlwifi regression | 8 (same file) |
+| 10 | mt76: mt7921: do not hang kldload when hardware init fails (same wait as mt7925; mt7915 and mt7996 register synchronously before their wait, so they cannot hang) | [0010](mt7925/0010-mt76-mt7921-do-not-hang-kldload-when-hardware-init-f.patch) [ca9637364497](https://github.com/ocochard/freebsd-src/commit/ca9637364497) | `mt7921/init.c` | done, builds; no mt7921 hardware to run it | nothing |
+| 11 | mt76: remove the debugfs directory when the device goes away (it stayed after `kldunload`; reading it after a reload panicked) | [0011](mt7925/0011-mt76-remove-the-debugfs-directory-when-the-device-go.patch) [0b64a1ff927c](https://github.com/ocochard/freebsd-src/commit/0b64a1ff927c) | `mt76.h`, `debugfs.c`, `mac80211.c` | done, tested: three load/read/unload cycles, the directory goes and comes back, no panic | 3 |
 
 Rows 8 and 9 change behaviour for every LinuxKPI wireless driver: tested
 with iwlwifi (see the iwlwifi regression test), not with rtw88 or rtw89.
 Still open, no commit yet: a page-crossing DMA map that works without the
 `skb.mem_limit=1` tunable (until then the firmware package sets it, see
 [Boot settings from the firmware package](#boot-settings-from-the-firmware-package)),
-flow queueing and AQL in LinuxKPI, removing the mt76 debugfs directory on
-unload.
+flow queueing and AQL in LinuxKPI, mt76 PM handlers (`MT76_CONFIG_PM`
+defines `CONFIG_PM` but not `CONFIG_PM_SLEEP`, which mt7925 checks).
 
 ## Boot settings from the firmware package
 
