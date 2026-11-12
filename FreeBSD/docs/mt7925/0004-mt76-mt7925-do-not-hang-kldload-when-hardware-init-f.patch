@@ -1,0 +1,74 @@
+From 0852e5450e08afa854645843f00d19ac977eac3c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 4/9] mt76: mt7925: do not hang kldload when hardware init
+ fails
+
+The FreeBSD-only wait in mt7925_register_device() was only woken on
+success; wake it on the failure paths too and return ENXIO.
+---
+ sys/contrib/dev/mediatek/mt76/mt7925/init.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/sys/contrib/dev/mediatek/mt76/mt7925/init.c b/sys/contrib/dev/mediatek/mt76/mt7925/init.c
+index 3b7c1668dc61..8a7b49ebcda5 100644
+--- a/sys/contrib/dev/mediatek/mt76/mt7925/init.c
++++ b/sys/contrib/dev/mediatek/mt76/mt7925/init.c
+@@ -143,6 +143,17 @@ static int mt7925_init_hardware(struct mt792x_dev *dev)
+ 	return 0;
+ }
+ 
++/*
++ * On FreeBSD mt7925_register_device() waits for the init work: wake it up
++ * when the work fails, it checks MT76_STATE_REGISTERED.
++ */
++static void mt7925_init_done(struct mt792x_dev *dev)
++{
++#if defined(__FreeBSD__)
++	complete(&dev->mt76.drv_start_complete);
++#endif
++}
++
+ static void mt7925_init_work(struct work_struct *work)
+ {
+ 	struct mt792x_dev *dev = container_of(work, struct mt792x_dev,
+@@ -150,8 +161,10 @@ static void mt7925_init_work(struct work_struct *work)
+ 	int ret;
+ 
+ 	ret = mt7925_init_hardware(dev);
+-	if (ret)
++	if (ret) {
++		mt7925_init_done(dev);
+ 		return;
++	}
+ 
+ 	mt76_set_stream_caps(&dev->mphy, true);
+ 	mt7925_set_stream_he_eht_caps(&dev->phy);
+@@ -160,6 +173,7 @@ static void mt7925_init_work(struct work_struct *work)
+ 	ret = mt7925_init_mlo_caps(&dev->phy);
+ 	if (ret) {
+ 		dev_err(dev->mt76.dev, "MLO init failed\n");
++		mt7925_init_done(dev);
+ 		return;
+ 	}
+ 
+@@ -167,6 +181,7 @@ static void mt7925_init_work(struct work_struct *work)
+ 				   ARRAY_SIZE(mt76_rates));
+ 	if (ret) {
+ 		dev_err(dev->mt76.dev, "register device failed\n");
++		mt7925_init_done(dev);
+ 		return;
+ 	}
+ 
+@@ -287,6 +302,8 @@ int mt7925_register_device(struct mt792x_dev *dev)
+ 
+ #if defined(__FreeBSD__)
+ 	wait_for_completion(&dev->mt76.drv_start_complete);
++	if (!test_bit(MT76_STATE_REGISTERED, &dev->mphy.state))
++		return -ENXIO;
+ #endif
+ 
+ 	return 0;
+-- 
+2.56.0
+

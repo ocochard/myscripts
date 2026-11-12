@@ -1,0 +1,205 @@
+From 194e81fa4500ff46a6eb1f5fd4f480097103c6ea Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 6/9] LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE
+
+Track pool pages and their DMA mapping in a side table until struct page
+can hold them, and return recycled skb frags and heads to the pool.
+Without it mt76 gets no RX buffers and every MCU command times out.
+---
+ sys/compat/linuxkpi/common/src/linux_skbuff.c |  14 ++-
+ .../linuxkpi/common/src/linuxkpi_page_pool.c  | 117 +++++++++++++++++-
+ 2 files changed, 122 insertions(+), 9 deletions(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_skbuff.c b/sys/compat/linuxkpi/common/src/linux_skbuff.c
+index 6908101f25af..c1d0fb41d866 100644
+--- a/sys/compat/linuxkpi/common/src/linux_skbuff.c
++++ b/sys/compat/linuxkpi/common/src/linux_skbuff.c
+@@ -351,11 +351,13 @@ linuxkpi_kfree_skb(struct sk_buff *skb)
+ 			shinfo->frags[fragno].size = 0;
+ 			shinfo->frags[fragno].offset = 0;
+ 			shinfo->frags[fragno].page = NULL;
+-#ifdef PAGE_IS_LKPI_PAGE
+ 			if ((skb->_flags & _SKB_PP_RECYCLE) != 0)
++#ifdef PAGE_IS_LKPI_PAGE
+ 				page_pool_put_full_page(p->pp, p, false);
+-			else
++#else
++				page_pool_put_full_page(NULL, p, false);
+ #endif
++			else
+ 				__free_page(p);
+ 			count++;
+ 		}
+@@ -365,7 +367,13 @@ linuxkpi_kfree_skb(struct sk_buff *skb)
+ 		void *p;
+ 
+ 		p = skb->head;
+-		skb_free_frag(p);
++#ifndef PAGE_IS_LKPI_PAGE
++		if ((skb->_flags & _SKB_PP_RECYCLE) != 0)
++			page_pool_put_full_page(NULL, virt_to_head_page(p),
++			    false);
++		else
++#endif
++			skb_free_frag(p);
+ 		skb->head = NULL;
+ 	}
+ 
+diff --git a/sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c b/sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c
+index 93e649faafd7..bfdad95992d4 100644
+--- a/sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c
++++ b/sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c
+@@ -11,16 +11,56 @@
+ #include <linux/dma-mapping.h>
+ #include <net/page_pool/helpers.h>
+ 
++#ifndef PAGE_IS_LKPI_PAGE
++#include <sys/lock.h>
++#include <sys/mutex.h>
++
++/*
++ * Without a LinuxKPI struct page there is nowhere to keep the pool and the
++ * DMA address on the page, so track the pages we hand out in a hash table.
++ */
++struct lkpi_pp_page {
++	struct lkpi_pp_page		*next;
++	struct page			*page;
++	struct device			*dev;
++	dma_addr_t			dma;
++	enum dma_data_direction		dir;
++	bool				mapped;
++};
++
++#define	LKPI_PP_HASH_SIZE	1024
++static struct lkpi_pp_page *lkpi_pp_hash[LKPI_PP_HASH_SIZE];
++static struct mtx lkpi_pp_mtx;
++MTX_SYSINIT(lkpi_pp_mtx, &lkpi_pp_mtx, "lkpi page pool", MTX_DEF);
++
++static inline u_int
++lkpi_pp_hash_idx(const struct page *p)
++{
++
++	return (((uintptr_t)p / sizeof(*p)) % LKPI_PP_HASH_SIZE);
++}
++
++/* Returns the link pointing at the entry for p, or at the chain's NULL end. */
++static struct lkpi_pp_page **
++lkpi_pp_lookup(const struct page *p)
++{
++	struct lkpi_pp_page **pppp;
++
++	mtx_assert(&lkpi_pp_mtx, MA_OWNED);
++	for (pppp = &lkpi_pp_hash[lkpi_pp_hash_idx(p)]; *pppp != NULL;
++	    pppp = &(*pppp)->next)
++		if ((*pppp)->page == p)
++			break;
++	return (pppp);
++}
++#endif
++
+ struct page_pool *
+ linuxkpi_page_pool_create(const struct page_pool_params *ppparams)
+ {
+ 	struct page_pool *pp;
+ 	int error;
+ 
+-#ifndef PAGE_IS_LKPI_PAGE
+-	WARN_ONCE(1, "\n!!! LinuxKPI page pool not supported yet!!!\n\n");
+-#endif
+-
+ 	pp = kzalloc_node(sizeof(*pp), GFP_KERNEL, ppparams->nid);
+ 	if (pp == NULL)
+ 		return (ERR_PTR(-ENOMEM));
+@@ -116,7 +156,49 @@ linuxkpi_page_pool_alloc_frag(struct page_pool *pp, uint32_t *offset,
+ 
+ 	return (p);
+ #else
+-	return (NULL);
++	struct lkpi_pp_page *ppp;
++	struct page *p;
++
++	if (size > PAGE_SIZE) {
++		pr_warn_once("%s: size %zu > PAGE_SIZE\n", __func__, size);
++		return (NULL);
++	}
++
++	ppp = kzalloc(sizeof(*ppp), gfp);
++	if (ppp == NULL)
++		return (NULL);
++	p = alloc_page(gfp);
++	if (p == NULL) {
++		kfree(ppp);
++		return (NULL);
++	}
++	ppp->page = p;
++	ppp->dev = pp->params.dev;
++	ppp->dir = pp->params.dma_dir;
++
++	if ((pp->params.flags & PP_FLAG_DMA_MAP) != 0) {
++		ppp->dma = dma_map_page_attrs(ppp->dev, p, 0, PAGE_SIZE,
++		    ppp->dir, DMA_ATTR_SKIP_CPU_SYNC);
++		if (dma_mapping_error(ppp->dev, ppp->dma)) {
++			put_page(p);
++			kfree(ppp);
++			return (NULL);
++		}
++		ppp->mapped = true;
++		if ((pp->params.flags & PP_FLAG_DMA_SYNC_DEV) != 0)
++			dma_sync_single_for_device(ppp->dev, ppp->dma,
++			    PAGE_SIZE, ppp->dir);
++	}
++
++	if (offset != NULL)
++		*offset = 0;
++
++	mtx_lock(&lkpi_pp_mtx);
++	ppp->next = lkpi_pp_hash[lkpi_pp_hash_idx(p)];
++	lkpi_pp_hash[lkpi_pp_hash_idx(p)] = ppp;
++	mtx_unlock(&lkpi_pp_mtx);
++
++	return (p);
+ #endif /* PAGE_IS_LKPI_PAGE */
+ }
+ 
+@@ -138,6 +220,22 @@ linuxkpi_page_pool_put_full_page(struct page_pool *pp, struct page *page,
+ #ifdef PAGE_IS_LKPI_PAGE
+ 	page->pp = NULL;
+ 	page->dma_addr = 0;
++#else
++	struct lkpi_pp_page **pppp, *ppp;
++
++	/* pp may be garbage here: callers derive it from the page. */
++	mtx_lock(&lkpi_pp_mtx);
++	pppp = lkpi_pp_lookup(page);
++	ppp = *pppp;
++	if (ppp != NULL)
++		*pppp = ppp->next;
++	mtx_unlock(&lkpi_pp_mtx);
++	if (ppp != NULL) {
++		if (ppp->mapped)
++			dma_unmap_page_attrs(ppp->dev, ppp->dma, PAGE_SIZE,
++			    ppp->dir, DMA_ATTR_SKIP_CPU_SYNC);
++		kfree(ppp);
++	}
+ #endif
+ 	put_page(page);
+ }
+@@ -151,6 +249,13 @@ linuxkpi_page_pool_get_dma_addr(const struct page *page)
+ #ifdef PAGE_IS_LKPI_PAGE
+ 	return (page->dma_addr);
+ #else
+-	return (0);
++	struct lkpi_pp_page *ppp;
++	dma_addr_t dma;
++
++	mtx_lock(&lkpi_pp_mtx);
++	ppp = *lkpi_pp_lookup(page);
++	dma = (ppp != NULL) ? ppp->dma : 0;
++	mtx_unlock(&lkpi_pp_mtx);
++	return (dma);
+ #endif
+ }
+-- 
+2.56.0
+

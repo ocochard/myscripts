@@ -1,0 +1,26 @@
+From 3deff8f22c970a9d6abb09e448d162bd97b56585 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 3/9] mt76: mt7925: depend on lindebugfs when debugfs is built
+
+The kernel linker resolves symbols only through a module's own
+dependencies; only mt76_core declared lindebugfs.
+---
+ sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c b/sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c
+index e2498659c884..086a9ca5b2e9 100644
+--- a/sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c
++++ b/sys/contrib/dev/mediatek/mt76/mt7925/debugfs.c
+@@ -317,3 +317,7 @@ int mt7925_init_debugfs(struct mt792x_dev *dev)
+ 
+ 	return 0;
+ }
++
++#if defined(__FreeBSD__)
++MODULE_DEPEND(mt7925_pci, lindebugfs, 1, 1, 1);
++#endif
+-- 
+2.56.0
+

@@ -1,0 +1,29 @@
+From 1cf981ca291410c35a7592476df99b4085d60ccd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 5/9] LinuxKPI: skbuff: make napi_consume_skb() free the skb
+
+It was an empty stub; mt7925 frees every completed TX skb through it.
+---
+ sys/compat/linuxkpi/common/include/linux/skbuff.h | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/sys/compat/linuxkpi/common/include/linux/skbuff.h b/sys/compat/linuxkpi/common/include/linux/skbuff.h
+index 77ef47064fa5..c3a4897d5b34 100644
+--- a/sys/compat/linuxkpi/common/include/linux/skbuff.h
++++ b/sys/compat/linuxkpi/common/include/linux/skbuff.h
+@@ -1141,7 +1141,10 @@ napi_consume_skb(struct sk_buff *skb, int budget)
+ {
+ 
+ 	SKB_TRACE(skb);
+-	SKB_TODO();
++	if (skb == NULL)
++		return;
++	/* No NAPI skb cache; budget only selects it on Linux. */
++	consume_skb(skb);
+ }
+ 
+ static inline struct sk_buff *
+-- 
+2.56.0
+

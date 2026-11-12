@@ -1,0 +1,26 @@
+From 9eaa5b948f6ea4525721eb7fe76e23f824711d73 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 2/9] lindebugfs: export debugfs_create_devm_seqfile()
+
+Added in 3521cce445d4 but missing from EXPORT_SYMS, so modules using it
+fail to load with an undefined symbol.
+---
+ sys/modules/lindebugfs/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sys/modules/lindebugfs/Makefile b/sys/modules/lindebugfs/Makefile
+index 44041011b407..34acaf875ec8 100644
+--- a/sys/modules/lindebugfs/Makefile
++++ b/sys/modules/lindebugfs/Makefile
+@@ -9,6 +9,7 @@ CFLAGS+= ${LINUXKPI_INCLUDES}
+ EXPORT_SYMS=	debugfs_create_atomic_t
+ EXPORT_SYMS+=	debugfs_create_blob
+ EXPORT_SYMS+=	debugfs_create_bool
++EXPORT_SYMS+=	debugfs_create_devm_seqfile
+ EXPORT_SYMS+=	debugfs_create_dir
+ EXPORT_SYMS+=	debugfs_create_file
+ EXPORT_SYMS+=	debugfs_create_file_size
+-- 
+2.56.0
+

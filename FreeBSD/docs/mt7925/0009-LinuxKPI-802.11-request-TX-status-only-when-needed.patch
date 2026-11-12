@@ -1,0 +1,47 @@
+From 6e635093f3ad5f3f20b81427f3510c0203d901f7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Thu, 12 Nov 2026 17:30:32 +0000
+Subject: [PATCH 9/9] LinuxKPI: 802.11: request TX status only when needed
+
+mt76 sends frames that request status outside the BA session, so every
+TCP ACK went out alone; request it as mac80211 does and do not count a
+missing status as a TX error.
+---
+ sys/compat/linuxkpi/common/src/linux_80211.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_80211.c b/sys/compat/linuxkpi/common/src/linux_80211.c
+index a4eed95513e1..a249450cd320 100644
+--- a/sys/compat/linuxkpi/common/src/linux_80211.c
++++ b/sys/compat/linuxkpi/common/src/linux_80211.c
+@@ -6152,7 +6152,13 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
+ 	skb_set_queue_mapping(skb, ac);
+ 
+ 	info = IEEE80211_SKB_CB(skb);
+-	info->flags |= IEEE80211_TX_CTL_REQ_TX_STATUS;
++	/*
++	 * Like mac80211, only ask for TX status when someone waits for it:
++	 * mt76 sends frames with a status request outside the BA session.
++	 */
++	if (!ieee80211_is_data(hdr->frame_control) ||
++	    (m->m_flags & (M_EAPOL | M_TXCB)) != 0)
++		info->flags |= IEEE80211_TX_CTL_REQ_TX_STATUS;
+ 	/* Slight delay; probably only happens on scanning so fine? */
+ 	if (c == NULL || c == IEEE80211_CHAN_ANYC)
+ 		c = ic->ic_curchan;
+@@ -9240,8 +9246,11 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
+ 		status = 1;
+ 		txs.status = IEEE80211_RATECTL_TX_FAIL_UNSPECIFIED;
+ 	}
++	/* No status was requested or reported: unknown, not a failure. */
++	if (txstat->info == NULL)
++		status = 0;
+ 
+-	if (ni != NULL) {
++	if (ni != NULL && txstat->info != NULL) {
+ 		txs.pktlen = skb->len;
+ 		txs.flags |= IEEE80211_RATECTL_STATUS_PKTLEN;
+ 		if (info->status.rates[0].count > 1) {
+-- 
+2.56.0
+
