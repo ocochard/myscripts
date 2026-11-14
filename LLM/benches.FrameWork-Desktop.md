@@ -43,8 +43,9 @@ model's rows are still b9925. PP gained 23-55 %, decode is flat.
   bigger.** MTP works there (~37/35 t/s Total TPS at N=2, acceptance 0.76-0.80,
   ≥65 k context). One step up, UD-IQ4_XS (93.7 GB), needs a raised GTT aperture,
   loads in ~18 min, accepts *fewer* drafts, and on Linux that aperture
-  **panicked the kernel**; Q8_0 (192 GB) never fits. Needs the unmerged
-  PR #28243. Still ~half of `agents-a1-mtp`. Added 2026-09-05.
+  **panicked the kernel**; Q8_0 (192 GB) never fits. Runs on mainline
+  llama.cpp v1.0.0 since 2026-11-14 (~40 t/s decode, see the Flash-Next
+  section). Still ~half of `agents-a1-mtp`. Added 2026-09-05.
 
 ## Which recipe to use
 
@@ -63,7 +64,7 @@ formatted `frwk-bsd / frwk-linux`.
 | `moe-q8`             | Qwen3.6-35B-A3B Q8_K_XL         |            44 / 45      |            39 / 40       | Plain Q8. `USAGE=doc` alias.                 |
 | `mtp`                | Qwen3.6-27B-MTP Q8_K_XL + N=5   |            16 / 17      |            15 / 15       | Dense MTP: 2.5× vs off, still ~5× slower decode than MoE. |
 | `dense`              | Qwen3.6-27B Q4_K_XL             |            12 / 12      |            11 / 11       | Highest quality per token; slow.             |
-| `flashnext`          | Qwen3.8-Flash-Next UD-IQ3_XXS + MTP N=2 |    **37 / 35**  |          **30 / 28**     | 125B `qwen4exp`, 82 GB. MTP works at both depths (accept 0.76-0.80); gain *widens* with depth. Full `CTX=131072` fits with MTP on (verified 2026-09-05); ~2 min cold TTFT at ~32 k filled. Needs unmerged PR #28243; frwk-bsd MTP flaky (Mesa 26). |
+| `flashnext`          | Qwen3.8-Flash-Next UD-IQ3_XXS + MTP N=2 |    **37 / 35**  |          **30 / 28**     | 125B `qwen4exp`, 82 GB. MTP works at both depths (accept 0.76-0.80); gain *widens* with depth. Full `CTX=131072` fits with MTP on (verified 2026-09-05); ~2 min cold TTFT at ~32 k filled. Mainline v1.0.0 since 2026-11-14; frwk-bsd MTP flaky (Mesa 26). |
 | _(no slot)_          | Qwen3.8-Flash-Next UD-IQ4_XS    |          n/a            |            n/a           | 93.7 GB. Loads only with a raised GTT aperture, ~18 min to load, acceptance *worse* (0.68). On Linux that aperture panicked the kernel. Use IQ3_XXS. |
 
 ★ = current default in `LLM/llmsrv.sh`. `USAGE=coding` → `agents-a1-mtp`;
@@ -760,8 +761,9 @@ sidecar head, N=4), temp 0.6, ~4 k, 2 alternating series of `-r 3`: greedy
 17.8 / 18.5 vs probabilistic 19.1 / 17.6 t/s on frwk-bsd (+1 %), greedy
 17.7 / 18.1 vs probabilistic 19.6 / 17.9 on frwk-linux (+5 %); acceptance
 0.56-0.60 vs 0.58-0.63. No loss, so `llmsrv.sh` now passes
-`--spec-draft-sampling probabilistic` for that slot. Not for `flashnext`: its
-PR #28243 build (`~/llama.cpp-mtp`) predates the flag.
+`--spec-draft-sampling probabilistic` for that slot. Not for `flashnext`: it
+ran on the PR #28243 build, which predates the flag, until 2026-11-14, and is
+not A/B'd on v1.0.0.
 
 ### FreeBSD kernel profile (hwpmc, `ls_not_halted_cyc`, system-wide)
 
@@ -1181,6 +1183,28 @@ it has **zero** MTP references in `src/models/qwen4exp.cpp` (the PR adds 67 and
 +329 lines). It *does* accept `--spec-type draft-mtp` as a flag, because the flag
 exists for other architectures — so a successful `--help` proves nothing.
 
+**Update 2026-11-14: mainline llama.cpp v1.0.0 (`b1b770d90`) runs this model
+with MTP; `~/llama.cpp-mtp` is removed.** PR #28243 was closed unmerged on
+2026-10-01, and mainline gained `qwen4exp` MTP separately (#30097). Two head
+traps: mainline cannot use the `shared-` heads (`tensor 'token_embd.weight'
+not found`, no cross-model embedding borrowing), and the pre-2026-10-05 upload
+of the self-contained `mtp-Qwen3.8-Flash-Next-Q8_0.gguf` aborts with
+`GGML_ASSERT(buffer) failed`. The re-uploaded self-contained Q8_0 head (same
+4 137 429 120 B, md5 `06f833bea518d9e7e4050d47806a42fa`) works. Decode on one
+800-token coding prompt, IQ3_XXS, temp 0.6:
+
+| frwk-bsd | ctx | decode t/s | acceptance | mean len |
+|---|---:|---:|---:|---:|
+| v1.0.0, spec-off | 32768 | 31.3 | n/a | n/a |
+| v1.0.0, MTP N=2, self-contained Q8_0 | 32768 | 40.3 | 0.66 | 2.31 |
+| v1.0.0, MTP N=2, self-contained Q8_0 | 131072 | 39.6 / 40.0 | 0.65 | 2.30 |
+| PR #28243 build, MTP N=2, `shared-Q8_0` | 32768 | 28.4 / 31.0 | 0.49-0.57 | 1.49-1.57 |
+
+Through `llmsrv.sh MODEL=flashnext` (ctx 131072): 38.6 / 38.2 t/s on
+frwk-bsd, 38.9 / 35.4 on frwk-linux, acceptance 0.61-0.70. These are decode
+rates, not the Total TPS figures elsewhere in this section, and N=2 was not
+re-swept on v1.0.0.
+
 A new architecture, not a Qwen3.x repack: arch `qwen4exp`, 125B total / 6B
 active, 512 experts (10 routed + 1 shared), 48 layers of
 `3 × (Gated DeltaNet → MoE) → 1 × (Qwen Sparse Attention → MoE)`, plus a 20 M-entry
@@ -1410,9 +1434,9 @@ llama.cpp opens the rest), `--metrics` plus `spec_metrics()` so a dead draft hea
 reads `0.00000` instead of passing as a merely-slow row, and a quant-column regex
 that handles `UD-IQ4_XS`-style names.
 
-`llmsrv.sh` gained `MODEL=flashnext`, verified end-to-end: it forces
-`LLAMA_DIR=~/llama.cpp-mtp`, uses the full `CTX=131072` (verified to load with
+`llmsrv.sh` gained `MODEL=flashnext`, verified end-to-end: it forced
+`LLAMA_DIR=~/llama.cpp-mtp` (dropped 2026-11-14, see the update above), uses the full `CTX=131072` (verified to load with
 MTP on — an earlier clamp to 32768 was carried over from IQ4_XS and was never
 a real limit for this quant), warns past the model's native 262144, pins
-`--spec-draft-n-max 2`, and refuses to start with the build recipe if the PR
+`--spec-draft-n-max 2`, and refused to start with the build recipe if the PR
 build is missing.

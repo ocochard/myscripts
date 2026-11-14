@@ -22,9 +22,8 @@
 #   CTX=131072 ./llmsrv.sh       # extend ctx past 65536 (TTFT collapses past ~30k
 #                                # on Strix Halo — see LLM.benches.FrameWork-Desktop.md)
 #   JINJA=0 ./llmsrv.sh          # disable embedded jinja template (default is on)
-#   LLAMA_DIR=~/llama-am17an ./llmsrv.sh   # override llama.cpp build dir
-#                                          # (MTP needs llama.cpp >= b9878 — PR #22673
-#                                          #  is in upstream master since 2026-06)
+#   LLAMA_DIR=~/other-llama.cpp ./llmsrv.sh  # override llama.cpp build dir
+#                                            # (every slot tested on v1.0.0)
 set -eu
 
 usage() {
@@ -63,7 +62,7 @@ Environment variables:
                 smaller KV footprint if you never work past ~30 k prompts.
                 See benches.FrameWork-Desktop.md.)
   LLAMA_DIR=dir llama.cpp build dir (default: ~/llama.cpp for all models;
-                MTP requires llama.cpp >= b9878, in upstream master since 2026-06)
+                every slot tested on mainline llama.cpp v1.0.0)
   JINJA=0       Disable --jinja (default is on — uses the GGUF's embedded
                 chat template, routes <think> blocks into reasoning_content,
                 and gives agent clients correct tool-call boundaries).
