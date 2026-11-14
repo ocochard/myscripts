@@ -20,8 +20,9 @@ then cost.
 | 2 | Qwen3.8-Flash-Next | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 1/3 | 3/3 | PASS | **14/16** | 1 740 | best local; 17× Opus wall time |
 | 3 | Qwen3.8-27B | Q8_0 MTP | 4/10 | 3/7 | 2/5 | 1/3 | 0/3 | PASS | **10/28** | 1 646 | fewest t6 steps of the locals (36) |
 | 4 | Qwen3.8-27B | UD3.1 UD-Q4_K_XL | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | not run | **6/15** | 1 600 | no MTP, ~11 t/s; tree 1600031, see below |
-| 5 | Swift-Qwen3.8-27B-Uncensored | Q8_0 | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | abliterated; ignores the spec |
-| 6 | Qwen3-Coder-Next 80B-A3B | UD-Q4_K_XL | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | fastest (0.7 h/sweep) and still zero |
+| 5 | Sage-A1.5 35B-A3B | Q8_0 MTP | 0/3 | 0/3 | 2/3 | 1/3 | 0/3 | not run | **3/15** | 408 | ~60 t/s; fails the easy tiers; see below |
+| 6 | Swift-Qwen3.8-27B-Uncensored | Q8_0 | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | abliterated; ignores the spec |
+| 7 | Qwen3-Coder-Next 80B-A3B | UD-Q4_K_XL | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | fastest (0.7 h/sweep) and still zero |
 
 Tier 6 is `--reps 1` for every model, so it is reported PASS/— rather than as a
 rate.
@@ -50,6 +51,20 @@ client timeout: one reply ran past the 1800 s request limit, so it is scored
 `__FreeBSD_version` 1600022 to 1600031 (new guest image
 `fbsdq-1600031.img`), and the harness gained the symbol checks after row 3's
 early runs.
+
+**Sage-A1.5 Q8_0** (InternScience, the Agents-A1 successor; run-id
+`v40-sage-a15-q8-mtp-t06`, 2026-11-14) is the first model to clear harder
+tiers while scoring 0/3 on the two easiest. All 12 failures are
+`no_progress`, and 11 of them wrote no source file. The trace shows the model
+finding the right API (for t2, the exact `osd_register`/`osd_set`
+signatures), announcing "Let me write the module", then re-checking a header
+instead, until the 40-step limit. Its vendor scores (SWE-bench Pro 61.2) did
+not transfer to this bench. Sampling is the Qwen thinking preset (temp 0.6,
+top-p 0.95, top-k 20, no presence penalty), **not** the model card's temp 1.0 +
+presence penalty 1.5: a first attempt with the card's values (`v39`, aborted,
+no rows) produced degenerate text (fused words, dropped articles, invented
+APIs). Same tree and image as row 4. Served on llama.cpp v1.0.0 with the
+GGUF's embedded MTP head at N=3.
 
 Compare models on **`model_s`** and `tokens_out`, never on steps: a
 `ToolCallingAgent` step is one tool call, a `CodeAgent` step is one Python block
