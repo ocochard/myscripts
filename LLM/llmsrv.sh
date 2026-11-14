@@ -47,12 +47,11 @@ Environment variables:
                 and the fallback when the MTP draft path misbehaves.
   MODEL=flashnext
                 Qwen3.8-Flash-Next 125B/6B-active MoE, UD-IQ3_XXS (82 GB) +
-                shared-Q8_0 MTP head at N=2. ~37/35 t/s Total TPS at ~4 k,
-                acceptance 0.74-0.84. REQUIRES ~/llama.cpp-mtp built from
-                llama.cpp PR #28243 (still open — mainline has no qwen4exp MTP
-                graph); forces LLAMA_DIR. Takes the full 131072 CTX. Do not
-                substitute a bigger quant: IQ4_XS (93.7 GB) cannot load the
-                draft head at all. MTP is flaky on FreeBSD (Mesa 26 RADV).
+                self-contained Q8_0 MTP head at N=2. Mainline llama.cpp
+                >= v1.0.0: ~40 t/s decode, acceptance 0.65. Takes the full
+                131072 CTX. Do not substitute a bigger quant: IQ4_XS
+                (93.7 GB) cannot load the draft head at all. MTP is flaky on
+                FreeBSD (Mesa 26 RADV).
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
   CTX=N         --ctx-size (default: 131072 — practical sweet spot on Strix
@@ -242,16 +241,16 @@ case "${MODEL}" in
     ;;
   flashnext)
     # Qwen3.8-Flash-Next, 125B/6B-active `qwen4exp` MoE, UD-IQ3_XXS (82 GB) +
-    # the shared-Q8_0 sidecar MTP head. ~37 t/s Total TPS at ~4 k on FreeBSD
-    # (35 on Ubuntu) with N=2, draft acceptance 0.74-0.84.
+    # the self-contained Q8_0 sidecar MTP head. On mainline v1.0.0 (frwk-bsd,
+    # 2026-11-14): 40.3 t/s decode with N=2 vs 31.3 spec-off, acceptance 0.65,
+    # mean length 2.3; the old PR #28243 build did 28-31 t/s on the same prompt.
     #
     # THREE hard requirements, all of them load-time failures if unmet:
     #
-    # 1. NEEDS ~/llama.cpp-mtp, NOT the default ~/llama.cpp. Mainline has no
-    #    MTP graph for qwen4exp; llama.cpp PR #28243 (`qwen4exp/mtp`) adds it
-    #    and is still OPEN. Mainline accepts --spec-type draft-mtp as a FLAG
-    #    (it exists for other archs) and then fails on a missing tensor, so a
-    #    successful --help proves nothing. LLAMA_DIR is forced below.
+    # 1. The SELF-CONTAINED head re-uploaded 2026-10-05, not the `shared-`
+    #    one: mainline cannot borrow the main model's embedding
+    #    (`tensor 'token_embd.weight' not found`), and the pre-Oct-05 upload of
+    #    the self-contained head aborts with `GGML_ASSERT(buffer) failed`.
     # 2. IQ3_XXS (82 GB), NOT IQ4_XS (93.7 GB). One quant step up and the
     #    draft head cannot load at ANY --ctx-size: 93.7 GB resident leaves the
     #    driver unable to fund a second model's command submission
@@ -294,26 +293,7 @@ case "${MODEL}" in
     # (see benches.FrameWork-Desktop.md, "gttsize=120000 panicked the Linux
     # kernel"). frwk-bsd survives the same workload but takes ~18 min to load
     # and prefills far slower. IQ3_XXS is both safer and faster.
-    #
-    # EXPECTED NOISE on every start of this slot — not an error, do not chase:
-    #   E llama_init_from_model: failed to initialize the context:
-    #     qwen4exp requires ctx_other to be set (this warning is normal ...)
-    #   W operator(): failed to measure the memory of the extra model,
-    #     fitting without it: failed to create llama_context from model
-    # llama.cpp's memory fitter probe-loads the DRAFT model to budget for both
-    # models competing for memory (common/fit.cpp add_extra_memory). qwen4exp
-    # throws there (src/llama-context.cpp:158), the probe is caught at
-    # common/fit.cpp:226, and the main model is then fitted ALONE. The server
-    # loads and serves correctly afterwards; the E-line is llama.cpp logging
-    # its own internal throw before catching it.
-    #
-    # The real consequence: because the draft head's memory is never counted,
-    # nothing stops you from picking a main quant that leaves no room for it —
-    # which is exactly how IQ4_XS fails (ErrorDeviceLost at draft load). That
-    # is why this slot pins IQ3_XXS rather than trusting the fitter.
-    # Do not silence this by redirecting stderr: it would hide real load errors
-    # (ErrorDeviceLost, missing tensors) that look similar at a glance.
-    LLAMA_DIR="${HOME}/llama.cpp-mtp"
+
     # No CTX clamp: 131072 with MTP on is verified to load on this quant (see
     # note 3 above). Only warn past the model's native 262144, which would
     # need RoPE scaling.
@@ -352,7 +332,7 @@ case "${MODEL}" in
     # not expect MTP to work with it.
     q="${QUANT:-UD-IQ3_XXS}"
     hf_file="${q}/Qwen3.8-Flash-Next-${q}-00001-of-00003.gguf"
-    hf_draft="MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
+    hf_draft="MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf"
     hf_dir="${HF_HUB}/models--unsloth--Qwen3.8-Flash-Next-GGUF"
     model=$(hf_resolve "${hf_dir}" "${hf_file}")
     draft=$(hf_resolve "${hf_dir}" "${hf_draft}")
@@ -360,29 +340,14 @@ case "${MODEL}" in
     warmup_flag=""
     # Not A/B'd on this arch; keep the FreeBSD-dense precedent of leaving it off.
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
-    if [ ! -x "${LLAMA_DIR}/build/bin/llama-server" ]; then
-      echo "MODEL=flashnext needs a PR #28243 build at ${LLAMA_DIR}" >&2
-      echo "  git clone https://github.com/ggml-org/llama.cpp ~/llama.cpp-mtp" >&2
-      echo "  git -C ~/llama.cpp-mtp fetch origin refs/pull/28243/head" >&2
-      echo "  git -C ~/llama.cpp-mtp checkout FETCH_HEAD" >&2
-      echo "  (then cmake -B build -DGGML_VULKAN=ON -DGGML_CCACHE=OFF ...)" >&2
-      exit 1
-    fi
     if [ -z "${draft}" ] || [ ! -e "${draft}" ]; then
       echo "draft head ${hf_draft} not cached under ${hf_dir}" >&2
       echo "MTP is the point of this slot; fetch the head or pick another MODEL" >&2
       exit 1
     fi
-    # Pre-announce the fitter noise so it does not read as a failed start.
-    echo "note: two lines below are EXPECTED on this slot and harmless —" >&2
-    echo "  'qwen4exp requires ctx_other to be set' (E) and" >&2
-    echo "  'failed to measure the memory of the extra model' (W)." >&2
-    echo "  llama.cpp probe-loads the draft head to size memory, qwen4exp does" >&2
-    echo "  not support that probe, so it fits the main model alone and carries" >&2
-    echo "  on. Startup is OK if you then see 'model loaded'." >&2
-    # N=2 is the measured peak on BOTH hosts, and there is no cliff (N=16 still
-    # beats spec-off) — unlike the agents-a1-mtp MoE cliff at N>=8. Mean accepted
-    # draft length is only ~1.8 tokens, so a larger N buys nothing here.
+    # N=2 was the measured peak on BOTH hosts on the PR build, with no cliff
+    # (N=16 still beat spec-off). Not re-swept on v1.0.0, where the mean
+    # accepted length rose from ~1.8 to 2.3.
     model_extra="--model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 2"
     ;;
   qwen38-q8)
