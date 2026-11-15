@@ -236,8 +236,11 @@ FreeBSD 16 has a kernel V4L2 capture framework, `video(4)` (9c9428825f4c, 2026-0
 `video_if` hardware methods (formats, controls, start/stop stream), like `uvideo(4)` and `fwcam(4)`.
 The Linux driver (`amd_isp4_capture`, about 4000 lines plus the amdgpu ISP power and the ISP I2C/pin
 controllers) is GPL-2.0+, so a FreeBSD driver would be a rewrite against the ISP firmware interface.
-The ISP firmware drives the OV05C sensor itself (no sensor driver in Linux). Not checked: whether the
-camera captures frames on Ubuntu.
+The ISP firmware drives the OV05C sensor itself (no sensor driver in Linux).
+On Ubuntu (Linux 7.0.0-43, 2026-11-15) the RGB camera works: `amd_isp4_capture` provides `/dev/video0`
+(driver `amd_isp_capture`, media model `amd_isp41_mdev`), NV12 and YUYV from 640x360 to 2888x1808 at
+30 fps; `v4l2-ctl --stream-mmap` captured 1920x1080 NV12 at 29.66 fps with a correct image (black
+frames with the privacy shutter closed).
 
 ### Platform Management Framework (AMDI0105)
 
