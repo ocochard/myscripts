@@ -5,7 +5,7 @@ Status, analysis and patch for suspend-to-idle on the AMD Ryzen AI Max+ PRO
 Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#suspend).
 Patches, in commit order. Rows 1-6 are on main 83c8ec72ac6a, row 7 on main
 cf58c8667cfd. Branches:
-[olivier-amdsmu-strixhalo](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) (1-2),
+[olivier-amdsmu-strixhalo](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) (1, 2, 2b),
 [olivier-s2idle-wake](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) (3-5),
 [olivier-pci-d3hot](https://github.com/ocochard/freebsd-src/compare/main...olivier-pci-d3hot) (7).
 
@@ -13,6 +13,7 @@ cf58c8667cfd. Branches:
 |---|---|---|---|---|---|
 | 1 | amdsmu: Add Strix Halo support | [0001](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch) [eb3bffacdf28](https://github.com/ocochard/freebsd-src/commit/eb3bffacdf28) | `amdsmu.h`, `amdsmu_reg.h` | done, tested: attaches, SMU 100.7.0, same 19 IP blocks as Linux; ready to send | nothing |
 | 2 | amdsmu: Diagnose S0i3 blockers on Strix Halo | [0002](amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch) [fd35f91cc43e](https://github.com/ocochard/freebsd-src/commit/fd35f91cc43e) | `amdsmu.c` | done, tested: blocker report after resume, USB4_1 garbage filtered | 1 |
+| 2b | amdsmu: Only report IP blocks the SMU tracks (GFX was a false blocker) | [0003](amdsmu/0003-amdsmu-Only-report-IP-blocks-the-SMU-tracks.patch) [1bc9633f8370](https://github.com/ocochard/freebsd-src/commit/1bc9633f8370) | `amdsmu.c` | done, tested: GFX `active: 0` on Strix Halo, as in Linux `0x1ff9dd9`; affects every model | 2 |
 | 3 | acpi: let drivers add wake interrupts for suspend-to-idle | [0001](amdsmu/s2idle/0001-acpi-let-drivers-add-wake-interrupts-for-suspend-to-.patch) [bcebee137c71](https://github.com/ocochard/freebsd-src/commit/bcebee137c71) | `acpi.c`, `acpivar.h` | done, tested: `do_idle()` unmasks the registered IRQ | nothing |
 | 4 | amdgpio: arm the _AEI wake pins for suspend-to-idle | [0002](amdsmu/s2idle/0002-amdgpio-arm-the-_AEI-wake-pins-for-suspend-to-idle.patch) [3b8b97303b3d](https://github.com/ocochard/freebsd-src/commit/3b8b97303b3d) | `amdgpio.c`, `amdgpio.h` | done, tested: pins armed and restored; power button (pin 54) still does not wake | 3 |
 | 5 | acpi_cpu: use the deepest Cx state during suspend-to-idle | [0003](amdsmu/s2idle/0003-acpi_cpu-use-the-deepest-Cx-state-during-suspend-to-.patch) [a413caa2444c](https://github.com/ocochard/freebsd-src/commit/a413caa2444c) | `acpi_cpu.c` | done, tested: key wakes, clean resume with the default `cx_lowest` C1 | nothing |
@@ -576,6 +577,31 @@ still reports GFX and JPEG_1 active the whole sleep. `smu_v14_0_set_jpeg_enable(
 sends `PowerDownJpeg1` only when MP1 is 14.0.1; Linux 7.2 has the same
 code and reaches S0i3, so that is not the difference by itself.
 
+## Linux vs FreeBSD SMU messages: identical; GFX is a false blocker
+
+Linux 7.0.0-43 with `file smu_cmn.c +p` and `module amd_pmc +p` dynamic
+debug, `rtcwake -m freeze -s 30`: S0i3 success, 29.2 s in S0i3, 595877 us
+to enter it ([amdsmu/linux_smu_messages.txt](amdsmu/linux_smu_messages.txt)).
+FreeBSD with the same amdgpu `smu send message` lines printed (debug
+drm-kmod build), `tb` loaded:
+
+| Step | Linux | FreeBSD |
+|---|---|---|
+| boot idle | `PowerDownJpeg0/1`, `PowerDownVcn0/1`, `AllowGfxOff` | same, all resp 1 |
+| amdgpu suspend | `PowerUpVpe`, `PowerDownVpe` | same |
+| PMC before the hint | 0x09 constraints (`0x1ff9dd9`), 0x05/0x04 log address, 0x07 reset, 0x06 start | same messages at attach only |
+| hint | 0x03 arg 1 | same |
+| resume | VCN/JPEG/VPE power up, then idle power down | same |
+
+The SMU constraint mask `0x1ff9dd9` leaves out GFX (bit 2), and FreeBSD
+reads the same mask (`dev.amdsmu.0.ip_blocks.GFX.active: 0`). Linux only
+prints tracked blocks; FreeBSD's `amdsmu_resume_check()` walks every name,
+so the GFX "blocker" was a false report. Fix (patch table row 2b): skip
+blocks with `ip_blocks_active[i]` false, as Linux does. That leaves JPEG_1 as the only
+real blocker with amdgpu and `tb` loaded; Linux reports JPEG_1 active for
+5309 us only. amdgpu sends the same JPEG1 power-down on both systems, so
+what keeps JPEG_1 up on FreeBSD is still unknown.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -632,3 +658,5 @@ code and reaches S0i3, so that is not the difference by itself.
 | 2026-11-15 | `tb` loaded, both NHIs, no amdgpu, `zzz` | resume works; USB3_0 and USB3_1 cleared, only GFX blocks |
 | 2026-11-15 | amdgpu + `tb` (both NHIs) + `pci` D3hot fix, `zzz` | resume works (no hang); blockers GFX, JPEG_1 only |
 | 2026-11-15 | debug amdgpu: JPEG/VCN state at suspend, `tb` loaded | VCN0/1 and JPEG0/1 already gated; GFX, JPEG_1 still block |
+| 2026-11-15 | Ubuntu 7.0, SMU/PMC debug messages, `rtcwake -m freeze` | S0i3 29.2 s; amdgpu suspend sends only VPE up/down |
+| 2026-11-15 | FreeBSD, amdgpu SMU messages printed, `tb` loaded | same SMU messages as Linux; GFX untracked (false blocker); JPEG_1 blocks |

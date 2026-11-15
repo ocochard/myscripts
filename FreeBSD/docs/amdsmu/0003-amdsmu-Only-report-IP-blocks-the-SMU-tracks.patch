@@ -1,0 +1,30 @@
+From 1bc9633f837091201032ea79194f2084ec647c1b Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sun, 15 Nov 2026 16:05:25 +0000
+Subject: [PATCH 3/3] amdsmu: Only report IP blocks the SMU tracks
+
+The S0i3 blocker report walked every IP block name, including those the
+SMU leaves out of its supported constraints, whose last active time is
+meaningless.  On Strix Halo that reported GFX as blocking on every
+suspend.  Skip them, as Linux amd_pmc does.
+---
+ sys/dev/amdsmu/amdsmu.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/sys/dev/amdsmu/amdsmu.c b/sys/dev/amdsmu/amdsmu.c
+index 64e0e7759d62..ced97af5ca72 100644
+--- a/sys/dev/amdsmu/amdsmu.c
++++ b/sys/dev/amdsmu/amdsmu.c
+@@ -355,6 +355,9 @@ amdsmu_resume_check(device_t dev, enum power_stype stype)
+ 	}
+ 
+ 	for (size_t i = 0; i < sc->product->ip_block_count; i++) {
++		/* The SMU does not track this block; its time is meaningless. */
++		if (!sc->ip_blocks_active[i])
++			continue;
+ 		/*
+ 		 * An IP block only truly blocked S0i3 entry if it was active
+ 		 * for the entire time spent in "SWDRIPS".
+-- 
+2.56.0
+

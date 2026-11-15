@@ -1,0 +1,103 @@
+[   41.619830] PM: suspend entry (s2idle)
+[   41.667341] amdgpu 0000:c3:00.0: smu send message: PowerUpVpe(49), resp: 0x00000001
+[   42.068279] amdgpu 0000:c3:00.0: smu send message: PowerDownVpe(50), resp: 0x00000001
+[   42.074193] PM: suspend of devices complete after 445.020 msecs
+[   42.074201] PM: start suspend of devices complete after 446.753 msecs
+[   42.076965] PM: late suspend of devices complete after 2.760 msecs
+[   42.164300] PM: noirq suspend of devices complete after 87.198 msecs
+[   42.164616] PM: Triggering wakeup from IRQ 9
+[   42.196690] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_RESPONSE:1
+[   42.196714] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_ARGUMENT:1ff9dd9
+[   42.196721] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_MESSAGE:9
+[   42.217849] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_RESPONSE:1
+[   42.217873] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_ARGUMENT:7e0c14c0
+[   42.217881] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_MESSAGE:5
+[   42.248944] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_RESPONSE:1
+[   42.248967] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_ARGUMENT:18
+[   42.248974] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_MESSAGE:4
+[   42.250300] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_RESPONSE:1
+[   42.250322] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_ARGUMENT:0
+[   42.250335] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_MESSAGE:7
+[   42.250473] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_RESPONSE:1
+[   42.250482] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_ARGUMENT:0
+[   42.250490] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_MESSAGE:6
+[   42.250618] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_RESPONSE:1
+[   42.250627] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_ARGUMENT:1
+[   42.250630] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_MESSAGE:3
+[   42.250650] PM: suspend-to-idle
+[   42.250742] ACPI: PM: Rearming ACPI SCI for wakeup
+[   42.250763] amd_pmc: SMU idlemask s0i3: 0x7fffb9dd
+[   72.400114] PM: Triggering wakeup from IRQ 9
+[   72.400292] ACPI: PM: ACPI fixed event wakeup
+[   72.400298] PM: resume from suspend-to-idle
+[   72.400399] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_RESPONSE:1
+[   72.400410] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_ARGUMENT:0
+[   72.400418] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_MESSAGE:3
+[   72.400507] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_RESPONSE:1
+[   72.400514] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_ARGUMENT:0
+[   72.400520] amd_pmc AMDI000B:00: AMD_PMC_REGISTER_MESSAGE:8
+[   73.949943] PM: noirq resume of devices complete after 1546.964 msecs
+[   73.958614] PM: early resume of devices complete after 8.421 msecs
+[   73.966038] amdgpu 0000:c3:00.0: smu send message: SetDriverDramAddrHigh(13), resp: 0x00000001
+[   73.966061] amdgpu 0000:c3:00.0: smu send message: SetDriverDramAddrLow(14), resp: 0x00000001
+[   73.967079] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   73.967100] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   73.969945] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   73.969976] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   73.970854] amdgpu 0000:c3:00.0: smu send message: PowerUpVcn0(7), resp: 0x00000001
+[   73.973650] amdgpu 0000:c3:00.0: smu send message: PowerUpVcn1(5), resp: 0x00000001
+[   73.974995] amdgpu 0000:c3:00.0: smu send message: PowerUpJpeg0(34), resp: 0x00000001
+[   73.975024] amdgpu 0000:c3:00.0: smu send message: PowerUpJpeg1(39), resp: 0x00000001
+[   73.975057] amdgpu 0000:c3:00.0: smu send message: TransferTableSmu2Dram(15), resp: 0x00000001
+[   73.975088] amdgpu 0000:c3:00.0: smu send message: PowerDownJpeg0(33), resp: 0x00000001
+[   73.975218] amdgpu 0000:c3:00.0: smu send message: PowerDownJpeg1(38), resp: 0x00000001
+[   73.976046] amdgpu 0000:c3:00.0: smu send message: PowerDownVcn0(6), resp: 0x00000001
+[   73.976113] amdgpu 0000:c3:00.0: smu send message: PowerDownVcn1(4), resp: 0x00000001
+[   73.977528] amdgpu 0000:c3:00.0: smu send message: PowerUpVcn0(7), resp: 0x00000001
+[   73.980520] amdgpu 0000:c3:00.0: smu send message: PowerUpVcn1(5), resp: 0x00000001
+[   73.982004] amdgpu 0000:c3:00.0: smu send message: PowerUpJpeg0(34), resp: 0x00000001
+[   73.982033] amdgpu 0000:c3:00.0: smu send message: PowerUpJpeg1(39), resp: 0x00000001
+[   73.982835] amdgpu 0000:c3:00.0: smu send message: PowerUpVpe(49), resp: 0x00000001
+[   74.416931] amdgpu 0000:c3:00.0: smu send message: PowerDownVpe(50), resp: 0x00000001
+[   74.423983] amdgpu 0000:c3:00.0: smu send message: PowerUpVpe(49), resp: 0x00000001
+[   74.492926] PM: resume of devices complete after 534.299 msecs
+[   74.511095] PM: suspend exit
+[   74.511925] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.511958] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.511984] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512008] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512034] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512058] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512081] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512100] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512172] amdgpu 0000:c3:00.0: smu send message: DisallowGfxOff(26), resp: 0x00000001
+[   74.512869] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512892] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512916] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512941] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512966] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.512991] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.513015] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.513040] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531077] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531116] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531141] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531852] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531873] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531895] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531909] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531926] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.531999] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.532013] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.532026] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.532039] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.532052] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.532065] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.532078] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.532091] amdgpu 0000:c3:00.0: smu send message: GetEnabledSmuFeatures(18) resp : 0x00000001
+[   74.637897] amdgpu 0000:c3:00.0: smu send message: AllowGfxOff(25), resp: 0x00000001
+[   75.453950] amdgpu 0000:c3:00.0: smu send message: PowerDownVpe(50), resp: 0x00000001
+[   75.454044] amdgpu 0000:c3:00.0: smu send message: PowerDownJpeg0(33), resp: 0x00000001
+[   75.454072] amdgpu 0000:c3:00.0: smu send message: PowerDownJpeg1(38), resp: 0x00000001
+[   75.454170] amdgpu 0000:c3:00.0: smu send message: PowerDownVcn1(4), resp: 0x00000001
+[   75.454869] amdgpu 0000:c3:00.0: smu send message: PowerDownVcn0(6), resp: 0x00000001
