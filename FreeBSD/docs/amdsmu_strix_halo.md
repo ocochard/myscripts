@@ -378,6 +378,45 @@ run still reports DISPLAY, GFX, JPEG_1, USB3_0, USB3_1 and MPM active the
 whole 34.7 s. So the amdgpu S0ix sequence and GFXOFF are not the missing
 piece; the blockers come from something outside amdgpu's suspend method.
 
+## GPU stays in D0: FreeBSD rejects D3hot
+
+With `debug.bootverbose=1`, every function next to the GPU goes to D3cold
+over suspend (HDAU 195:0:1, XHC1 195:0:4, HDEF 195:0:6), then the parent
+bridge GPPA (0:8:1), but the GPU itself (`vgapci0`, 195:0:0) logs nothing.
+The LPS0 constraint table (`ssdt27`) asks for `\_SB.PCI0.GPPA.GFX0` in D3.
+DTrace cannot see this: over `zzz` it aborts with "processing aborted:
+Abort due to systemic unresponsiveness". A debug `printf` in
+`pci_set_power_child()` shows:
+
+```
+vgapci0: XXX suspend_child error 0 do_power 1
+vgapci0: XXX set_power_child state 4 attached 1 cur 0
+vgapci0: XXX dstate 3
+```
+
+Suspend asks for `PCI_POWERSTATE_D3` (D3cold, 4); GFX0's `_S3D` returns 3,
+which is D3hot since 84bbfc32a3f4 ("acpi_powerres: D3cold support") split
+D3 into D3hot (3) and D3cold (4). `pci_set_powerstate_method()` only has a
+`case PCI_POWERSTATE_D3` (D3cold), so D3hot falls into `return (EINVAL)`;
+`acpi_pci_set_powerstate_method()` then skips the ACPI transition and
+nothing is logged. Every device whose `_SxD` returns 3 stays in D0. Still
+in freebsd/main cf58c8667cfd and in stable/15 (releng/15.0 to 15.2).
+
+Fix (uncommitted test in the combo worktree): accept D3hot and D3cold in
+`pci_set_powerstate_method()` (both write D3 to the PM register), use the
+10 ms delay for both, and treat D3hot/D3cold as no change since the
+register cannot tell them apart. With it the GPU goes to D3hot and ACPI
+switches GFX0 to D3hot; amdgpu resumes fine:
+
+```
+pci0:195:0:0: Transition from D0 to D3hot
+pci3: set ACPI power state D3hot on \_SB_.PCI0.GPPA.GFX0
+```
+
+The S0i3 blockers do not change (DISPLAY, GFX, USB3_0, USB3_1, MPM, JPEG_1
+for the whole 22 s). The fix is a real bug fix on its own, but not the S0i3
+blocker.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -386,9 +425,10 @@ piece; the blockers come from something outside amdgpu's suspend method.
    trying again.
 3. amdgpu (DISPLAY, GFX, JPEG): `in_s0ix` and GFXOFF are confirmed, and
    LinuxKPI also calls `suspend_noirq` (only sets `suspend_complete` in
-   S0ix). Next: compare the GPU function's PCI power state over suspend
-   (FreeBSD bootverbose vs Linux) and the order of the SMU sleep hint
-   relative to amdgpu's suspend.
+   S0ix). The GPU now reaches D3hot with the `pci` D3hot fix, blockers
+   unchanged. Next: the order of the SMU sleep hint relative to device
+   suspend, and whether these blocker times mean anything (every blocker
+   reports exactly the whole software DRIPS time).
 4. Power button (pin 54) still does not wake: check the `amdgpio` arming
    (register values after suspend) and the MP2 (`MP2C`) path.
 5. Turn `do_idle()` into the loop its comment describes (the key wake
@@ -421,3 +461,6 @@ piece; the blockers come from something outside amdgpu's suspend method.
 | 2026-11-15 | + `kldload tb` (nhi0/nhi1 attach) | resume hangs: keyboard backlight on, screen black, no network; forced power off, nothing logged |
 | 2026-11-15 | read `dri/drmn0/amdgpu_gfxoff_status` (lindebugfs) | whole system froze; forced power off |
 | 2026-11-15 | instrumented `amdgpu.ko` (printf in `amdgpu_pmops_suspend`) | `in_s0ix 1`, GFXOFF engaged before and after, suspend returns 0; same blockers over 34.7 s |
+| 2026-11-15 | DTrace on `pci_suspend_child` over `zzz` | aborted: "Abort due to systemic unresponsiveness", no data |
+| 2026-11-15 | debug `printf` in `pci_set_power_child` | GPU gets `_S3D` D3hot (3), `pci_set_powerstate_method` returns EINVAL, GPU stays D0 |
+| 2026-11-15 | + `pci` D3hot fix | GPU D3hot, GFX0 ACPI D3hot, resume fine; same blockers over 22 s |
