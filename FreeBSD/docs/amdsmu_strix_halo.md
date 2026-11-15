@@ -637,6 +637,15 @@ the audio coprocessor (195:0:5), the sensor hub (195:0:7), 196:0:0 and the
 NPU (196:0:1) in D3cold; resume worked, and JPEG_1 still blocked the whole
 15.9 s with no S0i3 attempt.
 
+Boot-time SMU messages, Linux (`options amdgpu dyndbg="file smu_cmn.c +p"`,
+[amdsmu/linux_boot_smu_messages.txt](amdsmu/linux_boot_smu_messages.txt))
+vs FreeBSD: the same list, except Linux also sends `PowerUpIspByTile` then
+`PowerDownIspByTile` (mask `0x7ff`, all tiles) for the camera ISP, through
+the ISP power support added in Linux after 6.12 (fba8d147472e), plus extra
+`DisallowGfxOff`/`AllowGfxOff` pairs. A debug FreeBSD amdgpu sending
+`PowerDownIspByTile(0x7FF)` (resp 1) at boot and at each suspend changes
+nothing: JPEG_1 blocked a 1277 s (21 min) sleep, no S0i3 attempt.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -698,3 +707,5 @@ NPU (196:0:1) in D3cold; resume worked, and JPEG_1 still blocked the whole
 | 2026-11-15 | second suspend in one boot, amdgpu + `tb` (routers not re-slept) | JPEG_1 time = sum of both sleeps (no per-suspend log reset); USB3_0/1, DISPLAY, MPM back |
 | 2026-11-15 | amdsmu log reset + start before each hint, GFX filter, amdgpu + `tb` | only JPEG_1 blocks (13.3 s); still no S0i3 attempt |
 | 2026-11-15 | + every driverless PCI function in D3cold (Wi-Fi, PSP, ACP, sensor hub, NPU) | resume works; JPEG_1 still the only blocker, no S0i3 attempt |
+| 2026-11-15 | Ubuntu boot with amdgpu SMU debug | boot list same as FreeBSD plus ISP up/down (`0x7ff`) and GFXOFF pairs |
+| 2026-11-15 | debug amdgpu sends `PowerDownIspByTile(0x7FF)` | resp 1; JPEG_1 still blocks (1277 s sleep), no S0i3 attempt |

@@ -1,0 +1,230 @@
+ 17:26:34 up 0 min,  1 user,  load average: 0.67, 0.16, 0.05
+GetDriverIfVersion(3) resp : 0x00000001
+GetSmuVersion(2) resp : 0x00000001
+EnableGfxImu(22), resp: 0x00000001
+PowerUpVcn0(7), resp: 0x00000001
+PowerUpVcn1(5), resp: 0x00000001
+PowerUpJpeg0(34), resp: 0x00000001
+PowerUpJpeg1(39), resp: 0x00000001
+MALLPowerController(56), resp: 0x00000001
+MALLPowerState(57), resp: 0x00000001
+SetDriverDramAddrHigh(13), resp: 0x00000001
+SetDriverDramAddrLow(14), resp: 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+TransferTableSmu2Dram(15), resp: 0x00000001
+PowerUpVpe(49), resp: 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+PowerDownVpe(50), resp: 0x00000001
+TransferTableSmu2Dram(15), resp: 0x00000001
+PowerUpVpe(49), resp: 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+PowerUpIspByTile(42), resp: 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+PowerDownIspByTile(41), resp: 0x00000001
+AllowGfxOff(25), resp: 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+DisallowGfxOff(26), resp: 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+PowerDownVpe(50), resp: 0x00000001
+PowerDownJpeg0(33), resp: 0x00000001
+PowerDownJpeg1(38), resp: 0x00000001
+PowerDownVcn1(4), resp: 0x00000001
+PowerDownVcn0(6), resp: 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+GetEnabledSmuFeatures(18) resp : 0x00000001
+AllowGfxOff(25), resp: 0x00000001
+TransferTableSmu2Dram(15), resp: 0x00000001
