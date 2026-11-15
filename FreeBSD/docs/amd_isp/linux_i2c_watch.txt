@@ -1,0 +1,11 @@
+# linux_i2cwatch.c output (amdgpu_regs every 66 us) during a capture start, Linux 7.0.0-43;
+# only target, abort, PHY and busy changes. The polling made the ISP lose power at 573.9 ms.
+  532.744 ms tar 0xffffffff st 0xffffffff raw 0xffffffff txfl 3735936685 rxfl 3735936685 abrt 0xdeaddead phy 0xdeaddead boot 0xdeaddead
+  532.781 ms tar 0xdeaddead st 0xdeaddead raw 0xdeaddead txfl 3735936685 rxfl 3735936685 abrt 0xdeaddead phy 0xdeaddead boot 0xdeaddead
+  533.547 ms tar 0xdeaddead st 0xdeaddead raw 0xdeaddead txfl 3735936685 rxfl 0 abrt 0x0 phy 0x0 boot 0x0
+  533.558 ms tar 0x1055 st 0x6 raw 0x0 txfl 0 rxfl 0 abrt 0x0 phy 0x0 boot 0x0
+  559.266 ms tar 0x55 st 0x6 raw 0x0 txfl 0 rxfl 0 abrt 0x0 phy 0x0 boot 0x2002
+  565.466 ms tar 0x10 st 0x23 raw 0x510 txfl 1 rxfl 0 abrt 0x0 phy 0x0 boot 0x2402
+  565.898 ms tar 0x10 st 0x27 raw 0x710 txfl 0 rxfl 0 abrt 0x0 phy 0x0 boot 0x2002
+  573.923 ms tar 0x10 st 0x6 raw 0x710 txfl 0 rxfl 0 abrt 0x0 phy 0xffffffff boot 0xffffffff
+  605.922 ms tar 0xffffffff st 0xffffffff raw 0xffffffff txfl 4294967295 rxfl 4294967295 abrt 0xffffffff phy 0xffffffff boot 0xffffffff

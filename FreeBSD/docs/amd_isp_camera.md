@@ -653,9 +653,29 @@ During `SET_STREAM_CONFIG` the firmware keeps the bus busy with address
 controller read requests also go through it), with no abort. A long read
 from a module memory chip (calibration data) at `0x50` fits, but is not
 proven. After `START_STREAM` it does nothing on the bus and reports the
-failure; the sensor address `0x10` never appears. Next: the same watch on
-Linux, to see whether the `0x50` phase is the same there and when `0x10`
-starts.
+failure; the sensor address `0x10` never appears.
+
+The same watch on Linux, from user space
+([amd_isp/linux_i2cwatch.c](amd_isp/linux_i2cwatch.c) reading `amdgpu_regs`
+every 66 microseconds,
+[amd_isp/linux_i2c_watch.txt](amd_isp/linux_i2c_watch.txt)):
+
+```
+559.3 ms  tar 0x55 st 0x6               idle
+565.5 ms  tar 0x10 st 0x23  busy        the sensor
+565.9 ms  tar 0x10 st 0x27  ...
+573.9 ms  all ISP registers 0xffffffff  powered off by the polling
+```
+
+Linux also sets `0x55` first, then goes straight to the sensor at `0x10`
+(less than a millisecond of traffic), where FreeBSD goes to `0x50` for
+98 ms. Reading `amdgpu_regs` during a capture made the ISP lose power after
+14 ms (the driver then logged `rb invalid: ... rd=4294967295` and failed to
+stop the stream; probably the GPU's runtime power management cutting the
+ISP domain), so this trace stops there; a capture without the polling
+worked. Working hypothesis: the firmware probes the sensor at `0x10`, gets
+no answer on FreeBSD, and falls back to another path (`0x50`). Suspects:
+the sensor's power, reset or clock sequence.
 
 ## 5. Next steps
 
