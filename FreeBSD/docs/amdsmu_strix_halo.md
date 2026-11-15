@@ -3,14 +3,21 @@
 Status, analysis and patch for suspend-to-idle on the AMD Ryzen AI Max+ PRO
 395 (Strix Halo, family 1Ah model 70h) on FreeBSD 16.0-CURRENT.
 Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#suspend).
-Patches, all on main 83c8ec72ac6a:
+Patches, in commit order. Rows 1-6 are on main 83c8ec72ac6a, row 7 on main
+cf58c8667cfd. Branches:
+[olivier-amdsmu-strixhalo](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) (1-2),
+[olivier-s2idle-wake](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) (3-5),
+[olivier-pci-d3hot](https://github.com/ocochard/freebsd-src/compare/main...olivier-pci-d3hot) (7).
 
-- [amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch)
-  and [amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch](amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch),
-  branch [olivier-amdsmu-strixhalo](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo);
-- [amdsmu/s2idle/](amdsmu/s2idle/) (3 commits: wake interrupt registry,
-  amdgpio wake pins, deepest C-state), branch
-  [olivier-s2idle-wake](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake).
+| # | Commit | Patch | Files | Status | Depends on |
+|---|---|---|---|---|---|
+| 1 | amdsmu: Add Strix Halo support | [0001](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch) [ef5cf02d0c68](https://github.com/ocochard/freebsd-src/commit/ef5cf02d0c68) | `amdsmu.h`, `amdsmu_reg.h` | done, tested: attaches, SMU 100.7.0, same 19 IP blocks as Linux; ready to send | nothing |
+| 2 | amdsmu: Diagnose S0i3 blockers on Strix Halo | [0002](amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch) [d01374ae8a23](https://github.com/ocochard/freebsd-src/commit/d01374ae8a23) | `amdsmu.c` | done, tested: blocker report after resume, USB4_1 garbage filtered | 1 |
+| 3 | acpi: let drivers add wake interrupts for suspend-to-idle | [0001](amdsmu/s2idle/0001-acpi-let-drivers-add-wake-interrupts-for-suspend-to-.patch) [a7953aee9189](https://github.com/ocochard/freebsd-src/commit/a7953aee9189) | `acpi.c`, `acpivar.h` | done, tested: `do_idle()` unmasks the registered IRQ | nothing |
+| 4 | amdgpio: arm the _AEI wake pins for suspend-to-idle | [0002](amdsmu/s2idle/0002-amdgpio-arm-the-_AEI-wake-pins-for-suspend-to-idle.patch) [f6dffc5c60ea](https://github.com/ocochard/freebsd-src/commit/f6dffc5c60ea) | `amdgpio.c`, `amdgpio.h` | done, tested: pins armed and restored; power button (pin 54) still does not wake | 3 |
+| 5 | acpi_cpu: use the deepest Cx state during suspend-to-idle | [0003](amdsmu/s2idle/0003-acpi_cpu-use-the-deepest-Cx-state-during-suspend-to-.patch) [37464069e6be](https://github.com/ocochard/freebsd-src/commit/37464069e6be) | `acpi_cpu.c` | done, tested: key wakes, clean resume with the default `cx_lowest` C1 | nothing |
+| 6 | pci: power down driverless USB4 hosts on suspend | not exported, a28c828ac613 (local, not pushed) | `pci.c` | tested: NHI0/NHI1 reach D3cold, blockers unchanged; not proposed | nothing |
+| 7 | pci: Accept D3hot in pci_set_powerstate_method() | [pci_d3hot.patch](pci_d3hot.patch) [d60158ffee8f](https://github.com/ocochard/freebsd-src/commit/d60158ffee8f), tutorial [pci_d3hot.md](pci_d3hot.md) | `pci.c` | done, tested (same code in the test kernel): GPU reaches D3hot, resume fine; S0i3 blockers unchanged; bug on its own since 84bbfc32a3f4 | nothing |
 
 Linux reference data:
 [amdsmu/linux_s2idle_reference.txt](amdsmu/linux_s2idle_reference.txt),
@@ -402,7 +409,7 @@ D3 into D3hot (3) and D3cold (4). `pci_set_powerstate_method()` only has a
 nothing is logged. Every device whose `_SxD` returns 3 stays in D0. Still
 in freebsd/main cf58c8667cfd and in stable/15 (releng/15.0 to 15.2).
 
-Fix (uncommitted test in the combo worktree): accept D3hot and D3cold in
+Fix ([pci_d3hot.patch](pci_d3hot.patch), tutorial [pci_d3hot.md](pci_d3hot.md), branch `olivier-pci-d3hot`): accept D3hot and D3cold in
 `pci_set_powerstate_method()` (both write D3 to the PM register), use the
 10 ms delay for both, and treat D3hot/D3cold as no change since the
 register cannot tell them apart. With it the GPU goes to D3hot and ACPI
