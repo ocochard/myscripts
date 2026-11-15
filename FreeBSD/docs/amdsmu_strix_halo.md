@@ -424,6 +424,39 @@ The S0i3 blockers do not change (DISPLAY, GFX, USB3_0, USB3_1, MPM, JPEG_1
 for the whole 22 s). The fix is a real bug fix on its own, but not the S0i3
 blocker.
 
+## SMU sleep hint order and CPU idle: same as Linux
+
+The hint is not sent too early. Linux 7.2
+(`acpi_s2idle_prepare_late_lps0()` in `drivers/acpi/x86/s2idle.c`) runs,
+after all devices suspend: AMD and Microsoft screen off, AMD LPS0 entry,
+Microsoft sleep entry and LPS0 entry, then the `amd_pmc` prepare hook,
+which sends `MSG_OS_HINT_RN` (3) with argument 1. FreeBSD runs the same
+DSM calls (Microsoft screen off before AMD's) from `acpi_spmc_suspend`
+(`acpi_post_dev_suspend`, priority ANY), then `amdsmu_suspend` (priority
+LAST) sends message 0x03 with argument 1. The only other Linux step is a
+reset and restart of the SMU log before the hint (statistics only).
+
+The SMU never starts S0i3 at all: time entering S0i3 is 0 (Linux 587776
+us), and every blocker reports exactly the whole software DRIPS time. The
+idle mask after resume is 0x5c37b9ac (Linux 0x5f73398c, bits undocumented).
+
+CPU idle during the sleep, from a debug `printf` of each CPU's
+`cpu_cx_stats` in `acpi_cpu_s2idle_resume()` before the limit is restored
+(C1 C2 C3 entries over one 21.4 s sleep):
+
+```
+XXX cpu0 cx_stats 1 4 4 prev_sleep 712355
+XXX cpu1 cx_stats 0 2 2 prev_sleep 3959130
+XXX cpu7 cx_stats 0 6 12 prev_sleep 124261
+XXX cpu23 cx_stats 0 1 23 prev_sleep 2871787
+XXX cpu31 cx_stats 0 0 3 prev_sleep 5333120
+```
+
+All 32 CPUs idle only 3 to 24 times in 21 s, mostly in C3 (the deepest
+`_CST` state, 350 us latency), with idle periods of seconds. Some C2
+entries remain (bus master activity or the minutes before `do_idle()`),
+so the last state of each CPU is not proven, but the cores do sleep deep.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -471,3 +504,5 @@ blocker.
 | 2026-11-15 | DTrace on `pci_suspend_child` over `zzz` | aborted: "Abort due to systemic unresponsiveness", no data |
 | 2026-11-15 | debug `printf` in `pci_set_power_child` | GPU gets `_S3D` D3hot (3), `pci_set_powerstate_method` returns EINVAL, GPU stays D0 |
 | 2026-11-15 | + `pci` D3hot fix | GPU D3hot, GFX0 ACPI D3hot, resume fine; same blockers over 22 s |
+| 2026-11-15 | SMU hint order vs Linux 7.2 | same order (DSM screen off, LPS0 entry, MS entry, then hint 0x03 arg 1) |
+| 2026-11-15 | debug `printf` of per-CPU Cx counts at resume | 3 to 24 idle entries per CPU in 21.4 s, mostly C3; same blockers |
