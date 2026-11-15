@@ -475,7 +475,7 @@ against `main`:
  				tcp_seq oldsndmax = tp->snd_max;
  				u_int sent;
  				int avail;
-+				bool cwnd_is_flight = false;
++				bool cwnd_is_flight __diagused = false;
  
  				KASSERT(tp->t_dupacks == 1 ||
 ...
@@ -505,9 +505,17 @@ Why this shape:
 - **It keeps the check where it is valid.** In the normal case (no
   timeout, `snd_nxt == snd_max`) the three cases still catch a real
   bug, for example a wrong `snd_limited`.
-- **It does not change what TCP sends.** Kernels without `INVARIANTS`
-  compile to the same code except one unused flag; kernels with it
-  stop panicking on valid traffic.
+- **It does not change what TCP sends.** Without `INVARIANTS` the
+  `KASSERT` is empty, so the flag is set and never read. The compiler
+  drops those stores; kernels with `INVARIANTS` stop panicking on
+  valid traffic.
+- **`__diagused` on the flag.** Without it, `GENERIC-NODEBUG` fails:
+  `error: variable 'cwnd_is_flight' set but not used
+  [-Werror,-Wunused-but-set-variable]`. `sys/sys/systm.h` defines
+  `__diagused` as nothing under `INVARIANTS` and as `__unused`
+  otherwise. Wrapping the declaration in `#ifdef INVARIANTS` would also
+  need `#ifdef` around the store; `__diagused` is the tree's usual
+  idiom.
 - **A flag, not a copy of the condition.** Testing `t_rxtshift > 0` in
   the assertion would read `tp` after `tcp_output()`, which can change
   `snd_nxt`. The flag records the decision taken at (A).
@@ -700,6 +708,8 @@ is a new case: `t_rxtshift > 0`, which none of them covers.
 - **duplicate ACK**: an ACK that does not move `snd_una`; with SACK it
   must carry new SACK information (RFC 6675).
 - **flight size**: bytes sent and not acknowledged, `snd_max - snd_una`.
+- **`__diagused`**: marks a variable read only by `KASSERT`; silences
+  the unused warning on kernels without `INVARIANTS`.
 - **`INVARIANTS`**: kernel option that compiles in the `KASSERT`
   checks.
 - **Karn's algorithm**: never measure the round-trip time on a

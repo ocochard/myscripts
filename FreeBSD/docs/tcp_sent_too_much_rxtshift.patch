@@ -6,7 +6,7 @@ index 5ebcad5eae43..8c3c80769453 100644
  				tcp_seq oldsndmax = tp->snd_max;
  				u_int sent;
  				int avail;
-+				bool cwnd_is_flight = false;
++				bool cwnd_is_flight __diagused = false;
  
  				KASSERT(tp->t_dupacks == 1 ||
  				    tp->t_dupacks == 2,
