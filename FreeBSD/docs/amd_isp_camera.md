@@ -673,9 +673,26 @@ Linux also sets `0x55` first, then goes straight to the sensor at `0x10`
 14 ms (the driver then logged `rb invalid: ... rd=4294967295` and failed to
 stop the stream; probably the GPU's runtime power management cutting the
 ISP domain), so this trace stops there; a capture without the polling
-worked. Working hypothesis: the firmware probes the sensor at `0x10`, gets
-no answer on FreeBSD, and falls back to another path (`0x50`). Suspects:
-the sensor's power, reset or clock sequence.
+worked.
+
+A tight-loop watch on FreeBSD (no delay, changes recorded in memory with
+microsecond times, 2000 changes over 200 ms) shows no `0x10` attempt at all:
+
+```
+    5 us  tar 0x1055 st 0x6  raw 0x0
+   68 us  tar 0x55   st 0x6  raw 0x0     target 0x55
+  163 us  tar 0x55   st 0x6  raw 0x10    receive-FIFO-full bit (data read from 0x55?)
+  171 us  tar 0x50   st 0x23 raw 0x510   then 0x50, busy, no abort
+```
+
+So the firmware reads something at `0x55` and then picks a path: `0x10`
+(the sensor) on Linux after about 6 ms, `0x50` on FreeBSD after 0.1 ms. Two
+timing tests changed nothing (same `0x55` then `0x50`, same failure): AMD
+GPIO 85 held low during the ISP boot and raised just before the stream
+set-up, and a 3 s wait between the boot and the set-up. Next suspect: the
+ISP firmware itself; FreeBSD loads the linux-firmware `20260519` snapshot
+(`gpu-firmware-amd-kmod-isp-4-1-1`), Ubuntu its own package, version not
+checked yet.
 
 ## 5. Next steps
 
