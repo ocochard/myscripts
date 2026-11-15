@@ -1,5 +1,5 @@
-From fa47aa0b426f6c3f91f07d349c82892359ba3459 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From 682cda87117a5c103b867457c393b531e94c9d92 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
 Subject: [PATCH 05/11] LinuxKPI: skbuff: make napi_consume_skb() free the skb
 

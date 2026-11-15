@@ -11,13 +11,13 @@ cf58c8667cfd. Branches:
 
 | # | Commit | Patch | Files | Status | Depends on |
 |---|---|---|---|---|---|
-| 1 | amdsmu: Add Strix Halo support | [0001](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch) [ef5cf02d0c68](https://github.com/ocochard/freebsd-src/commit/ef5cf02d0c68) | `amdsmu.h`, `amdsmu_reg.h` | done, tested: attaches, SMU 100.7.0, same 19 IP blocks as Linux; ready to send | nothing |
-| 2 | amdsmu: Diagnose S0i3 blockers on Strix Halo | [0002](amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch) [d01374ae8a23](https://github.com/ocochard/freebsd-src/commit/d01374ae8a23) | `amdsmu.c` | done, tested: blocker report after resume, USB4_1 garbage filtered | 1 |
-| 3 | acpi: let drivers add wake interrupts for suspend-to-idle | [0001](amdsmu/s2idle/0001-acpi-let-drivers-add-wake-interrupts-for-suspend-to-.patch) [a7953aee9189](https://github.com/ocochard/freebsd-src/commit/a7953aee9189) | `acpi.c`, `acpivar.h` | done, tested: `do_idle()` unmasks the registered IRQ | nothing |
-| 4 | amdgpio: arm the _AEI wake pins for suspend-to-idle | [0002](amdsmu/s2idle/0002-amdgpio-arm-the-_AEI-wake-pins-for-suspend-to-idle.patch) [f6dffc5c60ea](https://github.com/ocochard/freebsd-src/commit/f6dffc5c60ea) | `amdgpio.c`, `amdgpio.h` | done, tested: pins armed and restored; power button (pin 54) still does not wake | 3 |
-| 5 | acpi_cpu: use the deepest Cx state during suspend-to-idle | [0003](amdsmu/s2idle/0003-acpi_cpu-use-the-deepest-Cx-state-during-suspend-to-.patch) [37464069e6be](https://github.com/ocochard/freebsd-src/commit/37464069e6be) | `acpi_cpu.c` | done, tested: key wakes, clean resume with the default `cx_lowest` C1 | nothing |
-| 6 | pci: power down driverless USB4 hosts on suspend | not exported, a28c828ac613 (local, not pushed) | `pci.c` | tested: NHI0/NHI1 reach D3cold, blockers unchanged; not proposed | nothing |
-| 7 | pci: Accept D3hot in pci_set_powerstate_method() | [pci_d3hot.patch](pci_d3hot.patch) [d60158ffee8f](https://github.com/ocochard/freebsd-src/commit/d60158ffee8f), tutorial [pci_d3hot.md](pci_d3hot.md) | `pci.c` | done, tested (same code in the test kernel): GPU reaches D3hot, resume fine; S0i3 blockers unchanged; bug on its own since 84bbfc32a3f4 | nothing |
+| 1 | amdsmu: Add Strix Halo support | [0001](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch) [eb3bffacdf28](https://github.com/ocochard/freebsd-src/commit/eb3bffacdf28) | `amdsmu.h`, `amdsmu_reg.h` | done, tested: attaches, SMU 100.7.0, same 19 IP blocks as Linux; ready to send | nothing |
+| 2 | amdsmu: Diagnose S0i3 blockers on Strix Halo | [0002](amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch) [fd35f91cc43e](https://github.com/ocochard/freebsd-src/commit/fd35f91cc43e) | `amdsmu.c` | done, tested: blocker report after resume, USB4_1 garbage filtered | 1 |
+| 3 | acpi: let drivers add wake interrupts for suspend-to-idle | [0001](amdsmu/s2idle/0001-acpi-let-drivers-add-wake-interrupts-for-suspend-to-.patch) [bcebee137c71](https://github.com/ocochard/freebsd-src/commit/bcebee137c71) | `acpi.c`, `acpivar.h` | done, tested: `do_idle()` unmasks the registered IRQ | nothing |
+| 4 | amdgpio: arm the _AEI wake pins for suspend-to-idle | [0002](amdsmu/s2idle/0002-amdgpio-arm-the-_AEI-wake-pins-for-suspend-to-idle.patch) [3b8b97303b3d](https://github.com/ocochard/freebsd-src/commit/3b8b97303b3d) | `amdgpio.c`, `amdgpio.h` | done, tested: pins armed and restored; power button (pin 54) still does not wake | 3 |
+| 5 | acpi_cpu: use the deepest Cx state during suspend-to-idle | [0003](amdsmu/s2idle/0003-acpi_cpu-use-the-deepest-Cx-state-during-suspend-to-.patch) [a413caa2444c](https://github.com/ocochard/freebsd-src/commit/a413caa2444c) | `acpi_cpu.c` | done, tested: key wakes, clean resume with the default `cx_lowest` C1 | nothing |
+| 6 | pci: power down driverless USB4 hosts on suspend | not exported, 8e3084da1773 (local, not pushed) | `pci.c` | tested: NHI0/NHI1 reach D3cold, blockers unchanged; not proposed | nothing |
+| 7 | pci: Accept D3hot in pci_set_powerstate_method() | [pci_d3hot.patch](pci_d3hot.patch) [dd75503aa8cf](https://github.com/ocochard/freebsd-src/commit/dd75503aa8cf), tutorial [pci_d3hot.md](pci_d3hot.md) | `pci.c` | done, tested (same code in the test kernel): GPU reaches D3hot, resume fine; S0i3 blockers unchanged; bug on its own since 84bbfc32a3f4 | nothing |
 
 Linux reference data:
 [amdsmu/linux_s2idle_reference.txt](amdsmu/linux_s2idle_reference.txt),
@@ -557,6 +557,25 @@ USB-C DisplayPort outputs; inferred, not measured). The earlier
 stayed in D0 under a bridge in D3cold; it did not come back here. Left:
 GFX and JPEG_1, still no S0i3 attempt.
 
+## JPEG_1: amdgpu already gates it
+
+`printf` in `jpeg_v4_0_5_hw_fini()` and `vcn_v4_0_5_hw_fini()` (debug
+amdgpu build) over a 142.7 s sleep with `tb` loaded:
+
+```
+amdgpu S0i3dbg: jpeg0 cur_state 0 jrbc 0xffffffff pg_flags 0x2c001
+amdgpu S0i3dbg: jpeg1 cur_state 0 jrbc 0xffffffff pg_flags 0x2c001
+amdgpu S0i3dbg: vcn0 cur_state 0 uvd_status 0xffffffff
+amdgpu S0i3dbg: vcn1 cur_state 0 uvd_status 0xffffffff
+```
+
+`cur_state` 0 is `AMD_PG_STATE_GATE`: the idle work had already gated VCN
+and JPEG, and the registers read all ones because the blocks are powered
+off. No JPEG_DPG in `pg_flags` (GFX_PG, VCN, VCN_DPG, JPEG). Yet amdsmu
+still reports GFX and JPEG_1 active the whole sleep. `smu_v14_0_set_jpeg_enable()`
+sends `PowerDownJpeg1` only when MP1 is 14.0.1; Linux 7.2 has the same
+code and reaches S0i3, so that is not the difference by itself.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -612,3 +631,4 @@ GFX and JPEG_1, still no S0i3 attempt.
 | 2026-11-15 | `tb` loaded, `nhi1` detached, no amdgpu, `zzz` | resume works; USB3_0 cleared, GFX and USB3_1 block |
 | 2026-11-15 | `tb` loaded, both NHIs, no amdgpu, `zzz` | resume works; USB3_0 and USB3_1 cleared, only GFX blocks |
 | 2026-11-15 | amdgpu + `tb` (both NHIs) + `pci` D3hot fix, `zzz` | resume works (no hang); blockers GFX, JPEG_1 only |
+| 2026-11-15 | debug amdgpu: JPEG/VCN state at suspend, `tb` loaded | VCN0/1 and JPEG0/1 already gated; GFX, JPEG_1 still block |

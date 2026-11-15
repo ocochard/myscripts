@@ -1,5 +1,5 @@
-From 37464069e6beb34a476e5e111a2362d5a7a093fc Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From a413caa2444c92464ebdc33b44d7bea971a2e413 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 15 Nov 2026 08:46:23 +0000
 Subject: [PATCH 3/3] acpi_cpu: use the deepest Cx state during suspend-to-idle
 

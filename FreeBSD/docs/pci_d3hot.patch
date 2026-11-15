@@ -1,5 +1,5 @@
-From d60158ffee8fc16875b3836428d1702ba248bec8 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From dd75503aa8cfaf58d704e3d8daabbbcca70ab19b Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 15 Nov 2026 13:35:15 +0000
 Subject: [PATCH] pci: Accept D3hot in pci_set_powerstate_method()
 

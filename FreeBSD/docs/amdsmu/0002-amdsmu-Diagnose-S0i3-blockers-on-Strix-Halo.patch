@@ -1,5 +1,5 @@
-From d01374ae8a23a577d41031ca2291e03213527d07 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From fd35f91cc43e175b7c808b8e4ea0956bde515d0a Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 15 Nov 2026 09:07:55 +0000
 Subject: [PATCH 2/2] amdsmu: Diagnose S0i3 blockers on Strix Halo
 

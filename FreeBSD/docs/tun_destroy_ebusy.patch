@@ -1,4 +1,4 @@
-From: Olivier Cochard-Labbe <olivier@FreeBSD.org>
+From: Olivier Cochard <olivier@FreeBSD.org>
 Subject: [PATCH] tun(4): refuse if_clone destroy of an in-use device with EBUSY
 
 tun_destroy() is reached two ways:

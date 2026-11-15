@@ -321,10 +321,10 @@ All three work on the laptop, in branch `olivier-cs35l54` of the FreeBSD fork:
 
 | Commit | Change | Test |
 |---|---|---|
-| 31f6b9841f1d | `sound: Add cs35l54 driver for HDA side speaker amplifiers` | `kldload`, then `sysctl dev.cs35l54.0.play=1`: sound |
-| 81de4bd2948c | `hdaa: Add an event for internal speaker stream start and stop` | needs a new kernel: `snd_hda` is in GENERIC |
-| 2b45a75818df | `cs35l54: Follow the HDA speaker stream` | test tone, YouTube in Chromium, pause/resume: sound follows the stream |
-| eae29ae68c87 | `cs35l54: Apply the factory speaker calibration` | control addresses and AMP1 values equal the Linux trace; each amp matched its UEFI entry by silicon id |
+| 2fbd8c5686ee | `sound: Add cs35l54 driver for HDA side speaker amplifiers` | `kldload`, then `sysctl dev.cs35l54.0.play=1`: sound |
+| 8528f5d64dc8 | `hdaa: Add an event for internal speaker stream start and stop` | needs a new kernel: `snd_hda` is in GENERIC |
+| 8b4ac825b1d4 | `cs35l54: Follow the HDA speaker stream` | test tone, YouTube in Chromium, pause/resume: sound follows the stream |
+| 146b7405db8a | `cs35l54: Apply the factory speaker calibration` | control addresses and AMP1 values equal the Linux trace; each amp matched its UEFI entry by silicon id |
 
 Phase 3 design: `hdaa_channel_trigger()` fires the `hdaa_speaker` event (new `hdaa_speaker.h`) after a playback channel whose association holds a fixed internal speaker pin starts or stops, outside the hdaa lock.
 The amp driver matches the codec subsystem id with its `_SUB` and queues the I2C work to a taskqueue.
@@ -444,13 +444,13 @@ Proposed scope:
 
 | # | Item | Branch commits | Repository, review by | Status | Depends on |
 |---|---|---|---|---|---|
-| 1 | hdaa: event for internal speaker stream start/stop (`hdaa.c`, new `hdaa_speaker.h`) | [olivier-cs35l54](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54): 81de4bd2948c | src, sound maintainers | done, tested | nothing |
-| 2 | New `snd_cs35l54` driver (squash for review): driver, stream following, calibration, firmware lookup and root deferral, suspend/resume, PnP info, man page, module build list | [olivier-cs35l54](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54): 31f6b9841f1d, 2b45a75818df, eae29ae68c87, bf3bc9cf3bdd, ae3094880fb9, f179a3d35975, fc7d622fd903, b33ca56a3eac | src, sound maintainers | done, tested on one laptop | 1 |
-| 3 | fwget: ACPI device support (`acpi` subsystem, `acpi_cirrus`) | [olivier-cs35l54](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54): 2a743fb664ea | src, fwget maintainers | done, dry run only | package name of 4 |
+| 1 | hdaa: event for internal speaker stream start/stop (`hdaa.c`, new `hdaa_speaker.h`) | [olivier-cs35l54](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54): 8528f5d64dc8 | src, sound maintainers | done, tested | nothing |
+| 2 | New `snd_cs35l54` driver (squash for review): driver, stream following, calibration, firmware lookup and root deferral, suspend/resume, PnP info, man page, module build list | [olivier-cs35l54](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54): 2fbd8c5686ee, 8b4ac825b1d4, 146b7405db8a, 14e28fb1deec, 8671a900e7e6, b8594b549615, 52e08e3446f5, 82f2fd7f93d9 | src, sound maintainers | done, tested on one laptop | 1 |
+| 3 | fwget: ACPI device support (`acpi` subsystem, `acpi_cirrus`) | [olivier-cs35l54](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54): 6db4d5c595ea | src, fwget maintainers | done, dry run only | package name of 4 |
 | 4 | Port `audio/sound-firmware-cirrus-kmod` (`cs35l54` flavor) | uncommitted in the ports tree | ports, committed by the author | done, poudriere and `pkg add` tested | 2 accepted |
-| 5 | amdgpio: add ACPI PnP info so that devmatch(8) loads it (reset line available without `kld_list`) | [olivier-amdgpio-pnp](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp): 6faa1d6c9aa6 | src | done; `devmatch -a` selects `amdgpio.ko`; also enables `_AEI` handling on AMD systems at boot | nothing |
-| 6 | acpi: refuse property requests for children of other buses (`device_get_property()` on an `acpi_iicbus` child hung the machine) | [olivier-acpi-prop-child](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child): 6c6df2e6c7b9 | src, ACPI | done; on a test kernel, the call that froze the laptop returns -1 and the system stays up | nothing |
-| 7 | ig4: use the 150 MHz input clock of AMDI0010 controllers (Linux value; ig4 assumed 100 MHz) | [olivier-ig4-amd-clock](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock): aed8a95ff128 | src, ig4 | done; measured bus clock 494 kHz before, 359 kHz after (200 reads of 1 KB, overhead included); touchpad, touchscreen and amplifiers reattach; does not fix the stale read | nothing |
+| 5 | amdgpio: add ACPI PnP info so that devmatch(8) loads it (reset line available without `kld_list`) | [olivier-amdgpio-pnp](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp): 27e6acb6e735 | src | done; `devmatch -a` selects `amdgpio.ko`; also enables `_AEI` handling on AMD systems at boot | nothing |
+| 6 | acpi: refuse property requests for children of other buses (`device_get_property()` on an `acpi_iicbus` child hung the machine) | [olivier-acpi-prop-child](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child): deafc1f7586a | src, ACPI | done; on a test kernel, the call that froze the laptop returns -1 and the system stays up | nothing |
+| 7 | ig4: use the 150 MHz input clock of AMDI0010 controllers (Linux value; ig4 assumed 100 MHz) | [olivier-ig4-amd-clock](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock): b41462a3373a | src, ig4 | done; measured bus clock 494 kHz before, 359 kHz after (200 reads of 1 KB, overhead included); touchpad, touchscreen and amplifiers reattach; does not fix the stale read | nothing |
 
 1-4 are needed for working speakers, 5 is a convenience, 6 and 7 are bugs met on the way that the driver does not need fixed.
 

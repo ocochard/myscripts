@@ -1,5 +1,5 @@
-From df5b2876a02387c3488b78bf04add743173fcf61 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From dab1e77938cfc216f9bb7ca4c6c81322910b6cc7 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
 Subject: [PATCH 02/11] lindebugfs: export debugfs_create_devm_seqfile()
 

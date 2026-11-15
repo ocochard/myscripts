@@ -1,5 +1,5 @@
-From 60f4eb35e0043c1f17cf568a70491a5eaee0bdc4 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From 2ade974f85db9dc56961a76b7d2190bec28c6265 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
 Subject: [PATCH 04/11] mt76: mt7925: do not hang kldload when hardware init
  fails

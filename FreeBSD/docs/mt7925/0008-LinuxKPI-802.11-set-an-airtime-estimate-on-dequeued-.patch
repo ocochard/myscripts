@@ -1,5 +1,5 @@
-From daf8335a06d6df15bb426a0d0f1905d25c5cbf30 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From 937a34e422ab4a35921ad249a545fec04042a536 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Thu, 12 Nov 2026 17:30:32 +0000
 Subject: [PATCH 08/11] LinuxKPI: 802.11: set an airtime estimate on dequeued
  frames

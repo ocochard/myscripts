@@ -1,5 +1,5 @@
-From 0b64a1ff927c4599ca7232ff69726b8ee54b9839 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From c2a848cc904e7de230bbcce8631e8cd04c321057 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Thu, 12 Nov 2026 22:29:47 +0000
 Subject: [PATCH 11/11] mt76: remove the debugfs directory when the device goes
  away

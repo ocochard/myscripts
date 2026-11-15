@@ -1,5 +1,5 @@
-From f6dffc5c60ea52b506f8e598320f457df0a8ae9b Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From 3b8b97303b3dd9ae4949835462040f8d7c3a74fe Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Thu, 12 Nov 2026 23:23:36 +0000
 Subject: [PATCH 2/3] amdgpio: arm the _AEI wake pins for suspend-to-idle
 

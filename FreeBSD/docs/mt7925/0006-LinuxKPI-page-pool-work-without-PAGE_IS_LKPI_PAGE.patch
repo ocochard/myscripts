@@ -1,5 +1,5 @@
-From dd884476f68339261f31d6329045a344a350b456 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+From 740c0eae540f0189ff0941a76a51712296ca02a1 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Thu, 12 Nov 2026 17:30:31 +0000
 Subject: [PATCH 06/11] LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE
 
