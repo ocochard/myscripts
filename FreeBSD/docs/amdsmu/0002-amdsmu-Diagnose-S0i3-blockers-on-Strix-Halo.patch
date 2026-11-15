@@ -1,0 +1,37 @@
+From d01374ae8a23a577d41031ca2291e03213527d07 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Sun, 15 Nov 2026 09:07:55 +0000
+Subject: [PATCH 2/2] amdsmu: Diagnose S0i3 blockers on Strix Halo
+
+Strix Halo reports the same IP block layout as Krackan Point model 70h.
+Skip blocks reported active for longer than the sleep: the USB4_1 value
+on Strix Halo is always garbage, as Linux amd_pmc shows too.
+---
+ sys/dev/amdsmu/amdsmu.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/sys/dev/amdsmu/amdsmu.c b/sys/dev/amdsmu/amdsmu.c
+index 4d833e90cf11..64e0e7759d62 100644
+--- a/sys/dev/amdsmu/amdsmu.c
++++ b/sys/dev/amdsmu/amdsmu.c
+@@ -344,6 +344,7 @@ amdsmu_resume_check(device_t dev, enum power_stype stype)
+ 	switch (sc->product->amdsmu_deviceid) {
+ 	case PCI_DEVICEID_AMD_PHOENIX_ROOT:
+ 	case PCI_DEVICEID_AMD_KRACKAN_POINT_ROOT:
++	case PCI_DEVICEID_AMD_STRIX_HALO_ROOT:
+ 		break;
+ 	default:
+ 		device_printf(dev, "only limited diagnostic information "
+@@ -360,6 +361,9 @@ amdsmu_resume_check(device_t dev, enum power_stype stype)
+ 		 */
+ 		if (m->ip_block_last_active_time[i] < m->time_last_in_sw_drips)
+ 			continue;
++		/* More than the whole time is garbage (USB4_1 on Strix Halo). */
++		if (m->ip_block_last_active_time[i] > m->time_last_in_sw_drips)
++			continue;
+ 		/* Check if this IP block should be ignored. */
+ 		d = NULL;
+ 		for (size_t j = 0; j < nitems(amdsmu_diagnostics); j++) {
+-- 
+2.56.0
+

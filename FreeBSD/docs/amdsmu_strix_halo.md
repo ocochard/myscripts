@@ -5,7 +5,8 @@ Status, analysis and patch for suspend-to-idle on the AMD Ryzen AI Max+ PRO
 Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#suspend).
 Patches, all on main 83c8ec72ac6a:
 
-- [amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch),
+- [amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch)
+  and [amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch](amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch),
   branch [olivier-amdsmu-strixhalo](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo);
 - [amdsmu/s2idle/](amdsmu/s2idle/) (3 commits: wake interrupt registry,
   amdgpio wake pins, deepest C-state), branch
@@ -258,19 +259,44 @@ manual Cmax. Limit: the boot CPU's single `cpu_idle(0)` in `do_idle()`
 still picks its state by latency from the previous sleep, so it may use C2
 rather than C3; Linux enters the deepest state explicitly.
 
+## amdsmu diagnostics for Strix Halo
+
+Second commit on `olivier-amdsmu-strixhalo`, `amdsmu: Diagnose S0i3
+blockers on Strix Halo`: adds 1022:1507 to the switch in
+`amdsmu_resume_check()` that enables the blocker report, and skips blocks
+reported active for longer than the sleep (a real blocker equals the sleep
+time exactly; `USB4_1` always reads about 4.6e18 us here, on Linux too).
+After the next resume:
+
+```
+amdsmu0: failed to enter S0i3 during last suspend; battery drain will be excessive
+amdsmu0: IP blocks that blocked S0i3 entry:
+amdsmu0:   DISPLAY (active for 33344564 us)
+amdsmu0:   GFX (active for 33344564 us)
+amdsmu0:   USB3_0 (active for 33344564 us)
+amdsmu0:     hint: load tb to allow this block to suspend
+amdsmu0:   USB3_1 (active for 33344564 us)
+amdsmu0:   MPM (active for 33344564 us)
+amdsmu0:     hint: this can happen due to other IP blocks or because the CPU didn't properly idle
+amdsmu0:   JPEG_1 (active for 33344564 us)
+```
+
+The `tb` hint comes from the shared hint table and does not fit this
+laptop (`thunderbolt(4)` does not know its USB4 controllers); making hints
+per chip is left out.
+
 ## Next steps
 
-1. amdsmu: add Strix Halo to the blocker diagnostics.
-2. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
-3. xhci: put the controllers in D3 for suspend-to-idle; amdgpu S0ix path
+1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
+2. xhci: put the controllers in D3 for suspend-to-idle; amdgpu S0ix path
    in drm-kmod (DISPLAY, GFX, JPEG blocks).
-4. Power button (pin 54) still does not wake: check the `amdgpio` arming
+3. Power button (pin 54) still does not wake: check the `amdgpio` arming
    (register values after suspend) and the MP2 (`MP2C`) path.
-5. Turn `do_idle()` into the loop its comment describes (the key wake
+4. Turn `do_idle()` into the loop its comment describes (the key wake
    through the EC GPE works, no extra arming needed).
-6. Retry one suspend per change, with the disks synced first: a hang needs
+5. Retry one suspend per change, with the disks synced first: a hang needs
    a forced power off.
-7. Send the amdsmu patch: it is correct on its own (attaches, reads the SMU
+6. Send the amdsmu patch: it is correct on its own (attaches, reads the SMU
    version, IP blocks and metrics; matches Linux), whatever suspend does.
    The NVMe "Complete Failed controller" seen on the C1 resumes did not
    come back with Cmax.
@@ -288,3 +314,4 @@ rather than C3; Linux enters the deepest state explicitly.
 | 2026-11-13 | `olivier-s2idle-wake` kernel + amdgpio + amdsmu, `zzz` | IRQ 7 registered; no wake by power button or key, power LED keeps blinking, fans spin up; forced power off |
 | 2026-11-15 | same + `hw.acpi.cpu.cx_lowest=Cmax` | space key wakes it, full resume (network, NVMe, amdgpu); no S0i3: DISPLAY, GFX, JPEG_1, USB3_0/1, MPM active the whole 67 s |
 | 2026-11-15 | + `acpi_cpu` deepest-Cx fix, `cx_lowest` C1 | space key wakes it, full resume, `cx_lowest` restored to C1; no S0i3 (50.3 s software DRIPS) |
+| 2026-11-15 | + amdsmu diagnostics commit | blocker report: DISPLAY, GFX, USB3_0, USB3_1, MPM, JPEG_1; USB4_1 garbage filtered |
