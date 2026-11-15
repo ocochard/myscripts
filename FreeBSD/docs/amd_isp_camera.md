@@ -267,6 +267,67 @@ The trace shows only one window: the PHY registers of the MIPI link (the
 second memory resource amdgpu gives the camera driver) were not accessed by
 the driver in this session.
 
+### The command and response layouts
+
+To see what each command carries, Linux **kprobes** were placed on the
+driver: a kprobe is a breakpoint the kernel can put on any function entry
+and log chosen memory without stopping. One probe logged the identifier,
+payload size and payload of every command sent; a return probe logged every
+16-word response read from the response ring. Decoded output of one 5-frame
+session: [amd_isp/linux_stream_commands.txt](amd_isp/linux_stream_commands.txt).
+Field meanings are inferred from the values (sizes, addresses, the debug log),
+not documented by AMD. All words are 32-bit little-endian.
+
+`SEND_BUFFER` (`0x02040001`, 48 bytes) hands the firmware one memory buffer,
+described as up to three (address low, address high, size) triplets, one per
+plane:
+
+| Word | Pool | Meta info | NV12 frame |
+|---|---|---|---|
+| 0: buffer type | `0xf` | `0xa` | `0x8` |
+| 1 | 0 | 0 | 0 |
+| 2 | 4 | 4 | 4 |
+| 3, 4: plane 0 GPU address | `0x7fff03018000` | `0x7fff00878000` | `0x7fff01857000` |
+| 5: plane 0 size | `0x6400000` (100 MB) | `0x8000` (32 KB) | `0x1fa400` (2073600, Y plane) |
+| 6, 7: plane 1 GPU address | 0 | 0 | `0x7fff01a51400` |
+| 8: plane 1 size | 0 | 0 | `0xfd200` (1036800, UV plane) |
+| 9-11: plane 2 | 0 | 0 | 0 |
+
+So the firmware's 100 MB working memory, the eight 32 KB "meta info"
+buffers (per-frame results) and the frame buffers all go through the same
+command, told apart by the type word.
+
+| Command | Bytes | Payload seen | Inferred fields |
+|---|---|---|---|
+| `SET_STREAM_CONFIG` `0x02010001` | 20 | `1 0 0x5f91 1 0` | word 2: pipeline id (`pipeId 0x5f91` in the debug log), word 3: temporal noise reduction on (`EnableTnr 1`) |
+| `SET_OUT_CHAN_PROP` `0x02010003` | 28 | `0 1 0x780 0x438 0x780 0x780 0` | channel 0 (preview), format 1 (NV12), width 1920, height 1080, luma pitch 1920, chroma pitch 1920 |
+| `ENABLE_OUT_CHAN` `0x02010005` | 8 | `0 1` | channel 0, enable (at stop: disable) |
+| `START_STREAM` `0x02010007` | 0 | none | |
+
+Every response is 16 words (64 bytes):
+
+| Word | Command done | Frame done |
+|---|---|---|
+| 0 | response sequence number | response sequence number (own counter) |
+| 1: response type | `0x00010001` | `0x00030001` |
+| 2 | sequence number of the command | meta info buffer address low |
+| 3 | command identifier | meta info buffer address high (`0x7fff`) |
+| 4 | 0 | `0xd38` (3384, probably the bytes of meta info written) |
+| 5 | 0 | changes every frame (probably a timestamp or frame counter) |
+| 6-14 | 0 | 0 |
+| 15: checksum | 32-bit sum of words 0-14 | 32-bit sum of words 0-14 |
+
+The checksum rule was checked by hand on both kinds, for example
+`1 + 0x10001 + 0x2b + 0x2040001 = 0x205002e`.
+
+The frame loop is therefore: the firmware returns a "frame done" pointing at
+a meta info buffer (which describes the finished frame); the driver gives
+that meta info buffer back and queues the next frame buffer, two
+`SEND_BUFFER` commands per frame. The commands themselves travel in 64-byte
+ring entries whose header (sequence number, identifier, stream, checksum)
+was not visible to these probes; reading the command ring memory is the
+next step.
+
 ## 3. What a FreeBSD driver needs
 
 | Piece | Linux | FreeBSD today | Work |
@@ -294,9 +355,9 @@ Two rules shape the work:
 1. Done: the register-level protocol above (`mmiotrace` needs the module
    reloaded: use `rmmod amd_isp4_capture`, never `modprobe -r`, see below;
    `mmiotrace` also takes every CPU but one offline until it is turned off).
-2. Record the layout of each firmware command (the fields of
-   `SET_STREAM_CONFIG`, `SET_OUT_CHAN_PROP`, `SEND_BUFFER`) and of the
-   responses, from the shared-memory contents during a session.
+2. Partly done: command payloads and responses above. Missing: the
+   64-byte command ring entry header and the meta info buffer contents,
+   from the shared memory during a session.
 3. Decide where the driver lives (drm-kmod or base) and what amdgpu must
    export.
 4. Write a first FreeBSD driver that powers the ISP, boots the firmware and
@@ -318,6 +379,7 @@ one module only. The crash is a Linux bug worth reporting separately.
 | Ubuntu, Linux 7.0.0-43, shutter closed | 29.66 fps, black frames (brightness 2-9) |
 | Ubuntu, shutter open | correct 1920x1080 NV12 picture |
 | Ubuntu, 30-frame session with debug and ftrace | trace in [amd_isp/](amd_isp/) |
+| Ubuntu, 5-frame session with kprobes on command send and response read | 33 commands, 38 responses (plus 38 empty ring reads), [amd_isp/linux_stream_commands.txt](amd_isp/linux_stream_commands.txt) |
 | Ubuntu, 10-frame session under `mmiotrace` after `rmmod`/`modprobe` | 768 register accesses, [amd_isp/linux_stream_mmio.txt](amd_isp/linux_stream_mmio.txt) |
 | FreeBSD | no driver; `video(4)` and the firmware are present |
 | IR camera (HM1092) | untested, no driver on any system |
