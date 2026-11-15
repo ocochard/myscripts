@@ -576,6 +576,34 @@ and raised the interrupt status bit `0x10000` seen on Linux. This confirms
 the command entry layout, the checksum rule, both ring pointer roles and
 the response format on FreeBSD.
 
+### Third FreeBSD step: the stream starts, but no frame comes
+
+`sysctl hw.amdgpu.isp_cmd=2` sends the whole Linux set-up, waiting for each
+answer: memory pool, `SET_STREAM_CONFIG`, `SET_OUT_CHAN_PROP` (NV12
+1920x1080), `ENABLE_OUT_CHAN`, eight meta info buffers, four frame buffers
+(UV plane right after the Y plane), `START_STREAM`; then it waits for a
+frame and stops. All 19 commands got a valid "command done". But instead of
+a "frame done" the firmware sent, 1.1 s after the start and again 0.27 s
+later:
+
+```
+amdisp: resp seq 1 type 0x00030002 w2 0xe w3 0x11 w4 0x0 w5 0x0 checksum ok
+```
+
+Type `0x00030002` is a second kind of notification that the Linux driver
+does not handle and that never appeared in the Linux traces. Word 3 is 17,
+the sequence number of `START_STREAM`, so this reads as "the stream started
+by command 17 failed, reason 14", and the 1.1 s delay as a timeout waiting
+for the sensor. The disable answer carried `0x1e0001` in word 4. Stopping
+worked.
+
+The likely difference: something Linux sets up when its drivers load, which
+the session traces did not cover. Candidates: the ISP's I2C controller
+(`i2c_designware_amdisp` configures it at probe, and the firmware probably
+uses it to talk to the sensor) and the ISP's own GPIO block
+(`pinctrl_amdisp`). Next: compare those register blocks on Linux and
+FreeBSD.
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
@@ -622,5 +650,6 @@ the next reboot hung; a forced power off was needed. Always set the format
 | Ubuntu, 10-frame session under `mmiotrace` after `rmmod`/`modprobe` | 768 register accesses, [amd_isp/linux_stream_mmio.txt](amd_isp/linux_stream_mmio.txt) |
 | FreeBSD, `hw.amdgpu.isp_boot=1` with GPIO 85 high | firmware boot status `0x2402` after 2 ms; stop leaves amdgpu working |
 | FreeBSD, `hw.amdgpu.isp_cmd=1` (memory pool `SEND_BUFFER`) | "command done" in 10 ms, sequence and identifier echoed, checksum valid |
-| FreeBSD, streaming | not written yet |
+| FreeBSD, `hw.amdgpu.isp_cmd=2` (full set-up, `START_STREAM`) | all 19 commands acknowledged; no frame, notification `0x00030002` code `0xe` after 1.1 s |
+| FreeBSD, streaming | not working yet |
 | IR camera (HM1092) | untested, no driver on any system |
