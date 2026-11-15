@@ -1,0 +1,105 @@
+From 37464069e6beb34a476e5e111a2362d5a7a093fc Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Olivier=20Cochard-Labb=C3=A9?= <olivier@cochard.me>
+Date: Sun, 15 Nov 2026 08:46:23 +0000
+Subject: [PATCH 3/3] acpi_cpu: use the deepest Cx state during suspend-to-idle
+
+With cores limited to C1 (the cx_lowest default) an AMD Strix Halo laptop
+told to sleep by amdsmu(4) never woke; Linux always idles in the deepest
+state for suspend-to-idle.
+---
+ sys/dev/acpica/acpi_cpu.c | 51 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+diff --git a/sys/dev/acpica/acpi_cpu.c b/sys/dev/acpica/acpi_cpu.c
+index 267c0d1cf7f5..46972a699cdb 100644
+--- a/sys/dev/acpica/acpi_cpu.c
++++ b/sys/dev/acpica/acpi_cpu.c
+@@ -30,6 +30,7 @@
+ #include <sys/param.h>
+ #include <sys/bus.h>
+ #include <sys/cpu.h>
++#include <sys/eventhandler.h>
+ #include <sys/kernel.h>
+ #include <sys/malloc.h>
+ #include <sys/module.h>
+@@ -98,6 +99,7 @@ struct acpi_cpu_softc {
+     struct sysctl_oid	*cpu_sysctl_tree;
+     int			 cpu_cx_lowest;
+     int			 cpu_cx_lowest_lim;
++    int			 cpu_cx_lowest_lim_saved; /* Over suspend-to-idle. */
+     int			 cpu_disable_idle; /* Disable entry to idle function */
+     char 		 cpu_cx_supported[64];
+ };
+@@ -186,6 +188,8 @@ static int	acpi_cpu_usage_sysctl(SYSCTL_HANDLER_ARGS);
+ static int	acpi_cpu_usage_counters_sysctl(SYSCTL_HANDLER_ARGS);
+ static int	acpi_cpu_duration_counters_sysctl(SYSCTL_HANDLER_ARGS);
+ static int	acpi_cpu_set_cx_lowest(struct acpi_cpu_softc *sc);
++static void	acpi_cpu_s2idle_suspend(void *arg, enum power_stype stype);
++static void	acpi_cpu_s2idle_resume(void *arg, enum power_stype stype);
+ static int	acpi_cpu_cx_lowest_sysctl(SYSCTL_HANDLER_ARGS);
+ static int	acpi_cpu_global_cx_lowest_sysctl(SYSCTL_HANDLER_ARGS);
+ #if defined(__i386__) || defined(__amd64__)
+@@ -1061,6 +1065,11 @@ acpi_cpu_startup(void *arg)
+ #if defined(__i386__) || defined(__amd64__)
+     cpu_idle_hook = acpi_cpu_idle;
+ #endif
++
++    EVENTHANDLER_REGISTER(acpi_post_dev_suspend, acpi_cpu_s2idle_suspend,
++	NULL, EVENTHANDLER_PRI_ANY);
++    EVENTHANDLER_REGISTER(acpi_pre_dev_resume, acpi_cpu_s2idle_resume,
++	NULL, EVENTHANDLER_PRI_ANY);
+ }
+ 
+ static void
+@@ -1545,6 +1554,48 @@ acpi_cpu_set_cx_lowest(struct acpi_cpu_softc *sc)
+     return (0);
+ }
+ 
++/*
++ * The platform reaches its deepest suspend-to-idle state (S0i3 on AMD) only
++ * with every core in its deepest Cx state, and may not wake from a
++ * shallower one: use it whatever cx_lowest says, as Linux does.
++ */
++static void
++acpi_cpu_s2idle_suspend(void *arg __unused, enum power_stype stype)
++{
++    struct acpi_cpu_softc *sc;
++    int i;
++
++    if (stype != POWER_STYPE_SUSPEND_TO_IDLE)
++	return;
++    ACPI_SERIAL_BEGIN(cpu);
++    CPU_FOREACH(i) {
++	if ((sc = cpu_softc[i]) == NULL)
++	    continue;
++	sc->cpu_cx_lowest_lim_saved = sc->cpu_cx_lowest_lim;
++	sc->cpu_cx_lowest_lim = sc->cpu_cx_count - 1;
++	acpi_cpu_set_cx_lowest(sc);
++    }
++    ACPI_SERIAL_END(cpu);
++}
++
++static void
++acpi_cpu_s2idle_resume(void *arg __unused, enum power_stype stype)
++{
++    struct acpi_cpu_softc *sc;
++    int i;
++
++    if (stype != POWER_STYPE_SUSPEND_TO_IDLE)
++	return;
++    ACPI_SERIAL_BEGIN(cpu);
++    CPU_FOREACH(i) {
++	if ((sc = cpu_softc[i]) == NULL)
++	    continue;
++	sc->cpu_cx_lowest_lim = sc->cpu_cx_lowest_lim_saved;
++	acpi_cpu_set_cx_lowest(sc);
++    }
++    ACPI_SERIAL_END(cpu);
++}
++
+ static int
+ acpi_cpu_cx_lowest_sysctl(SYSCTL_HANDLER_ARGS)
+ {
+-- 
+2.56.0
+

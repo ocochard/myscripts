@@ -3,8 +3,15 @@
 Status, analysis and patch for suspend-to-idle on the AMD Ryzen AI Max+ PRO
 395 (Strix Halo, family 1Ah model 70h) on FreeBSD 16.0-CURRENT.
 Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#suspend).
-Patch: [amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch)
-(branch `olivier-amdsmu-strixhalo`, ef5cf02d0c68 on main 83c8ec72ac6a). Linux reference data:
+Patches, all on main 83c8ec72ac6a:
+
+- [amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch),
+  branch [olivier-amdsmu-strixhalo](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo);
+- [amdsmu/s2idle/](amdsmu/s2idle/) (3 commits: wake interrupt registry,
+  amdgpio wake pins, deepest C-state), branch
+  [olivier-s2idle-wake](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake).
+
+Linux reference data:
 [amdsmu/linux_s2idle_reference.txt](amdsmu/linux_s2idle_reference.txt),
 [amdsmu/linux_gpio_debug.txt](amdsmu/linux_gpio_debug.txt).
 
@@ -173,7 +180,7 @@ These are leads, not verified causes.
 
 ## GPIO wake fix: not enough
 
-Branch `olivier-s2idle-wake` (main 83c8ec72ac6a, not pushed) has two commits:
+Branch `olivier-s2idle-wake` (main 83c8ec72ac6a) has two commits for this:
 
 - `acpi: let drivers add wake interrupts for suspend-to-idle`: `do_idle()`
   unmasked only the SCI; drivers can now register up to four more wake
@@ -233,12 +240,25 @@ active for the whole 67.07 s, i.e. blocking S0i3:
 1022:1507": its blocker diagnostics switch on the Phoenix and Krackan Point
 IDs.
 
+## Fix: deepest C-state during suspend-to-idle
+
+Third commit on `olivier-s2idle-wake`, `acpi_cpu: use the deepest Cx state
+during suspend-to-idle`: an `acpi_post_dev_suspend` handler saves each
+CPU's `cpu_cx_lowest_lim` and raises it to its deepest state for
+suspend-to-idle only (before amdsmu's sleep hint, which is registered
+last); an `acpi_pre_dev_resume` handler restores the saved per-CPU value.
+
+Tested with `cx_lowest` left at its C1 default: suspend, space key wakes,
+full resume, `cx_lowest` reads C1 again afterwards (global and per CPU),
+no NVMe failure. Still no S0i3 (50.3 s in software DRIPS), as with the
+manual Cmax. Limit: the boot CPU's single `cpu_idle(0)` in `do_idle()`
+still picks its state by latency from the previous sleep, so it may use C2
+rather than C3; Linux enters the deepest state explicitly.
+
 ## Next steps
 
-1. `do_idle()`: use the deepest C-state during suspend-to-idle whatever
-   `cx_lowest` is (Linux does), so suspend does not hang with the C1
-   default.
-2. amdsmu: add Strix Halo to the blocker diagnostics.
+1. amdsmu: add Strix Halo to the blocker diagnostics.
+2. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
 3. xhci: put the controllers in D3 for suspend-to-idle; amdgpu S0ix path
    in drm-kmod (DISPLAY, GFX, JPEG blocks).
 4. Power button (pin 54) still does not wake: check the `amdgpio` arming
@@ -264,3 +284,4 @@ IDs.
 | 2026-11-13 | FreeBSD, `kldload amdgpio`, `_AEI` decode | the six `_AEI` pins are all wake capable; `amdgpio_suspend()` disables them and no code sets their wake bits |
 | 2026-11-13 | `olivier-s2idle-wake` kernel + amdgpio + amdsmu, `zzz` | IRQ 7 registered; no wake by power button or key, power LED keeps blinking, fans spin up; forced power off |
 | 2026-11-15 | same + `hw.acpi.cpu.cx_lowest=Cmax` | space key wakes it, full resume (network, NVMe, amdgpu); no S0i3: DISPLAY, GFX, JPEG_1, USB3_0/1, MPM active the whole 67 s |
+| 2026-11-15 | + `acpi_cpu` deepest-Cx fix, `cx_lowest` C1 | space key wakes it, full resume, `cx_lowest` restored to C1; no S0i3 (50.3 s software DRIPS) |
