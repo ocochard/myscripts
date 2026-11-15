@@ -239,13 +239,15 @@ the values, not documented by AMD.
 | `0x62010` | R/W, 143 | `0x410000`, toggles `0x400000`/`0x410000` | interrupt enable mask |
 | `0x62014` | R, 43 | `0x10000` when a response is pending | interrupt status |
 | `0x62018` | W, 45 | writes back the status bit | interrupt acknowledge |
-| `0x62210`-`0x62220` | W once, then 52 W / 104 R | base (low, high `0x7fff`), size `0xa00`, write pointer `0x6221c`, read pointer `0x62220` | command ring (the driver advances the write pointer) |
-| `0x62170`-`0x62180` | W once, then 43 W / 86 R | same layout, size `0xa00` | response ring (the driver advances the read pointer `0x62180`) |
+| `0x62170`-`0x62180` | W once, then 43 W / 86 R | base (low, high `0x7fff`), size `0xa00`, read pointer `0x6217c`, write pointer `0x62180` | command ring: the driver advances the write pointer once per command (43 commands) and reads the firmware's read pointer |
+| `0x62210`-`0x62220` | W once, then 52 W / 104 R | same layout, size `0xa00` | response ring: the firmware advances the write pointer `0x62220`, the driver advances the read pointer `0x6221c` |
 | `0x62184`, `0x62198`, `0x621ac`, `0x62224`, `0x62238`, `0x6224c` | W once each | same five-register layout, size `0xa00` | further command and response rings, set up but idle here |
 | `0x62148`-`0x62158` | W once | base, high `0x7fff`, size `0x200000` | 2 MB ring, probably the firmware log |
 
 Each ring is five registers: GPU address low, GPU address high, size in
-bytes, write pointer, read pointer. The high half `0x7fff` matches the GPU
+bytes, read pointer, write pointer. Which ring is which was confirmed by
+dumping their memory (next section): the commands sit in the ring whose base
+is programmed at `0x62170`. A first reading of this trace had the two swapped. The high half `0x7fff` matches the GPU
 addresses of every buffer in the debug log (`0x7fff...`).
 
 The start-up order, from the trace:
@@ -257,8 +259,8 @@ The start-up order, from the trace:
 4. poll `0x62058` until it reads `0x2402` (about 2 ms here);
 5. enable interrupts in `0x62010` (`0x410000`);
 6. from then on: write a command into the command ring and advance
-   `0x6221c`; on an interrupt, read `0x62014`, acknowledge in `0x62018`,
-   read responses up to `0x6217c` and advance `0x62180`.
+   `0x62180`; on an interrupt, read `0x62014`, acknowledge in `0x62018`,
+   read responses up to `0x62220` and advance `0x6221c`.
 
 Stopping reverses it: set bit `0x40000` of `0x62054`, set bit 0 of
 `0x62000` (value 3), then write `0` to `0x62000` and `0x60000`.
@@ -323,10 +325,48 @@ The checksum rule was checked by hand on both kinds, for example
 The frame loop is therefore: the firmware returns a "frame done" pointing at
 a meta info buffer (which describes the finished frame); the driver gives
 that meta info buffer back and queues the next frame buffer, two
-`SEND_BUFFER` commands per frame. The commands themselves travel in 64-byte
-ring entries whose header (sequence number, identifier, stream, checksum)
-was not visible to these probes; reading the command ring memory is the
-next step.
+`SEND_BUFFER` commands per frame.
+
+### The ring entries and the meta info buffer, from memory
+
+`bpftrace` read the shared memory directly, through the driver's own state
+(typed with the module's BTF type information, no module reload): the
+command ring right after `START_STREAM` was sent, and the first meta info
+buffer during streaming. Dumps:
+[amd_isp/linux_command_ring.txt](amd_isp/linux_command_ring.txt) and
+[amd_isp/linux_meta_info.txt](amd_isp/linux_meta_info.txt).
+
+The command ring is the first ring of the ISP's command/response memory
+(GPU address `0x7fff09418000` in that session). Each command is a 64-byte
+entry, the same shape as a response:
+
+| Word | Content | Example (`SET_OUT_CHAN_PROP`) |
+|---|---|---|
+| 0 | sequence number, counting every command since the module loaded | `0x4e` |
+| 1 | command identifier | `0x02010003` |
+| 2-13 | payload, 48 bytes, zero-padded (the payloads of the previous section) | `0 1 0x780 0x438 0x780 0x780 0 ...` |
+| 14 | 0 in every entry (stream and flag fields, unused here) | `0` |
+| 15 | checksum: 32-bit sum of words 0-14 | `0x02011b0a` |
+
+The 17 entries present after `START_STREAM` were, in order: the memory pool,
+`SET_STREAM_CONFIG`, `SET_OUT_CHAN_PROP`, `ENABLE_OUT_CHAN`, eight meta info
+buffers, four frame buffers, `START_STREAM`. All 17 checksums match the rule.
+
+The meta info buffer (32 KB) describes one finished frame. Non-zero fields at
+the start:
+
+| Offset | Value | Inferred meaning |
+|---|---|---|
+| `0x00` | 1 | frame number (the debug log's `poc:1`) |
+| `0x08` | `0xa7bea99d` | changes every frame: timestamp (same role as word 5 of "frame done") |
+| `0x10`, `0x14` | 1, 3 | preview channel enabled, buffer status 3 = done (debug log: `en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3)`) |
+| `0x30`-`0x40` | 1, 1920, 1080, 1920, 1920 | format NV12, width, height, the two line pitches |
+| `0x48` | 8 | buffer type of the frame (as in `SEND_BUFFER`) |
+| `0x50`-`0x64` | `0x7fff01857000`, 2073600, `0x7fff01a51400`, 1036800 | the frame buffer's two planes: tells the driver which buffer is finished |
+| `0x9c`, `0xa0` | 2888, 1624 | the sensor's raw frame size |
+
+From `0x798` on there are further values (counters and what look like
+statistics), not needed to deliver frames.
 
 ## 3. What a FreeBSD driver needs
 
@@ -355,9 +395,8 @@ Two rules shape the work:
 1. Done: the register-level protocol above (`mmiotrace` needs the module
    reloaded: use `rmmod amd_isp4_capture`, never `modprobe -r`, see below;
    `mmiotrace` also takes every CPU but one offline until it is turned off).
-2. Partly done: command payloads and responses above. Missing: the
-   64-byte command ring entry header and the meta info buffer contents,
-   from the shared memory during a session.
+2. Done: command payloads, ring entries, responses and the meta info
+   fields above.
 3. Decide where the driver lives (drm-kmod or base) and what amdgpu must
    export.
 4. Write a first FreeBSD driver that powers the ISP, boots the firmware and
@@ -372,6 +411,13 @@ in `isp_genpd_remove_device+0x1d`, called from `isp_v4_1_1_hw_fini`,
 `amdgpu_device_fini_hw`, `amdgpu_driver_unload_kms`). Use `rmmod`, which removes
 one module only. The crash is a Linux bug worth reporting separately.
 
+A second Linux bug: after the module is reloaded, starting a stream without
+first setting a format fails (`fail to get out prop`, `fail to setup output`)
+and the error path then blocks forever in `isp4sd_stop_stream` (called from
+`isp4sd_enable_streams`). The process is stuck in uninterruptible sleep and
+the next reboot hung; a forced power off was needed. Always set the format
+(`--set-fmt-video`) in the same `v4l2-ctl` call.
+
 ## Tested
 
 | Configuration | Result |
@@ -380,6 +426,7 @@ one module only. The crash is a Linux bug worth reporting separately.
 | Ubuntu, shutter open | correct 1920x1080 NV12 picture |
 | Ubuntu, 30-frame session with debug and ftrace | trace in [amd_isp/](amd_isp/) |
 | Ubuntu, 5-frame session with kprobes on command send and response read | 33 commands, 38 responses (plus 38 empty ring reads), [amd_isp/linux_stream_commands.txt](amd_isp/linux_stream_commands.txt) |
+| Ubuntu, 10-frame sessions with `bpftrace` reading the command ring and a meta info buffer | 17 ring entries, all checksums valid; meta info fields decoded |
 | Ubuntu, 10-frame session under `mmiotrace` after `rmmod`/`modprobe` | 768 register accesses, [amd_isp/linux_stream_mmio.txt](amd_isp/linux_stream_mmio.txt) |
 | FreeBSD | no driver; `video(4)` and the firmware are present |
 | IR camera (HM1092) | untested, no driver on any system |
