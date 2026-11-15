@@ -553,6 +553,29 @@ Linux, and stopping it leaves amdgpu working (no errors in the log). This
 also confirms that FreeBSD's amdgpu has the ISP firmware loaded. The GPU
 addresses have the same `0x7fff` high half as on Linux.
 
+### Second FreeBSD step: the first command is answered
+
+The same file gained a command sender and a response reader:
+`isp_send_cmd()` builds the 64-byte entry (sequence number, identifier,
+payload, checksum), writes it at the command ring's write pointer and
+advances `0x62180` by 64 bytes; `isp_poll_resp()` reads and acknowledges
+the interrupt status, then reads every response between `0x6221c` and
+`0x62220`, checks its checksum and advances `0x6221c`. `sysctl
+hw.amdgpu.isp_cmd=1` sends the first command Linux sends, `SEND_BUFFER`
+with the 100 MB memory pool (type `0xf`):
+
+```
+amdisp: sent cmd 0x02040001 seq 1 at ring offset 0x0
+amdisp: interrupt status 0x10000 at 10 ms
+amdisp: resp seq 1 type 0x00010001 w2 0x1 w3 0x2040001 w4 0x0 w5 0x0 checksum ok
+```
+
+The firmware answered in 10 ms with a valid "command done" (type
+`0x00010001`) that echoes the command's sequence number (1) and identifier,
+and raised the interrupt status bit `0x10000` seen on Linux. This confirms
+the command entry layout, the checksum rule, both ring pointer roles and
+the response format on FreeBSD.
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
@@ -563,10 +586,11 @@ addresses have the same `0x7fff` high half as on Linux.
 3. Done: design above (drm-kmod glue plus an `amdisp` driver on `video(4)`).
 4. Done: GPIO and I2C use traced (only AMD GPIO 85 matters).
 5. Done: firmware boot on FreeBSD (`hw.amdgpu.isp_boot`).
-6. Send one command and read its response (polling the response ring
-   first, then the interrupt), then the stream set-up commands, then
-   streaming into `video(4)` buffers, then move the code into the `amdisp`
-   child device.
+6. Done: first command and its response, by polling.
+7. The stream set-up commands and the meta info and frame buffers, then
+   one frame by polling, then the interrupt through amdgpu's interrupt
+   ring, then streaming into `video(4)` buffers, then move the code into
+   the `amdisp` child device.
 
 ## Pitfall met on the way
 
@@ -597,5 +621,6 @@ the next reboot hung; a forced power off was needed. Always set the format
 | Ubuntu, activity LED: 10 s capture, then GPIO 85 driven by hand with the driver unloaded | LED on during the capture only; GPIO 85 alone (6 s high, then 3 toggles) leaves it off |
 | Ubuntu, 10-frame session under `mmiotrace` after `rmmod`/`modprobe` | 768 register accesses, [amd_isp/linux_stream_mmio.txt](amd_isp/linux_stream_mmio.txt) |
 | FreeBSD, `hw.amdgpu.isp_boot=1` with GPIO 85 high | firmware boot status `0x2402` after 2 ms; stop leaves amdgpu working |
+| FreeBSD, `hw.amdgpu.isp_cmd=1` (memory pool `SEND_BUFFER`) | "command done" in 10 ms, sequence and identifier echoed, checksum valid |
 | FreeBSD, streaming | not written yet |
 | IR camera (HM1092) | untested, no driver on any system |
