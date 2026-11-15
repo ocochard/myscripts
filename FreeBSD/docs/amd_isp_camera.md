@@ -690,9 +690,19 @@ So the firmware reads something at `0x55` and then picks a path: `0x10`
 timing tests changed nothing (same `0x55` then `0x50`, same failure): AMD
 GPIO 85 held low during the ISP boot and raised just before the stream
 set-up, and a 3 s wait between the boot and the set-up. Next suspect: the
-ISP firmware itself; FreeBSD loads the linux-firmware `20260519` snapshot
-(`gpu-firmware-amd-kmod-isp-4-1-1`), Ubuntu its own package, version not
-checked yet.
+ISP firmware itself, and the two systems do not run the same one:
+
+| | Size | md5 | Build string |
+|---|---|---|---|
+| FreeBSD (`gpu-firmware-amd-kmod-isp-4-1-1`, drm-kmod-firmware fork tag `20260519`) | 6083536 | `6032620024ffecee4fb92eecc66a85ee` | `210721_SMDK 2025/02/14 06:51 E9925 7a54a07e` |
+| Ubuntu (`linux-firmware-amd-graphics 20260319.git217ca6e4-0ubuntu3.1`) | 3859408 | `c872d1bafabd9a274487d00c76bda924` | `210721_SMDK 2025/08/22 04:18 E9925 ccb1f23` |
+
+FreeBSD's ISP firmware is six months older: in the drm-kmod-firmware fork,
+`amdgpukmsfw-files/isp_4_1_1.bin` was last changed in 2025-12 and not
+refreshed by the later linux-firmware syncs. Since the firmware itself
+chooses the sensor path after reading `0x55`, a build that does not know
+this HP module would explain the `0x50` fallback with identical host
+commands. Next: run FreeBSD with the Ubuntu file.
 
 ## 5. Next steps
 
