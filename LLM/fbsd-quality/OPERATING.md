@@ -233,7 +233,12 @@ print(run_shell("make 2>&1 | tail -6"))          ->   <code>
 ```
 
 Verified by replay: 41 of 43 captured emissions recovered, 39 valid Python
-(`ast.parse`), 0 invalid. Replay-based, not yet observed firing live.
+(`ast.parse`), 0 invalid. It never fired live before 2026-11-15: the wrapper
+replaced the model's `__call__`, but CodeAgent calls `model.generate()`, and the
+copied `generate` bypassed the translation (v41: 263 parse errors in 1 029
+steps). `generate()` is now wrapped; a replay of v41's raw replies recovers 197
+of 204 to valid Python. Each result row records `tool_calls_recovered`; a
+non-zero value is the live proof, not yet observed.
 
 Two alternatives tested and rejected: widening `code_block_tags` to accept
 `<tool_call>` parses and then fails at execution (the payload is

@@ -18,11 +18,12 @@ then cost.
 |--:|---|---|---|---|---|---|---|---|---|---:|---|
 | 1 | claude-opus-4-5 | — | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | PASS | **6/6** | 99 | reference; 1 rep per tier |
 | 2 | Qwen3.8-Flash-Next | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 1/3 | 3/3 | PASS | **14/16** | 1 740 | best local; 17× Opus wall time |
-| 3 | Qwen3.8-27B | Q8_0 MTP | 4/10 | 3/7 | 2/5 | 1/3 | 0/3 | PASS | **10/28** | 1 646 | fewest t6 steps of the locals (36) |
-| 4 | Qwen3.8-27B | UD3.1 UD-Q4_K_XL | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | not run | **6/15** | 1 600 | no MTP, ~11 t/s; tree 1600031, see below |
-| 5 | Sage-A1.5 35B-A3B | Q8_0 MTP | 0/3 | 0/3 | 2/3 | 1/3 | 0/3 | not run | **3/15** | 408 | ~60 t/s; fails the easy tiers; see below |
-| 6 | Swift-Qwen3.8-27B-Uncensored | Q8_0 | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | abliterated; ignores the spec |
-| 7 | Qwen3-Coder-Next 80B-A3B | UD-Q4_K_XL | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | fastest (0.7 h/sweep) and still zero |
+| 3 | Qwen3.8-Flash-Next (llama.cpp v1.0.0) | UD-IQ3_XXS | 2/3 | 2/3 | 3/3 | 3/3 | 1/3 | not run | **11/15** | 1 777 | 26 % of steps lost to a harness bug, since fixed; see below |
+| 4 | Qwen3.8-27B | Q8_0 MTP | 4/10 | 3/7 | 2/5 | 1/3 | 0/3 | PASS | **10/28** | 1 646 | fewest t6 steps of the locals (36) |
+| 5 | Qwen3.8-27B | UD3.1 UD-Q4_K_XL | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | not run | **6/15** | 1 600 | no MTP, ~11 t/s; tree 1600031, see below |
+| 6 | Sage-A1.5 35B-A3B | Q8_0 MTP | 0/3 | 0/3 | 2/3 | 1/3 | 0/3 | not run | **3/15** | 408 | ~60 t/s; fails the easy tiers; see below |
+| 7 | Swift-Qwen3.8-27B-Uncensored | Q8_0 | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | abliterated; ignores the spec |
+| 8 | Qwen3-Coder-Next 80B-A3B | UD-Q4_K_XL | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | fastest (0.7 h/sweep) and still zero |
 
 Tier 6 is `--reps 1` for every model, so it is reported PASS/— rather than as a
 rate.
@@ -65,6 +66,20 @@ presence penalty 1.5: a first attempt with the card's values (`v39`, aborted,
 no rows) produced degenerate text (fused words, dropped articles, invented
 APIs). Same tree and image as row 4. Served on llama.cpp v1.0.0 with the
 GGUF's embedded MTP head at N=3.
+
+**Qwen3.8-Flash-Next on llama.cpp v1.0.0** (run-id `v41-flashnext-v100`,
+2026-11-15) is row 2's model on mainline v1.0.0 with the self-contained Q8_0
+MTP head (`llmsrv.sh MODEL=flashnext`), same tree and image as rows 5-6. It is
+the first row with 3/3 on t4, and every tier passed at least once; the lower
+t1, t2 and t5 scores are not directly comparable with row 2, which mixed
+harness versions, the 1600022 tree and single reps. 263 of its 1 029 steps
+(26 %) were parse errors from a harness bug: the native tool-call fallback
+wrapped the model's `__call__` while CodeAgent calls `generate()`, so it never
+ran. The failed t5 rep 3 lost 98 of 143 steps that way, so t5 understates the
+model. Fixed in `bench.py` after this run; replaying the run's raw replies, 197
+of the 204 native tool-call turns now translate to valid Python. Not yet seen
+firing live: the two check runs (`v42`, `v43`, both PASS) had 8 and 0 parse
+errors, and rows now record `tool_calls_recovered` to show it.
 
 Compare models on **`model_s`** and `tokens_out`, never on steps: a
 `ToolCallingAgent` step is one tool call, a `CodeAgent` step is one Python block

@@ -1053,8 +1053,7 @@ def _install_tool_call_fallback(agent):
     inner = agent.model
     tool_names = set(getattr(agent, "tools", {}) or {})
 
-    def _model(*a, **kw):
-        msg = inner(*a, **kw)
+    def _fix(msg):
         content = getattr(msg, "content", None)
         if isinstance(content, str) and "<code>" not in content:
             code = _translate_tool_call(content, tool_names)
@@ -1065,8 +1064,16 @@ def _install_tool_call_fallback(agent):
                 _model.recovered += 1
         return msg
 
+    def _model(*a, **kw):
+        return _fix(inner(*a, **kw))
+
+    # CodeAgent calls model.generate(), not model(): a verbatim copy of the
+    # inner generate bypassed _fix and the fallback never fired live (v41:
+    # 263 parse errors in 1029 steps). Streaming is not wrapped; the bench
+    # does not stream.
+    _model.generate = lambda *a, **kw: _fix(inner.generate(*a, **kw))
     _model.recovered = 0
-    for attr in ("model_id", "api_base", "generate", "generate_stream"):
+    for attr in ("model_id", "api_base", "generate_stream"):
         if hasattr(inner, attr):
             try:
                 setattr(_model, attr, getattr(inner, attr))
@@ -1940,6 +1947,7 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
             # where knowing how many steps went to retries matters.
             rec["parse_errors"] = progress.parse_errors
             rec["no_toolcall"] = progress.no_toolcall
+            rec["tool_calls_recovered"] = getattr(agent.model, "recovered", 0)
             rec["refunded_steps"] = progress.refunded
             rec["timeout_errors"] = progress.timeout_errors
             rec["sandbox_errors"] = progress.sandbox_errors
@@ -1955,6 +1963,9 @@ def run_one(task, model_id, api_base, api_key, disk, root_dir, max_steps,
     # compliance under this harness.
     rec["parse_errors"] = progress.parse_errors
     rec["no_toolcall"] = progress.no_toolcall
+    # Native tool-call replies _install_tool_call_fallback() turned into a
+    # <code> block; without this a working fallback leaves no trace.
+    rec["tool_calls_recovered"] = getattr(agent.model, "recovered", 0)
     rec["refunded_steps"] = progress.refunded
     rec["timeout_errors"] = progress.timeout_errors
     rec["sandbox_errors"] = progress.sandbox_errors
