@@ -7,7 +7,8 @@
 #    overflow (hang, no window).
 #  - MS core fonts (winetricks corefonts): Chromium maps CSS serif/sans-serif to
 #    Times New Roman/Arial; when absent, text renders as zero-width glyphs.
-#  - --no-sandbox: the sandboxed renderer gets killed under Wine (white screen).
+#  - --no-sandbox (Chromium-based games only, detected by icudtl.dat): the
+#    sandboxed renderer gets killed under Wine (white screen).
 #  - US keyboard layout while the game runs: Wine cannot map exotic layouts
 #    (e.g. bepo) to scancodes, so games reading KeyboardEvent.code (WASD) get
 #    wrong keys. The previous layout is restored on exit.
@@ -152,4 +153,9 @@ if grep -q '"chromium-args"' package.json 2>/dev/null &&
 	    package.json.orig > package.json
 fi
 ${release_mesa} && export LD_LIBMAP_DISABLE=1
-wine "$(basename "${exe}")" --no-sandbox "$@"
+# Chromium-based (Electron, NW.js, CEF) only: other engines, e.g. Ren'Py,
+# reject unknown arguments.
+if [ -f icudtl.dat ]; then
+	set -- --no-sandbox "$@"
+fi
+wine "$(basename "${exe}")" "$@"
