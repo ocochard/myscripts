@@ -341,19 +341,47 @@ the sleep (`driver own failed`, MCU timeout), reloads it by itself, but
 so the replugged `ue0` could not reach the gateway until `wlan0` was
 destroyed and a default route added.
 
+## amdgpu: the S0ix path is probably already taken
+
+Linux amdgpu picks its suspend-to-idle sequence with
+`amdgpu_acpi_is_s0ix_active()` (`amdgpu_acpi.c`), which sets
+`adev->in_s0ix` when all of these hold: `CONFIG_SUSPEND`,
+`pm_suspend_target_state == PM_SUSPEND_TO_IDLE`, an APU of Raven or later
+with GFXOFF in `pp_feature`, `ACPI_FADT_LOW_POWER_S0` in the FADT, and
+`CONFIG_AMD_PMC`. On FreeBSD with drm-kmod `drm_v6.12.85_3`:
+
+- `kconfig.mk` defines `CONFIG_SUSPEND` and `CONFIG_AMD_PMC`;
+- LinuxKPI sets `pm_suspend_target_state = PM_SUSPEND_TO_IDLE` from the
+  `power_suspend_early` event (a25cfcab9a9d), which `acpi.c` invokes before
+  `DEVICE_SUSPEND(root_bus)`, so before amdgpu's suspend method;
+- the FADT has `LOW_POWER_S0`, and amdgpu never logged its "Power
+  consumption will be higher" message;
+- on resume amdgpu logs the same sequence as Linux (GART, "SMU is
+  resuming...", "SMU is resumed successfully!").
+
+So amdgpu most likely already runs its S0ix sequence on FreeBSD, and
+DISPLAY/GFX stay active for another reason. In that sequence amdgpu skips
+suspending GFX and relies on GFXOFF; if GFXOFF never engages on FreeBSD,
+GFX stays on. Not verified: reading `dri/drmn0/amdgpu_gfxoff_status`
+through lindebugfs froze the whole laptop (forced power off). Do not read
+the amdgpu GFXOFF debugfs files on FreeBSD.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
 2. USB3_0/USB3_1: `thunderbolt(4)` attaches but its resume hangs; find
    where (its suspend/resume with the UFP and LC register errors) before
-   trying again. amdgpu S0ix path in drm-kmod (DISPLAY, GFX, JPEG blocks).
-3. Power button (pin 54) still does not wake: check the `amdgpio` arming
+   trying again.
+3. amdgpu (DISPLAY, GFX, JPEG): confirm `in_s0ix` and the GFXOFF state with
+   a `printf` in `amdgpu_pmops_suspend()` in a drm-kmod build (no debugfs
+   reads), then find what keeps GFX and the display controller up.
+4. Power button (pin 54) still does not wake: check the `amdgpio` arming
    (register values after suspend) and the MP2 (`MP2C`) path.
-4. Turn `do_idle()` into the loop its comment describes (the key wake
+5. Turn `do_idle()` into the loop its comment describes (the key wake
    through the EC GPE works, no extra arming needed).
-5. Retry one suspend per change, with the disks synced first: a hang needs
+6. Retry one suspend per change, with the disks synced first: a hang needs
    a forced power off.
-6. Send the amdsmu patch: it is correct on its own (attaches, reads the SMU
+7. Send the amdsmu patch: it is correct on its own (attaches, reads the SMU
    version, IP blocks and metrics; matches Linux), whatever suspend does.
    The NVMe "Complete Failed controller" seen on the C1 resumes did not
    come back with Cmax.
@@ -377,3 +405,4 @@ destroyed and a default route added.
 | 2026-11-15 | + `pci` USB4 power-down commit | NHI0/NHI1 D3cold over suspend; USB3_0, USB3_1 still block |
 | 2026-11-15 | Wi-Fi + s2idle kernel, dock unplugged | same blockers; mt7925 reloads firmware after resume but `wlan0` stays down |
 | 2026-11-15 | + `kldload tb` (nhi0/nhi1 attach) | resume hangs: keyboard backlight on, screen black, no network; forced power off, nothing logged |
+| 2026-11-15 | read `dri/drmn0/amdgpu_gfxoff_status` (lindebugfs) | whole system froze; forced power off |
