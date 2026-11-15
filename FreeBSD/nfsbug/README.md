@@ -27,18 +27,17 @@ In commit order. #1 and #2 are in main; #3 to #6 are proposed in this order.
 | 2 | [`staleclientid.patch`](staleclientid.patch) | NFS client (`nfs_clrpcops.c`) | `STALE_CLIENTID` in the renew window returns EIO instead of doing EXCHANGE_ID | 45 to 60 s with no I/O, and a CREATE_SESSION storm | - | [`staleclientid.md`](staleclientid.md) (Bugzilla: [`BUGREPORT-staleclientid.txt`](BUGREPORT-staleclientid.txt)) | yes, 7a0021a0988f (PR 299221) |
 | 3 | [`nfscl_jail.patch`](nfscl_jail.patch) | NFS client, `nfssvc(2)` | the client lacks `VFCF_JAIL`; reading mount options needs `PRIV_NFS_DAEMON` | a jail cannot mount NFS, so a test client must run on the host; `umount` in a jail exits 1 | nothing; needs the NFS maintainer's agreement (jail policy) | [`nfscl_jail.md`](nfscl_jail.md) | no |
 | 4 | [`kgss_vnet.patch`](kgss_vnet.patch) | kgssapi, `clnt_nl` | "gssd answered" and the upcall timeout are global, but gssd runs per jail | after one jail used Kerberos, an nfsd started in a jail without gssd does not serve | nothing (tested with #3 applied) | [`bugreport_kgss_vnet_upcall.md`](bugreport_kgss_vnet_upcall.md) | no, not filed |
-| 5 | [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch) | `tests/sys/fs/nfs` | the tree had no NFS test at all | regressions like #1 and #2 reach users | nothing; with #3, also two-client and Kerberos cases | [`nfs_vnet_tests.md`](nfs_vnet_tests.md) | no |
+| 5 | [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch) | `tests/sys/fs/nfs` | the tree had no NFS test at all | regressions like #1 and #2 reach users | #4 when kgssapi is loaded; with #3, also two-client and Kerberos cases | [`nfs_vnet_tests.md`](nfs_vnet_tests.md) | no |
 | 6 | [`session-leak.patch`](session-leak.patch) | NFS client | old sessions are never freed until unmount | `NFSCL session` memory grows with every recovery (37 to 256 in 27 h on EFS) | nothing; can go any time | [`session-leak.md`](session-leak.md) (Bugzilla: [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt)) | no, not filed |
 
 Why this order: the goal is client and server in jails, and #3 is what
 allows the client in a jail, so it goes first. It changes jail policy and
 needs the NFS maintainer's agreement. #4 fixes the bug that hangs a jailed
 nfsd once Kerberos is used in another jail. The tests (#5) then land at full
-strength: two clients and Kerberos, and their gssd workaround can be
-dropped before they are committed. #6 is
-independent; ideally a leak check is added to the tests before it. Tradeoff:
-the tests wait for the slowest review, #3, although they could run today
-with the client on the test machine.
+strength: two clients and Kerberos, relying on #4 instead of a workaround.
+#6 is independent; ideally a leak check is added to the tests before it.
+Tradeoff: the tests wait for the slowest review, #3, although they could run
+today with the client on the test machine.
 
 Upstream status checked against `freebsd/main` at `cf58c8667cfd`
 (2026-11-15): #1 and #2 are committed, and #3 to #6 still apply cleanly. They

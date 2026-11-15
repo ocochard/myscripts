@@ -129,8 +129,13 @@ handled:
   its replay cache there. The Kerberos daemons start without `TMPDIR`.
 - Once a gssd answered in one jail, an `nfsd` in a jail without gssd hangs
   at startup. That is a kernel bug, #4
-  ([`bugreport_kgss_vnet_upcall.md`](bugreport_kgss_vnet_upcall.md)); until
-  it is fixed, every server jail runs gssd.
+  ([`bugreport_kgss_vnet_upcall.md`](bugreport_kgss_vnet_upcall.md)). The
+  tests expect #4 in the kernel: without it, with kgssapi loaded, every case
+  that runs after a Kerberos case in the same boot fails with
+  `NFSPROC_NULL: RPC: Timed out`. Every case should also fail if the test
+  machine itself runs gssd (not tested; it follows from the same bug). An
+  earlier version started gssd in every server jail to avoid this; it was
+  dropped because #4 fixes the cause.
 - An exclusive NFSv4 lock needs a file opened for writing: `lockf -w`.
 - Setup runs in the test's own shell. In a `$(...)` subshell, `atf_fail`
   would stop only the subshell, and the test would carry on.
@@ -166,7 +171,7 @@ bhyve VM, 4 CPUs, 4 GB, kernels with `device epair`, `device if_bridge` and
 | d3a0bf0a79ef (before #1's fix) | test machine | passed | not run | passed | failed: no I/O for 61 s | not run |
 | main 584f44221f45 + #3 | jails | passed | passed | passed | passed | not run |
 | 64857418bb23 + #3 | jails | passed | passed | passed | failed: stalled 46 s | not run |
-| main 584f44221f45 + #3 + `KGSSAPI` | jails | passed | passed | passed | not run | passed |
+| main 584f44221f45 + #3 + `KGSSAPI`, with the gssd workaround | jails | passed | passed | passed | not run | passed |
 | main 7868958f5c79 + #3 + #4 + `KGSSAPI` (GENERIC, gssd workaround removed) | jails | passed | passed | passed | not run | passed |
 
 The pre-fix kernels were run with the first, single-file version of the

@@ -325,10 +325,10 @@ index 000000000000..1ea33137f6ae
 +}
 diff --git tests/sys/fs/nfs/nfs.subr tests/sys/fs/nfs/nfs.subr
 new file mode 100644
-index 000000000000..4529ef587c10
+index 000000000000..0079818fbc91
 --- /dev/null
 +++ tests/sys/fs/nfs/nfs.subr
-@@ -0,0 +1,474 @@
+@@ -0,0 +1,466 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -523,14 +523,6 @@ index 000000000000..4529ef587c10
 +nfs_server_run()
 +{
 +	local name=$1 i
-+
-+	# With kgssapi loaded, nfsd asks gssd for its Kerberos name before it
-+	# serves.  Until kgssapi tracks gssd per vnet, once gssd answered in
-+	# any vnet it waits a minute or more in every vnet, and a jail without
-+	# gssd would hang here.
-+	if kldstat -q -m kgssapi && ! pgrep -q -j ${name} gssd; then
-+		nfs_gssd_start ${name}
-+	fi
 +
 +	# NFSv4 only: no rpcbind needed.  mountd -R does not clear
 +	# nfs_privport, and the proxy connects from an unprivileged port.
