@@ -1,7 +1,7 @@
 From eb3bffacdf2870b637f1383fe8a60827632213ef Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Thu, 12 Nov 2026 22:51:24 +0000
-Subject: [PATCH 1/3] amdsmu: Add Strix Halo support
+Subject: [PATCH 1/4] amdsmu: Add Strix Halo support
 
 Strix Halo (family 1Ah model 70h) has root complex 0x1507 and the same
 SMU interface as Krackan Point model 70h, as in Linux amd_pmc.

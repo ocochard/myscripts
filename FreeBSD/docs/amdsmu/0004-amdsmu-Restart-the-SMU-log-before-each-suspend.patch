@@ -1,0 +1,30 @@
+From dacd2d8793be723024f40c2f8e6a52627986b82f Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sun, 15 Nov 2026 19:12:48 +0000
+Subject: [PATCH 4/4] amdsmu: Restart the SMU log before each suspend
+
+The SMU log was only reset and started at attach, so the per-IP block
+"last active" times kept accumulating across suspends and the blocker
+report misread them.  Reset and start it before the sleep hint, as
+Linux amd_pmc does.
+---
+ sys/dev/amdsmu/amdsmu.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/sys/dev/amdsmu/amdsmu.c b/sys/dev/amdsmu/amdsmu.c
+index ced97af5ca72..35b889f91789 100644
+--- a/sys/dev/amdsmu/amdsmu.c
++++ b/sys/dev/amdsmu/amdsmu.c
+@@ -299,6 +299,9 @@ amdsmu_suspend(device_t dev, enum power_stype stype)
+ 	 * XXX It seems that Cezanne needs a special workaround here for
+ 	 * firmware versions < 64.53.  See amd_pmc_verify_czn_rtc() in Linux.
+ 	 */
++	/* Restart the SMU log so the metrics cover only this suspend. */
++	amdsmu_cmd(dev, SMU_MSG_LOG_RESET, 0, NULL);
++	amdsmu_cmd(dev, SMU_MSG_LOG_START, 0, NULL);
+ 	if (amdsmu_cmd(dev, SMU_MSG_SLEEP_HINT, true, NULL) != 0)
+ 		device_printf(dev, "failed to hint to SMU to enter sleep");
+ }
+-- 
+2.56.0
+

@@ -5,7 +5,7 @@ Status, analysis and patch for suspend-to-idle on the AMD Ryzen AI Max+ PRO
 Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#suspend).
 Patches, in commit order. Rows 1-6 are on main 83c8ec72ac6a, row 7 on main
 cf58c8667cfd. Branches:
-[olivier-amdsmu-strixhalo](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) (1, 2, 2b),
+[olivier-amdsmu-strixhalo](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) (1, 2, 2b, 2c),
 [olivier-s2idle-wake](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) (3-5),
 [olivier-pci-d3hot](https://github.com/ocochard/freebsd-src/compare/main...olivier-pci-d3hot) (7).
 
@@ -14,6 +14,7 @@ cf58c8667cfd. Branches:
 | 1 | amdsmu: Add Strix Halo support | [0001](amdsmu/0001-amdsmu-Add-Strix-Halo-support.patch) [eb3bffacdf28](https://github.com/ocochard/freebsd-src/commit/eb3bffacdf28) | `amdsmu.h`, `amdsmu_reg.h` | done, tested: attaches, SMU 100.7.0, same 19 IP blocks as Linux; ready to send | nothing |
 | 2 | amdsmu: Diagnose S0i3 blockers on Strix Halo | [0002](amdsmu/0002-amdsmu-Diagnose-S0i3-blockers-on-Strix-Halo.patch) [fd35f91cc43e](https://github.com/ocochard/freebsd-src/commit/fd35f91cc43e) | `amdsmu.c` | done, tested: blocker report after resume, USB4_1 garbage filtered | 1 |
 | 2b | amdsmu: Only report IP blocks the SMU tracks (GFX was a false blocker) | [0003](amdsmu/0003-amdsmu-Only-report-IP-blocks-the-SMU-tracks.patch) [1bc9633f8370](https://github.com/ocochard/freebsd-src/commit/1bc9633f8370) | `amdsmu.c` | done, tested: GFX `active: 0` on Strix Halo, as in Linux `0x1ff9dd9`; affects every model | 2 |
+| 2c | amdsmu: Restart the SMU log before each suspend (per-suspend metrics, as Linux) | [0004](amdsmu/0004-amdsmu-Restart-the-SMU-log-before-each-suspend.patch) [dacd2d8793be](https://github.com/ocochard/freebsd-src/commit/dacd2d8793be) | `amdsmu.c` | done, tested: JPEG_1 time matches the sleep instead of the sum of all sleeps | 2b |
 | 3 | acpi: let drivers add wake interrupts for suspend-to-idle | [0001](amdsmu/s2idle/0001-acpi-let-drivers-add-wake-interrupts-for-suspend-to-.patch) [bcebee137c71](https://github.com/ocochard/freebsd-src/commit/bcebee137c71) | `acpi.c`, `acpivar.h` | done, tested: `do_idle()` unmasks the registered IRQ | nothing |
 | 4 | amdgpio: arm the _AEI wake pins for suspend-to-idle | [0002](amdsmu/s2idle/0002-amdgpio-arm-the-_AEI-wake-pins-for-suspend-to-idle.patch) [3b8b97303b3d](https://github.com/ocochard/freebsd-src/commit/3b8b97303b3d) | `amdgpio.c`, `amdgpio.h` | done, tested: pins armed and restored; power button (pin 54) still does not wake | 3 |
 | 5 | acpi_cpu: use the deepest Cx state during suspend-to-idle | [0003](amdsmu/s2idle/0003-acpi_cpu-use-the-deepest-Cx-state-during-suspend-to-.patch) [a413caa2444c](https://github.com/ocochard/freebsd-src/commit/a413caa2444c) | `acpi_cpu.c` | done, tested: key wakes, clean resume with the default `cx_lowest` C1 | nothing |
@@ -611,7 +612,7 @@ reported `JPEG_1.last_time: 43088401`, exactly the two sleeps (15666760 +
 27421641 us), which the "longer than the sleep" filter then hid.
 
 With amdsmu sending `SMU_MSG_LOG_RESET` and `SMU_MSG_LOG_START` before the
-hint (uncommitted, combo worktree), the GFX filter, amdgpu and `tb` (both
+hint (patch table row 2c), the GFX filter, amdgpu and `tb` (both
 routers asleep), one 13.3 s sleep:
 
 ```

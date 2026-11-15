@@ -1,7 +1,7 @@
 From 1bc9633f837091201032ea79194f2084ec647c1b Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 15 Nov 2026 16:05:25 +0000
-Subject: [PATCH 3/3] amdsmu: Only report IP blocks the SMU tracks
+Subject: [PATCH 3/4] amdsmu: Only report IP blocks the SMU tracks
 
 The S0i3 blocker report walked every IP block name, including those the
 SMU leaves out of its supported constraints, whose last active time is
