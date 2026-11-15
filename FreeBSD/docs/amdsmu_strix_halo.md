@@ -676,6 +676,14 @@ CPU into C3, is the only run that did not wake, consistent with the SoC
 finally reaching S0i3 and the wake path failing; unproven, since its
 metrics died with the power off.
 
+Battery check of that hypothesis: the same forced-C3 kernel on battery,
+88% at 17:53:44 (8.8 W awake idle), forced off after 30 min asleep, 83%
+at 18:29:32 after a fresh boot. 5% of the 69234 mWh full capacity is
+about 3.5 Wh in 35.8 min including about 2 min of boot, so roughly 5-6 W
+while "asleep" (1% steps: 4.5-7 W). S0i3 would cost well under 1%. So the
+forced-C3 sleep is not S0i3: it is a hang drawing close to awake idle
+power, and the no-wake is a hang, not a lost S0i3 wake.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -741,3 +749,4 @@ metrics died with the power off.
 | 2026-11-15 | debug amdgpu sends `PowerDownIspByTile(0x7FF)` | resp 1; JPEG_1 still blocks (1277 s sleep), no S0i3 attempt |
 | 2026-11-15 | debug: every CPU forced to C3 at suspend, no BM demotion, `sleep_delay=0` | quiet sleep, no wake (key, power button); forced power off |
 | 2026-11-15 | `sleep_delay=0` only | wakes; JPEG_0 and JPEG_1 block 1044.7 s; cpu0-2 and cpu31 never in C3 |
+| 2026-11-15 | forced-C3 kernel on battery, 30 min, forced off | 88% to 83% (about 5-6 W): not S0i3, a hang |
