@@ -473,8 +473,8 @@ be visible to the GPU, which the framework does not offer today.
 
 ### Open questions
 
-- The PSP load path exists in drm 6.12; still to confirm at run time on
-  FreeBSD, for example by the boot handshake succeeding.
+- Answered: the PSP loads the ISP firmware on FreeBSD too; the boot
+  handshake succeeds (below).
 - Answered (traced on Linux, see below): one GPIO must be driven, the I2C
   controller and the ISP's own GPIO are not used.
 - The MIPI PHY window (`0x66700`) was not accessed by the capture driver
@@ -528,6 +528,31 @@ So the FreeBSD glue needs one more service: set AMD GPIO line 85 through
 `amdgpio(4)` (a GPIO pin set on its `gpiobus`), high before the power-up
 sequence and low after power-down.
 
+### First FreeBSD step: the firmware boots
+
+A FreeBSD-only file in amdgpu, `amdgpu_isp_freebsd.c` (BSD licence, branch
+`olivier-amdisp` of a local drm-kmod tree based on `drm_v6.12.85_3`), adds a
+test switch, `sysctl hw.amdgpu.isp_boot`. Writing 1 runs the measured
+start-up: allocate the ring memory (16 MB) and the log ring (2 MB) as GPU
+buffers, send `PowerUpIspByTile(0x7ff)` and the two clock messages, enable
+the tiles, hold the processor, program the eight rings and the log ring,
+release the processor, and poll the boot status; writing 0 reverses it.
+With AMD GPIO 85 driven high first (`gpioctl -f /dev/gpioc0 85 1`, through
+`amdgpio(4)`):
+
+```
+amdisp: rings at GPU 0x7fff014b0000, log at GPU 0x7fff024b0000
+amdisp: boot status 0x2000 after 0 ms
+amdisp: boot status 0x2402 after 2 ms
+amdisp: firmware booted
+amdisp: stopped
+```
+
+The firmware reports ready after 2 ms, the same values and timing as on
+Linux, and stopping it leaves amdgpu working (no errors in the log). This
+also confirms that FreeBSD's amdgpu has the ISP firmware loaded. The GPU
+addresses have the same `0x7fff` high half as on Linux.
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
@@ -537,9 +562,11 @@ sequence and low after power-down.
    fields above.
 3. Done: design above (drm-kmod glue plus an `amdisp` driver on `video(4)`).
 4. Done: GPIO and I2C use traced (only AMD GPIO 85 matters).
-5. Write the amdgpu glue and a first `amdisp` that powers the ISP, boots the
-   firmware and reports success (the `0x2402` handshake), then add one
-   command and its response, then streaming.
+5. Done: firmware boot on FreeBSD (`hw.amdgpu.isp_boot`).
+6. Send one command and read its response (polling the response ring
+   first, then the interrupt), then the stream set-up commands, then
+   streaming into `video(4)` buffers, then move the code into the `amdisp`
+   child device.
 
 ## Pitfall met on the way
 
@@ -569,5 +596,6 @@ the next reboot hung; a forced power off was needed. Always set the format
 | Ubuntu, 5-frame sessions with ftrace on `pinctrl_amdisp`, `i2c_designware_amdisp`, `amd_isp4`, DesignWare I2C, and `bpftrace` on GPIO sets | only AMD GPIO 85 toggles (high at start, low at stop); no I2C traffic |
 | Ubuntu, activity LED: 10 s capture, then GPIO 85 driven by hand with the driver unloaded | LED on during the capture only; GPIO 85 alone (6 s high, then 3 toggles) leaves it off |
 | Ubuntu, 10-frame session under `mmiotrace` after `rmmod`/`modprobe` | 768 register accesses, [amd_isp/linux_stream_mmio.txt](amd_isp/linux_stream_mmio.txt) |
-| FreeBSD | no driver; `video(4)` and the firmware are present |
+| FreeBSD, `hw.amdgpu.isp_boot=1` with GPIO 85 high | firmware boot status `0x2402` after 2 ms; stop leaves amdgpu working |
+| FreeBSD, streaming | not written yet |
 | IR camera (HM1092) | untested, no driver on any system |
