@@ -539,6 +539,24 @@ not cut power to the display controller, which keeps scanning out the EFI
 framebuffer until a driver (amdgpu) turns the pipe and backlight off. The
 LPS0 "display off" call only notifies the firmware.
 
+With amdgpu loaded again, `tb` with both NHIs, and the `pci` D3hot fix
+(GPU in D3hot), resume works too (18.5 s sleep):
+
+```
+nhi1: Ready to enter sleep
+nhi0: Ready to enter sleep
+pci0:195:0:0: Transition from D0 to D3hot
+amdsmu0:   GFX (active for 18471693 us)
+amdsmu0:   JPEG_1 (active for 18471693 us)
+```
+
+DISPLAY and MPM clear together with USB3_0/1: with amdgpu loaded, the
+display controller blocks until the USB4 routers sleep (they carry the
+USB-C DisplayPort outputs; inferred, not measured). The earlier
+`tb` + amdgpu hang ran on a kernel without the D3hot fix, where the GPU
+stayed in D0 under a bridge in D3cold; it did not come back here. Left:
+GFX and JPEG_1, still no S0i3 attempt.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -593,3 +611,4 @@ LPS0 "display off" call only notifies the firmware.
 | 2026-11-15 | `tb` loaded, `devctl` suspend/resume of nhi0, nhi1, xhci1, xhci2 | all resume, system stays up |
 | 2026-11-15 | `tb` loaded, `nhi1` detached, no amdgpu, `zzz` | resume works; USB3_0 cleared, GFX and USB3_1 block |
 | 2026-11-15 | `tb` loaded, both NHIs, no amdgpu, `zzz` | resume works; USB3_0 and USB3_1 cleared, only GFX blocks |
+| 2026-11-15 | amdgpu + `tb` (both NHIs) + `pci` D3hot fix, `zzz` | resume works (no hang); blockers GFX, JPEG_1 only |
