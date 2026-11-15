@@ -8,11 +8,12 @@ index 42ac272fe78d..7a2d7e962bb3 100644
  BASEDIR=	${.CURDIR}/../wifi-firmware-kmod
  
  FWDRV=		mt76
-@@ -9,6 +11,11 @@ LICENSE_NAME=	Mediatek firmware license (${FWDRV})
+@@ -9,6 +11,12 @@ LICENSE_NAME=	Mediatek firmware license (${FWDRV})
  
  WHENCE_REGEX=	(mt7615e|mt7915e|mt7921|mt7922|mt7925|mt7996e|mtk_wed) -.*ireless
  
-+# All mt76 PCI chips set a 32-bit DMA mask.
++# mt76 PCI chips use a 32-bit DMA mask (mt7996: 36-bit data, 32-bit
++# coherent); 1 (32-bit) covers all of them.
 +COMPAT_LINUXKPI_SKB_MEM_LIMIT=	1
 +# Temporary list of flavours which we believe work with HW_CRYPTO/HT/VHT.
 +COMPAT_LINUXKPI_HWCRYPTO_HT_VHT=	mt7925
