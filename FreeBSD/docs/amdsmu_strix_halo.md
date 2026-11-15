@@ -457,6 +457,48 @@ All 32 CPUs idle only 3 to 24 times in 21 s, mostly in C3 (the deepest
 entries remain (bus master activity or the minutes before `do_idle()`),
 so the last state of each CPU is not proven, but the cores do sleep deep.
 
+## Without amdgpu: only USB3_0/USB3_1 left
+
+Same kernel, `amdgpu` removed from `kld_list` (console on the EFI
+framebuffer), one 29.2 s sleep:
+
+```
+amdsmu0: IP blocks that blocked S0i3 entry:
+amdsmu0:   GFX (active for 29226337 us)
+amdsmu0:   USB3_0 (active for 29226337 us)
+amdsmu0:   USB3_1 (active for 29226337 us)
+amdsmu0:   JPEG_1 (active for 29226337 us)
+```
+
+DISPLAY and MPM no longer block: with amdgpu loaded, its suspend leaves
+the display controller active (and MPM with it). GFX and JPEG_1 block with
+or without amdgpu, so they need something no FreeBSD code does today
+(Linux gets there with amdgpu loaded). USB3_0/1 are unchanged. Still no
+S0i3 attempt (time entering 0).
+
+The per-CPU counts show the boot CPU never reached C3 in this run
+(`cpu0 cx_stats 10 7 0 prev_sleep 98533`) while the 31 others did (3 to
+15 C3 entries each). In the amdgpu run cpu0 had 4 C3 entries. `do_idle()`
+calls `cpu_idle(0)` once, and `acpi_cpu_idle()` picks the state from
+`cpu_prev_sleep`, so the boot CPU's sleep depth depends on its recent
+history.
+
+A second suspend in the same boot (still no amdgpu, 71.8 s) leaves only
+USB3_0 and USB3_1:
+
+```
+amdsmu0: IP blocks that blocked S0i3 entry:
+amdsmu0:   USB3_0 (active for 71831002 us)
+amdsmu0:   USB3_1 (active for 71831002 us)
+```
+
+GFX and JPEG_1 cleared without any driver; on the first suspend after boot
+they were still active (cpu0 had 1 C3 entry this time). With amdgpu not
+loaded the panel stays lit during the sleep (nothing turns it off), so the
+sleep is easy to mistake for a failed suspend; the first run's "early wake"
+was a key press. USB3_0/USB3_1 are now the only blockers, and still no S0i3
+attempt.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -506,3 +548,5 @@ so the last state of each CPU is not proven, but the cores do sleep deep.
 | 2026-11-15 | + `pci` D3hot fix | GPU D3hot, GFX0 ACPI D3hot, resume fine; same blockers over 22 s |
 | 2026-11-15 | SMU hint order vs Linux 7.2 | same order (DSM screen off, LPS0 entry, MS entry, then hint 0x03 arg 1) |
 | 2026-11-15 | debug `printf` of per-CPU Cx counts at resume | 3 to 24 idle entries per CPU in 21.4 s, mostly C3; same blockers |
+| 2026-11-15 | no amdgpu loaded | blockers GFX, USB3_0, USB3_1, JPEG_1 (DISPLAY and MPM gone); cpu0 no C3 entry |
+| 2026-11-15 | no amdgpu, second suspend of the boot | only USB3_0, USB3_1 block; GFX, JPEG_1, DISPLAY, MPM clear; no S0i3 attempt |
