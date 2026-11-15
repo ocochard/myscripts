@@ -230,7 +230,14 @@ The cameras are MIPI sensors behind the AMD ISP, not USB (UVC) cameras:
 an OmniVision OV05C RGB camera (`_DDN` "OV05C-RGB") and a Himax HM1092 IR camera (`_DDN` "HM1092-IR").
 Linux binds `amd-isp4` to the RGB camera; nothing binds the IR camera.
 The ISP firmware is already loaded on FreeBSD: `amdgpu_isp_4_1_1_bin.ko` comes with amdgpu, but nothing uses it.
-Impact: no webcam. A USB webcam works through `webcamd`.
+Impact: no webcam. A USB webcam works with the native `uvideo(4)` driver (or `webcamd`).
+FreeBSD 16 has a kernel V4L2 capture framework, `video(4)` (9c9428825f4c, 2026-08): it provides
+`/dev/videoN`, buffers, `mmap` and the V4L2 ioctls, so an ISP driver would only implement the
+`video_if` hardware methods (formats, controls, start/stop stream), like `uvideo(4)` and `fwcam(4)`.
+The Linux driver (`amd_isp4_capture`, about 4000 lines plus the amdgpu ISP power and the ISP I2C/pin
+controllers) is GPL-2.0+, so a FreeBSD driver would be a rewrite against the ISP firmware interface.
+The ISP firmware drives the OV05C sensor itself (no sensor driver in Linux). Not checked: whether the
+camera captures frames on Ubuntu.
 
 ### Platform Management Framework (AMDI0105)
 
