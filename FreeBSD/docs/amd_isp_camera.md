@@ -440,7 +440,8 @@ messages) and those exist only there:
      clock messages);
    - register a handler for the ISP interrupt sources on amdgpu's interrupt
      ring;
-   - tell the child when amdgpu suspends or resumes.
+   - tell the child when amdgpu suspends or resumes;
+   - drive the ISP enable line, AMD GPIO 85 (through `amdgpio(4)`).
 2. **The camera driver `amdisp`** (new file, BSD licence, written from this
    document): a newbus driver that registers with `video(4)` and implements
    its methods.
@@ -461,9 +462,9 @@ flowchart TB
 |---|---|
 | `querycap`, `enum_format`, `enum_framesizes`, `enum_frameintervals` | report NV12 and YUYV, the ten sizes from 640x360 to 2888x1808, 30 fps (static tables) |
 | `try_format`, `set_format`, `get_format` | check and remember the size and format; no hardware access |
-| `start_stream` | power up through the SMU, set clocks, enable the tiles (`0x60000`), program the rings, release the processor, poll `0x62058` for `0x2402`, enable interrupts, send the memory pool, `SET_STREAM_CONFIG`, `SET_OUT_CHAN_PROP`, `ENABLE_OUT_CHAN`, eight meta info buffers, four or more frame buffers, `START_STREAM` |
+| `start_stream` | GPIO 85 high, power up through the SMU, set clocks, enable the tiles (`0x60000`), program the rings, release the processor, poll `0x62058` for `0x2402`, enable interrupts, send the memory pool, `SET_STREAM_CONFIG`, `SET_OUT_CHAN_PROP`, `ENABLE_OUT_CHAN`, eight meta info buffers, four or more frame buffers, `START_STREAM` |
 | interrupt | acknowledge, read responses; on "frame done", read the meta info to find the finished frame buffer, copy it into a `video(4)` buffer (`video_buf_write`, `video_buf_done`), then give the meta info buffer and the frame buffer back with `SEND_BUFFER` |
-| `stop_stream` | `ENABLE_OUT_CHAN` off, `STOP_STREAM`, wait for the responses, stop the processor, tiles off, power down through the SMU |
+| `stop_stream` | `ENABLE_OUT_CHAN` off, `STOP_STREAM`, wait for the responses, stop the processor, tiles off, power down through the SMU, GPIO 85 low |
 
 Copying each frame (3 MB at 1920x1080, about 93 MB/s at 30 fps) is the
 simple first step, the way `uvideo(4)` works. Letting the ISP write straight
@@ -474,14 +475,58 @@ be visible to the GPU, which the framework does not offer today.
 
 - The PSP load path exists in drm 6.12; still to confirm at run time on
   FreeBSD, for example by the boot handshake succeeding.
-- The sensor GPIO register (`0x6613c`) and the ISP's I2C controller: the
-  Linux capture driver did not touch them during a session, but Linux also
-  loads `pinctrl_amdisp` and `i2c_designware_amdisp`, and the sensor may
-  need its GPIO set before streaming. To check by tracing those drivers.
+- Answered (traced on Linux, see below): one GPIO must be driven, the I2C
+  controller and the ISP's own GPIO are not used.
 - The MIPI PHY window (`0x66700`) was not accessed by the capture driver
   either: the firmware probably programs it.
 - Suspend: the ISP must be stopped before amdgpu suspends (and it is one of
   the S0i3 constraints, see [amdsmu_strix_halo.md](amdsmu_strix_halo.md)).
+
+### The enable GPIO, the ISP I2C bus and the ISP GPIO: traced
+
+Linux also loads `pinctrl_amdisp` (a 3-line GPIO controller inside the ISP,
+`amdisp-pinctrl`), `i2c_designware_amdisp` (the ISP's I2C controller,
+"AMDISP DesignWare I2C adapter") and `amd_isp4` (matches ACPI `OMNI5C10`, the
+sensor, and creates an I2C device `ov05c10` at address `0x10` on that bus).
+An ftrace function trace of those three modules plus the generic DesignWare
+I2C and GPIO-set functions, over one capture session, and a `bpftrace` probe
+on `gpiod_set_value_nocheck()` that printed which GPIO line changed, show:
+
+```
+gpio chip=AMDI0030:00 line=85 value=1 comm=v4l2-ctl
+gpio chip=AMDI0030:00 line=85 value=0 comm=v4l2-ctl
+```
+
+- The capture driver drives **line 85 of the main AMD GPIO controller**
+  (`AMDI0030`, the one FreeBSD's `amdgpio(4)` drives) high when streaming
+  starts and low when it stops (`gpiod_set_value()` from
+  `isp4sd_module_enable`). The mapping comes from amdgpu: Linux's
+  `isp_v4_1_1.c` (MIT) declares `GPIO_LOOKUP("AMDI0030:00", 85, "enable_isp",
+  GPIO_ACTIVE_HIGH)`. The ACPI sensor device `CAMF` has no GPIO resource, so
+  this number exists only in the driver. drm-kmod 6.12 does not have that
+  table yet.
+- No function of `pinctrl_amdisp`, `i2c_designware_amdisp` or the DesignWare
+  I2C core ran during the session: the host never talks to the sensor. The
+  `ov05c10` I2C device has no driver bound; Linux's table maps its "enable"
+  to `amdisp-pinctrl` line 0 for a sensor driver that does not exist. The
+  firmware drives the sensor and the MIPI PHY itself.
+
+The camera's activity LED, next to the lens, is on exactly while streaming
+(checked by eye over a 10 s capture: on during, off after). Its control is
+not on the I2C bus, which stays silent. It follows the only signal that
+changes on the host side, GPIO 85. But GPIO 85 alone does not light it:
+with the capture driver unloaded (`rmmod amd_isp4_capture`, which frees the
+line; the driver holds it from load to unload), `gpioset -c gpiochip0 85=1`
+held the line high for 6 s, then toggled it three times (3 s high, 3 s low),
+and the LED stayed off every time. So the LED follows the camera module
+actually running (sensor powered and streaming, which the ISP firmware
+controls once the SMU has powered the ISP), not the enable line by itself.
+For a FreeBSD driver this means the LED comes for free: it lights when the
+stream really runs.
+
+So the FreeBSD glue needs one more service: set AMD GPIO line 85 through
+`amdgpio(4)` (a GPIO pin set on its `gpiobus`), high before the power-up
+sequence and low after power-down.
 
 ## 5. Next steps
 
@@ -491,7 +536,7 @@ be visible to the GPU, which the framework does not offer today.
 2. Done: command payloads, ring entries, responses and the meta info
    fields above.
 3. Done: design above (drm-kmod glue plus an `amdisp` driver on `video(4)`).
-4. Answer the open questions: sensor GPIO and I2C use on Linux.
+4. Done: GPIO and I2C use traced (only AMD GPIO 85 matters).
 5. Write the amdgpu glue and a first `amdisp` that powers the ISP, boots the
    firmware and reports success (the `0x2402` handshake), then add one
    command and its response, then streaming.
@@ -521,6 +566,8 @@ the next reboot hung; a forced power off was needed. Always set the format
 | Ubuntu, 30-frame session with debug and ftrace | trace in [amd_isp/](amd_isp/) |
 | Ubuntu, 5-frame session with kprobes on command send and response read | 33 commands, 38 responses (plus 38 empty ring reads), [amd_isp/linux_stream_commands.txt](amd_isp/linux_stream_commands.txt) |
 | Ubuntu, 10-frame sessions with `bpftrace` reading the command ring and a meta info buffer | 17 ring entries, all checksums valid; meta info fields decoded |
+| Ubuntu, 5-frame sessions with ftrace on `pinctrl_amdisp`, `i2c_designware_amdisp`, `amd_isp4`, DesignWare I2C, and `bpftrace` on GPIO sets | only AMD GPIO 85 toggles (high at start, low at stop); no I2C traffic |
+| Ubuntu, activity LED: 10 s capture, then GPIO 85 driven by hand with the driver unloaded | LED on during the capture only; GPIO 85 alone (6 s high, then 3 toggles) leaves it off |
 | Ubuntu, 10-frame session under `mmiotrace` after `rmmod`/`modprobe` | 768 register accesses, [amd_isp/linux_stream_mmio.txt](amd_isp/linux_stream_mmio.txt) |
 | FreeBSD | no driver; `video(4)` and the firmware are present |
 | IR camera (HM1092) | untested, no driver on any system |
