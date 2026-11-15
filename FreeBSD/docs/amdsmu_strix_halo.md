@@ -314,9 +314,26 @@ host interfaces in D0. Nor the USB-C dock: with it unplugged (Wi-Fi on a
 kernel with both series, `test-wifi-s2idle`), the blockers are the same
 (DISPLAY, GFX, USB3_0, USB3_1, MPM, JPEG_1, 32.5 s). Remaining candidate:
 Linux's thunderbolt driver puts the USB4 routers to sleep before powering
-the host interfaces down (amdsmu's hint says "load tb");
-`thunderbolt(4)` knows AMD Pink Sardine (1022:1668, 1669), not 1022:158d
-and 158e.
+the host interfaces down (amdsmu's hint says "load tb"); FreeBSD's
+`thunderbolt(4)` has a router suspend routine (02880ddf9ed0, 2026-10-09).
+
+`thunderbolt(4)` (module `tb`, not in GENERIC: "Disabled for now since
+thunderbolt(4) breaks suspend/resume in some instances") probes USB4
+hosts by class, so it attaches to these without a code change:
+
+```
+nhi0: <Generic USB4 NHI> mem 0xd4600000-0xd467ffff at device 0.5 on pci5
+nhi0: Cannot find Upstream Facing Port
+nhi0: Host interface is version 1.0
+nhi0: Error finding LC registers: 22
+nhi0: Root Router UUID: ffffffff-ffff-ffff-0438-17d6d5e64fe0
+```
+
+(same for `nhi1`). With it loaded, the laptop suspends (LED blinks), the
+space key lights the keyboard backlight but the screen stays black and the
+network never comes back: resume hangs, forced power off, nothing logged.
+`tb`'s resume path (with its UFP and LC register errors) is the prime
+suspect.
 
 Side results of that run: mt7925 (no PM handlers) loses its firmware over
 the sleep (`driver own failed`, MCU timeout), reloads it by itself, but
@@ -327,8 +344,9 @@ destroyed and a default route added.
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
-2. USB3_0/USB3_1: try `thunderbolt(4)` on 1022:158d/158e (USB4 router
-   sleep); amdgpu S0ix path in drm-kmod (DISPLAY, GFX, JPEG blocks).
+2. USB3_0/USB3_1: `thunderbolt(4)` attaches but its resume hangs; find
+   where (its suspend/resume with the UFP and LC register errors) before
+   trying again. amdgpu S0ix path in drm-kmod (DISPLAY, GFX, JPEG blocks).
 3. Power button (pin 54) still does not wake: check the `amdgpio` arming
    (register values after suspend) and the MP2 (`MP2C`) path.
 4. Turn `do_idle()` into the loop its comment describes (the key wake
@@ -358,3 +376,4 @@ destroyed and a default route added.
 | 2026-11-15 | NHI0/NHI1 D3hot via pciconf | still DISPLAY, GFX, USB3_0, USB3_1 |
 | 2026-11-15 | + `pci` USB4 power-down commit | NHI0/NHI1 D3cold over suspend; USB3_0, USB3_1 still block |
 | 2026-11-15 | Wi-Fi + s2idle kernel, dock unplugged | same blockers; mt7925 reloads firmware after resume but `wlan0` stays down |
+| 2026-11-15 | + `kldload tb` (nhi0/nhi1 attach) | resume hangs: keyboard backlight on, screen black, no network; forced power off, nothing logged |

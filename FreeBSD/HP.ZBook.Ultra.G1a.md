@@ -173,7 +173,10 @@ Impact: none for FreeBSD use; llama.cpp and similar run on the iGPU through Vulk
 
 USB4/Thunderbolt controllers for the USB-C ports.
 Linux driver: `thunderbolt`.
-FreeBSD `thunderbolt(4)` (`sys/dev/thunderbolt`) knows AMD Pink Sardine (1022:1668, 1669), not these IDs.
+FreeBSD `thunderbolt(4)` (module `tb`, not in GENERIC) lists AMD Pink Sardine IDs (1022:1668, 1669) in `nhi_reg.h`,
+but its `nhi` driver probes any USB4 host by class and attaches to these too
+(with "Cannot find Upstream Facing Port" and "Error finding LC registers: 22");
+with it loaded, resume from suspend-to-idle hangs (see [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md)).
 USB 3 on the USB-C ports works through the xHCI functions; DisplayPort alt mode goes through amdgpu.
 Impact: no PCIe tunneling (eGPU, NVMe enclosure, PCIe docks).
 
