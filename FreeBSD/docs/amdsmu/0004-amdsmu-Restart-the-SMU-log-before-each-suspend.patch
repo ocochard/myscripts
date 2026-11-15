@@ -1,4 +1,4 @@
-From dacd2d8793be723024f40c2f8e6a52627986b82f Mon Sep 17 00:00:00 2001
+From 20cb2e99be8192b0410c7fe5b0c8339797223f09 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 15 Nov 2026 19:12:48 +0000
 Subject: [PATCH 4/4] amdsmu: Restart the SMU log before each suspend
@@ -12,19 +12,19 @@ Linux amd_pmc does.
  1 file changed, 3 insertions(+)
 
 diff --git a/sys/dev/amdsmu/amdsmu.c b/sys/dev/amdsmu/amdsmu.c
-index ced97af5ca72..35b889f91789 100644
+index ced97af5ca72..9015bb453988 100644
 --- a/sys/dev/amdsmu/amdsmu.c
 +++ b/sys/dev/amdsmu/amdsmu.c
-@@ -299,6 +299,9 @@ amdsmu_suspend(device_t dev, enum power_stype stype)
- 	 * XXX It seems that Cezanne needs a special workaround here for
- 	 * firmware versions < 64.53.  See amd_pmc_verify_czn_rtc() in Linux.
- 	 */
+@@ -295,6 +295,9 @@ amdsmu_suspend(device_t dev, enum power_stype stype)
+ {
+ 	if (stype != POWER_STYPE_SUSPEND_TO_IDLE)
+ 		return;
 +	/* Restart the SMU log so the metrics cover only this suspend. */
 +	amdsmu_cmd(dev, SMU_MSG_LOG_RESET, 0, NULL);
 +	amdsmu_cmd(dev, SMU_MSG_LOG_START, 0, NULL);
- 	if (amdsmu_cmd(dev, SMU_MSG_SLEEP_HINT, true, NULL) != 0)
- 		device_printf(dev, "failed to hint to SMU to enter sleep");
- }
+ 	/*
+ 	 * XXX It seems that Cezanne needs a special workaround here for
+ 	 * firmware versions < 64.53.  See amd_pmc_verify_czn_rtc() in Linux.
 -- 
 2.56.0
 
