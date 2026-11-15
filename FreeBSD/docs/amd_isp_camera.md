@@ -390,17 +390,111 @@ Two rules shape the work:
   interface (registers, interrupts, GPU buffers, SMU messages) that a driver
   in base can use.
 
-## 4. Next steps
+## 4. FreeBSD driver design
+
+### What FreeBSD already has, and what is missing
+
+Checked in drm-kmod `drm_v6.12.85_3` (the amdgpu FreeBSD uses) and FreeBSD
+main:
+
+- amdgpu already runs the ISP's hardware init (`isp_v4_1_1.c`, MIT
+  licensed) and the ISP firmware module is loaded with amdgpu. amdgpu
+  requests the firmware and hands it to its security processor (PSP) as
+  `AMDGPU_UCODE_ID_ISP` (`amdgpu_isp.c`, present in drm 6.12 too), which
+  places it in memory at init; the camera driver never uploads it, it only
+  releases the ISP processor from reset (the boot handshake above).
+- But on FreeBSD that init does nothing visible: in Linux it creates the
+  camera child devices with `mfd_add_hotplug_devices()`, and FreeBSD's
+  LinuxKPI version of that function is an empty stub
+  (`sys/compat/linuxkpi/common/include/linux/mfd/core.h`: "TODO"). The
+  interrupt mapping it needs, `amdgpu_irq_create_mapping()`, returns 0 on
+  FreeBSD.
+- The facts the camera driver needs from amdgpu are in that MIT-licensed
+  file: the ISP window starts at the GPU register base, the MIPI PHY at
+  offset `0x66700` (size `0xd30`), the ISP's I2C controller at `0x66400`, a
+  sensor GPIO register at `0x6613c`, and the ISP raises its interrupts on
+  amdgpu's interrupt ring as sources `ISP_RINGBUFFER_WPT9` to `WPT16`.
+- Missing in drm 6.12: the ISP power and clock messages (Linux added
+  `dpm_set_isp_enable` later), and helpers to allocate GPU memory for the
+  camera (Linux's `isp_kernel_buffer_alloc()` and `isp_user_buffer_alloc()`
+  came after 6.12).
+- `video(4)` provides everything on the application side. Its buffers are
+  ordinary kernel memory owned by the framework; a driver fills one with
+  `video_buf_acquire()`, `video_buf_write()` and `video_buf_done()`, as
+  `uvideo(4)` does for each USB frame.
+
+### Proposed structure
+
+Two parts, both in the drm-kmod port, because the camera needs amdgpu's
+internals (its register mapping, interrupt ring, GPU memory manager and SMU
+messages) and those exist only there:
+
+1. **A small FreeBSD-only glue in amdgpu** (new file, BSD licence): when the
+   ISP block initializes, add a newbus child device `amdisp` under the GPU
+   device, and give it five services:
+   - read and write a 32-bit ISP register (through amdgpu's existing
+     register mapping);
+   - allocate and free a GPU buffer that the CPU can also map (a GTT buffer
+     object), returning its CPU pointer and GPU address;
+   - send an SMU message (`PowerUpIspByTile`, `PowerDownIspByTile`, the two
+     clock messages);
+   - register a handler for the ISP interrupt sources on amdgpu's interrupt
+     ring;
+   - tell the child when amdgpu suspends or resumes.
+2. **The camera driver `amdisp`** (new file, BSD licence, written from this
+   document): a newbus driver that registers with `video(4)` and implements
+   its methods.
+
+```mermaid
+flowchart TB
+  APP["application (ffmpeg, a browser, ...)"] -->|"V4L2 ioctls on /dev/video0"| VIDEO["video(4)<br/>framework in base"]
+  VIDEO -->|"video_if methods"| AMDISP["amdisp<br/>camera driver"]
+  AMDISP -->|"video_buf_acquire/write/done"| VIDEO
+  AMDISP -->|"registers, GPU buffers,<br/>SMU messages, interrupts"| GLUE["amdgpu FreeBSD glue"]
+  GLUE --> AMDGPU["amdgpu (drm-kmod)"]
+  AMDGPU --> HW["ISP 4.1 hardware + firmware"]
+```
+
+### How the `video(4)` methods map to the protocol
+
+| `video_if` method | `amdisp` does |
+|---|---|
+| `querycap`, `enum_format`, `enum_framesizes`, `enum_frameintervals` | report NV12 and YUYV, the ten sizes from 640x360 to 2888x1808, 30 fps (static tables) |
+| `try_format`, `set_format`, `get_format` | check and remember the size and format; no hardware access |
+| `start_stream` | power up through the SMU, set clocks, enable the tiles (`0x60000`), program the rings, release the processor, poll `0x62058` for `0x2402`, enable interrupts, send the memory pool, `SET_STREAM_CONFIG`, `SET_OUT_CHAN_PROP`, `ENABLE_OUT_CHAN`, eight meta info buffers, four or more frame buffers, `START_STREAM` |
+| interrupt | acknowledge, read responses; on "frame done", read the meta info to find the finished frame buffer, copy it into a `video(4)` buffer (`video_buf_write`, `video_buf_done`), then give the meta info buffer and the frame buffer back with `SEND_BUFFER` |
+| `stop_stream` | `ENABLE_OUT_CHAN` off, `STOP_STREAM`, wait for the responses, stop the processor, tiles off, power down through the SMU |
+
+Copying each frame (3 MB at 1920x1080, about 93 MB/s at 30 fps) is the
+simple first step, the way `uvideo(4)` works. Letting the ISP write straight
+into the `video(4)` buffers would avoid the copy, but needs those buffers to
+be visible to the GPU, which the framework does not offer today.
+
+### Open questions
+
+- The PSP load path exists in drm 6.12; still to confirm at run time on
+  FreeBSD, for example by the boot handshake succeeding.
+- The sensor GPIO register (`0x6613c`) and the ISP's I2C controller: the
+  Linux capture driver did not touch them during a session, but Linux also
+  loads `pinctrl_amdisp` and `i2c_designware_amdisp`, and the sensor may
+  need its GPIO set before streaming. To check by tracing those drivers.
+- The MIPI PHY window (`0x66700`) was not accessed by the capture driver
+  either: the firmware probably programs it.
+- Suspend: the ISP must be stopped before amdgpu suspends (and it is one of
+  the S0i3 constraints, see [amdsmu_strix_halo.md](amdsmu_strix_halo.md)).
+
+## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
    reloaded: use `rmmod amd_isp4_capture`, never `modprobe -r`, see below;
    `mmiotrace` also takes every CPU but one offline until it is turned off).
 2. Done: command payloads, ring entries, responses and the meta info
    fields above.
-3. Decide where the driver lives (drm-kmod or base) and what amdgpu must
-   export.
-4. Write a first FreeBSD driver that powers the ISP, boots the firmware and
-   reports success, then add streaming.
+3. Done: design above (drm-kmod glue plus an `amdisp` driver on `video(4)`).
+4. Answer the open questions: sensor GPIO and I2C use on Linux.
+5. Write the amdgpu glue and a first `amdisp` that powers the ISP, boots the
+   firmware and reports success (the `0x2402` handshake), then add one
+   command and its response, then streaming.
 
 ## Pitfall met on the way
 
