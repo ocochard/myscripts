@@ -1,4 +1,4 @@
-# Bug #3: every recovery leaks a session until unmount
+# Bug #6: every recovery leaks a session until unmount
 
 Patch: [`session-leak.patch`](session-leak.patch), against main
 a2fbd988638e. Not filed yet. Bugzilla text:

@@ -1,4 +1,4 @@
-# #6: regression tests for the FreeBSD NFS client
+# #5: regression tests for the FreeBSD NFS client
 
 Patch: [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch), adds
 `tests/sys/fs/nfs/`, against main 7a0021a0988f. Branch `nfs-vnet-tests` in
@@ -128,7 +128,7 @@ handled:
 - kyua sets `TMPDIR` to a directory the jail cannot see, and Kerberos keeps
   its replay cache there. The Kerberos daemons start without `TMPDIR`.
 - Once a gssd answered in one jail, an `nfsd` in a jail without gssd hangs
-  at startup. That is a kernel bug, #5
+  at startup. That is a kernel bug, #4
   ([`bugreport_kgss_vnet_upcall.md`](bugreport_kgss_vnet_upcall.md)); until
   it is fixed, every server jail runs gssd.
 - An exclusive NFSv4 lock needs a file opened for writing: `lockf -w`.
@@ -145,7 +145,7 @@ Alternatives:
 - **Write the proxy in C.** Python is already a test dependency in
   `tests/sys/netpfil`; C would be longer for no gain.
 
-What the tests do NOT cover: the session leak (#3), NFSv4.2, pNFS, NFS over
+What the tests do NOT cover: the session leak (#6), NFSv4.2, pNFS, NFS over
 TLS, and protocol conformance in general.
 
 Known side effect: after a reset test, the server jail stays in the "dying"
@@ -164,10 +164,10 @@ bhyve VM, 4 CPUs, 4 GB, kernels with `device epair`, `device if_bridge` and
 | main 7a0021a0988f | test machine | passed | skipped | passed | passed | skipped |
 | 64857418bb23 (before #2's fix) | test machine | passed | not run | passed | failed: stalled 47 s | not run |
 | d3a0bf0a79ef (before #1's fix) | test machine | passed | not run | passed | failed: no I/O for 61 s | not run |
-| main 584f44221f45 + #4 | jails | passed | passed | passed | passed | not run |
-| 64857418bb23 + #4 | jails | passed | passed | passed | failed: stalled 46 s | not run |
-| main 584f44221f45 + #4 + `KGSSAPI` | jails | passed | passed | passed | not run | passed |
-| main 7868958f5c79 + #4 + #5 + `KGSSAPI` (GENERIC, gssd workaround removed) | jails | passed | passed | passed | not run | passed |
+| main 584f44221f45 + #3 | jails | passed | passed | passed | passed | not run |
+| 64857418bb23 + #3 | jails | passed | passed | passed | failed: stalled 46 s | not run |
+| main 584f44221f45 + #3 + `KGSSAPI` | jails | passed | passed | passed | not run | passed |
+| main 7868958f5c79 + #3 + #4 + `KGSSAPI` (GENERIC, gssd workaround removed) | jails | passed | passed | passed | not run | passed |
 
 The pre-fix kernels were run with the first, single-file version of the
 tests, which had `basic` and both reset cases.

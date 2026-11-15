@@ -1,4 +1,4 @@
-# #4: let a jail mount NFS
+# #3: let a jail mount NFS
 
 Patch: [`nfscl_jail.patch`](nfscl_jail.patch), against main 584f44221f45.
 Branch `nfscl-jail` in `~/freebsd-src-nfscljail`. Not committed upstream; it

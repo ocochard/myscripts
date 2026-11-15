@@ -122,7 +122,7 @@ Alternatives:
   session the server has already forgotten, and fail anyway.
 
 What this does NOT fix: the 45-second outage while the second recovery waits
-(bug #2), and the memory leak of old sessions (bug #3).
+(bug #2), and the memory leak of old sessions (bug #6).
 
 ## 4. Tested
 

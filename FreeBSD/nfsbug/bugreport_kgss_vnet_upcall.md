@@ -1,4 +1,4 @@
-# #5: one jail's Kerberos daemon makes NFS servers in other jails hang
+# #4: one jail's Kerberos daemon makes NFS servers in other jails hang
 
 Patch: [`kgss_vnet.patch`](kgss_vnet.patch), against main 7868958f5c79.
 Branch `kgss-vnet` in `~/freebsd-src-kgssvnet`. Not filed or committed.

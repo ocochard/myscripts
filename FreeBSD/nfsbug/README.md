@@ -1,29 +1,50 @@
-# FreeBSD NFSv4.1 client fixes found with Amazon EFS, and their regression tests
+# FreeBSD NFS regression tests with client and server in jails, and the fixes they need
 
-A FreeBSD NFSv4.1 client mounting Amazon EFS hung for good after a few hours.
-Chasing that hang turned up three client bugs. Writing regression tests for
-them then needed two more kernel changes, and turned up a sixth bug on the
-way. Everything below was reproduced without EFS, in a bhyve VM, using a
+**The goal.** Make NFS regression tests easy to write by running both the
+NFS server and the NFS clients in vnet jails on one machine. Each jail has
+its own network stack, so a test builds a real network of server and
+clients in seconds, never touches the test machine itself, and can have
+several clients: two clients sharing a file, a lock conflict, a Kerberos
+client next to a plain one.
+
+**Where FreeBSD stands.** The server already runs in a vnet jail
+(`allow.nfsd`, since 15.0). The client could not: a jail was not allowed to
+mount NFS (#3). Kerberos in jails also hit a kernel bug (#4). Until #3
+lands, the tests (#5) fall back to a client on the test machine.
+
+**How it started.** A FreeBSD NFSv4.1 client mounting Amazon EFS hung for
+good after a few hours. Chasing that hang turned up three client bugs (#1,
+#2, #6). Everything here was reproduced without EFS, in a bhyve VM, using a
 small proxy that makes a normal FreeBSD nfsd behave like EFS.
 
 ## Patches
 
-| # | patch | component | defect | symptom without it | write-up | upstream |
-|---|---|---|---|---|---|---|
-| 1 | [`badsession.patch`](badsession.patch) | NFS client (`nfs_commonkrpc.c`) | recovery restarts only if the session is not already marked defunct | two server resets within ~45 s: every process touching the mount hangs in `nfsbadse` until reboot | [`badsession.md`](badsession.md) (Bugzilla: [`BUGREPORT.txt`](BUGREPORT.txt); investigation: [`nfsbug.md`](nfsbug.md)) | yes, 5ab48fb9f7ac (PR 297252, by rmacklem) |
-| 2 | [`staleclientid.patch`](staleclientid.patch) | NFS client (`nfs_clrpcops.c`) | `STALE_CLIENTID` in the renew window returns EIO instead of doing EXCHANGE_ID | 45 to 60 s with no I/O, and a CREATE_SESSION storm | [`staleclientid.md`](staleclientid.md) (Bugzilla: [`BUGREPORT-staleclientid.txt`](BUGREPORT-staleclientid.txt)) | yes, 7a0021a0988f (PR 299221) |
-| 3 | [`session-leak.patch`](session-leak.patch) | NFS client | old sessions are never freed until unmount | `NFSCL session` memory grows with every recovery (37 to 256 in 27 h on EFS) | [`session-leak.md`](session-leak.md) (Bugzilla: [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt)) | no, not filed |
-| 4 | [`nfscl_jail.patch`](nfscl_jail.patch) | NFS client, `nfssvc(2)` | the client lacks `VFCF_JAIL`; reading mount options needs `PRIV_NFS_DAEMON` | a jail cannot mount NFS, so a test client must run on the host; `umount` in a jail exits 1 | [`nfscl_jail.md`](nfscl_jail.md) | no |
-| 5 | [`kgss_vnet.patch`](kgss_vnet.patch) | kgssapi, `clnt_nl` | "gssd answered" and the upcall timeout are global, but gssd runs per jail | after one jail used Kerberos, an nfsd started in a jail without gssd does not serve | [`bugreport_kgss_vnet_upcall.md`](bugreport_kgss_vnet_upcall.md) | no, not filed |
-| 6 | [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch) | `tests/sys/fs/nfs` | the tree had no NFS test at all | regressions like #1 and #2 reach users | [`nfs_vnet_tests.md`](nfs_vnet_tests.md) | no |
+In commit order. #1 and #2 are in main; #3 to #6 are proposed in this order.
 
-Upstream status checked against `freebsd/main` at `e4a2b19aa961`. #1 and #2
-are committed. #3 to #6 are only here, and on local branches: #4 is
-`nfscl-jail` in `~/freebsd-src-nfscljail`, #5 is `kgss-vnet` in
-`~/freebsd-src-kgssvnet`, and #6 is `nfs-vnet-tests` in
-`~/freebsd-src-nfstest`. The tests (#6) run without #4 and #5, with the
-client on the host and a workaround for #5. With #4 they also cover two
-clients and Kerberos.
+| # | patch | component | defect | symptom without it | depends on | write-up | upstream |
+|---|---|---|---|---|---|---|---|
+| 1 | [`badsession.patch`](badsession.patch) | NFS client (`nfs_commonkrpc.c`) | recovery restarts only if the session is not already marked defunct | two server resets within ~45 s: every process touching the mount hangs in `nfsbadse` until reboot | - | [`badsession.md`](badsession.md) (Bugzilla: [`BUGREPORT.txt`](BUGREPORT.txt); investigation: [`nfsbug.md`](nfsbug.md)) | yes, 5ab48fb9f7ac (PR 297252, by rmacklem) |
+| 2 | [`staleclientid.patch`](staleclientid.patch) | NFS client (`nfs_clrpcops.c`) | `STALE_CLIENTID` in the renew window returns EIO instead of doing EXCHANGE_ID | 45 to 60 s with no I/O, and a CREATE_SESSION storm | - | [`staleclientid.md`](staleclientid.md) (Bugzilla: [`BUGREPORT-staleclientid.txt`](BUGREPORT-staleclientid.txt)) | yes, 7a0021a0988f (PR 299221) |
+| 3 | [`nfscl_jail.patch`](nfscl_jail.patch) | NFS client, `nfssvc(2)` | the client lacks `VFCF_JAIL`; reading mount options needs `PRIV_NFS_DAEMON` | a jail cannot mount NFS, so a test client must run on the host; `umount` in a jail exits 1 | nothing; needs the NFS maintainer's agreement (jail policy) | [`nfscl_jail.md`](nfscl_jail.md) | no |
+| 4 | [`kgss_vnet.patch`](kgss_vnet.patch) | kgssapi, `clnt_nl` | "gssd answered" and the upcall timeout are global, but gssd runs per jail | after one jail used Kerberos, an nfsd started in a jail without gssd does not serve | nothing (tested with #3 applied) | [`bugreport_kgss_vnet_upcall.md`](bugreport_kgss_vnet_upcall.md) | no, not filed |
+| 5 | [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch) | `tests/sys/fs/nfs` | the tree had no NFS test at all | regressions like #1 and #2 reach users | nothing; with #3, also two-client and Kerberos cases | [`nfs_vnet_tests.md`](nfs_vnet_tests.md) | no |
+| 6 | [`session-leak.patch`](session-leak.patch) | NFS client | old sessions are never freed until unmount | `NFSCL session` memory grows with every recovery (37 to 256 in 27 h on EFS) | nothing; can go any time | [`session-leak.md`](session-leak.md) (Bugzilla: [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt)) | no, not filed |
+
+Why this order: the goal is client and server in jails, and #3 is what
+allows the client in a jail, so it goes first. It changes jail policy and
+needs the NFS maintainer's agreement. #4 fixes the bug that hangs a jailed
+nfsd once Kerberos is used in another jail. The tests (#5) then land at full
+strength: two clients and Kerberos, and their gssd workaround can be
+dropped before they are committed. #6 is
+independent; ideally a leak check is added to the tests before it. Tradeoff:
+the tests wait for the slowest review, #3, although they could run today
+with the client on the test machine.
+
+Upstream status checked against `freebsd/main` at `cf58c8667cfd`
+(2026-11-15): #1 and #2 are committed, and #3 to #6 still apply cleanly. They
+are on local branches: #3 is `nfscl-jail` in `~/freebsd-src-nfscljail`, #4 is
+`kgss-vnet` in `~/freebsd-src-kgssvnet`, #5 is `nfs-vnet-tests` in
+`~/freebsd-src-nfstest`.
 
 ## What went wrong, explained
 
@@ -61,19 +82,19 @@ returned an error instead of doing EXCHANGE_ID, as the RFC requires. The
 mount then did no I/O until the window ended. The fix treats
 `STALE_CLIENTID` as "start over now".
 
-**Bug #3, the leak.** Each recovery leaves the old session in a list, because
+**Bug #6, the leak.** Each recovery leaves the old session in a list, because
 a request in flight may still use it, and nothing ever frees it. The patch
 counts the requests that hold a session and frees old sessions once nobody
 holds them.
 
-**Why the tests needed kernel changes (#4, #5).** A good NFS test puts the
+**Why the tests needed kernel changes (#3, #4).** A good NFS test puts the
 server and the clients in jails, each with its own network stack (a vnet
 jail). The test machine is then never touched, and a test can have two
 clients. FreeBSD lets nfsd run in a vnet jail, but the client could not
 mount NFS from a jail: the file system was never flagged as allowed in jails
-(#4). With Kerberos, each jail runs its own gssd, but the kernel remembered
+(#3). With Kerberos, each jail runs its own gssd, but the kernel remembered
 "gssd answered" for the whole machine, so a jail without gssd waited for a
-reply that never came (#5).
+reply that never came (#4).
 
 **How the tests reproduce EFS.** `nfs_reset_proxy.py` sits between client
 and server. On a signal, it resets the client connection and then answers
@@ -90,13 +111,13 @@ fails the test. On a kernel before #2 the double-reset test fails with
   write-up of that patch, for a reader new to NFS.
 - `BUGREPORT*.txt`: the plain-text bug reports for Bugzilla, written for NFS
   developers.
-- `vm-results/`: raw logs of the stock vs patched runs for #2 and #3.
+- `vm-results/`: raw logs of the stock vs patched runs for #2 and #6.
 - `scripts/`:
   - `badsession-proxy.py`: the first fault-injecting proxy; reproduced #1
     against a plain local nfsd. See `REPRODUCE.md`.
   - `REPRODUCE.md`: step-by-step reproduction of #1 without EFS.
-  - `efs-reset-proxy.py`: mimics an EFS connection reset; drives #2 and #3.
-    The test proxy in #6 is derived from it.
+  - `efs-reset-proxy.py`: mimics an EFS connection reset; drives #2 and #6.
+    The test proxy in #5 is derived from it.
   - `repro.sh`: runs the proxy, `nfsrecov.d` and a 1 s probe in the bhyve VM.
   - `nfsrecov.d`: DTrace of every SetClient, CreateSession and ExchangeID,
     and TCP resets.
@@ -157,4 +178,4 @@ unique (the duplicate-hostid theory was ruled out). Captured 2026-08-03.
 To reproduce on an instance: `sudo sh scripts/capture-setup.sh <fs-id> /efs`,
 then `sh scripts/watch-wedge.sh`. It hangs within minutes to hours; analyze
 with `sh scripts/decode-trace.sh /tmp/nfsdbg.log`. Only a reboot recovers.
-Without EFS, use the tests in #6 or `scripts/REPRODUCE.md`.
+Without EFS, use the tests in #5 or `scripts/REPRODUCE.md`.
