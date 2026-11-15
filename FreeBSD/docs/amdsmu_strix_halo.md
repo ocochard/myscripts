@@ -21,7 +21,7 @@ Linux reference data:
 | | FreeBSD, no amdsmu | FreeBSD + amdsmu | FreeBSD + amdsmu + `olivier-s2idle-wake` | Linux 7.0 (Ubuntu) |
 |---|---|---|---|---|
 | Sleep entered | yes, shallow | yes | yes | yes |
-| S0i3 reached | no | unknown (never resumed) | no: DISPLAY, GFX, JPEG_1 (amdgpu), USB3_0/1 (xhci) stay active | yes, 32.4 s |
+| S0i3 reached | no | unknown (never resumed) | no: DISPLAY, GFX, JPEG_1, USB3_0/1, MPM stay active | yes, 32.4 s |
 | Wakes on a key | yes | no, fans spin up | yes | yes |
 | Wakes on the power button | not tried | no | no | not tried |
 | After resume | NVMe controller fails, no network | forced power off | network, NVMe and amdgpu fine | fine |
@@ -341,7 +341,7 @@ the sleep (`driver own failed`, MCU timeout), reloads it by itself, but
 so the replugged `ue0` could not reach the gateway until `wlan0` was
 destroyed and a default route added.
 
-## amdgpu: the S0ix path is probably already taken
+## amdgpu: the S0ix path is taken
 
 Linux amdgpu picks its suspend-to-idle sequence with
 `amdgpu_acpi_is_s0ix_active()` (`amdgpu_acpi.c`), which sets
@@ -359,12 +359,24 @@ with GFXOFF in `pp_feature`, `ACPI_FADT_LOW_POWER_S0` in the FADT, and
 - on resume amdgpu logs the same sequence as Linux (GART, "SMU is
   resuming...", "SMU is resumed successfully!").
 
-So amdgpu most likely already runs its S0ix sequence on FreeBSD, and
-DISPLAY/GFX stay active for another reason. In that sequence amdgpu skips
-suspending GFX and relies on GFXOFF; if GFXOFF never engages on FreeBSD,
-GFX stays on. Not verified: reading `dri/drmn0/amdgpu_gfxoff_status`
-through lindebugfs froze the whole laptop (forced power off). Do not read
-the amdgpu GFXOFF debugfs files on FreeBSD.
+Reading `dri/drmn0/amdgpu_gfxoff_status` through lindebugfs froze the
+whole laptop (forced power off). Do not read the amdgpu GFXOFF debugfs
+files on FreeBSD.
+
+A `printf` around `amdgpu_device_suspend()` in `amdgpu_pmops_suspend()`
+(drm-kmod `drm_v6.12.85_3` plus the strix-halo port patches, debug only)
+confirms it:
+
+```
+amdgpu S0i3dbg: suspend in_s0ix 1 in_s3 0 gfxoff 1 req 0 pp_gfxoff 1
+amdgpu S0i3dbg: after suspend r 0 gfxoff 1 req 0
+```
+
+`in_s0ix` is set, GFXOFF is enabled and engaged (`gfx_off_state` 1, no
+one holds a GFXOFF-disable request), and the suspend returns 0. The same
+run still reports DISPLAY, GFX, JPEG_1, USB3_0, USB3_1 and MPM active the
+whole 34.7 s. So the amdgpu S0ix sequence and GFXOFF are not the missing
+piece; the blockers come from something outside amdgpu's suspend method.
 
 ## Next steps
 
@@ -372,9 +384,11 @@ the amdgpu GFXOFF debugfs files on FreeBSD.
 2. USB3_0/USB3_1: `thunderbolt(4)` attaches but its resume hangs; find
    where (its suspend/resume with the UFP and LC register errors) before
    trying again.
-3. amdgpu (DISPLAY, GFX, JPEG): confirm `in_s0ix` and the GFXOFF state with
-   a `printf` in `amdgpu_pmops_suspend()` in a drm-kmod build (no debugfs
-   reads), then find what keeps GFX and the display controller up.
+3. amdgpu (DISPLAY, GFX, JPEG): `in_s0ix` and GFXOFF are confirmed, and
+   LinuxKPI also calls `suspend_noirq` (only sets `suspend_complete` in
+   S0ix). Next: compare the GPU function's PCI power state over suspend
+   (FreeBSD bootverbose vs Linux) and the order of the SMU sleep hint
+   relative to amdgpu's suspend.
 4. Power button (pin 54) still does not wake: check the `amdgpio` arming
    (register values after suspend) and the MP2 (`MP2C`) path.
 5. Turn `do_idle()` into the loop its comment describes (the key wake
@@ -406,3 +420,4 @@ the amdgpu GFXOFF debugfs files on FreeBSD.
 | 2026-11-15 | Wi-Fi + s2idle kernel, dock unplugged | same blockers; mt7925 reloads firmware after resume but `wlan0` stays down |
 | 2026-11-15 | + `kldload tb` (nhi0/nhi1 attach) | resume hangs: keyboard backlight on, screen black, no network; forced power off, nothing logged |
 | 2026-11-15 | read `dri/drmn0/amdgpu_gfxoff_status` (lindebugfs) | whole system froze; forced power off |
+| 2026-11-15 | instrumented `amdgpu.ko` (printf in `amdgpu_pmops_suspend`) | `in_s0ix 1`, GFXOFF engaged before and after, suspend returns 0; same blockers over 34.7 s |
