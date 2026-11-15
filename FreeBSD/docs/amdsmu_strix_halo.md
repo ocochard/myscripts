@@ -499,6 +499,46 @@ sleep is easy to mistake for a failed suspend; the first run's "early wake"
 was a key press. USB3_0/USB3_1 are now the only blockers, and still no S0i3
 attempt.
 
+## thunderbolt(4) resume: no code upstream, but one router resumes fine
+
+`nhi_resume()` is a stub on freebsd/main (`TODO(Bug 299199)`), and
+`tb_router_suspend()` only sets `ROUTER_CS_5.SLP` and polls
+`ROUTER_CS_6.SLPR`. Bug 299199 (filed by the driver and amdsmu author)
+lists the missing suspend steps and says they should not block S0i3; it
+does not cover resume. `sc->suspended` is never cleared, so after one
+cycle the next suspend returns early without putting the router to sleep.
+
+Single-device tests with `tb` loaded (no full suspend) all come back:
+`devctl suspend`/`resume` of nhi0 and nhi1 ("Ready to enter sleep",
+D3cold, D0); both NHIs asleep while xhci1 (XHC0) and xhci2 (XHC3) cycle,
+then the NHIs resumed. Network and system stay up.
+
+Full suspend with `tb` loaded, `nhi1` detached, no amdgpu (52.9 s):
+
+```
+nhi0: Ready to enter sleep
+pci0:197:0:5: Transition from D0 to D3cold
+...
+amdsmu0:   GFX (active for 52899460 us)
+amdsmu0:   USB3_1 (active for 52899460 us)
+```
+
+Resume works, and USB3_0 no longer blocks: nhi0 is the USB3_0 block, and
+putting its router to sleep clears it, as amdsmu's "load tb" hint says.
+USB3_1 is then nhi1's router. The earlier hang had amdgpu loaded, whose
+DISPLAY and GFX blockers keep S0i3 from starting, so that hang was not an
+S0i3 exit; it needs either both routers or the amdgpu plus tb combination.
+
+Same with both NHIs attached (52.9 s): both routers report "Ready to enter
+sleep", resume works, and GFX is the only blocker left (still no S0i3
+attempt). So `tb` with both routers is fine without amdgpu; the earlier
+hang comes from `tb` together with amdgpu (untested which part).
+
+Without amdgpu the panel stays lit during the sleep: suspend-to-idle does
+not cut power to the display controller, which keeps scanning out the EFI
+framebuffer until a driver (amdgpu) turns the pipe and backlight off. The
+LPS0 "display off" call only notifies the firmware.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -550,3 +590,6 @@ attempt.
 | 2026-11-15 | debug `printf` of per-CPU Cx counts at resume | 3 to 24 idle entries per CPU in 21.4 s, mostly C3; same blockers |
 | 2026-11-15 | no amdgpu loaded | blockers GFX, USB3_0, USB3_1, JPEG_1 (DISPLAY and MPM gone); cpu0 no C3 entry |
 | 2026-11-15 | no amdgpu, second suspend of the boot | only USB3_0, USB3_1 block; GFX, JPEG_1, DISPLAY, MPM clear; no S0i3 attempt |
+| 2026-11-15 | `tb` loaded, `devctl` suspend/resume of nhi0, nhi1, xhci1, xhci2 | all resume, system stays up |
+| 2026-11-15 | `tb` loaded, `nhi1` detached, no amdgpu, `zzz` | resume works; USB3_0 cleared, GFX and USB3_1 block |
+| 2026-11-15 | `tb` loaded, both NHIs, no amdgpu, `zzz` | resume works; USB3_0 and USB3_1 cleared, only GFX blocks |
