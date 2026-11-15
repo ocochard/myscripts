@@ -15,16 +15,19 @@ Linux reference data:
 [amdsmu/linux_s2idle_reference.txt](amdsmu/linux_s2idle_reference.txt),
 [amdsmu/linux_gpio_debug.txt](amdsmu/linux_gpio_debug.txt).
 
-## Status (2026-11-13)
+## Status (2026-11-15)
 
-| | FreeBSD, no amdsmu | FreeBSD + Strix Halo amdsmu | Linux 7.0 (Ubuntu) |
-|---|---|---|---|
-| Sleep entered | yes, shallow | yes | yes |
-| S0i3 reached | no ("unlikely the system entered a deep sleep state") | unknown (never resumed) | yes, `Last S0i3 Status: Success`, 32.4 s in S0i3 |
-| Wakes on a key | yes | no (key and power button do nothing; fans spin up) | yes (space key) |
-| After resume | NVMe controller fails, no network at all | forced power off needed | NVMe, USB, Wi-Fi fine |
+| | FreeBSD, no amdsmu | FreeBSD + amdsmu | FreeBSD + amdsmu + `olivier-s2idle-wake` | Linux 7.0 (Ubuntu) |
+|---|---|---|---|---|
+| Sleep entered | yes, shallow | yes | yes | yes |
+| S0i3 reached | no | unknown (never resumed) | no: DISPLAY, GFX, JPEG_1 (amdgpu), USB3_0/1 (xhci) stay active | yes, 32.4 s |
+| Wakes on a key | yes | no, fans spin up | yes | yes |
+| Wakes on the power button | not tried | no | no | not tried |
+| After resume | NVMe controller fails, no network | forced power off | network, NVMe and amdgpu fine | fine |
 
-`amdsmu(4)` now attaches on this laptop; making suspend work needs more.
+`amdsmu(4)` attaches with a one-row patch; with the C-state fix suspend and
+resume work, but the SoC does not reach S0i3 yet, so sleeping still drains
+the battery.
 
 ## Background: what suspend-to-idle needs on AMD
 
