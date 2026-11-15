@@ -217,6 +217,56 @@ sequenceDiagram
   Drv->>AMD: PowerDownIspByTile(0x7ff)
 ```
 
+### The register level
+
+To see the registers, Linux's `mmiotrace` tracer logs every read and write
+the driver makes to the memory-mapped registers it maps. A **register** here
+is a 32-bit value at an address inside the GPU's register window (a PCI BAR,
+the window of addresses through which the CPU talks to the device). The
+camera driver maps one window, `0xa0300000` (size `0x629a5`); offsets below
+are relative to it. Full trace of one 10-frame session (768 accesses to 52
+registers): [amd_isp/linux_stream_mmio.txt](amd_isp/linux_stream_mmio.txt).
+
+The roles in the right-hand column are inferred from the access pattern and
+the values, not documented by AMD.
+
+| Offset | Accesses | Pattern | Inferred role |
+|---|---|---|---|
+| `0x60000` | W | `0x7ff` at start, `0` at stop | enable the eleven ISP tiles (same mask as the SMU message) |
+| `0x62054` | R/W | `0x50000` to `0x10000` at start, back at stop | firmware processor held/released (bit `0x40000`) |
+| `0x62000` | R/W | `3` to `2` at start, `3` then `0` at stop | firmware processor reset (bit 0) |
+| `0x62058` | W then R | written `0`, read `0x2000`, `0x2000`, `0x2402` | boot status: the driver polls until the firmware reports ready |
+| `0x62010` | R/W, 143 | `0x410000`, toggles `0x400000`/`0x410000` | interrupt enable mask |
+| `0x62014` | R, 43 | `0x10000` when a response is pending | interrupt status |
+| `0x62018` | W, 45 | writes back the status bit | interrupt acknowledge |
+| `0x62210`-`0x62220` | W once, then 52 W / 104 R | base (low, high `0x7fff`), size `0xa00`, write pointer `0x6221c`, read pointer `0x62220` | command ring (the driver advances the write pointer) |
+| `0x62170`-`0x62180` | W once, then 43 W / 86 R | same layout, size `0xa00` | response ring (the driver advances the read pointer `0x62180`) |
+| `0x62184`, `0x62198`, `0x621ac`, `0x62224`, `0x62238`, `0x6224c` | W once each | same five-register layout, size `0xa00` | further command and response rings, set up but idle here |
+| `0x62148`-`0x62158` | W once | base, high `0x7fff`, size `0x200000` | 2 MB ring, probably the firmware log |
+
+Each ring is five registers: GPU address low, GPU address high, size in
+bytes, write pointer, read pointer. The high half `0x7fff` matches the GPU
+addresses of every buffer in the debug log (`0x7fff...`).
+
+The start-up order, from the trace:
+
+1. write `0x7ff` to `0x60000`;
+2. clear bit `0x40000` of `0x62054` and bit 0 of `0x62000` (with `0x62058`
+   cleared first): the firmware processor starts;
+3. program every ring (base, size, pointers to 0);
+4. poll `0x62058` until it reads `0x2402` (about 2 ms here);
+5. enable interrupts in `0x62010` (`0x410000`);
+6. from then on: write a command into the command ring and advance
+   `0x6221c`; on an interrupt, read `0x62014`, acknowledge in `0x62018`,
+   read responses up to `0x6217c` and advance `0x62180`.
+
+Stopping reverses it: set bit `0x40000` of `0x62054`, set bit 0 of
+`0x62000` (value 3), then write `0` to `0x62000` and `0x60000`.
+
+The trace shows only one window: the PHY registers of the MIPI link (the
+second memory resource amdgpu gives the camera driver) were not accessed by
+the driver in this session.
+
 ## 3. What a FreeBSD driver needs
 
 | Piece | Linux | FreeBSD today | Work |
@@ -241,10 +291,9 @@ Two rules shape the work:
 
 ## 4. Next steps
 
-1. Record the register-level protocol: ring base and pointer registers,
-   firmware boot handshake and interrupt status/acknowledge, from an MMIO
-   trace of a Linux capture session (`mmiotrace` needs the module reloaded:
-   use `rmmod amd_isp4_capture`, never `modprobe -r`, see below).
+1. Done: the register-level protocol above (`mmiotrace` needs the module
+   reloaded: use `rmmod amd_isp4_capture`, never `modprobe -r`, see below;
+   `mmiotrace` also takes every CPU but one offline until it is turned off).
 2. Record the layout of each firmware command (the fields of
    `SET_STREAM_CONFIG`, `SET_OUT_CHAN_PROP`, `SEND_BUFFER`) and of the
    responses, from the shared-memory contents during a session.
@@ -269,5 +318,6 @@ one module only. The crash is a Linux bug worth reporting separately.
 | Ubuntu, Linux 7.0.0-43, shutter closed | 29.66 fps, black frames (brightness 2-9) |
 | Ubuntu, shutter open | correct 1920x1080 NV12 picture |
 | Ubuntu, 30-frame session with debug and ftrace | trace in [amd_isp/](amd_isp/) |
+| Ubuntu, 10-frame session under `mmiotrace` after `rmmod`/`modprobe` | 768 register accesses, [amd_isp/linux_stream_mmio.txt](amd_isp/linux_stream_mmio.txt) |
 | FreeBSD | no driver; `video(4)` and the firmware are present |
 | IR camera (HM1092) | untested, no driver on any system |
