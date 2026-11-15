@@ -604,6 +604,59 @@ uses it to talk to the sensor) and the ISP's own GPIO block
 (`pinctrl_amdisp`). Next: compare those register blocks on Linux and
 FreeBSD.
 
+### Fourth step: separate module, register comparison, I2C watch
+
+The test code moved out of amdgpu into its own module, `amdisp.ko`
+(`amd/amdisp/` in the drm-kmod branch): amdgpu keeps a small glue
+(`amdgpu_isp_freebsd.c`, interface in `amdgpu_isp_freebsd.h`: register
+read/write, GPU buffers, the four SMU ISP requests). amdgpu cannot be
+reloaded while the display runs, so before the split every change needed a
+reboot; now it is `kldunload amdisp; kldload amdisp`. The sysctls are now
+`hw.amdisp.boot`, `hw.amdisp.cmd`, `hw.amdisp.frame` and `hw.amdisp.log`.
+
+Register snapshot, Linux while streaming (`amdgpu_regs` debugfs, all
+registers read `0xffffffff` with the ISP off,
+[amd_isp/linux_regs_streaming.txt](amd_isp/linux_regs_streaming.txt)) against
+FreeBSD 1.5 s after `START_STREAM`:
+
+| Register | Linux | FreeBSD | Meaning |
+|---|---|---|---|
+| `0x6613c` (sensor GPIO) | `0x11` | `0x01`, `0x11` after writing bit 4 | made equal; the stream still fails |
+| `0x66404` (I2C0 target address) | `0x10` (the sensor) | `0x50` | the firmware never reaches the sensor |
+| `0x66700`-`0x66728` (MIPI PHY) | programmed | all 0 | the sensor link is never started |
+| `0x60000` | `0xf` | `0x3ef` | not understood |
+
+The ISP has three DesignWare I2C controllers (`0x66400`, `0x66500`,
+`0x66600`, each with the DesignWare identifier `0x44570140` at `+0xfc`);
+the firmware itself programs and uses the first one. The host never touches
+them on Linux. AMD GPIO 85 is really driven on FreeBSD: its pin register
+reads `0x00d50000` when set (output enable, output high, pin high) and
+`0x00940000` when cleared.
+
+Watching the first I2C controller every 100 microseconds on FreeBSD:
+
+```
+SET_STREAM_CONFIG sent
+i2c    0.1 ms tar 0x55 st 0x6  ...                    target 0x55, idle
+i2c    0.2 ms tar 0x50 st 0x23 raw 0x510 txfl 30 ...  busy with 0x50
+i2c    6.5 ms tar 0x50 st 0x6  ...                    short pause
+i2c    6.6 ms tar 0x50 st 0x23 txfl 107 ...           busy again
+i2c   98.8 ms tar 0x50 st 0x6  ...                    idle
+command done
+START_STREAM sent
+i2c    0.0 ms tar 0x50 st 0x6 ...                     no bus activity at all
+notification 0x00030002 code 0xe (twice)
+```
+
+During `SET_STREAM_CONFIG` the firmware keeps the bus busy with address
+`0x50` for about 98 ms, refilling the transmit queue (in a DesignWare
+controller read requests also go through it), with no abort. A long read
+from a module memory chip (calibration data) at `0x50` fits, but is not
+proven. After `START_STREAM` it does nothing on the bus and reports the
+failure; the sensor address `0x10` never appears. Next: the same watch on
+Linux, to see whether the `0x50` phase is the same there and when `0x10`
+starts.
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module

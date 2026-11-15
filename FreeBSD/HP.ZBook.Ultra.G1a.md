@@ -307,6 +307,24 @@ After `kldunload iichid.ko; kldload iichid`, both devices still report `Interrup
 Cause: `acpi_iicbus.c` ignores GpioInt resources (`/* Not supported by FreeBSD yet */`, `sys/dev/iicbus/acpi_iicbus.c:415`).
 The same gap on Meteor Lake is described in [docs/x86_gpio_intr_mtl.md](docs/x86_gpio_intr_mtl.md); that patch targets the Intel GPIO controller, so `amdgpio` would need the same interrupt support.
 
+## Driver work in progress
+
+Branches of the FreeBSD fork (github.com/ocochard/freebsd-src) and of the
+drm-kmod fork (github.com/ocochard/drm-kmod) written for this laptop, with
+the document that explains each one.
+
+| Area | Branch | Commits | Status | Document |
+|---|---|---|---|---|
+| Wi-Fi (MT7925) | [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 11 | works, TX 82-88% / RX 68-74% of Linux; firmware port PR 300731 | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
+| Internal speakers (CS35L54) | [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | works, waiting for review | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
+| SMU power metrics (amdsmu) | [`olivier-amdsmu-strixhalo`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) | 4 | attaches, S0i3 blocker report | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
+| Suspend-to-idle wake and C-states | [`olivier-s2idle-wake`](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) | 3 | key wake and clean resume; no S0i3 yet | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
+| PCI D3hot (GPU stayed in D0 over suspend) | [`olivier-pci-d3hot`](https://github.com/ocochard/freebsd-src/compare/main...olivier-pci-d3hot) | 1 | fix, tested | [docs/pci_d3hot.md](docs/pci_d3hot.md) |
+| I2C controller clock | [`olivier-ig4-amd-clock`](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock) | 1 | `ig4: Use the 150 MHz input clock of AMD AMDI0010 controllers` | |
+| GPIO driver autoload | [`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) | 1 | `amdgpio: Add PNP info for devmatch` | |
+| ACPI properties | [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) | 1 | `acpi: Refuse property requests for other buses children` | |
+| Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 5, on the port's Strix Halo patches | firmware boots and accepts the stream set-up, no frame yet | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
+
 ## Which drivers are worth the work
 
 1. Wi-Fi (MT7925).
@@ -329,5 +347,5 @@ Skip for laptop use:
 - NPU, CCP/PSP, UCSI: no user-visible gain.
 - Sensor Fusion Hub / MP2: Linux uses it only as an I2C controller here, with no visible function.
 - USB4 routers: only for PCIe tunneling devices.
-- Cameras: ISP and sensor drivers are a large job; a USB webcam is the practical answer.
+- Cameras: a large job (now in progress, see [docs/amd_isp_camera.md](docs/amd_isp_camera.md)); a USB webcam works today with `uvideo(4)`.
 - PMF: useful for power modes, but the firmware default works.
