@@ -240,7 +240,7 @@ The ISP firmware drives the OV05C sensor itself (no sensor driver in Linux).
 On Ubuntu (Linux 7.0.0-43, 2026-11-15) the RGB camera works: `amd_isp4_capture` provides `/dev/video0`
 (driver `amd_isp_capture`, media model `amd_isp41_mdev`), NV12 and YUYV from 640x360 to 2888x1808 at
 30 fps; `v4l2-ctl --stream-mmap` captured 1920x1080 NV12 at 29.66 fps with a correct image (black
-frames with the privacy shutter closed).
+frames with the privacy shutter closed). Driver study: [docs/amd_isp_camera.md](docs/amd_isp_camera.md).
 
 ### Platform Management Framework (AMDI0105)
 

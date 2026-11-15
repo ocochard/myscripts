@@ -1,0 +1,419 @@
+[58.831010] amd_isp_capture amd_isp_capture: Preview|capabilities=0xA4000001
+[58.831022] amd_isp_capture amd_isp_capture: Preview|capabilities=0xA4000001
+[58.831056] amd_isp_capture amd_isp_capture: Preview|index=0, pixelformat=0x3231564E
+[58.831061] amd_isp_capture amd_isp_capture: Preview|width height:1920x1080->1920x1080
+[58.831062] amd_isp_capture amd_isp_capture: Preview|pixelformat:0x3231564e-0x3231564e
+[58.831063] amd_isp_capture amd_isp_capture: Preview|bytesperline:1920->1920
+[58.831063] amd_isp_capture amd_isp_capture: Preview|sizeimage:3110400->3110400
+[58.831065] amd_isp_capture amd_isp_capture: set pad format suc, code:2004 w:1920 h:1080 size:3110400
+[58.831079] amd_isp_capture amd_isp_capture: Preview|*nbuffers=8 *nplanes=1 sizes[0]=3110400
+[58.835245] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000036d021d, gpuva 0x7fff01857000, size 3110400
+[58.835249] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01857000 size=2073600
+[58.835250] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01a51400 size=1036800
+[58.835251] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000faa62c3f, gpuva 0x7fff01b4f000, size 3110400
+[58.835251] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01b4f000 size=2073600
+[58.835252] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01d49400 size=1036800
+[58.835252] amd_isp_capture amd_isp_capture: queue buf, vaddr 000000004c2e0285, gpuva 0x7fff01e47000, size 3110400
+[58.835253] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01e47000 size=2073600
+[58.835253] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02041400 size=1036800
+[58.835254] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000443c643e, gpuva 0x7fff0213f000, size 3110400
+[58.835254] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0213f000 size=2073600
+[58.835255] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02339400 size=1036800
+[58.835255] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000dba777da, gpuva 0x7fff02437000, size 3110400
+[58.835256] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02437000 size=2073600
+[58.835256] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02631400 size=1036800
+[58.835257] amd_isp_capture amd_isp_capture: queue buf, vaddr 0000000050b28f9d, gpuva 0x7fff0272f000, size 3110400
+[58.835257] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0272f000 size=2073600
+[58.835258] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02929400 size=1036800
+[58.835258] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000c9698961, gpuva 0x7fff02a27000, size 3110400
+[58.835259] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02a27000 size=2073600
+[58.835259] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02c21400 size=1036800
+[58.835260] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000d52b07ad, gpuva 0x7fff02d1f000, size 3110400
+[58.835260] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02d1f000 size=2073600
+[58.835261] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02f19400 size=1036800
+[58.835275] amd_isp_capture amd_isp_capture: enable isp_subdev module
+[58.842193] amdgpu 0000:c3:00.0: smu send message: PowerUpIspByTile(42), resp: 0x00000001
+[58.842196] in params:000007ff
+[58.849035] amdgpu 0000:c3:00.0: smu send message: SetHardMinIspxclkByFreq(44), resp: 0x00000001
+[58.849036] in params:00000314
+[58.850351] amdgpu 0000:c3:00.0: smu send message: SetHardMinIspiclkByFreq(43), resp: 0x00000001
+[58.850352] in params:00000314
+[58.857583] amd_isp_capture amd_isp_capture: ISP CCPU FW boot success
+[58.858532] amd_isp_capture amd_isp_capture: [0] fw resp thread started
+[58.858575] amd_isp_capture amd_isp_capture: create resp threads ok
+[58.858589] amd_isp_capture amd_isp_capture: [1] fw resp thread started
+[58.858591] amd_isp_capture amd_isp_capture: send fw mem pool 0x7fff03018000(104857600) suc
+[58.858593] amd_isp_capture amd_isp_capture: isp4fw_sensor_id 0, pipeId 0x5f91 EnableTnr 1
+[58.858598] amd_isp_capture amd_isp_capture: channel:prev,fmt NV12,w:h=1920:1080,lp:1920,cp1920
+[58.858605] amd_isp_capture amd_isp_capture: enable channel prev
+[58.858606] amd_isp_capture amd_isp_capture: w:1920,h:1080
+[58.858626] amd_isp_capture amd_isp_capture: send meta info suc
+[58.858627] amd_isp_capture amd_isp_capture: no send START_STREAM, start_sent 0, buf_sent 0
+[58.858628] amd_isp_capture amd_isp_capture: setup output suc
+[58.858633] amd_isp_capture amd_isp_capture: no send start, required 4, buf sent 1
+[58.858637] amd_isp_capture amd_isp_capture: no send start, required 4, buf sent 2
+[58.858640] amd_isp_capture amd_isp_capture: no send start, required 4, buf sent 3
+[58.872990] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 0, ele 0000000000000000
+[59.051468] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SET_STREAM_CONFIG(0x02010001)(0),seq 1, ele 0000000000000000
+[59.051491] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SET_OUT_CHAN_PROP(0x02010003)(0),seq 2, ele 0000000000000000
+[59.051499] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_ENABLE_OUT_CHAN(0x02010005)(0),seq 3, ele 0000000000000000
+[59.051505] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 4, ele 0000000000000000
+[59.051512] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 5, ele 0000000000000000
+[59.051518] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 6, ele 0000000000000000
+[59.051524] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 7, ele 0000000000000000
+[59.051558] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 8, ele 0000000000000000
+[59.051563] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 9, ele 0000000000000000
+[59.051567] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 10, ele 0000000000000000
+[59.051571] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 11, ele 0000000000000000
+[59.051575] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 12, ele 0000000000000000
+[59.051579] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 13, ele 0000000000000000
+[59.051584] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 14, ele 0000000000000000
+[59.051590] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 15, ele 0000000000000000
+[59.052314] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 17, ele 0000000000000000
+[59.052325] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 18, ele 0000000000000000
+[59.052332] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 19, ele 0000000000000000
+[59.052338] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 20, ele 0000000000000000
+[59.061253] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_START_STREAM(0x02010007)(0),seq 16, ele 0000000000000000
+[59.154169] amd_isp_capture amd_isp_capture: ts:59160648988,streamId:1,poc:1,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.154196] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.154201] amd_isp_capture amd_isp_capture: 00000000036d021d,0x7fff01857000(2073600) 000000009c360285,0x7fff01a51400(1036800) 0000000000000000,0x0(0)
+[59.154227] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.154259] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00878000
+[59.154261] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.154392] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 21, ele 0000000000000000
+[59.154412] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000036d021d, gpuva 0x7fff01857000, size 3110400
+[59.154422] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01857000 size=2073600
+[59.154425] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01a51400 size=1036800
+[59.154570] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 22, ele 0000000000000000
+[59.189202] amd_isp_capture amd_isp_capture: ts:59195692966,streamId:1,poc:2,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.189219] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.189222] amd_isp_capture amd_isp_capture: 00000000faa62c3f,0x7fff01b4f000(2073600) 0000000029868c62,0x7fff01d49400(1036800) 0000000000000000,0x0(0)
+[59.189238] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.189253] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00880000
+[59.189254] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.189318] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000faa62c3f, gpuva 0x7fff01b4f000, size 3110400
+[59.189328] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01b4f000 size=2073600
+[59.189331] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01d49400 size=1036800
+[59.189331] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 23, ele 0000000000000000
+[59.189374] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 24, ele 0000000000000000
+[59.224129] amd_isp_capture amd_isp_capture: ts:59230623212,streamId:1,poc:3,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.224155] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.224159] amd_isp_capture amd_isp_capture: 000000004c2e0285,0x7fff01e47000(2073600) 000000000b50734e,0x7fff02041400(1036800) 0000000000000000,0x0(0)
+[59.224177] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.224198] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00888000
+[59.224201] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.224306] amd_isp_capture amd_isp_capture: queue buf, vaddr 000000004c2e0285, gpuva 0x7fff01e47000, size 3110400
+[59.224324] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 25, ele 0000000000000000
+[59.224327] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01e47000 size=2073600
+[59.224331] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02041400 size=1036800
+[59.224406] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 26, ele 0000000000000000
+[59.256428] amd_isp_capture amd_isp_capture: ts:59262926954,streamId:1,poc:4,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.256454] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.256458] amd_isp_capture amd_isp_capture: 00000000443c643e,0x7fff0213f000(2073600) 0000000046d0ab34,0x7fff02339400(1036800) 0000000000000000,0x0(0)
+[59.256486] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.256559] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00890000
+[59.256562] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.256614] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000443c643e, gpuva 0x7fff0213f000, size 3110400
+[59.256624] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0213f000 size=2073600
+[59.256627] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02339400 size=1036800
+[59.256704] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 27, ele 0000000000000000
+[59.256715] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 28, ele 0000000000000000
+[59.289725] amd_isp_capture amd_isp_capture: ts:59296236357,streamId:1,poc:5,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.289743] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.289747] amd_isp_capture amd_isp_capture: 00000000dba777da,0x7fff02437000(2073600) 000000000f40be36,0x7fff02631400(1036800) 0000000000000000,0x0(0)
+[59.289765] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.289774] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00898000
+[59.289776] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.289850] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000dba777da, gpuva 0x7fff02437000, size 3110400
+[59.289866] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02437000 size=2073600
+[59.289869] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02631400 size=1036800
+[59.289870] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 29, ele 0000000000000000
+[59.289928] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 30, ele 0000000000000000
+[59.320819] amd_isp_capture amd_isp_capture: ts:59327337474,streamId:1,poc:6,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.320833] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.320836] amd_isp_capture amd_isp_capture: 0000000050b28f9d,0x7fff0272f000(2073600) 0000000011ea942a,0x7fff02929400(1036800) 0000000000000000,0x0(0)
+[59.320847] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.320863] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008a0000
+[59.320865] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.320916] amd_isp_capture amd_isp_capture: queue buf, vaddr 0000000050b28f9d, gpuva 0x7fff0272f000, size 3110400
+[59.320925] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0272f000 size=2073600
+[59.320927] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02929400 size=1036800
+[59.320946] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 31, ele 0000000000000000
+[59.320957] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 32, ele 0000000000000000
+[59.358595] amd_isp_capture amd_isp_capture: ts:59365112520,streamId:1,poc:7,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.358623] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.358627] amd_isp_capture amd_isp_capture: 00000000c9698961,0x7fff02a27000(2073600) 0000000002abda0c,0x7fff02c21400(1036800) 0000000000000000,0x0(0)
+[59.358653] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.358671] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008a8000
+[59.358673] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.358779] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000c9698961, gpuva 0x7fff02a27000, size 3110400
+[59.358790] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02a27000 size=2073600
+[59.358794] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02c21400 size=1036800
+[59.360601] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 33, ele 0000000000000000
+[59.360615] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 34, ele 0000000000000000
+[59.390908] amd_isp_capture amd_isp_capture: ts:59397431542,streamId:1,poc:8,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.390936] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.390940] amd_isp_capture amd_isp_capture: 00000000d52b07ad,0x7fff02d1f000(2073600) 00000000419903c9,0x7fff02f19400(1036800) 0000000000000000,0x0(0)
+[59.390966] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.390997] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008b0000
+[59.391000] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.391109] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000d52b07ad, gpuva 0x7fff02d1f000, size 3110400
+[59.391134] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02d1f000 size=2073600
+[59.391137] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02f19400 size=1036800
+[59.391153] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 35, ele 0000000000000000
+[59.391198] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 36, ele 0000000000000000
+[59.424406] amd_isp_capture amd_isp_capture: ts:59430935199,streamId:1,poc:9,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.424434] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.424438] amd_isp_capture amd_isp_capture: 00000000036d021d,0x7fff01857000(2073600) 000000009c360285,0x7fff01a51400(1036800) 0000000000000000,0x0(0)
+[59.424507] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.424539] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00878000
+[59.424541] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.424677] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 37, ele 0000000000000000
+[59.424675] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000036d021d, gpuva 0x7fff01857000, size 3110400
+[59.424688] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01857000 size=2073600
+[59.424693] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01a51400 size=1036800
+[59.424793] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 38, ele 0000000000000000
+[59.458171] amd_isp_capture amd_isp_capture: ts:59464706560,streamId:1,poc:10,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.458198] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.458202] amd_isp_capture amd_isp_capture: 00000000faa62c3f,0x7fff01b4f000(2073600) 0000000029868c62,0x7fff01d49400(1036800) 0000000000000000,0x0(0)
+[59.458228] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.458263] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00880000
+[59.458265] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.458375] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000faa62c3f, gpuva 0x7fff01b4f000, size 3110400
+[59.458399] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01b4f000 size=2073600
+[59.458402] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01d49400 size=1036800
+[59.458420] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 39, ele 0000000000000000
+[59.458504] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 40, ele 0000000000000000
+[59.492748] amd_isp_capture amd_isp_capture: ts:59499289644,streamId:1,poc:11,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.492775] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.492779] amd_isp_capture amd_isp_capture: 000000004c2e0285,0x7fff01e47000(2073600) 000000000b50734e,0x7fff02041400(1036800) 0000000000000000,0x0(0)
+[59.492806] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.492836] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00888000
+[59.492839] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.492931] amd_isp_capture amd_isp_capture: queue buf, vaddr 000000004c2e0285, gpuva 0x7fff01e47000, size 3110400
+[59.492942] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01e47000 size=2073600
+[59.492945] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02041400 size=1036800
+[59.494698] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 41, ele 0000000000000000
+[59.494717] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 42, ele 0000000000000000
+[59.524889] amd_isp_capture amd_isp_capture: ts:59531441447,streamId:1,poc:12,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.524906] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.524910] amd_isp_capture amd_isp_capture: 00000000443c643e,0x7fff0213f000(2073600) 0000000046d0ab34,0x7fff02339400(1036800) 0000000000000000,0x0(0)
+[59.524924] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.524937] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00890000
+[59.524939] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.525007] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000443c643e, gpuva 0x7fff0213f000, size 3110400
+[59.525018] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 43, ele 0000000000000000
+[59.525021] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0213f000 size=2073600
+[59.525024] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02339400 size=1036800
+[59.525103] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 44, ele 0000000000000000
+[59.556706] amd_isp_capture amd_isp_capture: ts:59563259119,streamId:1,poc:13,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.556734] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.556738] amd_isp_capture amd_isp_capture: 00000000dba777da,0x7fff02437000(2073600) 000000000f40be36,0x7fff02631400(1036800) 0000000000000000,0x0(0)
+[59.556764] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.556794] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00898000
+[59.556797] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.556907] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000dba777da, gpuva 0x7fff02437000, size 3110400
+[59.556933] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02437000 size=2073600
+[59.556936] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02631400 size=1036800
+[59.556951] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 45, ele 0000000000000000
+[59.557002] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 46, ele 0000000000000000
+[59.593257] amd_isp_capture amd_isp_capture: ts:59599816075,streamId:1,poc:14,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.593285] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.593290] amd_isp_capture amd_isp_capture: 0000000050b28f9d,0x7fff0272f000(2073600) 0000000011ea942a,0x7fff02929400(1036800) 0000000000000000,0x0(0)
+[59.593315] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.593347] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008a0000
+[59.593349] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.593470] amd_isp_capture amd_isp_capture: queue buf, vaddr 0000000050b28f9d, gpuva 0x7fff0272f000, size 3110400
+[59.593480] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0272f000 size=2073600
+[59.593483] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02929400 size=1036800
+[59.595805] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 47, ele 0000000000000000
+[59.595839] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 48, ele 0000000000000000
+[59.626723] amd_isp_capture amd_isp_capture: ts:59633287896,streamId:1,poc:15,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.626752] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.626756] amd_isp_capture amd_isp_capture: 00000000c9698961,0x7fff02a27000(2073600) 0000000002abda0c,0x7fff02c21400(1036800) 0000000000000000,0x0(0)
+[59.626781] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.626813] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008a8000
+[59.626815] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.626906] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000c9698961, gpuva 0x7fff02a27000, size 3110400
+[59.626917] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02a27000 size=2073600
+[59.626920] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02c21400 size=1036800
+[59.628836] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 49, ele 0000000000000000
+[59.628855] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 50, ele 0000000000000000
+[59.659526] amd_isp_capture amd_isp_capture: ts:59666101475,streamId:1,poc:16,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.659543] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.659547] amd_isp_capture amd_isp_capture: 00000000d52b07ad,0x7fff02d1f000(2073600) 00000000419903c9,0x7fff02f19400(1036800) 0000000000000000,0x0(0)
+[59.659562] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.659579] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008b0000
+[59.659580] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.659642] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000d52b07ad, gpuva 0x7fff02d1f000, size 3110400
+[59.659652] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02d1f000 size=2073600
+[59.659654] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02f19400 size=1036800
+[59.659656] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 51, ele 0000000000000000
+[59.659696] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 52, ele 0000000000000000
+[59.692488] amd_isp_capture amd_isp_capture: ts:59699064220,streamId:1,poc:17,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.692515] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.692519] amd_isp_capture amd_isp_capture: 00000000036d021d,0x7fff01857000(2073600) 000000009c360285,0x7fff01a51400(1036800) 0000000000000000,0x0(0)
+[59.692546] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.692578] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00878000
+[59.692580] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.692672] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000036d021d, gpuva 0x7fff01857000, size 3110400
+[59.692683] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01857000 size=2073600
+[59.692686] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01a51400 size=1036800
+[59.692697] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 53, ele 0000000000000000
+[59.692739] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 54, ele 0000000000000000
+[59.727537] amd_isp_capture amd_isp_capture: ts:59734124418,streamId:1,poc:18,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.727557] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.727562] amd_isp_capture amd_isp_capture: 00000000faa62c3f,0x7fff01b4f000(2073600) 0000000029868c62,0x7fff01d49400(1036800) 0000000000000000,0x0(0)
+[59.727580] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.727603] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00880000
+[59.727605] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.727707] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000faa62c3f, gpuva 0x7fff01b4f000, size 3110400
+[59.727723] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01b4f000 size=2073600
+[59.727726] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01d49400 size=1036800
+[59.729415] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 55, ele 0000000000000000
+[59.729433] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 56, ele 0000000000000000
+[59.758691] amd_isp_capture amd_isp_capture: ts:59765279689,streamId:1,poc:19,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.758720] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.758724] amd_isp_capture amd_isp_capture: 000000004c2e0285,0x7fff01e47000(2073600) 000000000b50734e,0x7fff02041400(1036800) 0000000000000000,0x0(0)
+[59.758749] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.758772] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00888000
+[59.758774] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.758885] amd_isp_capture amd_isp_capture: queue buf, vaddr 000000004c2e0285, gpuva 0x7fff01e47000, size 3110400
+[59.758911] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01e47000 size=2073600
+[59.758915] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02041400 size=1036800
+[59.758927] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 57, ele 0000000000000000
+[59.759043] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 58, ele 0000000000000000
+[59.791060] amd_isp_capture amd_isp_capture: ts:59797659687,streamId:1,poc:20,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.791077] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.791081] amd_isp_capture amd_isp_capture: 00000000443c643e,0x7fff0213f000(2073600) 0000000046d0ab34,0x7fff02339400(1036800) 0000000000000000,0x0(0)
+[59.791093] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.791106] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00890000
+[59.791108] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.791165] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000443c643e, gpuva 0x7fff0213f000, size 3110400
+[59.791175] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0213f000 size=2073600
+[59.791178] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02339400 size=1036800
+[59.791187] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 59, ele 0000000000000000
+[59.791225] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 60, ele 0000000000000000
+[59.825632] amd_isp_capture amd_isp_capture: ts:59832232471,streamId:1,poc:21,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.825659] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.825663] amd_isp_capture amd_isp_capture: 00000000dba777da,0x7fff02437000(2073600) 000000000f40be36,0x7fff02631400(1036800) 0000000000000000,0x0(0)
+[59.825689] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.825711] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00898000
+[59.825714] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.825818] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000dba777da, gpuva 0x7fff02437000, size 3110400
+[59.825828] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02437000 size=2073600
+[59.825829] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 61, ele 0000000000000000
+[59.825831] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02631400 size=1036800
+[59.825891] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 62, ele 0000000000000000
+[59.861462] amd_isp_capture amd_isp_capture: ts:59868069110,streamId:1,poc:22,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.861488] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.861493] amd_isp_capture amd_isp_capture: 0000000050b28f9d,0x7fff0272f000(2073600) 0000000011ea942a,0x7fff02929400(1036800) 0000000000000000,0x0(0)
+[59.861573] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.861621] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008a0000
+[59.861625] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.861678] amd_isp_capture amd_isp_capture: queue buf, vaddr 0000000050b28f9d, gpuva 0x7fff0272f000, size 3110400
+[59.861689] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0272f000 size=2073600
+[59.861693] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02929400 size=1036800
+[59.863510] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 63, ele 0000000000000000
+[59.863522] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 64, ele 0000000000000000
+[59.892341] amd_isp_capture amd_isp_capture: ts:59898957839,streamId:1,poc:23,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.892358] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.892362] amd_isp_capture amd_isp_capture: 00000000c9698961,0x7fff02a27000(2073600) 0000000002abda0c,0x7fff02c21400(1036800) 0000000000000000,0x0(0)
+[59.892405] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.892432] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008a8000
+[59.892434] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.892459] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000c9698961, gpuva 0x7fff02a27000, size 3110400
+[59.892469] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02a27000 size=2073600
+[59.892473] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02c21400 size=1036800
+[59.892496] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 65, ele 0000000000000000
+[59.892528] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 66, ele 0000000000000000
+[59.928119] amd_isp_capture amd_isp_capture: ts:59934737050,streamId:1,poc:24,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.928146] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.928151] amd_isp_capture amd_isp_capture: 00000000d52b07ad,0x7fff02d1f000(2073600) 00000000419903c9,0x7fff02f19400(1036800) 0000000000000000,0x0(0)
+[59.928177] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.928210] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008b0000
+[59.928212] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.928318] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 67, ele 0000000000000000
+[59.928334] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000d52b07ad, gpuva 0x7fff02d1f000, size 3110400
+[59.928345] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02d1f000 size=2073600
+[59.928348] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02f19400 size=1036800
+[59.928491] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 68, ele 0000000000000000
+[59.959828] amd_isp_capture amd_isp_capture: ts:59966451612,streamId:1,poc:25,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.959854] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.959858] amd_isp_capture amd_isp_capture: 00000000036d021d,0x7fff01857000(2073600) 000000009c360285,0x7fff01a51400(1036800) 0000000000000000,0x0(0)
+[59.959884] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.959917] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00878000
+[59.959919] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.960061] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000036d021d, gpuva 0x7fff01857000, size 3110400
+[59.960070] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 69, ele 0000000000000000
+[59.960080] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01857000 size=2073600
+[59.960085] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01a51400 size=1036800
+[59.960145] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 70, ele 0000000000000000
+[59.995569] amd_isp_capture amd_isp_capture: ts:60002199230,streamId:1,poc:26,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[59.995596] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[59.995600] amd_isp_capture amd_isp_capture: 00000000faa62c3f,0x7fff01b4f000(2073600) 0000000029868c62,0x7fff01d49400(1036800) 0000000000000000,0x0(0)
+[59.995627] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[59.995659] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00880000
+[59.995661] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[59.995754] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000faa62c3f, gpuva 0x7fff01b4f000, size 3110400
+[59.995765] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01b4f000 size=2073600
+[59.995768] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff01d49400 size=1036800
+[59.997571] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 71, ele 0000000000000000
+[59.997588] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 72, ele 0000000000000000
+[60.026752] amd_isp_capture amd_isp_capture: ts:60033388590,streamId:1,poc:27,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[60.026779] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[60.026783] amd_isp_capture amd_isp_capture: 000000004c2e0285,0x7fff01e47000(2073600) 000000000b50734e,0x7fff02041400(1036800) 0000000000000000,0x0(0)
+[60.026810] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[60.026842] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00888000
+[60.026844] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[60.026987] amd_isp_capture amd_isp_capture: queue buf, vaddr 000000004c2e0285, gpuva 0x7fff01e47000, size 3110400
+[60.026992] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 73, ele 0000000000000000
+[60.027005] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff01e47000 size=2073600
+[60.027010] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02041400 size=1036800
+[60.027071] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 74, ele 0000000000000000
+[60.058692] amd_isp_capture amd_isp_capture: ts:60065338502,streamId:1,poc:28,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[60.058708] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[60.058712] amd_isp_capture amd_isp_capture: 00000000443c643e,0x7fff0213f000(2073600) 0000000046d0ab34,0x7fff02339400(1036800) 0000000000000000,0x0(0)
+[60.058727] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[60.058742] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00890000
+[60.058743] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[60.058814] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 75, ele 0000000000000000
+[60.058824] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000443c643e, gpuva 0x7fff0213f000, size 3110400
+[60.058834] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0213f000 size=2073600
+[60.058837] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02339400 size=1036800
+[60.058886] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 76, ele 0000000000000000
+[60.092635] amd_isp_capture amd_isp_capture: ts:60099290482,streamId:1,poc:29,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[60.092648] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[60.092651] amd_isp_capture amd_isp_capture: 00000000dba777da,0x7fff02437000(2073600) 000000000f40be36,0x7fff02631400(1036800) 0000000000000000,0x0(0)
+[60.092658] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[60.092667] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff00898000
+[60.092668] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[60.092724] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 77, ele 0000000000000000
+[60.092732] amd_isp_capture amd_isp_capture: queue buf, vaddr 00000000dba777da, gpuva 0x7fff02437000, size 3110400
+[60.092743] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff02437000 size=2073600
+[60.092746] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02631400 size=1036800
+[60.092777] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 78, ele 0000000000000000
+[60.129624] amd_isp_capture amd_isp_capture: ts:60136278345,streamId:1,poc:30,preview_en:1,status:ISP4FW_BUFFER_STATUS_DONE(3)
+[60.129651] amd_isp_capture amd_isp_capture: prev(NV12) en:1,stat:ISP4FW_BUFFER_STATUS_DONE(3),src:Unknown buf source
+[60.129656] amd_isp_capture amd_isp_capture: 0000000050b28f9d,0x7fff0272f000(2073600) 0000000011ea942a,0x7fff02929400(1036800) 0000000000000000,0x0(0)
+[60.129682] amd_isp_capture amd_isp_capture: call vb2_buffer_done(size=3110400)
+[60.129714] amd_isp_capture amd_isp_capture: resend meta_info 0x7fff008a0000
+[60.129716] amd_isp_capture amd_isp_capture: stream_id:1, status:1
+[60.129823] amd_isp_capture amd_isp_capture: queue buf, vaddr 0000000050b28f9d, gpuva 0x7fff0272f000, size 3110400
+[60.129847] amd_isp_capture amd_isp_capture: img_buf[0]: mc=0x7fff0272f000 size=2073600
+[60.129851] amd_isp_capture amd_isp_capture: img_buf[1]: mc=0x7fff02929400 size=1036800
+[60.129914] amd_isp_capture amd_isp_capture: status 1
+[60.131700] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 79, ele 0000000000000000
+[60.131719] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_SEND_BUFFER(0x02040001)(0),seq 80, ele 0000000000000000
+[60.155878] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_ENABLE_OUT_CHAN(0x02010005)(0),seq 81, ele 000000008befe6e8
+[60.155948] amd_isp_capture amd_isp_capture: wait disable stream suc
+[60.203761] amd_isp_capture amd_isp_capture: stream 1,cmd ISP4FW_CMD_ID_STOP_STREAM(0x02010008)(0),seq 82, ele 000000008befe6e8
+[60.203866] amd_isp_capture amd_isp_capture: wait stop stream suc
+[60.204464] amd_isp_capture amd_isp_capture: [0] fw resp thread quit
+[60.204609] amd_isp_capture amd_isp_capture: [1] fw resp thread quit
+[60.204685] amd_isp_capture amd_isp_capture: isp_subdev stop resp proc threads suc
+[60.210055] amdgpu 0000:c3:00.0: smu send message: PowerDownIspByTile(41), resp: 0x00000001
+[60.210062] in params:000007ff
+[60.210065] amd_isp_capture amd_isp_capture: power off isp_subdev suc
+[60.210077] amd_isp_capture amd_isp_capture: disable isp_subdev module
+[60.230427] amd_isp_capture amd_isp_capture: call vb2_buffer_done(6)
