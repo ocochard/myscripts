@@ -208,19 +208,49 @@ the OS is ready to sleep; Linux idles every core in its deepest state
 during suspend-to-idle. The sleep hint itself matches Linux (message 0x03,
 argument 1).
 
+## With Cmax: suspend and resume work, no S0i3 yet
+
+With `hw.acpi.cpu.cx_lowest=Cmax` (cores mostly in C3; stable for minutes,
+no new messages), the `olivier-s2idle-wake` kernel, amdgpio and amdsmu:
+the laptop sleeps, the power button still does nothing, **the space key
+wakes it, and it resumes**: network (ssh, ping 127.0.0.1) works, NVMe only
+resubmits queued writes (no "Complete Failed controller"), amdgpu passes
+its ring tests, USB devices detach and reattach, Bluetooth reset fails.
+So the hang came from the cores never going below C1.
+
+The SoC did not reach S0i3 (`amdsmu0: failed to enter S0i3 during last
+suspend`): `hint_count` 1, 67.07 s in software DRIPS, 0 in S0i3. IP blocks
+active for the whole 67.07 s, i.e. blocking S0i3:
+
+| IP block | Probable FreeBSD cause |
+|---|---|
+| DISPLAY, GFX, JPEG_1 | amdgpu (drm-kmod) not taking its S0ix low-power path |
+| USB3_0, USB3_1 | xhci controllers not put in D3 |
+| MPM | power management firmware, likely waiting on the others |
+
+(CPU and JPEG_0 were active 0.49 s; `USB4_1` is the known garbage value.)
+`amdsmu` printed "only limited diagnostic information available for
+1022:1507": its blocker diagnostics switch on the Phoenix and Krackan Point
+IDs.
+
 ## Next steps
 
-1. Set `hw.acpi.cpu.cx_lowest=Cmax`, check that the cores reach C2/C3 and
-   stay stable, then retry one suspend with the `olivier-s2idle-wake`
-   kernel, amdgpio and amdsmu.
-2. Arm the EC GPE for wake during suspend-to-idle, as Linux does, and turn
-   `do_idle()` into the loop its comment describes.
-3. Look at nvme(4) suspend/resume on this controller (it failed even
-   without S0i3).
-4. Retry one suspend per change, with the disks synced first: a hang needs
+1. `do_idle()`: use the deepest C-state during suspend-to-idle whatever
+   `cx_lowest` is (Linux does), so suspend does not hang with the C1
+   default.
+2. amdsmu: add Strix Halo to the blocker diagnostics.
+3. xhci: put the controllers in D3 for suspend-to-idle; amdgpu S0ix path
+   in drm-kmod (DISPLAY, GFX, JPEG blocks).
+4. Power button (pin 54) still does not wake: check the `amdgpio` arming
+   (register values after suspend) and the MP2 (`MP2C`) path.
+5. Turn `do_idle()` into the loop its comment describes (the key wake
+   through the EC GPE works, no extra arming needed).
+6. Retry one suspend per change, with the disks synced first: a hang needs
    a forced power off.
-5. Send the amdsmu patch: it is correct on its own (attaches, reads the SMU
+7. Send the amdsmu patch: it is correct on its own (attaches, reads the SMU
    version, IP blocks and metrics; matches Linux), whatever suspend does.
+   The NVMe "Complete Failed controller" seen on the C1 resumes did not
+   come back with Cmax.
 
 ## Test log
 
@@ -233,3 +263,4 @@ argument 1).
 | 2026-11-13 | Ubuntu, Linux 7.0.0-43 | S0i3 success, 32.4 s; woken by space key via EC GPE 03; resume clean |
 | 2026-11-13 | FreeBSD, `kldload amdgpio`, `_AEI` decode | the six `_AEI` pins are all wake capable; `amdgpio_suspend()` disables them and no code sets their wake bits |
 | 2026-11-13 | `olivier-s2idle-wake` kernel + amdgpio + amdsmu, `zzz` | IRQ 7 registered; no wake by power button or key, power LED keeps blinking, fans spin up; forced power off |
+| 2026-11-15 | same + `hw.acpi.cpu.cx_lowest=Cmax` | space key wakes it, full resume (network, NVMe, amdgpu); no S0i3: DISPLAY, GFX, JPEG_1, USB3_0/1, MPM active the whole 67 s |
