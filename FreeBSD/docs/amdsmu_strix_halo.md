@@ -646,6 +646,36 @@ the ISP power support added in Linux after 6.12 (fba8d147472e), plus extra
 `PowerDownIspByTile(0x7FF)` (resp 1) at boot and at each suspend changes
 nothing: JPEG_1 blocked a 1277 s (21 min) sleep, no S0i3 attempt.
 
+## JPEG_0/JPEG_1 follow the CPUs, and deep CPU idle stops the wake
+
+Two runs on the same setup (amdgpu, `tb`, amdgpio, amdsmu with per-suspend
+log reset):
+
+1. Debug `acpi_cpu.c`: at suspend set every CPU's `cpu_prev_sleep` to 1 s
+   (so the next idle picks C3) and skip the bus-master demotion to C2,
+   plus `hw.acpi.sleep_delay=0`. The laptop slept quietly (LED blinking
+   slowly, no fan spin-up) and did not wake on the space key or the power
+   button; forced power off, metrics lost.
+2. `hw.acpi.sleep_delay=0` alone (stock C-state choice), 1044.7 s sleep,
+   woke on the space key:
+
+```
+amdsmu0:   JPEG_0 (active for 1044664303 us)
+amdsmu0:   JPEG_1 (active for 1044664303 us)
+XXX cpu0 cx_stats 0 5 0
+```
+
+With the 1 s busy wait, JPEG_0 and CPU were active for that 1 s only and
+JPEG_1 the whole sleep; without it, JPEG_0 joins JPEG_1 for the whole
+sleep, and cpu0, cpu1, cpu2 and cpu31 never reach C3 (C2 entries only)
+while the other CPUs do. amdgpu powers both JPEG engines down before
+suspend on both systems, so the SMU's "JPEG_0"/"JPEG_1" bits here look
+tied to CPU core idle state rather than to the JPEG engines (inferred:
+Strix Halo has two CCDs, cpu0-15 and cpu16-31). Run 1, which forced every
+CPU into C3, is the only run that did not wake, consistent with the SoC
+finally reaching S0i3 and the wake path failing; unproven, since its
+metrics died with the power off.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -709,3 +739,5 @@ nothing: JPEG_1 blocked a 1277 s (21 min) sleep, no S0i3 attempt.
 | 2026-11-15 | + every driverless PCI function in D3cold (Wi-Fi, PSP, ACP, sensor hub, NPU) | resume works; JPEG_1 still the only blocker, no S0i3 attempt |
 | 2026-11-15 | Ubuntu boot with amdgpu SMU debug | boot list same as FreeBSD plus ISP up/down (`0x7ff`) and GFXOFF pairs |
 | 2026-11-15 | debug amdgpu sends `PowerDownIspByTile(0x7FF)` | resp 1; JPEG_1 still blocks (1277 s sleep), no S0i3 attempt |
+| 2026-11-15 | debug: every CPU forced to C3 at suspend, no BM demotion, `sleep_delay=0` | quiet sleep, no wake (key, power button); forced power off |
+| 2026-11-15 | `sleep_delay=0` only | wakes; JPEG_0 and JPEG_1 block 1044.7 s; cpu0-2 and cpu31 never in C3 |
