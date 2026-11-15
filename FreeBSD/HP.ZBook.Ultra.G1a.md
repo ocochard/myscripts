@@ -13,7 +13,7 @@ Linux comparison: Ubuntu with Linux 7.0.0-43 on the same laptop, same day (`lspc
 
 | Function | Device | FreeBSD driver |
 |---|---|---|
-| GPU, display | 1002:1586 Radeon 8060S | `amdgpu` from `graphics/drm-latest-kmod` + `gpu-firmware-amd-kmod` |
+| GPU, display, Vulkan, video decode/encode | 1002:1586 Radeon 8060S | `amdgpu` from `graphics/drm-latest-kmod` + `gpu-firmware-amd-kmod`, Mesa (see [GPU features](#gpu-features)) |
 | HDMI/DP audio | 1002:1640 | `hdac0`, 4 `pcm` outputs |
 | Headphone jack | 1022:15e3 + Realtek ALC245 codec | `hdac1`, `pcm5` (headphones) |
 | Internal speakers | `pcm4` (ALC245) + 4 Cirrus Logic CS35L54 amplifiers (CSC3554) | not in FreeBSD yet: `snd_cs35l54` from branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) + firmware port (see below) |
@@ -35,6 +35,50 @@ Sound device nodes are `root:audio` 0660 and DRM nodes `root:video` 0660 since m
 add desktop users to both groups, or sound and GPU acceleration fail.
 The `/boot/loader.conf` hint `hint.pcib.7.disabled="1"` from older kernels is no longer needed:
 without it, `pcib7` attaches the xHCI at 197:0:0 and the boot does not hang (2026-11-11).
+
+## GPU features
+
+Tested on 2026-11-15 with `mesa-dri` 26.2.2 (radeonsi and RADV), `amdgpu`
+from `drm-latest-kmod` (drm 6.12), packages `libva-utils`, `vulkan-tools`,
+`clinfo` and `ffmpeg` 9.0.2, no desktop session (render node
+`/dev/dri/renderD128`, user in group `video`).
+
+| Feature | Result | Evidence |
+|---|---|---|
+| Vulkan | works | `vulkaninfo`: `AMD Radeon 8060S Graphics (RADV STRIX_HALO)`, Vulkan 1.4.354 |
+| Vulkan video | exposed | `VK_KHR_video_decode_{h264,h265,vp9,av1}`, `VK_KHR_video_encode_{h264,h265,av1}` |
+| VA-API decode | works, bit-exact | H.264, HEVC (Main, Main10), VP9 (profiles 0, 2), AV1, JPEG |
+| VA-API encode | works | H.264, HEVC (Main, Main10), AV1 |
+| VA-API video processing | listed | `VAProfileNone: VAEntrypointVideoProc` (the VPE engine) |
+| OpenCL | none | `clinfo`: 0 platforms; no FreeBSD package provides Mesa rusticl |
+| OpenGL | not tested | needs a desktop session |
+
+VA-API needs `libva` (pulled in by `libva-utils` or `ffmpeg`); the driver
+itself, `radeonsi_drv_video.so`, ships in `mesa-dri`. `vainfo --display drm
+--device /dev/dri/renderD128` lists the profiles.
+
+Measured with 10 s 1920x1080 30 fps test clips (`testsrc2`, encoded in
+software), decoded with `ffmpeg -hwaccel vaapi -hwaccel_device
+/dev/dri/renderD128 -hwaccel_output_format vaapi -i CLIP -f null -`:
+
+| Clip | Hardware decode, 300 frames | Output vs software decoder |
+|---|---|---|
+| H.264 | 0.24 s | identical (`framemd5`) |
+| HEVC | 0.25 s | identical |
+| VP9 | 0.27 s | identical |
+| AV1 | 0.34 s | identical |
+| MJPEG | 0.70 s (0.04 s CPU) | not compared (lossy decoders may round differently) |
+
+Hardware encode (`-vf format=nv12,hwupload -c:v h264_vaapi|hevc_vaapi|av1_vaapi`)
+of the same 300 frames took 0.73 s, 0.41 s and 0.44 s and produced valid
+1920x1080 streams (`ffprobe`). The SMU message log of a debug amdgpu build
+shows the engines powering up for the work and down when idle
+(`PowerUpVcn0/1`, `PowerUpJpeg0/1`, then `PowerDown...`).
+
+Use cases: hardware video playback (mpv, browsers with VA-API), webcam and
+capture MJPEG decode, transcoding with ffmpeg or GStreamer, and Vulkan
+compute (llama.cpp's Vulkan backend). The two JPEG engines (JPEG_0,
+JPEG_1) serve `VAProfileJPEGBaseline`.
 
 ## PCI devices without driver
 
