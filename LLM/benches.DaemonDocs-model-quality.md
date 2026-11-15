@@ -9,8 +9,8 @@ This is a **quality** benchmark, distinct from `benches.FrameWork-Desktop.md`
 (which measures tokens/sec). It complements the speed-only `BENCHMARKS.md`
 inside the DaemonDocs repo.
 
-Date: 2026-08-21/22. Host: `bigone` drove the runs; models served on
-`framework` (FreeBSD) + `framework2` (Ubuntu) llama-servers.
+Date: 2026-08-21/22. The build host drove the runs; models served on the
+frwk-bsd (FreeBSD) and frwk-linux (Ubuntu) llama-servers.
 
 ## TL;DR
 
@@ -21,10 +21,11 @@ Date: 2026-08-21/22. Host: `bigone` drove the runs; models served on
   |-------|------|------|--------------------------------------------:|
   | **Qwen3.8-27B** ★ | `unsloth/Qwen3.8-27B-UD-Q8_K_XL` | dense | **6.4** |
   | Qwen3.6-27B | `unsloth/Qwen3.6-27B-UD-Q8_K_XL` | dense | 7.4 |
-  | Qwen3.6-35B-A3B (current default) | `unsloth/Qwen3.6-35B-A3B-UD-Q8_K_XL` | MoE | 12.4 |
+  | Qwen3.6-35B-A3B (default at the time) | `unsloth/Qwen3.6-35B-A3B-UD-Q8_K_XL` | MoE | 12.4 |
 
   ★ recommended for DaemonDocs quality runs. (Means over the 3 shared chapters —
   Kernel Core, Locking, VM — so the comparison is apples-to-apples; see caveats.)
+  Qwen3.8-Flash-Next (`flashnext` slot) was never scored on this bench.
 
 - **This is a real grounding win, not a fluency artifact.** It does *not* repeat
   the earlier Q4→Q8 finding (BENCHMARKS.md run1→run2) where a heavier quant of
@@ -140,8 +141,8 @@ needs fewer reps — directly useful for a bench that pays for 3 reps per
 achievable while MTP is enabled (speculative accept/reject varies with batch
 composition), and MTP must stay on because the bench also reports speed.
 
-Note the speed benches (`bench-all.sh`, `bench_model.py`,
-`bench-agents-a1.sh`) do **not** need this: `bench_model.py` already runs at
+Note the speed benches (`bench-all.sh`, `bench_model.py`) do **not** need
+this: `bench_model.py` already runs at
 `temperature=0.0` (greedy — no sampling RNG to seed) and already discards a
 warm-up run, and they measure tokens/second at a fixed token count rather than
 which tokens are produced. `llama-bench` generates no real text at all.
@@ -182,24 +183,31 @@ quality further at even more wall-clock.
 
 ## Recommendation
 
-- **For DaemonDocs quality runs, use `MODEL=qwen38-q8` (Qwen3.8-27B dense Q8)** —
-  best pooled accuracy, newest generation. `MODEL=dense-q8` (Qwen3.6-27B dense
-  Q8) is a near-equal fallback and won Kernel Core outright.
-- **Keep the MoE (`moe-q8`) for speed-sensitive / bulk regen**, accepting ~2×
-  more hallucinations for the fact-fix pipeline to catch.
-- New `llmsrv.sh` slots added for this: `dense-q8`, `qwen38-q8`.
+- **For DaemonDocs quality runs, use `MODEL=qwen38-q8` (Qwen3.8-27B dense
+  Q8)**: best pooled accuracy, newest generation. Qwen3.6-27B dense Q8 was a
+  near-equal runner-up and won Kernel Core outright, but it no longer has an
+  `llmsrv.sh` slot.
+- The MoE baseline produced ~2× more hallucinations; a faster model for bulk
+  regen leans harder on the fact-fix pipeline to catch them.
+- `llmsrv.sh` slots today: `qwen38-q8` (this recipe), `qwen38-mtp` (same model
+  family plus MTP speculative decoding, different repo and quant) and
+  `flashnext` (unscored here).
 - If adopting a dense model for a full 28-chapter regen, budget for the ~10×
   slowdown and consider raising the writer `max_steps` above 80 so deep-exploring
   drafts finish instead of truncating.
 
 ## Reproduce
 
+Only model B still has an `llmsrv.sh` slot (`qwen38-q8`). To rerun A or C,
+serve the GGUF from the TL;DR table with a plain `llama-server` using the
+settings in Method (Vulkan0, `-fa on`, ctx 131072).
+
 ```sh
-# On bigone, with DaemonDocs venv (see DaemonDocs/README.md — version-agnostic venv):
+# On the build host, with DaemonDocs venv (see DaemonDocs/README.md, version-agnostic venv):
 cd ~/DaemonDocs
-# serve model A on framework, B on framework2 (one model per endpoint):
-#   MODEL=moe-q8   HOST=0.0.0.0 ./llmsrv.sh   # on framework
-#   MODEL=qwen38-q8 HOST=0.0.0.0 ./llmsrv.sh  # on framework2
+# serve one model per endpoint; harness endpoint names: framework = frwk-bsd,
+# framework2 = frwk-linux. Example for model B on frwk-linux:
+#   MODEL=qwen38-q8 HOST=0.0.0.0 ./llmsrv.sh
 .venv/bin/python ~/score_models.py --verify                        # sanity, no LLM
 .venv/bin/python ~/score_models.py --endpoints A:framework,B:framework2 --reps 3
 # then swap an endpoint to model C and:
@@ -207,5 +215,5 @@ cd ~/DaemonDocs
 .venv/bin/python ~/score_models.py --report                        # -> ~/model-scoring/QUALITY.md
 ```
 
-Endpoint IPs: `framework` = 192.168.100.7, `framework2` = **192.168.100.8**
-(the .136 in DaemonDocs' old CLAUDE.md is stale — corrected in the harness).
+The harness maps endpoint names to addresses; check them with
+`curl -s <endpoint>/models` before a run.

@@ -1,19 +1,19 @@
 #!/bin/sh
 # Launch llama-server tuned for Framework Desktop (Strix Halo + RADV).
 # Works on all hosts:
-#   - framework  (FreeBSD 16-CURRENT, Mesa 24.x or 25.x, Vulkan — auto-detected)
-#   - framework2 (Ubuntu 24.04,       Mesa 25.2.8, Vulkan)
+#   - framework  (FreeBSD 16-CURRENT, Mesa 26.2, Vulkan; auto-detected)
+#   - framework2 (Ubuntu 26.04,       Mesa 26.0, Vulkan)
 #   - mac        (macOS, Metal)
 #
-# Default: qwen38-mtp (Qwen3.8-27B dense Q8_0 + Q8_0 sidecar MTP draft head,
-# both from ggml-org/Qwen3.8-27B-GGUF). Best FreeBSD-source doc accuracy in the
-# DaemonDocs quality bench, with speculative decoding on top. The MTP draft
-# path is UNVERIFIED on FreeBSD/Mesa 26 — see the WARNING on the slot below and
-# fall back to MODEL=qwen38-q8 if cold starts report 0.00 draft acceptance.
+# Default: flashnext (Qwen3.8-Flash-Next UD-IQ3_XXS + self-contained Q8_0 MTP
+# head). Best agentic score of the local models in fbsd-quality and the
+# fastest recipe here. If cold starts report 0.00 draft acceptance (Mesa 26
+# RADV on FreeBSD), restart or fall back to MODEL=qwen38-mtp / qwen38-q8.
 #
 # Usage:
-#   ./llmsrv.sh                  # default: qwen38-mtp (Q8 dense + Q8 MTP head)
-#   USAGE=coding ./llmsrv.sh     # alias for MODEL=qwen38-mtp
+#   ./llmsrv.sh                  # default: flashnext (MoE IQ3_XXS + Q8 MTP head)
+#   USAGE=coding ./llmsrv.sh     # alias for MODEL=flashnext
+#   MODEL=qwen38-mtp ./llmsrv.sh # Qwen3.8-27B dense Q8_0 + Q8 MTP head
 #   USAGE=doc    ./llmsrv.sh     # alias for MODEL=qwen38-q8 (spec-off fallback)
 #   MODEL=qwen38-q8 ./llmsrv.sh  # Qwen3.8-27B dense Q8, no MTP (DaemonDocs
 #                                #   production recipe; see
@@ -31,23 +31,22 @@ usage() {
 Usage: [ENV=val ...] $(basename "$0") [-h|--help]
 
 Environment variables:
-  USAGE=coding  Alias for MODEL=qwen38-mtp (default)
+  USAGE=coding  Alias for MODEL=flashnext (default)
   USAGE=doc     Alias for MODEL=qwen38-q8 (spec-off fallback)
   MODEL=qwen38-mtp
-                DEFAULT. Qwen3.8-27B dense Q8_0 + Q8_0 sidecar MTP draft head
-                (ggml-org). Speculative decoding; MEASURED 2026-09-05 on
-                frwk-linux (Ubuntu 26.04, b10801): acceptance 0.504 with
-                mean accepted length 5.00 — MTP is worth 2.2x here
-                (7.6 -> 16.8 Total TPS at ~4 k). Draft path still unverified
+                Qwen3.8-27B dense Q8_0 + Q8_0 sidecar MTP draft head
+                (ggml-org). Speculative decoding; v1.0.0: 17.0-17.4 t/s
+                decode, acceptance ~0.52-0.55. Draft path still unverified
                 on FreeBSD/Mesa 26. See the slot comment.
   MODEL=qwen38-q8
-                Qwen3.8-27B dense Q8_K_XL (unsloth), no MTP. Best
-                FreeBSD-source doc accuracy in the DaemonDocs quality bench,
-                and the fallback when the MTP draft path misbehaves.
+                Qwen3.8-27B dense Q8_K_XL (unsloth), no MTP; v1.0.0:
+                7.2-7.3 t/s decode. Best FreeBSD-source doc accuracy in the
+                DaemonDocs quality bench, and the fallback when the MTP
+                draft path misbehaves.
   MODEL=flashnext
-                Qwen3.8-Flash-Next 125B/6B-active MoE, UD-IQ3_XXS (82 GB) +
+                DEFAULT. Qwen3.8-Flash-Next 125B/6B-active MoE, UD-IQ3_XXS (82 GB) +
                 self-contained Q8_0 MTP head at N=2. Mainline llama.cpp
-                >= v1.0.0: ~40 t/s decode, acceptance 0.65. Takes the full
+                >= v1.0.0: 38-40 t/s decode, acceptance 0.61-0.70. Takes the full
                 131072 CTX. Do not substitute a bigger quant: IQ4_XS
                 (93.7 GB) cannot load the draft head at all. MTP is flaky on
                 FreeBSD (Mesa 26 RADV).
@@ -82,13 +81,13 @@ case "${1:-}" in -h|--help|help) usage ;; esac
 # the MODEL= slots the rest of the script switches on. Explicit MODEL= wins.
 if [ -n "${USAGE:-}" ] && [ -z "${MODEL:-}" ]; then
   case "${USAGE}" in
-    coding) MODEL=qwen38-mtp ;;   # Q8 dense + Q8 sidecar MTP head (default)
+    coding) MODEL=flashnext  ;;   # MoE IQ3_XXS + Q8 MTP head (default)
     doc)    MODEL=qwen38-q8  ;;   # spec-off fallback (unsloth Q8_K_XL)
     *) echo "unknown USAGE='${USAGE}' (use coding|doc)" >&2; exit 1 ;;
   esac
 fi
 
-MODEL=${MODEL:-qwen38-mtp}
+MODEL=${MODEL:-flashnext}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-8080}
 # Remember whether the caller set CTX explicitly: a slot may need a lower
@@ -165,10 +164,8 @@ hf_resolve() {
 }
 
 # --no-host: enables UMA-aware host-pointer path on Vulkan. On Strix Halo:
-#   - MoE (35B-A3B Q4/Q8): safe and slightly faster on both OSes / Mesa versions.
-#   - Dense (27B Q4):       crashes on FreeBSD (Mesa 24 and 25); OK on Ubuntu.
-#   - Dense (27B Q8):       crashes on FreeBSD/Mesa 25 (regression vs Mesa 24);
-#                           OK on Ubuntu.
+#   - MoE:       safe and slightly faster on both OSes / Mesa versions.
+#   - Dense 27B: crashes on FreeBSD (Mesa 24 and 25); OK on Ubuntu.
 # Default to no-host; cleared below for FreeBSD dense.
 nohost_flag="--no-host"
 
@@ -177,33 +174,15 @@ model_extra=""
 
 case "${MODEL}" in
   qwen38-mtp)
-    # DEFAULT. Qwen3.8-27B dense (ggml-org), Q8_0 target + Q8_0 SIDECAR MTP
-    # draft head (mtp-Qwen3.8-27B-Q8_0.gguf) passed via --model-draft — not
-    # embedded like the Agents-A1 models. Both files come from the same repo.
+    # Qwen3.8-27B dense (ggml-org), Q8_0 target + Q8_0 SIDECAR MTP
+    # draft head (mtp-Qwen3.8-27B-Q8_0.gguf) passed via --model-draft. Both
+    # files come from the same repo. v1.0.0: 17.0-17.4 t/s decode,
+    # acceptance ~0.52-0.55 (bench-all.sh slot `qwen38-mtp-q8`).
     #
-    # This is NOT the pairing benched on 2026-08-15. That run used the Q4
-    # pair (Q4_K_M target + q4_0 head) and measured only ~34% draft
-    # acceptance, which the bench attributed to the weak Q4/q4_0 match and
-    # named a higher-precision head as the fix. This slot is that fix, and
-    # the fix WORKED — measured 2026-09-05 on frwk-linux (Ubuntu 26.04,
-    # b10801, registry slot `qwen38-mtp-q8`):
-    #
-    #   draft acceptance 0.504, mean accepted length 5.00
-    #   Total TPS @~4 k: 7.6 spec-off -> 16.8 with MTP N=5  (2.2x)
-    #
-    # Note acceptance (0.50) is LOWER than Flash-Next's 0.76 yet the speedup
-    # is much larger (2.2x vs ~1.3x), because this head lands ALL FIVE
-    # drafted tokens when it hits (len 5.00) while Flash-Next's lands exactly
-    # one. Length, not acceptance %, is what converts into throughput.
-    #
-    # Context for the default choice: at 16.8 Total TPS this slot is one of
-    # the SLOWEST recipes in benches.FrameWork-Desktop.md (agents-a1-mtp does
-    # 79/71). It is the default for QUALITY, not speed — it wins the
+    # The dense pick for doc accuracy, not speed: it wins the
     # DaemonDocs hallucination bench at 6.4 mean violations
     # (benches.DaemonDocs-model-quality.md). That bench never tested
-    # agents-a1-mtp or flashnext, so whether a faster recipe is also more
-    # accurate is an OPEN question. Use USAGE=coding (agents-a1-mtp) when you
-    # want speed.
+    # flashnext, so whether it is also more accurate is an OPEN question.
     #
     # STILL UNVERIFIED on FreeBSD/Mesa 26: the same bench recorded a RADV
     # GPUVM fault in the draft-mtp dispatch path — `[gfxhub] page fault`,
@@ -213,7 +192,7 @@ case "${MODEL}" in
     # and it is a Mesa 26 regression (identical binary+GGUF is clean on
     # Mesa 25 / Ubuntu). Quant does not affect it. On a dead load every
     # drafted token is wasted verify compute and throughput falls BELOW
-    # spec-off (7.3 t/s vs 11.2 baseline at N=5).
+    # spec-off.
     #
     # So: watch the server log's "draft acceptance = 0.xx" line on every
     # cold start on framework. If it reads 0.00000, restart; if it keeps
@@ -227,22 +206,21 @@ case "${MODEL}" in
     draft=$(hf_resolve "${hf_dir}" "${hf_draft}")
     alias="Qwen3.8-27B-Q8_0-MTP"
     warmup_flag=""
-    # Dense 27B on FreeBSD: --no-host crashes (same class as 3.6 dense).
+    # Dense 27B on FreeBSD: --no-host crashes.
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     if [ -z "${draft}" ] || [ ! -e "${draft}" ]; then
       echo "draft head ${hf_draft} not cached under ${hf_dir}" >&2
       echo "fetch it, or run MODEL=qwen38-q8 for the spec-off fallback" >&2
       exit 1
     fi
-    # probabilistic drafts at the request temp (0.6 here): +1-5 % on this slot,
-    # ~4 % on agents-a1-mtp (b12278). Needs llama.cpp with #27694.
+    # probabilistic drafts at the request temp (0.6 here): a small gain on
+    # this slot. Needs llama.cpp with #27694 (v1.0.0 has it).
     model_extra="--jinja --model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 4 --spec-draft-sampling probabilistic"
     ;;
   flashnext)
-    # Qwen3.8-Flash-Next, 125B/6B-active `qwen4exp` MoE, UD-IQ3_XXS (82 GB) +
-    # the self-contained Q8_0 sidecar MTP head. On mainline v1.0.0 (frwk-bsd,
-    # 2026-11-14): 40.3 t/s decode with N=2 vs 31.3 spec-off, acceptance 0.65,
-    # mean length 2.3; the old PR #28243 build did 28-31 t/s on the same prompt.
+    # DEFAULT. Qwen3.8-Flash-Next, 125B/6B-active `qwen4exp` MoE, UD-IQ3_XXS (82 GB) +
+    # the self-contained Q8_0 sidecar MTP head. v1.0.0: 38-40 t/s decode with
+    # N=2, acceptance 0.61-0.70.
     #
     # THREE hard requirements, all of them load-time failures if unmet:
     #
@@ -255,34 +233,18 @@ case "${MODEL}" in
     #    driver unable to fund a second model's command submission
     #    (`radv/amdgpu: Not enough memory for command submission` →
     #    ErrorDeviceLost). Q8_0 is 192 GB and never fits 128 GB UMA.
-    # 3. CTX: the full 131072 FITS, with MTP on. Verified 2026-09-05 on
-    #    frwk-linux — `n_ctx_slot = 131072`, `model loaded`, no
-    #    ErrorDeviceLost. So this slot uses the script-wide default and does
-    #    NOT clamp it.
+    # 3. CTX: the full 131072 FITS with MTP on (`n_ctx_slot = 131072`, no
+    #    ErrorDeviceLost), so this slot does NOT clamp it. The old 32768
+    #    clamp was derived for IQ4_XS and does not apply to IQ3_XXS.
+    #    A large ctx costs nothing until you fill it; MTP does not
+    #    accelerate prefill, so cold TTFT is the cost of filling it.
     #
-    #    HISTORY, because the old value was wrong and may be in your notes:
-    #    this slot previously forced CTX=32768 and the comment claimed "CTX
-    #    must stay low". That number was derived for UD-IQ4_XS (93.7 GB), where
-    #    a 131072 KV really does overcommit, and it was carried over to
-    #    IQ3_XXS (82 GB) without being re-derived. The follow-up probe only
-    #    tested 32768 and 65536, so "65536 is proven" was recorded as if it
-    #    were a ceiling when it was merely the largest value tried. It is not
-    #    a ceiling: 131072 loads.
-    #
-    #    Benched depth behaviour (unchanged, still useful): at ~32 k of filled
-    #    depth MTP gives 29.6/27.6 Total TPS vs 21.8/20.6 spec-off — the gain
-    #    WIDENS with depth (+36 %/+34 %) and acceptance holds at 0.77-0.79.
-    #    A large ctx costs nothing until you fill it; filling it costs cold
-    #    TTFT ~118 s (FreeBSD) / ~135 s (Ubuntu) at ~32 k, because prefill runs
-    #    ~280 t/s and MTP does not accelerate prefill. Lower CTX only if cold
-    #    TTFT matters more to you than depth.
-    #
-    # FreeBSD caveat: MTP is flaky here, NOT unusable. 2 of 6 N values faulted
-    # in the bench with the Mesa-26 RADV compute-write fingerprint already
-    # documented for qwen38-mtp (`[gfxhub] page fault`, client ID CPC (0x5),
-    # `ring comp_1.1.0 timeout`). N=2 and N=4 ran clean. Watch the draft
-    # acceptance on cold start as with qwen38-mtp: 0.00000 means a dead head —
-    # restart, or drop --spec-type for a spec-off run.
+    # FreeBSD caveat: MTP is flaky here, NOT unusable. Some cold starts hit
+    # the Mesa-26 RADV compute-write fingerprint documented for qwen38-mtp
+    # (`[gfxhub] page fault`, client ID CPC (0x5), `ring comp_1.1.0
+    # timeout`). Watch the draft acceptance on cold start as with
+    # qwen38-mtp: 0.00000 means a dead head; restart, or drop --spec-type
+    # for a spec-off run.
     #
     # DO NOT substitute IQ4_XS (93.7 GB) here to "get more quality". On
     # frwk-linux that combination needs amdgpu.gttsize raised well past the
@@ -290,8 +252,7 @@ case "${MODEL}" in
     #   BUG: unable to handle page fault for address: 0000000000004008
     #   RIP: ttm_resource_manager_next+0x130/0x370 [ttm]  Comm: llama-server
     # (see benches.FrameWork-Desktop.md, "gttsize=120000 panicked the Linux
-    # kernel"). frwk-bsd survives the same workload but takes ~18 min to load
-    # and prefills far slower. IQ3_XXS is both safer and faster.
+    # kernel"). IQ3_XXS is both safer and faster.
 
     # No CTX clamp: 131072 with MTP on is verified to load on this quant (see
     # note 3 above). Only warn past the model's native 262144, which would
@@ -302,33 +263,10 @@ case "${MODEL}" in
     fi
     hf_repo="unsloth/Qwen3.8-Flash-Next-GGUF"
     # Sharded: pass shard 00001 (the tensor-free header); llama.cpp opens 2/3.
-    # QUANT overrides the default IQ3_XXS. Only IQ4_XS is a sane alternative,
-    # and ONLY on frwk-bsd: on frwk-linux the raised amdgpu.gttsize it needs
-    # kernel-panicked the host (see the comment above). FreeBSD already runs
-    # hw.amdgpu.gttsize=120000 and survives the same workload, at ~18 min to
-    # load and worse draft acceptance (0.68 vs 0.76-0.80).
-    #
-    #   QUANT=UD-IQ4_XS MODEL=flashnext ./llmsrv.sh
-    #
-    # ATTEMPTED 2026-09-07 and it does NOT work, confirming the warning in
-    # this slot's own help text ("IQ4_XS cannot load the draft head at all").
-    # QUANT=UD-IQ4_XS wedges at exactly:
-    #   common_speculative_init_result: loading draft model .../MTP/
-    #     mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf
-    # and then spins at 99% CPU in state R with no further log output —
-    # killed at 41 minutes against the ~18 min the bench doc predicts for a
-    # successful load. Not an aperture shortfall: 87.2 GB model + 2.6 GB head
-    # = 89.8 GB against a 117.2 GB GTT aperture.
-    #
-    # So the quantisation question this was meant to settle — whether IQ3_XXS
-    # is what makes this model substitute its native <tool_call> format for
-    # the harness's requested one (28 parse failures in 583 iterations, 4.8%,
-    # against 1 in 917 for the Q8 dense model) — REMAINS UNTESTABLE on this
-    # hardware. It is moot in practice anyway: bench.py now detects the
-    # tool-call template and selects ToolCallingAgent, which is the real fix.
-    #
-    # Keep the override for spec-off experiments (drop --spec-type), but do
-    # not expect MTP to work with it.
+    # QUANT overrides the default IQ3_XXS (no other quant is cached). IQ4_XS
+    # will not load the draft head (the load wedges at "loading draft model")
+    # and the gttsize it needs panicked Linux (see above); keep QUANT for
+    # spec-off experiments only.
     q="${QUANT:-UD-IQ3_XXS}"
     hf_file="${q}/Qwen3.8-Flash-Next-${q}-00001-of-00003.gguf"
     hf_draft="MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf"
@@ -344,9 +282,8 @@ case "${MODEL}" in
       echo "MTP is the point of this slot; fetch the head or pick another MODEL" >&2
       exit 1
     fi
-    # N=2 was the measured peak on BOTH hosts on the PR build, with no cliff
-    # (N=16 still beat spec-off). Not re-swept on v1.0.0, where the mean
-    # accepted length rose from ~1.8 to 2.3.
+    # N=2 was the measured peak on both hosts in the last N sweep (pre-v1.0.0;
+    # not re-swept on v1.0.0).
     model_extra="--model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 2"
     ;;
   qwen38-q8)
@@ -388,7 +325,7 @@ extra_sampler=""
 
 # --jinja uses the GGUF's embedded chat template instead of llama.cpp's
 # built-in guesser. Required for correct tool-call parsing with agent
-# clients (qwen-code, aider). mtp already sets it via model_extra; skip
+# clients (qwen-code, aider). qwen38-mtp already sets it via model_extra; skip
 # to avoid duplicate flag.
 jinja_flag=""
 case "${MODEL}" in

@@ -12,12 +12,12 @@
 #
 # Env knobs:
 #   OUT, JSONLOG, LLAMA_DIR, HF_HUB, PORT (default 8090)
-#   ONLY=agents-a1-mtp,mtp  → run only these model slots (default: all cached)
+#   ONLY=flashnext-iq3,qwen38-mtp-q8 → run only these model slots (default: all cached)
 #   STAGES=llama-bench,server,mtp-sweep  (default: all)
 #   FORCE=1                 → run despite stray llama-* procs (unsafe)
 #   CTX=131072              → default --ctx-size; a registry slot may lower it
 #                             via its own ctx field (weights that leave no room
-#                             for a 131072 KV reservation, e.g. Flash-Next).
+#                             for a 131072 KV reservation).
 set -eu
 
 OUT=${OUT:-/tmp/bench-all.md}
@@ -60,7 +60,7 @@ hf_resolve() {
 #   family      — dense | moe   (informational; not used to switch flags)
 #   mtp         — 0 | 1         (1 = has draft-mtp head, do N-max sweep)
 #   draft       — sidecar draft GGUF filename (same repo dir), or "-" if the
-#                 MTP head is embedded in the main GGUF (havenoammo, Agents-A1)
+#                 MTP head is embedded in the main GGUF
 #                 or the model is non-MTP. Passed via --model-draft when set.
 #   ctx         — --ctx-size for this slot, or "-" to use $CTX (131072).
 #                 Lower it only when the weights leave no room for the KV
@@ -74,19 +74,9 @@ hf_resolve() {
 # their own folder). Pass shard 00001 — llama.cpp opens the rest itself.
 # ---------------------------------------------------------------------------
 MODELS='
-qwen-27b-q4  : models--unsloth--Qwen3.6-27B-GGUF                : Qwen3.6-27B-UD-Q4_K_XL.gguf         : dense : 0 : - : - : Qwen3.6-27B Q4_K_XL
-qwen-27b-q8  : models--unsloth--Qwen3.6-27B-GGUF                : Qwen3.6-27B-UD-Q8_K_XL.gguf         : dense : 0 : - : - : Qwen3.6-27B Q8_K_XL
-qwen-moe-q4  : models--unsloth--Qwen3.6-35B-A3B-GGUF            : Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf     : moe   : 0 : - : - : Qwen3.6-35B-A3B Q4_K_XL
-qwen-moe-q8  : models--unsloth--Qwen3.6-35B-A3B-GGUF            : Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf     : moe   : 0 : - : - : Qwen3.6-35B-A3B Q8_K_XL
-qwen-mtp-q8  : models--havenoammo--Qwen3.6-27B-MTP-UD-GGUF      : Qwen3.6-27B-MTP-UD-Q8_K_XL.gguf     : dense : 1 : - : - : Qwen3.6-27B-MTP Q8_K_XL
-agents-a1-q4 : models--InternScience--Agents-A1-Q4_K_M-GGUF     : Agents-A1-Q4_K_M.gguf               : moe   : 0 : - : - : Agents-A1 Q4_K_M
-agents-a1-mtp: models--protoLabsAI--Agents-A1-MTP-GGUF          : Agents-A1-MTP-Q8_0.gguf             : moe   : 1 : - : - : Agents-A1-MTP Q8_0
-qwen38-mtp   : models--ggml-org--Qwen3.8-27B-GGUF               : Qwen3.8-27B-Q4_K_M.gguf             : dense : 1 : mtp-Qwen3.8-27B-Q4_0.gguf : - : Qwen3.8-27B Q4_K_M
 qwen38-mtp-q8: models--ggml-org--Qwen3.8-27B-GGUF               : Qwen3.8-27B-Q8_0.gguf               : dense : 1 : mtp-Qwen3.8-27B-Q8_0.gguf : - : Qwen3.8-27B Q8_0
-huihui-38-q8 : models--huihui-ai--Huihui-Qwen3.8-27B-abliterated-GGUF     : Huihui-Qwen3.8-27B-abliterated-Q8_0.gguf            : dense : 0 : - : - : Huihui-Qwen3.8-27B-abl Q8_0
-huihui-36-q8 : models--huihui-ai--Huihui-Qwen3.6-27B-abliterated-MTP-GGUF : Huihui-Qwen3.6-27B-abliterated-ggml-model-Q8_0.gguf : dense : 1 : - : - : Huihui-Qwen3.6-27B-abl-MTP Q8_0
-flashnext-iq4: models--unsloth--Qwen3.8-Flash-Next-GGUF : UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf : moe : 1 : MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf : 16384 : Qwen3.8-Flash-Next UD-IQ4_XS
-flashnext-iq3: models--unsloth--Qwen3.8-Flash-Next-GGUF : UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf : moe : 1 : MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf : 32768 : Qwen3.8-Flash-Next UD-IQ3_XXS
+qwen38-q8    : models--unsloth--Qwen3.8-27B-GGUF                : Qwen3.8-27B-UD-Q8_K_XL.gguf         : dense : 0 : - : - : Qwen3.8-27B UD-Q8_K_XL
+flashnext-iq3: models--unsloth--Qwen3.8-Flash-Next-GGUF : UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf : moe : 1 : MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf : - : Qwen3.8-Flash-Next UD-IQ3_XXS
 '
 
 # Filter by ONLY= if set.
@@ -159,7 +149,7 @@ kill_server() {
 # start_server MODEL_PATH ALIAS FAMILY DRAFT_PATH [extra args...]
 # DRAFT_PATH: sidecar draft GGUF path, or "" / "-" for none. When set it is
 # passed as --model-draft; the caller still passes --spec-type/--spec-draft-n-max
-# in the extra args. Embedded-MTP models (havenoammo, Agents-A1) pass "" here —
+# in the extra args. Embedded-MTP models pass "" here:
 # their draft head loads from the main GGUF, no --model-draft needed.
 start_server() {
   model_path=$1; alias=$2; family=$3; draft_path=$4; shift 4

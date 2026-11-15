@@ -39,39 +39,6 @@ Some llama fork need to add this to be compiled on FreeBSD:
 -DCMAKE_MAKE_PROGRAM=/usr/local/bin/gmake
 ```
 
-### Link failure: undefined references to `*_cm2_*` shader symbols
-
-**Status (b9878, 2026-07-06)**: verified fixed upstream. A pristine build with
-`glslang-16.3.0 / shaderc-2026.2` on FreeBSD 16.0-CURRENT + AMD RADV succeeds
-without any patch — the probe correctly reports `GL_NV_cooperative_matrix_decode_vector
-not supported by glslc` and emits the missing cm2 shader `.cpp` sources
-(`flash_attn_cm2.comp.cpp`, `mul_mm_cm2.comp.cpp`) so the link resolves. Skip this
-whole workaround unless you see actual `undefined reference to *_cm2_*` errors.
-
-Historical context (pre-b9878, Vulkan SDK 1.4.350 era, llama.cpp `b0df4c0cf`
-version 9297): the link step failed with hundreds of `undefined reference to
-matmul_..._cm2_...` because the cmake probe unconditionally enabled
-`GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT` whenever `glslc` reported support for
-`GL_NV_cooperative_matrix2`, but `vulkan-shaders-gen` only emitted 2 of ~412 cm2
-sources. cm2 is NVIDIA-only, so on AMD/Intel the workaround was:
-```
-# Only if the pristine build fails with cm2 linker errors.
-# The regex here is fragile — CMakeLists structure has changed multiple times.
-# Verify with `grep -n GL_NV_cooperative_matrix2 ggml/src/ggml-vulkan/CMakeLists.txt`
-# and hand-edit if the sed pattern produces a syntax error.
-python3 -c "
-import re
-p='ggml/src/ggml-vulkan/CMakeLists.txt'
-s=open(p).read()
-new=re.sub(r'\n    test_shader_extension_support\(\n        \"GL_NV_cooperative_matrix2\"\n[^)]*\)\n','\n',s,count=1)
-open(p,'w').write(new)"
-rm -rf build
-cmake -B build -DGGML_VULKAN=ON
-cmake --build build --config Release -- -j $(nproc)
-```
-The full build directory must be wiped — the generator caches outputs and won't
-re-emit headers on its own.
-
 ## Usage
 
 ### Start Web UI with specific model
@@ -81,27 +48,24 @@ To find what is the up-to-date efficient model, check the latest [Open LLM Leade
 
 And choose weighted/imatrix quants (should have `-i1` in filename) over [static quants files](https://newsletter.maartengrootendorst.com/p/a-visual-guide-to-quantization).
 
+If built with curl support, simply instruct it to download the model, example
+with Qwen3.8-27B:
 ```
-curl --output-dir models -LO -C - https://huggingface.co/TheBloke/Starling-LM-7B-alpha-GGUF/resolve/main/starling-lm-7b-alpha.Q4_K_M.gguf
-./llama-server --host 0.0.0.0 --model models/starling-lm-7b-alpha.Q4_K_M.gguf
-```
-
-For big (32G) model (large context size):
-```
-curl --output-dir models -LO -C - https://huggingface.co/MaziyarPanahi/Mixtral-8x22B-v0.1-GGUF/resolve/main/Mixtral-8x22B-v0.1.IQ1_S.gguf
+build/bin/llama-server --host 0.0.0.0 \
+  -hf unsloth/Qwen3.8-27B-GGUF -hff Qwen3.8-27B-UD-Q8_K_XL.gguf \
+  --ctx-size 131072 --flash-attn on --device Vulkan0
 ```
 
-If builded with curl support, simply instruct it to download model, example with gpt-oss-20b:
+On the Strix Halo hosts, `llmsrv.sh` wraps the tuned recipes; pick a slot with
+`MODEL=flashnext`, `MODEL=qwen38-mtp` (default) or `MODEL=qwen38-q8`:
 ```
-lama-server --host 0.0.0.0 -hf ggml-org/gpt-oss-20b-GGUF --ctx-size 0 --jinja -ub 2048 -b 2048 -ngl 99 --flash-attn on
+MODEL=qwen38-q8 HOST=0.0.0.0 ./llmsrv.sh
 ```
-
-[Offical tips to run gpt-oss](https://github.com/ggml-org/llama.cpp/discussions/15396)
 
 ### Using prompt for text summarization
 
-Text summarization, by using long text input like 1 hour conference transcription as example, need a model supporting large (16K or 32k context size).
-Here I’m using a Mixtral-8x22B model (up to 64K context for this one).
+Text summarization, by using long text input like 1 hour conference transcription as example, needs a model supporting a large context (16K or 32K tokens at least).
+Qwen3.8-27B declares a 262144-token context, so a full transcript fits.
 ```
 cat <<'EOF' >prompt.txt
 ### Instruction:
@@ -118,30 +82,38 @@ cat <<EOF >>prompt.txt
 
 ### Response:
 EOF
-build/bin/llama-cli --temp 0.0 --top_p 0.0 --top_k 1.0 -n -1 -f prompt.txt -m models/Mixtral-8x22B-v0.1.IQ1_S.gguf
+build/bin/llama-cli --temp 0.0 --top-k 1 -n -1 -c 32768 -st -f prompt.txt \
+  -hf unsloth/Qwen3.8-27B-GGUF -hff Qwen3.8-27B-UD-Q8_K_XL.gguf
 
 ```
+
+`-st` (`--single-turn`) answers the prompt file once and exits instead of
+staying in interactive chat.
 
 ### Coding with vim, vs-code, etc.
 
 Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master) or a [vs-code](https://marketplace.visualstudio.com/items?itemName=ggml-org.llama-vscode):
-First download the model and start the llama server using the [model’s instruction](https://unsloth.ai/docs/models/qwen3.6)
+First download the model and start the llama server with the sampling settings from the model card:
 ```
 build/bin/llama-server \
-  -hf unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL
-  --alias qwen36-coder \
+  -hf unsloth/Qwen3.8-27B-GGUF -hff Qwen3.8-27B-UD-Q8_K_XL.gguf \
+  --alias qwen38-coder \
   --device Vulkan0 \
   --temp 0.6 \
   --top-p 0.95 \
   --top-k 20 \
   --min-p 0.00 \
   --flash-attn on \
-  --no-host \
   --kv-unified \
   --batch-size 4096 \
   --ubatch-size 1024 \
   --ctx-size 131072
 ```
+
+On the Strix Halo hosts, `USAGE=coding ./llmsrv.sh` (the default) starts the
+`flashnext` slot with the same sampling plus MTP speculative decoding (see
+below); `MODEL=qwen38-mtp` starts the dense 27B equivalent. Do not
+add `--no-host` for the dense 27B on FreeBSD: it crashes there.
 
 Then run a [qwen-code](https://qwen.ai/qwencode) as example:
 
@@ -149,53 +121,68 @@ Then run a [qwen-code](https://qwen.ai/qwencode) as example:
 cat <<EOF > ~/.env
 export OPENAI_BASE_URL=http://127.0.0.1:8080/v1
 export OPENAI_API_KEY=not-needed
-export OPENAI_MODEL=qwen36-coder
+export OPENAI_MODEL=qwen38-coder
 EOF
 qwen
 ```
 
 ### Speculative decoding with Multi-Token Prediction (MTP)
 
-Since llama.cpp b9878 (PR [#22673](https://github.com/ggml-org/llama.cpp/pull/22673)
-merged as commit `255582687`, plus follow-up fixes), the server supports MTP — a form
-of speculative decoding where the draft heads are baked into the main model (no
-separate draft model needed). Best gains are on dense models with structured output
-(code, reasoning) — Stage 5 measured ~2.35–2.38× decode on Qwen3.6-27B-MTP. **MoE
-MTP also delivers ~1.4× decode** on Agents-A1-MTP Q8_0 (Stage 7), contradicting the
-earlier assumption that MoE MTP is neutral — with the caveat that `--spec-draft-n-max`
-must be tuned tight (≤5) on MoE, else it falls off a cliff at N≥8.
+MTP is a form of speculative decoding where a small draft head, trained
+alongside the main model, proposes the next few tokens and the main model
+verifies them in one batch. It is enabled with `--spec-type draft-mtp`, and
+`--spec-draft-n-max N` caps how many tokens are drafted per verify step (the
+v1.0.0 default is 3; set it explicitly per model).
 
-The model must be an MTP-fine-tuned variant (extra NextN/MTP tensors). For Qwen3.6-27B
-dense, `havenoammo/Qwen3.6-27B-MTP-UD-GGUF` is a working choice:
+For the Qwen3.8 models the head ships as a separate GGUF passed with
+`--model-draft`:
+
+- **Qwen3.8-27B (`qwen38-mtp` slot)**: `ggml-org/Qwen3.8-27B-GGUF`, target
+  `Qwen3.8-27B-Q8_0.gguf` plus the sidecar head `mtp-Qwen3.8-27B-Q8_0.gguf`
+  from the same repo. The slot uses `--spec-draft-n-max 4` with
+  `--spec-draft-sampling probabilistic`.
+- **Qwen3.8-Flash-Next (`flashnext` slot)**: `unsloth/Qwen3.8-Flash-Next-GGUF`,
+  the `UD-IQ3_XXS` shards plus `MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf`, at
+  `--spec-draft-n-max 2`. Mainline llama.cpp needs that self-contained head,
+  re-uploaded 2026-10-05: the `shared-` heads fail because mainline cannot
+  borrow the main model's embedding (`tensor 'token_embd.weight' not found`),
+  and the pre-2026-10-05 upload of the self-contained head aborts with
+  `GGML_ASSERT(buffer) failed`. Stay on IQ3_XXS: with IQ4_XS the draft head
+  cannot load at any context size. On v1.0.0 (frwk-bsd, 2026-11-14) this gave
+  40.3 t/s decode vs 31.3 t/s spec-off, acceptance 0.65.
+
+Example for the dense model (download the head first; `-hf` does not fetch it):
 
 ```
 build/bin/llama-server \
-  -hf havenoammo/Qwen3.6-27B-MTP-UD-GGUF:UD-Q8_K_XL \
+  -hf ggml-org/Qwen3.8-27B-GGUF -hff Qwen3.8-27B-Q8_0.gguf \
+  --model-draft /path/to/mtp-Qwen3.8-27B-Q8_0.gguf \
   --device Vulkan0 \
   --flash-attn on \
-  --batch-size 2048 --ubatch-size 512 \
-  --ctx-size 65536 --parallel 1 \
+  --ctx-size 131072 --parallel 1 \
   --spec-type draft-mtp \
-  --spec-draft-n-max 5
+  --spec-draft-n-max 4
 ```
 
+`llmsrv.sh` resolves both files from the Hugging Face cache, so
+`MODEL=qwen38-mtp ./llmsrv.sh` or `MODEL=flashnext ./llmsrv.sh` is the simpler
+path.
+
 Notes:
-- Flag value renamed from `--spec-type mtp` (early PR builds) to `--spec-type draft-mtp`
-  in b9878. The full set: `none, draft-simple, draft-eagle3, draft-mtp, draft-dflash,
-  ngram-simple, ngml-map-k, ngram-map-k4v, ngram-mod, ngram-cache`.
-- The server prints `slot print_timing: id 0 | task 0 | draft acceptance = 0.81395
-  ( 105 accepted / 129 generated), mean len = 3.44` per request — acceptance rate is
-  the number to watch (~80 % is normal on coding prompts).
+- `--spec-type` values in v1.0.0: `none, draft-simple, draft-eagle3, draft-mtp,
+  draft-dflash, draft-dspark, ngram-simple, ngram-map-k, ngram-map-k4v,
+  ngram-mod, ngram-cache`.
+- The server prints `draft acceptance = 0.xxxxx (accepted / generated), mean
+  len = N` per request. Acceptance alone is misleading: mean accepted length is
+  what converts into throughput.
+- A cold start that reports `draft acceptance = 0.00000` means a dead draft
+  head; every drafted token is then wasted verify compute and decode falls
+  below spec-off. On FreeBSD (Mesa 26 RADV) the draft-mtp path intermittently
+  hits a GPUVM fault (`[gfxhub] page fault`, client ID CPC); restart, or drop
+  `--spec-type` (or use `MODEL=qwen38-q8`) for a spec-off run.
 - Chat responses expose `reasoning_content` (the `<think>…</think>` block) and
-  `content` (final answer) as separate fields in `/v1/chat/completions`. `--jinja` is
-  default-on since b9878; the old `--chat-template-kwargs {"preserve_thinking":true}`
-  hack is no longer required.
-- On Strix Halo Q8 dense at b9878, MTP with `--spec-draft-n-max 5` gives ~2.4× decode
-  (6.5 → 15.3 t/s at 4k, 6.1 → 14.5 t/s at 32k), with neutral-to-slightly-better prefill.
-  See [LLM.benches.FrameWork-Desktop.md](LLM.benches.FrameWork-Desktop.md) Stage 5.
-- `--spec-draft-n-max N` caps proposals per verify step. **Default (16) regressed between
-  b9124 and b9878** on Strix Halo — set `--spec-draft-n-max 5` explicitly for best decode.
-  N=3–5 is a plateau (~15–16 t/s); N=8 dips (~12 t/s); N=16 falls to ~10 t/s.
+  `content` (final answer) as separate fields in `/v1/chat/completions`.
+  `--jinja` is on by default.
 
 ## Unified Memory Architecture with AMD iGPU
 
@@ -214,8 +201,19 @@ GTT total in MB: 48161
 Here, the system reserved 32GB for GPU usage (default value allowed in the EFI settings of this computer)
 but it allows to use about 48GB of RAM for GPU usage in case of need by the system.
 
-To compile llama.cpp to support this feature, you need:
-- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) (version 7.2.2 used here that fix AMD Strix Halo stability);
+Vulkan (RADV) is the backend to use on Strix Halo. ROCm is currently broken on
+gfx1151: on current firmware (linux-firmware with MES 0x83, shipped by ROCm
+7.2.x apt), every ROCm dispatch faults at model warmup with
+`[gfxhub] page fault ... CPF (0x4) / WALKER_ERROR 0x1 / PERMISSION_FAULTS 0x3`.
+This is an AMD firmware bug, not a llama.cpp one, tracked upstream in
+[ROCm/ROCm#5890](https://github.com/ROCm/ROCm/issues/5890),
+[#6186](https://github.com/ROCm/ROCm/issues/6186) and
+[#5724](https://github.com/ROCm/ROCm/issues/5724). Vulkan on the same silicon is
+unaffected; use `--device Vulkan0`. The ROCm build steps below are kept for
+when AMD ships a fix, and for other AMD GPUs.
+
+To compile llama.cpp with ROCm, you need:
+- [Official AMD ROCm drivers and libraries](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html);
 - [Configure GPU access for your user](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/prerequisites.html#group-permissions)
 - Instruct llama.cpp to use the BLAS acceleration on HIP-supported AMD GPUs;
 - Enable HIP UMA (LLAMA_HIP_UMA).
@@ -267,164 +265,17 @@ ggml_backend_cuda_get_available_uma_memory: final available_memory_kb: 61262128
   Vulkan0: AMD Radeon Graphics (RADV GFX1151) (97568 MiB, 97227 MiB free)
 ```
 
-Then force usage of UMA with the env var `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1` when starting llama.
-And run a quick test using the big Qwen3.5-397B-A17B:UD-IQ2_XXS model:
-
--hf unsloth/Qwen3.5-397B-A17B:UD-IQ2_XXS
-
+Then force usage of UMA with the env var `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1` when starting llama:
 ```
-GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-cli -hf Qwen3.5-397B-A17B-GGUF:UD-IQ2_XXS --flash-attn on --ctx-size 0 --jinja -ub 2048 -b 2048 -p "I believe the meaning of life is" -n 128 -ngl 99 -no-cnv
+GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 build/bin/llama-cli \
+  -hf unsloth/Qwen3.8-27B-GGUF -hff Qwen3.8-27B-UD-Q8_K_XL.gguf \
+  --device ROCm0 --flash-attn on -p "I believe the meaning of life is" -n 128 -st
 ```
 
-Log should have this output:
-```
-ggml_cuda_init: found 1 ROCm devices:
-  Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32
-(...)
-llama_model_load_from_file_impl: using device ROCm0 (AMD Radeon Graphics) (0000:c3:00.0) - 47985 MiB free
-llama_model_loader: loaded meta data with 35 key-value pairs and 459 tensors from /home/olivier/.cache/llama.cpp/
-ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf (version GGUF V3 (latest))
-(...)
-load_tensors: offloading 24 repeating layers to GPU
-load_tensors: offloading output layer to GPU
-load_tensors: offloaded 25/25 layers to GPU
-load_tensors:        ROCm0 model buffer size = 10949.38 MiB
-load_tensors:   CPU_Mapped model buffer size =   586.82 MiB
-(...)
-system_info: n_threads = 16 (n_threads_batch = 16) / 32 | ROCm : NO_VMM = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX_VNNI = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | AVX512 = 1 | AVX512_VBMI = 1 | AVX512_VNNI = 1 | AVX512_BF16 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 |
-(...)
-```
+The log should report `ggml_cuda_init: found 1 ROCm devices` and
+`llama_model_load_from_file_impl: using device ROCm0`.
 
-> **Warning (2026-07-07):** the ROCm rows in the table below are historical
-> (ROCm 7.2 era, before the AMD firmware regression). On current firmware
-> (linux-firmware with MES 0x83, shipped by ROCm 7.2.x apt), **every ROCm
-> dispatch on gfx1151 faults at model warmup** with
-> `[gfxhub] page fault ... CPF (0x4) / WALKER_ERROR 0x1 / PERMISSION_FAULTS 0x3`.
-> Tracked upstream in [ROCm/ROCm#5890](https://github.com/ROCm/ROCm/issues/5890),
-> [#6186](https://github.com/ROCm/ROCm/issues/6186),
-> [#5724](https://github.com/ROCm/ROCm/issues/5724). Not a llama.cpp bug — no
-> upstream PR fixes it. Vulkan on the same silicon is unaffected and ~2×
-> faster than ROCm was anyway; use `--device Vulkan0`. See
-> [LLM.benches.FrameWork-Desktop.md](LLM.benches.FrameWork-Desktop.md) for the
-> current numbers.
-
-Some benches (notice the llama-bench is using -ngl 99 by default) with 2 models and with different backend (ROCM, Vulkan, CPU):
-  - enables Flash Attention, an optimized algorithm designed to speed up the "Attention" mechanism—the most computationally expensive part of a Transformer model.
-  - enables memory mapping, to tells the OS to map the model file directly into the process's virtual address space
-  - Use 16 threads (=number of physical cores)
-  - Display Token Generation (decoding) speeds (n-gen 128), line tg128 in the result
-  - enables Unified Memory Management (no-host), on APU the GPU can access the model data directly without needing a redundant copy in host-managed memory
-  - Enable performance mode with the Linux governor
-```
-echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-build/bin/llama-bench \
-  -m ~/.cache/llama.cpp/ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf,\
-~/.cache/llama.cpp/unsloth_Qwen3.5-27B-GGUF_Qwen3.5-27B-UD-Q4_K_XL.gguf,\
-~/.cache/llama.cpp/unsloth_Qwen3-Next-80B-A3B-Instruct-GGUF_Qwen3-Next-80B-A3B-Instruct-Q4_K_M.gguf \
-  --device none,ROCm0,Vulkan0 \
-  --flash-attn 0,1 \
-  --batch-size 2048 \
-  --ubatch-size 512 \
-  --n-prompt 2048,8192,16384 \
-  --n-gen 128 \
-  --mmap 1 \
-  --threads 16 \
-  --no-host 1 \
-  --n-gen 128 \
-  --repetitions 5
-
-ggml_cuda_init: found 1 ROCm devices:
-  Device 0: AMD Radeon Graphics, gfx1151 (0x1151), VMM: no, Wave Size: 32
-ggml_vulkan: Found 1 Vulkan devices:
-ggml_vulkan: 0 = AMD Radeon Graphics (RADV GFX1151) (radv) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 64 |
-shared memory: 65536 | int dot: 1 | matrix cores: KHR_coopmat | ngl: 99 | mmap: 1 | noh: 1
-| model                    |      size |  params | backend     | dev     | fa |    test |             t/s |
-| ------------------------ | --------: | ------: | ----------- | ------- | -: | ------: | --------------: |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |  pp2048 |  168.64 ± 3.37  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |  pp8192 |  146.99 ± 0.28  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 | pp16384 |  121.09 ± 0.24  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | none    |  1 |   tg128 |   34.03 ± 0.06  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  507.51 ± 4.11  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  476.48 ± 1.95  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  430.54 ± 1.00  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   68.27 ± 0.25  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  470.19 ± 1.02  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  405.49 ± 0.90  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  339.08 ± 1.39  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   64.50 ± 1.48  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 | 1057.21 ± 3.79  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  958.72 ± 1.26  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  823.88 ± 0.89  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   74.15 ± 0.03  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  932.91 ± 4.12  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  779.61 ± 1.01  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  608.28 ± 0.55  |
-| gpt-oss 20B MXFP4 MoE    | 11.27 GiB | 20.91 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   72.79 ± 0.02  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |  pp2048 |   24.88 ± 0.03  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |  pp8192 |   23.78 ± 0.02  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 | pp16384 |   22.30 ± 0.02  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | none    |  1 |   tg128 |    4.94 ± 0.00  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  209.71 ± 0.07  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  160.12 ± 0.52  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  120.56 ± 0.82  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   10.56 ± 0.00  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  236.14 ± 1.41  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  220.67 ± 0.19  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  202.07 ± 0.51  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   10.51 ± 0.00  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 |  201.06 ± 0.06  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  193.04 ± 0.10  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  181.31 ± 1.34  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   10.48 ± 0.01  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  198.40 ± 0.10  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  192.44 ± 0.13  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  182.08 ± 1.50  |
-| qwen35 27B Q4_K - Medium | 16.40 GiB | 26.90 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   10.48 ± 0.00  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | none    |  0 |  pp2048 |   96.59 ± 1.30  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | none    |  0 |  pp8192 |   94.81 ± 0.39  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | none    |  0 | pp16384 |   90.03 ± 0.19  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | none    |  0 |   tg128 |   23.48 ± 0.15  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  0 |  pp2048 |  517.19 ± 3.27  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  0 |  pp8192 |  481.88 ± 0.97  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  0 | pp16384 |  436.78 ± 6.83  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  0 |   tg128 |   38.66 ± 0.22  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  1 |  pp2048 |  455.70 ± 2.26  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  1 |  pp8192 |  341.23 ± 1.65  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  1 | pp16384 |  254.38 ± 1.02  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | ROCm0   |  1 |   tg128 |   38.58 ± 0.14  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  0 |  pp2048 |  450.33 ± 8.52  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  0 |  pp8192 |  430.85 ± 1.63  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  0 | pp16384 |  404.22 ± 5.23  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  0 |   tg128 |   38.77 ± 0.02  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  1 |  pp2048 |  427.86 ± 33.08 |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  1 |  pp8192 |  429.70 ± 20.43 |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  1 | pp16384 |  422.36 ± 7.85  |
-| qwen3next 80B.A3B Q4_K   | 45.17 GiB | 79.67 B | ROCm,Vulkan | Vulkan0 |  1 |   tg128 |   38.92 ± 0.08  |
-
-
-build: 451ef0843 (8243)
-```
-
-While running, system usage:
-```
-$ rocm-smi
-
-WARNING: AMD GPU device(s) is/are in a low-power state. Check power control/runtime_status
-
-======================================= ROCm System Management Interface =======================================
-================================================= Concise Info =================================================
-Device  Node  IDs              Temp    Power     Partitions          SCLK  MCLK     Fan  Perf  PwrCap  VRAM%  GPU%
-              (DID,     GUID)  (Edge)  (Socket)  (Mem, Compute, ID)
-================================================================================================================
-0       1     0x1586,   42721  68.0°C  59.098W   N/A, N/A, 0         N/A   1000Mhz  0%   auto  N/A     33%    100%
-================================================================================================================
-============================================= End of ROCm SMI Log ==============================================
-```
-
-Conclusion: It is indeed able to load big model and using the iGPU, but more important, Vulkan
-is twice faster than ROCm 7.2.
-
-Warning: to be able to load large model, some kernel/amdgpu drivers tunning are mandatory
+Warning: to be able to load large model, some kernel/amdgpu drivers tunning are mandatory
 Example with AMD Strix Halo that only use half available (128GB shared RAM here):
 Default values allows only using 64GB:
 ```
@@ -447,6 +298,11 @@ ggml_cuda_init: found 1 ROCm devices (Total VRAM: 120000 MiB):
 Available devices:
   ROCm0: AMD Radeon Graphics (120000 MiB, 124096 MiB free)
 ```
+
+A 120 GB aperture lets models load that leave the OS no headroom: on frwk-linux,
+loading Flash-Next UD-IQ4_XS with its MTP head this way kernel-panicked the
+host. See "DANGER: gttsize=120000 panicked the Linux kernel" in
+[benches.FrameWork-Desktop.md](benches.FrameWork-Desktop.md).
 
 
 ## Intel iGPU (Arc graphics)
@@ -480,60 +336,27 @@ Then build llamacpp using SYSCL and check it detects your GPU:
 ~/llama.cpp$ ./examples/sycl/build.sh
 ```
 
-And start a bench (remember to load OneAPI vars for each new session), and with 96MB of RAM, we could try big models:
+And start a bench (remember to load OneAPI vars for each new session); with 96GB of RAM, big models fit.
+The startup banner should list one `[level_zero:gpu:0]` SYCL device:
 ```
 ~/llama.cpp$ source /opt/intel/oneapi/setvars.sh
-~/llama.cpp$ build/bin/llama-bench -m models/starling-lm-7b-alpha.Q4_K_M.gguf \
--m models/mixtral-8x7b-v0.1.Q5_K_M.gguf \
--m models/calme-2.4-rys-78b.i1-Q4_K_S.gguf
-ggml_sycl_init: GGML_SYCL_FORCE_MMQ:   no
-ggml_sycl_init: SYCL_USE_XMX: yes
-found 1 SYCL devices:
-|  |                   |                        |       |Max    |        |Max  |Global |               |
-|  |                   |                        |       |compute|Max work|sub  |mem    |               |
-|ID|        Device Type|                    Name|Version|units  |group   |group|size   | Driver version|
-|--|-------------------|------------------------|-------|-------|--------|-----|-------|---------------|
-| 0| [level_zero:gpu:0]| Intel Graphics [0x7d55]|    1.3|    128|    1024|   32| 94336M|      1.3.27642|
-[SYCL] call ggml_check_sycl
-get_memory_info: [warning] ext_intel_free_memory is not supported (export/set ZES_ENABLE_SYSMAN=1 to support), use total memory as free memory
-ggml_check_sycl: GGML_SYCL_DEBUG: 0
-ggml_check_sycl: GGML_SYCL_F16: yes
-| model                    |      size |  params | backend | ngl |  test |           t/s |
-| ------------------------ | --------: | ------: | ------- | --: | ----: |-------------: |
-| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | SYCL    |  99 | pp512 | 204.51 ± 5.79 |
-| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | SYCL    |  99 | tg128 |   6.13 ± 0.02 |
-| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | SYCL    |  99 | pp512 |  59.67 ± 0.19 |
-| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | SYCL    |  99 | tg128 |   2.42 ± 0.01 |
-| qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | SYCL    |  99 | pp512 |  15.47 ± 0.15 |
-| qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | SYCL    |  99 | tg128 |   0.60 ± 0.01 |
-
-build: d5cb8684 (3891)
+~/llama.cpp$ build/bin/llama-bench -m /path/to/Qwen3.8-27B-UD-Q8_K_XL.gguf
 ```
 
 To be compared with CPU only usage:
 ```
-~/llama.cpp$ build/bin/llama-bench -t $(nproc) -m models/starling-lm-7b-alpha.Q4_K_M.gguf \
- -m models/mixtral-8x7b-v0.1.Q5_K_M.gguf
-| model                    |      size |  params | backend | threads |  test |          t/s |
-| ------------------------ | --------: | ------: | --------| ------: | ----: | -----------: |
-| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      22 | pp512 | 24.47 ± 0.49 |
-| llama 7B Q4_K - Medium   |  4.07 GiB |  7.24 B | CPU     |      22 | tg128 |  9.22 ± 0.07 |
-| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      22 | pp512 | 10.11 ± 0.02 |
-| llama 8x7B Q5_K - Medium | 58.89 GiB | 91.80 B | CPU     |      22 | tg128 |  4.51 ± 0.01 |
-| qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | CPU     |      22 | pp512 |  1.97 ± 0.02 |
-| qwen2 ?B Q4_K - Small    | 43.72 GiB | 77.97 B | CPU     |      22 | tg128 |  1.19 ± 0.00 |
-
-build: d5cb8684 (3891)
+~/llama.cpp$ build/bin/llama-bench -t $(nproc) -m /path/to/Qwen3.8-27B-UD-Q8_K_XL.gguf
 ```
 
 ## Vision
 
-Reading picture:
+Reading picture needs a model that ships an mmproj (vision projector) file in
+its repo; `-hf` downloads it automatically:
 ```
 $ curl --output /tmp/fbsd.png  https://www.freebsd.org/images/banner-red.png
-$ build/bin/llama-mtmd-cli -hf ggml-org/gemma-3-4b-it-GGUF --image /tmp/fbsd.png -p "Describe this image"
+$ build/bin/llama-mtmd-cli -hf <vision-model-repo> --image /tmp/fbsd.png -p "Describe this image"
 (etc..)
-$ build/bin/llama-mtmd-cli -hf ggml-org/gemma-3-4b-it-GGUF --image ~/Downloads/iKVM_capture_dump.jpg -p "you are an OCR machine, write text on the picture"
+$ build/bin/llama-mtmd-cli -hf <vision-model-repo> --image ~/Downloads/iKVM_capture_dump.jpg -p "you are an OCR machine, write text on the picture"
 ```
 
 # whisper.cpp (Voice to text)
