@@ -285,11 +285,50 @@ The `tb` hint comes from the shared hint table and does not fit this
 laptop (`thunderbolt(4)` does not know its USB4 controllers); making hints
 per chip is left out.
 
+## USB3_0/USB3_1: not the xhci controllers, not the USB4 hosts
+
+With `debug.bootverbose=1` the suspend log shows every PCI function FreeBSD
+controls going to D3cold through ACPI (`Transition from D0 to D3cold`, `set
+ACPI power state D3cold on ...`): the four xhci controllers (`XHC0`,
+`XHC1`, `XHC3`, `XHC4`, which have `_S0W`, `_PR0`/`_PR3` and no `_S3D`),
+NVMe and its root port, HD audio, the PCIe root ports and the I2C
+controllers; the LPS0 `_DSM` calls (DISPLAY_OFF, LPI_ENTRY, SLEEP_ENTRY)
+all succeed. `PCI_POWERSTATE_D3` is `PCI_POWERSTATE_D3_COLD` in this tree,
+so FreeBSD already asks for D3cold.
+
+amdsmu's comment says USB3_0/USB3_1 report USB4 on Phoenix and Krackan
+Point. The two USB4 host interfaces (`NHI0`/`NHI1`, 1022:158d and 158e,
+class 0x0c0340) have no driver and stay in D0, since unattached functions
+keep their power state over suspend (`pci_set_power_child()` skips them,
+`hw.pci.do_power_nodriver` is 0). Two tests:
+
+- `pciconf -w` PMCSR to D3hot before suspend (stays in place over the
+  sleep, `pci_cfg_restore()` brings them back to D0): no change.
+- Fourth commit on `olivier-s2idle-wake`, `pci: power down driverless USB4
+  hosts on suspend`: `pci_set_power_child()` also handles unattached
+  class/subclass/progif USB4 functions. Both now go to D3cold through ACPI
+  on suspend and back to D0 on resume, but USB3_0 and USB3_1 still block.
+
+So the remaining USB blockers are neither the xhci controllers nor the USB4
+host interfaces in D0. Nor the USB-C dock: with it unplugged (Wi-Fi on a
+kernel with both series, `test-wifi-s2idle`), the blockers are the same
+(DISPLAY, GFX, USB3_0, USB3_1, MPM, JPEG_1, 32.5 s). Remaining candidate:
+Linux's thunderbolt driver puts the USB4 routers to sleep before powering
+the host interfaces down (amdsmu's hint says "load tb");
+`thunderbolt(4)` knows AMD Pink Sardine (1022:1668, 1669), not 1022:158d
+and 158e.
+
+Side results of that run: mt7925 (no PM handlers) loses its firmware over
+the sleep (`driver own failed`, MCU timeout), reloads it by itself, but
+`wlan0` stays down; and the DHCP default route stayed on the dead `wlan0`,
+so the replugged `ue0` could not reach the gateway until `wlan0` was
+destroyed and a default route added.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
-2. xhci: put the controllers in D3 for suspend-to-idle; amdgpu S0ix path
-   in drm-kmod (DISPLAY, GFX, JPEG blocks).
+2. USB3_0/USB3_1: try `thunderbolt(4)` on 1022:158d/158e (USB4 router
+   sleep); amdgpu S0ix path in drm-kmod (DISPLAY, GFX, JPEG blocks).
 3. Power button (pin 54) still does not wake: check the `amdgpio` arming
    (register values after suspend) and the MP2 (`MP2C`) path.
 4. Turn `do_idle()` into the loop its comment describes (the key wake
@@ -315,3 +354,7 @@ per chip is left out.
 | 2026-11-15 | same + `hw.acpi.cpu.cx_lowest=Cmax` | space key wakes it, full resume (network, NVMe, amdgpu); no S0i3: DISPLAY, GFX, JPEG_1, USB3_0/1, MPM active the whole 67 s |
 | 2026-11-15 | + `acpi_cpu` deepest-Cx fix, `cx_lowest` C1 | space key wakes it, full resume, `cx_lowest` restored to C1; no S0i3 (50.3 s software DRIPS) |
 | 2026-11-15 | + amdsmu diagnostics commit | blocker report: DISPLAY, GFX, USB3_0, USB3_1, MPM, JPEG_1; USB4_1 garbage filtered |
+| 2026-11-15 | `debug.bootverbose=1` | every xhci, NVMe, root port, I2C function goes to D3cold; LPS0 calls succeed |
+| 2026-11-15 | NHI0/NHI1 D3hot via pciconf | still DISPLAY, GFX, USB3_0, USB3_1 |
+| 2026-11-15 | + `pci` USB4 power-down commit | NHI0/NHI1 D3cold over suspend; USB3_0, USB3_1 still block |
+| 2026-11-15 | Wi-Fi + s2idle kernel, dock unplugged | same blockers; mt7925 reloads firmware after resume but `wlan0` stays down |
