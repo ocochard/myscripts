@@ -602,6 +602,41 @@ real blocker with amdgpu and `tb` loaded; Linux reports JPEG_1 active for
 5309 us only. amdgpu sends the same JPEG1 power-down on both systems, so
 what keeps JPEG_1 up on FreeBSD is still unknown.
 
+## JPEG_1: the last blocker, measured per suspend
+
+amdsmu resets and starts the SMU log only at attach; Linux does it before
+every suspend (`amd_pmc_setup_smu_logging()` in the prepare hook). Without
+that the "last active time" accumulates: a second suspend in one boot
+reported `JPEG_1.last_time: 43088401`, exactly the two sleeps (15666760 +
+27421641 us), which the "longer than the sleep" filter then hid.
+
+With amdsmu sending `SMU_MSG_LOG_RESET` and `SMU_MSG_LOG_START` before the
+hint (uncommitted, combo worktree), the GFX filter, amdgpu and `tb` (both
+routers asleep), one 13.3 s sleep:
+
+```
+amdsmu0: IP blocks that blocked S0i3 entry:
+amdsmu0:   JPEG_1 (active for 13346514 us)
+dev.amdsmu.0.ip_blocks.JPEG_0.last_time: 1005453
+dev.amdsmu.0.ip_blocks.CPU.last_time: 1005453
+```
+
+JPEG_1 is the only blocker left, and still no S0i3 attempt. JPEG_0 and CPU
+are active for the same 1.0 s (likely the 1 s `hw.acpi.sleep_delay` busy
+wait before `do_idle()`). amdgpu sent `PowerDownJpeg1` (resp 1) before
+suspend and its JPEG instance 1 is power gated, as on Linux; the
+`jpeg_v4_0_5` gating code is identical in drm-kmod 6.12 and Linux 7.2.
+Without amdgpu and with `tb`, JPEG_1 did not block and the only report was
+the untracked GFX, yet the SMU did not attempt S0i3 either: JPEG_1 is not
+the only missing condition.
+
+Driverless PCI functions are not it either. A debug `pci_power_unattached()`
+that powers down every function without a driver put the Wi-Fi card
+(driver unloaded for the tests, 193:0:0), the PSP crypto engine (195:0:2),
+the audio coprocessor (195:0:5), the sensor hub (195:0:7), 196:0:0 and the
+NPU (196:0:1) in D3cold; resume worked, and JPEG_1 still blocked the whole
+15.9 s with no S0i3 attempt.
+
 ## Next steps
 
 1. `do_idle()`: make the boot CPU enter its deepest C-state explicitly.
@@ -660,3 +695,6 @@ what keeps JPEG_1 up on FreeBSD is still unknown.
 | 2026-11-15 | debug amdgpu: JPEG/VCN state at suspend, `tb` loaded | VCN0/1 and JPEG0/1 already gated; GFX, JPEG_1 still block |
 | 2026-11-15 | Ubuntu 7.0, SMU/PMC debug messages, `rtcwake -m freeze` | S0i3 29.2 s; amdgpu suspend sends only VPE up/down |
 | 2026-11-15 | FreeBSD, amdgpu SMU messages printed, `tb` loaded | same SMU messages as Linux; GFX untracked (false blocker); JPEG_1 blocks |
+| 2026-11-15 | second suspend in one boot, amdgpu + `tb` (routers not re-slept) | JPEG_1 time = sum of both sleeps (no per-suspend log reset); USB3_0/1, DISPLAY, MPM back |
+| 2026-11-15 | amdsmu log reset + start before each hint, GFX filter, amdgpu + `tb` | only JPEG_1 blocks (13.3 s); still no S0i3 attempt |
+| 2026-11-15 | + every driverless PCI function in D3cold (Wi-Fi, PSP, ACP, sensor hub, NPU) | resume works; JPEG_1 still the only blocker, no S0i3 attempt |
