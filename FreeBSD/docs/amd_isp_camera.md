@@ -8,8 +8,9 @@ records what the Linux driver does, measured on the laptop, so the FreeBSD
 driver can be written from this description instead of from the Linux code.
 
 Status (2026-11-16): the camera works on Linux; on FreeBSD a test driver
-(`amdisp.ko`) provides `/dev/video0` (NV12 and YUYV 1920x1080, about 24
-fps), usable with VLC, with the newer ISP firmware. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
+(`amdisp.ko`) provides `/dev/video0` (NV12 and YUYV, ten sizes from
+640x360 to 2888x1808, about 24 fps), usable with VLC, with the newer ISP
+firmware. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
 Raw traces: [amd_isp/](amd_isp/).
 
 ## 1. Background
@@ -851,6 +852,31 @@ two "command done" answers for the buffers given back each frame, plus the
 set-up commands). Frame delivery is unchanged; the frame rate stays at the
 firmware's 41.5 ms.
 
+### Ninth step: all ten frame sizes
+
+The driver now offers the ten sizes the Linux driver offers, each in NV12
+and YUYV at 30 fps (20 modes): 640x360, 640x480, 1280x720, 1280x960,
+1920x1080, 1920x1440, 2560x1440, 2880x1620, 2880x1624 and 2888x1808.
+`SET_OUT_CHAN_PROP` takes the chosen width and height, with a line pitch of
+the width (NV12) or twice the width (YUYV); in NV12 the UV plane starts
+right after the width x height bytes of Y. `try_format` and `set_format`
+snap any request to the nearest supported size (by area), and the four
+frame buffers are allocated for the largest mode (2888x1808 YUYV, about
+10.4 MB each).
+
+| Mode | fps | Bytes, 40 frames | Firmware meta info |
+|---|---|---|---|
+| 640x360 NV12 | 23.6 | 13824000 (40 x 345600) | 640x360 |
+| 1280x720 YUYV | 23.5 | 73728000 | 1280x720 |
+| 1920x1440 NV12 | 23.6 | 165888000 | 1920x1440 |
+| 2888x1808 NV12 | 23.8 | 313290240 | 2888x1808 |
+| 2888x1808 YUYV | 23.9 | 417720320 | 2888x1808 |
+
+Every run delivered exactly 40 frames of the right size, and the firmware's
+meta info reports the requested size. Frames at the two extremes (2888x1808
+NV12 and 640x480 YUYV) decode to correct pictures with no stride errors.
+The frame rate stays at about 24 fps at every size.
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
@@ -903,4 +929,5 @@ the next reboot hung; a forced power off was needed. Always set the format
 | FreeBSD, `/dev/video0` with `v4l2-ctl` and VLC | 23.8 fps, live picture in VLC, repeated streams work |
 | FreeBSD, `/dev/video0` in YUYV with `v4l2-ctl` and VLC | 23.8 fps, correct picture, VLC uses YUYV directly |
 | FreeBSD, interrupt-driven (amdgpu IH client ISP) | 452 interrupts for 130 frames, 23.8 fps, no polling |
+| FreeBSD, ten sizes 640x360 to 2888x1808, NV12 and YUYV | all modes stream at about 24 fps, correct size and picture |
 | IR camera (HM1092) | untested, no driver on any system |
