@@ -81,12 +81,41 @@ capability header `0x190b640f`; kernels from FreeBSD main 46ce9acd6d15 plus the 
 | Kernel | Tunables | Result |
 |---|---|---|
 | stock | `hw.amdiommu.enable=1` | USB driver attach loop during boot, as on the SER6; forced power off |
-| patched | `hw.amdiommu.enable=1` (+ `boot_verbose`) | boots; `dev.amdiommu.0.ir: 1`, `dev.amdiommu.0.dma: 0`; GPU and Wi-Fi contexts "id-mapped"; NVMe, USB, Wi-Fi, keyboard (IOAPIC IRQ 1) and I2C (IRQs 3, 4, 6) all get their interrupts and work; no IOMMU event; but amdgpu's display stalls: repeated `flip_done timed out`, `commit wait timed out` and `DMCUB error`, the console redraws only every few seconds |
+| patched | `hw.amdiommu.enable=1` | boots; `dev.amdiommu.0.ir: 1`, `dev.amdiommu.0.dma: 0`; all 11 contexts "id-mapped" (bridges 0:1:1 and 0:1:2, NVMe, GPU and its other functions, Wi-Fi, xHCI), none "re-mapped"; NVMe, USB, Wi-Fi, keyboard (IOAPIC IRQ 1) and I2C (IRQs 3, 4, 6) all get their interrupts and work; no IOMMU event; with `boot_verbose`, amdgpu's SMU hangs in about half the boots (below) |
 | patched | `hw.amdiommu.enable=1 hw.iommu.dma=1` | boots; no IOMMU event; no display error |
 
-The display stall with interrupt remapping alone is a separate problem, not understood yet:
-GPU interrupts do arrive (about 120/s on `vgapci0`), and the stall is gone once DMA remapping is on too.
-The context count of the SER6 row could not be checked here: `boot_verbose` overflows the message buffer before syslog starts.
+The context count needs `kern.msgbufsize=4194304`: with `boot_verbose` the default message buffer overflows before syslog starts.
+
+A separate problem shows on this laptop with the patch and interrupt remapping alone (`hw.amdiommu.enable=1`, contexts id-mapped):
+in about half the boots with `boot_verbose`, amdgpu's SMU firmware stops answering, and the display follows.
+The first error comes right after amdgpu initializes and the console moves to `drmfb`:
+
+```
+drmn0: SMU: I'm not done with your previous command: SMN_C2PMSG_66:0x00000032 SMN_C2PMSG_82:0x00000000
+drmn0: Failed to power gate VPE!
+[drm ERROR :amdgpu_dpm_enable_vpe] Dpm disable vpe failed, ret = -60.
+```
+
+`0x32` is `PPSMC_MSG_PowerDownVpe` (`smu_v14_0_0_ppsmc.h`): the SMU took the request to power down the VPE (video processing engine)
+and never completed it. Every later SMU request times out (VCN and JPEG power gating fail the same way),
+the display's clock manager warns (`dcn35_smu.c:175`), and page flips time out (`flip_done timed out`, `pflip_status != AMDGPU_FLIP_NONE`,
+`DMCUB error`): the console redraws only every few seconds and the boot takes about 3 minutes instead of 20 s.
+Up to that point amdgpu's messages are the same in good and bad boots; no IOMMU event is logged.
+
+Patched kernel, `hw.amdiommu.enable=1 boot_verbose=YES kern.msgbufsize=4194304`, VPE switched off or not with amdgpu's
+`hw.amdgpu.ip_block_mask` (VPE is IP block 11, `vpe_v6_1`, so `0xfffff7ff`), one boot at a time, alternating:
+
+| VPE | Boots | SMU hang | First SMU failure |
+|---|---|---|---|
+| on (default) | 9 | 5 | `0x32` (`PowerDownVpe`) in every hang inspected |
+| off (`hw.amdgpu.ip_block_mask=0xfffff7ff`) | 5 | 0 | none |
+
+The hangs came in runs (four in a row, then four good boots, then one), so the rate is uneven;
+at the overall rate, 5 good boots in a row with VPE off would happen by chance about 2% of the time.
+Not seen: without `boot_verbose` (one boot, typing at the console included), without any IOMMU (one boot with `boot_verbose`),
+or with DMA remapping on as well (`hw.iommu.dma=1`, two boots, both without `boot_verbose`). A kernel with a debug log in `amdiommu_map_msi_intr()`
+did not hang in 4 boots, so timing matters. Not known: why powering down the VPE hangs the SMU only with id-mapped contexts.
+Workaround: `hw.amdgpu.ip_block_mask=0xfffff7ff`; the VPE is a video post-processing engine, and nothing that uses it on FreeBSD is known.
 
 Framework Desktop, 2026-11-16: AMD Ryzen AI Max+ 395 (Strix Halo), IOMMU 1022:1508 at 0:0:2, capability header `0x190b640f`,
 NPU 1022:17f0 at pci0:194:0:1 with the amdxdna port (drm-kmod branch `olivier-amdxdna`, "carveout" mode: NPU buffers in one physically contiguous region,
