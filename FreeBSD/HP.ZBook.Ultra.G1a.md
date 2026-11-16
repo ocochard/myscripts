@@ -16,6 +16,7 @@ Linux comparison: Ubuntu with Linux 7.0.0-43 on the same laptop, same day (`lspc
 | GPU, display, Vulkan, video decode/encode | 1002:1586 Radeon 8060S | `amdgpu` from `graphics/drm-latest-kmod` with 4 FPU patches from ports branch [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo) (stock: panic when amdgpu loads) + `gpu-firmware-amd-kmod`, Mesa (see [GPU features](#gpu-features)) |
 | HDMI/DP audio | 1002:1640 | `hdac0`, 4 `pcm` outputs |
 | Headphone jack | 1022:15e3 + Realtek ALC245 codec | `hdac1`, `pcm5` (headphones) |
+| Built-in microphones | 2 digital microphones on the Audio Coprocessor (1022:15e2) | not in FreeBSD yet: `snd_acp` from branch [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp), `pcm6` record (see below) |
 | Internal speakers | `pcm4` (ALC245) + 4 Cirrus Logic CS35L54 amplifiers (CSC3554) | not in FreeBSD yet: `snd_cs35l54` from branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) + firmware port (see below) |
 | Wi-Fi | MediaTek MT7925 (14c3:7925) | not in FreeBSD yet: `if_mt7925` from branch [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) + `wifi-firmware-mt76-kmod-mt7925`; TX 474-509, RX 289-314 Mbit/s, survives suspend-to-idle (see below) |
 | Built-in camera | OmniVision OV05C behind the ISP 4.1 | not in FreeBSD yet: `amdisp` from drm-kmod branch [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) + the August 2025 ISP firmware; `/dev/video0`, 30 fps (see below) |
@@ -212,7 +213,11 @@ Impact: no crypto offload; nothing visible for laptop use.
 DSP for the internal digital microphones (DMIC) and audio offload.
 The built-in microphones are on the ACP's PDM (pulse density modulation) interface, not on the HDA codec:
 the ALC245 has no internal microphone pin (its only microphone pin, nid 25, is the headset jack).
-Impact: no built-in microphone on FreeBSD; the headset jack microphone goes through the ALC245 codec (`pcm4` record, not tested).
+Impact with stock FreeBSD: no built-in microphone; the headset jack microphone goes through the ALC245 codec (`pcm4` record, not tested).
+Driver: `snd_acp`, branch [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) (commit 6ba38c3ca4a6, not in `zbook`):
+a capture-only `pcm(4)` driver for ACP 7.x (rev 0x70-0x72). Tested 2026-11-16 on this laptop: `pcm6`, stereo 32-bit 48 kHz,
+quiet room -36 to -41 dBFS, clapping peaks at 0 dBFS, reload and restart work; no gain control, DC offset not removed.
+How it works, step by step: [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md).
 
 On Ubuntu (Linux 7.0.0-43, 2026-11-16) they record. Linux uses the plain ACP stack, not SOF:
 `snd_acp_pci` on the PCI function creates the platform device `acp_asoc_acp70` (`snd_acp70`, with `snd_acp_pdm` and `snd_acp_pcm`),
@@ -415,6 +420,7 @@ the document that explains each one.
 | NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna); ports [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu) (devel/xrt) | 8; 3 | jobs, XRT, FastFlowLM and runtime PM (NPU in D3 when idle) work (tested on a Framework Desktop, needs the IOMMU on) | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
 | AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) (in `zbook`) | 2 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu's SMU hangs on `PowerDownVpe` in about half the boots with `boot_verbose` (workaround `hw.amdgpu.ip_block_mask=0xfffff7ff`); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
 | GPU (amdgpu panic when it loads) | ports [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo) (graphics/drm-latest-kmod) | 1 | fix, the installed package is built from it; [ports PR #625](https://github.com/freebsd/freebsd-ports/pull/625) | [GPU features](#gpu-features) |
+| Built-in microphones (ACP PDM) | [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) (not in `zbook`) | 1 | `snd_acp`: records stereo 32-bit 48 kHz from the two digital microphones, tested | [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md) |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
 ### Applying the work, in order
@@ -491,6 +497,7 @@ Done, waiting to be sent or reviewed:
 - Camera (ISP 4.1): drm-kmod branch `olivier-amdisp`, 30 fps; needs the newer ISP firmware in the firmware port
   ([docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md)).
 - IOMMU fixes: three commits, see the IOMMU section.
+- Built-in microphones (ACP): branch `olivier-acp`, driver `snd_acp`, see the Audio Coprocessor section.
 - NPU: works on a Framework Desktop (LLM inference with FastFlowLM, XRT); not yet tested on this laptop.
 
 Still worth the work:
@@ -503,8 +510,6 @@ Still worth the work:
    Builds on the Meteor Lake GpioInt work.
 3. MediaTek Bluetooth firmware loader.
    A small `ubt` companion like `rtlbtfw`; needs the MediaTek firmware download protocol.
-4. Internal microphone (ACP).
-   Needed for calls without a headset; ASoC-style driver, medium to large effort.
 
 Skip for laptop use:
 

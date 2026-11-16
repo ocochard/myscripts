@@ -1,0 +1,769 @@
+From 6ba38c3ca4a6fd4b499cbcf47ca3ffbe0e25807f Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 22:19:30 +0100
+Subject: [PATCH] snd_acp: Add a driver for AMD ACP 7.x digital microphones
+
+The built-in microphones of Strix Halo laptops are wired to the ACP's PDM
+interface, not to the HDA codec, so FreeBSD had no way to record from
+them.  Capture only: no DSP, I2S or SoundWire.
+---
+ share/man/man4/Makefile               |   1 +
+ share/man/man4/snd_acp.4              |  86 ++++
+ sys/conf/files.amd64                  |   1 +
+ sys/dev/sound/pci/acp.c               | 596 ++++++++++++++++++++++++++
+ sys/modules/sound/driver/Makefile     |   4 +
+ sys/modules/sound/driver/acp/Makefile |   7 +
+ 6 files changed, 695 insertions(+)
+ create mode 100644 share/man/man4/snd_acp.4
+ create mode 100644 sys/dev/sound/pci/acp.c
+ create mode 100644 sys/modules/sound/driver/acp/Makefile
+
+diff --git a/share/man/man4/Makefile b/share/man/man4/Makefile
+index 4a39645fcba3..f7afabd8d0e4 100644
+--- a/share/man/man4/Makefile
++++ b/share/man/man4/Makefile
+@@ -567,6 +567,7 @@ MAN=	aac.4 \
+ 	smbus.4 \
+ 	smp.4 \
+ 	smsc.4 \
++	snd_acp.4 \
+ 	snd_als4000.4 \
+ 	snd_atiixp.4 \
+ 	snd_cmi.4 \
+diff --git a/share/man/man4/snd_acp.4 b/share/man/man4/snd_acp.4
+new file mode 100644
+index 000000000000..61f85015ab08
+--- /dev/null
++++ b/share/man/man4/snd_acp.4
+@@ -0,0 +1,86 @@
++.\"-
++.\" SPDX-License-Identifier: BSD-2-Clause
++.\"
++.\" Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
++.\"
++.\" Redistribution and use in source and binary forms, with or without
++.\" modification, are permitted provided that the following conditions
++.\" are met:
++.\" 1. Redistributions of source code must retain the above copyright
++.\"    notice, this list of conditions and the following disclaimer.
++.\" 2. Redistributions in binary form must reproduce the above copyright
++.\"    notice, this list of conditions and the following disclaimer in the
++.\"    documentation and/or other materials provided with the distribution.
++.\"
++.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++.\" SUCH DAMAGE.
++.\"
++.Dd November 16, 2026
++.Dt SND_ACP 4
++.Os
++.Sh NAME
++.Nm snd_acp
++.Nd "AMD Audio Coprocessor digital microphone driver"
++.Sh SYNOPSIS
++To compile this driver into the kernel, place the following lines in your
++kernel configuration file:
++.Bd -ragged -offset indent
++.Cd "device sound"
++.Cd "device snd_acp"
++.Ed
++.Pp
++Alternatively, to load the driver as a module at boot time, place the
++following line in
++.Xr loader.conf 5 :
++.Bd -literal -offset indent
++snd_acp_load="YES"
++.Ed
++.Sh DESCRIPTION
++The
++.Nm
++driver allows the generic audio driver,
++.Xr sound 4 ,
++to record from the built-in digital microphones connected to the PDM
++interface of the AMD Audio Coprocessor (ACP) found in recent Ryzen
++processors.
++It provides one recording channel, stereo, 32-bit signed little-endian
++samples at 48 kHz; the
++.Xr sound 4
++feeders convert to other formats and rates.
++.Pp
++The driver attaches only when the firmware reports digital microphones:
++the ACP pin configuration must route the PDM interface, and the ACPI
++.Va _WOV
++method of the ACP device, when present, must not return 0.
++The ACP's DSP and its I2S and SoundWire links are not used.
++.Sh HARDWARE
++The
++.Nm
++driver supports the following devices:
++.Pp
++.Bl -bullet -compact
++.It
++AMD Audio Coprocessor 7.x (PCI 1022:15e2, revisions 0x70 to 0x72),
++as found in the Ryzen AI Max (Strix Halo) processors
++.El
++.Sh SEE ALSO
++.Xr sound 4
++.Sh HISTORY
++The
++.Nm
++driver first appeared in
++.Fx 16.0 .
++.Sh AUTHORS
++.An Olivier Cochard Aq Mt olivier@FreeBSD.org
++.Sh BUGS
++The microphones' gain cannot be changed; there is no mixer.
++Recordings carry a DC offset that the driver does not remove.
+diff --git a/sys/conf/files.amd64 b/sys/conf/files.amd64
+index 0eb78e3f7557..435b73f5eac8 100644
+--- a/sys/conf/files.amd64
++++ b/sys/conf/files.amd64
+@@ -388,6 +388,7 @@ dev/smartpqi/smartpqi_request.c optional 	smartpqi
+ dev/smartpqi/smartpqi_response.c	optional 	smartpqi
+ dev/smartpqi/smartpqi_sis.c     optional 	smartpqi
+ dev/smartpqi/smartpqi_tag.c     optional 	smartpqi
++dev/sound/pci/acp.c		optional	snd_acp pci acpi
+ dev/sume/if_sume.c		optional	sume
+ dev/syscons/apm/apm_saver.c	optional	apm_saver apm
+ dev/thunderbolt/hcm.c		optional	thunderbolt
+diff --git a/sys/dev/sound/pci/acp.c b/sys/dev/sound/pci/acp.c
+new file mode 100644
+index 000000000000..bb5d6022c513
+--- /dev/null
++++ b/sys/dev/sound/pci/acp.c
+@@ -0,0 +1,596 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++/*
++ * AMD Audio Coprocessor (ACP) 7.x: capture from the built-in digital
++ * microphones on the PDM interface.  The ACP's DSP and its I2S and
++ * SoundWire links are not used.
++ *
++ * No public datasheet exists.  Register offsets and values come from a
++ * register trace of Linux on an HP ZBook Ultra G1a (ACP rev 0x70) and
++ * follow the dual GPL/BSD-licensed AMD driver (sound/soc/amd/acp).
++ */
++
++#ifdef HAVE_KERNEL_OPTION_HEADERS
++#include "opt_snd.h"
++#endif
++
++#include <dev/sound/pcm/sound.h>
++
++#include <dev/pci/pcireg.h>
++#include <dev/pci/pcivar.h>
++
++#include <contrib/dev/acpica/include/acpi.h>
++#include <dev/acpica/acpivar.h>
++
++#define	ACP_VENDOR		0x1022
++#define	ACP_DEVICE		0x15e2
++
++/* Address translation unit: how the ACP's DMA reaches system memory. */
++#define	ACP_ATU_PAGE_SIZE_GRP1	0x0c00
++#define	ACP_ATU_BASE_ADDR_GRP1	0x0c04
++#define	ACP_ATU_PAGE_SIZE_GRP2	0x0c08
++#define	ACP_ATU_BASE_ADDR_GRP2	0x0c0c
++#define	ACP_ATU_PAGE_SIZE_GRP5	0x0c20
++#define	ACP_ATU_BASE_ADDR_GRP5	0x0c24
++#define	ACP_ATU_CTRL		0x0c40
++#define	ACP_ATU_PAGE_4K		0x2
++#define	ACP_ATU_VALID		(1U << 31)
++#define	ACP_SRAM_PTE		0x03800000	/* page table, ACP side */
++#define	ACP_SRAM_PTE_GRP2	0x00004000
++
++/* Global control. */
++#define	ACP_SOFT_RESET		0x1000
++#define	ACP_SOFT_RESET_DONE	0x00010001
++#define	ACP_CONTROL		0x1004
++#define	ACP_ZSC_DSP_CTRL	0x1014
++#define	ACP_PGFSM_CONTROL	0x1024
++#define	ACP_PGFSM_POWER_ON	0xffffffff
++#define	ACP_PGFSM_STATUS	0x1028
++#define	ACP_PGFSM_STATUS_MASK	0x3
++#define	ACP_PGFSM_ON_PENDING	0x1
++#define	ACP_PIN_CONFIG		0x1440
++
++/* Interrupts towards the host. */
++#define	ACP_EXT_INTR_ENB	0x1a00
++#define	ACP_EXT_INTR_CNTL(n)	(0x1a04 + (n) * 4)
++#define	ACP_EXT_INTR_STAT(n)	(0x1a0c + (n) * 4)
++#define	ACP_EXT_INTR_ERROR	0x20000000
++#define	ACP_EXT_INTR_PDM_DMA	0x00010000
++
++/* PDM (digital microphone) receiver and its DMA. */
++#define	ACP_PDM_ENABLE		0x2c04
++#define	ACP_PDM_DMA_ENABLE	0x2c08
++#define	ACP_PDM_DMA_RUNNING	0x2
++#define	ACP_PDM_RINGBUF_ADDR	0x2c0c
++#define	ACP_PDM_RINGBUF_SIZE	0x2c10
++#define	ACP_PDM_POS_HIGH	0x2c18
++#define	ACP_PDM_POS_LOW		0x2c1c
++#define	ACP_PDM_WATERMARK	0x2c20
++#define	ACP_PDM_CHANNELS	0x2c28	/* 0: 2 channels */
++#define	ACP_PDM_DECIMATION	0x2c2c
++#define	ACP_PDM_DEC_64		0x2
++#define	ACP_PDM_MISC_CTRL	0x2c5c
++#define	ACP_PDM_MISC_CTRL_MASK	0x18
++#define	ACP_PDM_CLK_CTRL	0x2c60
++#define	ACP_PDM_CLK_DEFAULT	0x7
++#define	ACP_PDM_RINGBUF_WINDOW	0x04c00000	/* ring address, ACP side */
++
++/* Page table entries for the PDM ring, in the ACP's scratch memory. */
++#define	ACP_PDM_PTE		(0x10000 + 0x6000)
++
++#define	ACP_BUFSZ		65536
++#define	ACP_BLKSZ_MIN		4096
++#define	ACP_BLKSZ_MAX		32768
++#define	ACP_BLKSZ_DEFAULT	8192
++#define	ACP_RATE		48000
++#define	ACP_POLL_US		5
++#define	ACP_TIMEOUT_US		500
++
++struct acp_info;
++
++struct acp_chinfo {
++	struct snd_dbuf		*buffer;
++	struct pcm_channel	*channel;
++	struct acp_info		*parent;
++	uint64_t		start_pos;
++	uint32_t		blksz;
++	bool			running;
++};
++
++struct acp_info {
++	device_t		dev;
++	struct mtx		lock;
++	struct resource		*reg;
++	int			regid;
++	struct resource		*irq;
++	int			irqid;
++	void			*ih;
++	bus_dma_tag_t		dmat;
++	struct acp_chinfo	rch;
++};
++
++static uint32_t acp_fmt[] = {
++	SND_FORMAT(AFMT_S32_LE, 2, 0),
++	0
++};
++
++static struct pcmchan_caps acp_caps = {
++	ACP_RATE, ACP_RATE, acp_fmt, 0
++};
++
++static inline uint32_t
++acp_rd(struct acp_info *sc, bus_size_t off)
++{
++	return (bus_read_4(sc->reg, off));
++}
++
++static inline void
++acp_wr(struct acp_info *sc, bus_size_t off, uint32_t val)
++{
++	bus_write_4(sc->reg, off, val);
++}
++
++/* Wait until (register & mask) == want; 0 on success. */
++static int
++acp_poll(struct acp_info *sc, bus_size_t off, uint32_t mask, uint32_t want)
++{
++	int t;
++
++	for (t = 0; t < ACP_TIMEOUT_US; t += ACP_POLL_US) {
++		if ((acp_rd(sc, off) & mask) == want)
++			return (0);
++		DELAY(ACP_POLL_US);
++	}
++	return (ETIMEDOUT);
++}
++
++static int
++acp_reset(struct acp_info *sc)
++{
++	acp_wr(sc, ACP_SOFT_RESET, 1);
++	if (acp_poll(sc, ACP_SOFT_RESET, ACP_SOFT_RESET_DONE,
++	    ACP_SOFT_RESET_DONE) != 0)
++		return (ETIMEDOUT);
++	acp_wr(sc, ACP_SOFT_RESET, 0);
++	return (acp_poll(sc, ACP_SOFT_RESET, 0xffffffff, 0));
++}
++
++static int
++acp_hw_init(struct acp_info *sc)
++{
++	uint32_t st;
++	int error;
++
++	st = acp_rd(sc, ACP_PGFSM_STATUS);
++	if (st != 0) {
++		if ((st & ACP_PGFSM_STATUS_MASK) != ACP_PGFSM_ON_PENDING)
++			acp_wr(sc, ACP_PGFSM_CONTROL, ACP_PGFSM_POWER_ON);
++		if (acp_poll(sc, ACP_PGFSM_STATUS, 0xffffffff, 0) != 0) {
++			device_printf(sc->dev, "power on failed (status %#x)\n",
++			    acp_rd(sc, ACP_PGFSM_STATUS));
++			return (ETIMEDOUT);
++		}
++	}
++	acp_wr(sc, ACP_CONTROL, 1);
++	if ((error = acp_reset(sc)) != 0) {
++		device_printf(sc->dev, "reset failed\n");
++		return (error);
++	}
++	acp_wr(sc, ACP_ZSC_DSP_CTRL, 0);
++
++	acp_wr(sc, ACP_EXT_INTR_ENB, 1);
++	acp_wr(sc, ACP_EXT_INTR_CNTL(1),
++	    acp_rd(sc, ACP_EXT_INTR_CNTL(1)) | ACP_EXT_INTR_ERROR);
++	return (0);
++}
++
++static void
++acp_hw_fini(struct acp_info *sc)
++{
++	acp_wr(sc, ACP_EXT_INTR_STAT(1), 0xffffffff);
++	acp_wr(sc, ACP_EXT_INTR_ENB, 0);
++	(void)acp_reset(sc);
++	acp_wr(sc, ACP_ZSC_DSP_CTRL, 1);
++}
++
++/* 64-bit byte count of the PDM DMA since the ACP was reset. */
++static uint64_t
++acp_pdm_pos(struct acp_info *sc)
++{
++	uint32_t hi, lo;
++
++	do {
++		hi = acp_rd(sc, ACP_PDM_POS_HIGH);
++		lo = acp_rd(sc, ACP_PDM_POS_LOW);
++	} while (hi != acp_rd(sc, ACP_PDM_POS_HIGH));
++	return (((uint64_t)hi << 32) | lo);
++}
++
++static void
++acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
++{
++	bus_addr_t pa;
++	u_int i, npages;
++
++	/* Page table: one entry per 4 KB page of the (contiguous) ring. */
++	pa = ch->buffer->buf_addr;
++	npages = ch->buffer->bufsize / PAGE_SIZE;
++	for (i = 0; i < npages; i++, pa += PAGE_SIZE) {
++		acp_wr(sc, ACP_PDM_PTE + i * 8, (uint32_t)pa);
++		acp_wr(sc, ACP_PDM_PTE + i * 8 + 4,
++		    (uint32_t)(pa >> 32) | ACP_ATU_VALID);
++	}
++	acp_wr(sc, ACP_ATU_BASE_ADDR_GRP1, ACP_SRAM_PTE | ACP_ATU_VALID);
++	acp_wr(sc, ACP_ATU_PAGE_SIZE_GRP1, ACP_ATU_PAGE_4K);
++	acp_wr(sc, ACP_ATU_BASE_ADDR_GRP2,
++	    (ACP_SRAM_PTE + ACP_SRAM_PTE_GRP2) | ACP_ATU_VALID);
++	acp_wr(sc, ACP_ATU_PAGE_SIZE_GRP2, ACP_ATU_PAGE_4K);
++	acp_wr(sc, ACP_ATU_BASE_ADDR_GRP5, ACP_SRAM_PTE | ACP_ATU_VALID);
++	acp_wr(sc, ACP_ATU_PAGE_SIZE_GRP5, ACP_ATU_PAGE_4K);
++	acp_wr(sc, ACP_ATU_CTRL, 1);
++
++	acp_wr(sc, ACP_EXT_INTR_CNTL(0),
++	    acp_rd(sc, ACP_EXT_INTR_CNTL(0)) | ACP_EXT_INTR_PDM_DMA);
++	acp_wr(sc, ACP_PDM_CHANNELS, 0);
++	acp_wr(sc, ACP_PDM_DECIMATION, ACP_PDM_DEC_64);
++	acp_wr(sc, ACP_PDM_CLK_CTRL, ACP_PDM_CLK_DEFAULT);
++	acp_wr(sc, ACP_PDM_MISC_CTRL,
++	    acp_rd(sc, ACP_PDM_MISC_CTRL) | ACP_PDM_MISC_CTRL_MASK);
++	acp_wr(sc, ACP_PDM_RINGBUF_ADDR, ACP_PDM_RINGBUF_WINDOW);
++	acp_wr(sc, ACP_PDM_RINGBUF_SIZE, ch->buffer->bufsize);
++	acp_wr(sc, ACP_PDM_WATERMARK, ch->blksz);
++	acp_wr(sc, ACP_ATU_CTRL, 1);
++
++	ch->start_pos = acp_pdm_pos(sc);
++	acp_wr(sc, ACP_PDM_ENABLE, 1);
++	acp_wr(sc, ACP_PDM_DMA_ENABLE, 1);
++	if (acp_poll(sc, ACP_PDM_DMA_ENABLE, ACP_PDM_DMA_RUNNING,
++	    ACP_PDM_DMA_RUNNING) != 0)
++		device_printf(sc->dev, "PDM DMA did not start\n");
++	ch->running = true;
++}
++
++static void
++acp_pdm_stop(struct acp_info *sc, struct acp_chinfo *ch)
++{
++	if ((acp_rd(sc, ACP_PDM_DMA_ENABLE) & ACP_PDM_DMA_RUNNING) != 0) {
++		acp_wr(sc, ACP_PDM_ENABLE, 0);
++		acp_wr(sc, ACP_PDM_DMA_ENABLE, 0);
++		if (acp_poll(sc, ACP_PDM_DMA_ENABLE, ACP_PDM_DMA_RUNNING,
++		    0) != 0)
++			device_printf(sc->dev, "PDM DMA did not stop\n");
++	}
++	acp_wr(sc, ACP_EXT_INTR_CNTL(0),
++	    acp_rd(sc, ACP_EXT_INTR_CNTL(0)) & ~ACP_EXT_INTR_PDM_DMA);
++	ch->running = false;
++}
++
++static void
++acp_intr(void *arg)
++{
++	struct acp_info *sc = arg;
++	uint32_t st;
++	int n;
++	bool period;
++
++	period = false;
++	mtx_lock(&sc->lock);
++	for (n = 0; n < 2; n++) {
++		st = acp_rd(sc, ACP_EXT_INTR_STAT(n));
++		if ((st & ACP_EXT_INTR_PDM_DMA) != 0) {
++			acp_wr(sc, ACP_EXT_INTR_STAT(n), ACP_EXT_INTR_PDM_DMA);
++			period = true;
++		}
++	}
++	mtx_unlock(&sc->lock);
++	if (period && sc->rch.running)
++		chn_intr(sc->rch.channel);
++}
++
++/* Channel methods. */
++
++static void *
++acpchan_init(kobj_t obj, void *devinfo, struct snd_dbuf *b,
++    struct pcm_channel *c, int dir)
++{
++	struct acp_info *sc = devinfo;
++	struct acp_chinfo *ch = &sc->rch;
++
++	if (dir != PCMDIR_REC)
++		return (NULL);
++	ch->parent = sc;
++	ch->buffer = b;
++	ch->channel = c;
++	ch->blksz = ACP_BLKSZ_DEFAULT;
++	if (sndbuf_alloc(b, sc->dmat, 0, ACP_BUFSZ) != 0)
++		return (NULL);
++	if (sndbuf_resize(b, ACP_BUFSZ / ch->blksz, ch->blksz) != 0)
++		return (NULL);
++	return (ch);
++}
++
++static int
++acpchan_setformat(kobj_t obj, void *data, uint32_t format)
++{
++	return (format == acp_fmt[0] ? 0 : EINVAL);
++}
++
++static uint32_t
++acpchan_setspeed(kobj_t obj, void *data, uint32_t speed)
++{
++	return (ACP_RATE);
++}
++
++static uint32_t
++acpchan_setblocksize(kobj_t obj, void *data, uint32_t blksz)
++{
++	struct acp_chinfo *ch = data;
++
++	blksz = MIN(MAX(blksz, ACP_BLKSZ_MIN), ACP_BLKSZ_MAX);
++	blksz = 1U << (fls(blksz) - 1);
++	if (!ch->running && sndbuf_resize(ch->buffer, ACP_BUFSZ / blksz,
++	    blksz) == 0)
++		ch->blksz = blksz;
++	return (ch->blksz);
++}
++
++static int
++acpchan_trigger(kobj_t obj, void *data, int go)
++{
++	struct acp_chinfo *ch = data;
++	struct acp_info *sc = ch->parent;
++
++	if (!PCMTRIG_COMMON(go))
++		return (0);
++	mtx_lock(&sc->lock);
++	if (go == PCMTRIG_START && !ch->running)
++		acp_pdm_start(sc, ch);
++	else if (go != PCMTRIG_START && ch->running)
++		acp_pdm_stop(sc, ch);
++	mtx_unlock(&sc->lock);
++	return (0);
++}
++
++static uint32_t
++acpchan_getptr(kobj_t obj, void *data)
++{
++	struct acp_chinfo *ch = data;
++	struct acp_info *sc = ch->parent;
++	uint64_t pos;
++
++	mtx_lock(&sc->lock);
++	pos = acp_pdm_pos(sc) - ch->start_pos;
++	mtx_unlock(&sc->lock);
++	return ((uint32_t)(pos % ch->buffer->bufsize) & ~7U);
++}
++
++static struct pcmchan_caps *
++acpchan_getcaps(kobj_t obj, void *data)
++{
++	return (&acp_caps);
++}
++
++static kobj_method_t acpchan_methods[] = {
++	KOBJMETHOD(channel_init,		acpchan_init),
++	KOBJMETHOD(channel_setformat,		acpchan_setformat),
++	KOBJMETHOD(channel_setspeed,		acpchan_setspeed),
++	KOBJMETHOD(channel_setblocksize,	acpchan_setblocksize),
++	KOBJMETHOD(channel_trigger,		acpchan_trigger),
++	KOBJMETHOD(channel_getptr,		acpchan_getptr),
++	KOBJMETHOD(channel_getcaps,		acpchan_getcaps),
++	KOBJMETHOD_END
++};
++CHANNEL_DECLARE(acpchan);
++
++/* Device methods. */
++
++/*
++ * The firmware describes whether digital microphones are wired: the pin
++ * configuration must route the PDM interface, and _WOV, when present,
++ * must not be 0.
++ */
++static bool
++acp_has_dmic(struct acp_info *sc)
++{
++	ACPI_HANDLE h;
++	UINT32 wov;
++
++	switch (acp_rd(sc, ACP_PIN_CONFIG)) {
++	case 4: case 5: case 6: case 7: case 8: case 10: case 11:
++	case 12: case 13: case 14: case 17: case 18: case 19: case 20:
++		break;
++	default:
++		return (false);
++	}
++	h = acpi_get_handle(sc->dev);
++	if (h != NULL && ACPI_SUCCESS(acpi_GetInteger(h, "_WOV", &wov)) &&
++	    wov == 0)
++		return (false);
++	return (true);
++}
++
++static int
++acp_probe(device_t dev)
++{
++	if (pci_get_vendor(dev) != ACP_VENDOR ||
++	    pci_get_device(dev) != ACP_DEVICE)
++		return (ENXIO);
++	switch (pci_get_revid(dev)) {
++	case 0x70: case 0x71: case 0x72:
++		break;
++	default:
++		return (ENXIO);
++	}
++	device_set_desc(dev, "AMD ACP 7.x digital microphones");
++	return (BUS_PROBE_DEFAULT);
++}
++
++static void
++acp_release(struct acp_info *sc)
++{
++	if (sc->ih != NULL)
++		bus_teardown_intr(sc->dev, sc->irq, sc->ih);
++	if (sc->irq != NULL)
++		bus_release_resource(sc->dev, SYS_RES_IRQ, sc->irqid, sc->irq);
++	if (sc->dmat != NULL)
++		bus_dma_tag_destroy(sc->dmat);
++	if (sc->reg != NULL)
++		bus_release_resource(sc->dev, SYS_RES_MEMORY, sc->regid,
++		    sc->reg);
++	mtx_destroy(&sc->lock);
++	free(sc, M_DEVBUF);
++}
++
++static int
++acp_attach(device_t dev)
++{
++	struct acp_info *sc;
++	char status[SND_STATUSLEN];
++
++	sc = malloc(sizeof(*sc), M_DEVBUF, M_WAITOK | M_ZERO);
++	sc->dev = dev;
++	mtx_init(&sc->lock, device_get_nameunit(dev), "snd_acp softc",
++	    MTX_DEF);
++	pci_enable_busmaster(dev);
++
++	sc->regid = PCIR_BAR(0);
++	sc->reg = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->regid,
++	    RF_ACTIVE);
++	if (sc->reg == NULL) {
++		device_printf(dev, "cannot map registers\n");
++		goto bad;
++	}
++	if (acp_hw_init(sc) != 0)
++		goto bad;
++	if (!acp_has_dmic(sc)) {
++		device_printf(dev, "no digital microphone (pin config %#x)\n",
++		    acp_rd(sc, ACP_PIN_CONFIG));
++		goto bad_hw;
++	}
++
++	if (bus_dma_tag_create(bus_get_dma_tag(dev), PAGE_SIZE, 0,
++	    BUS_SPACE_MAXADDR_32BIT, BUS_SPACE_MAXADDR, NULL, NULL,
++	    ACP_BUFSZ, 1, ACP_BUFSZ, 0, NULL, NULL, &sc->dmat) != 0) {
++		device_printf(dev, "cannot create DMA tag\n");
++		goto bad_hw;
++	}
++
++	sc->irqid = 0;
++	sc->irq = bus_alloc_resource_any(dev, SYS_RES_IRQ, &sc->irqid,
++	    RF_ACTIVE | RF_SHAREABLE);
++	if (sc->irq == NULL || snd_setup_intr(dev, sc->irq, INTR_MPSAFE,
++	    acp_intr, sc, &sc->ih) != 0) {
++		device_printf(dev, "cannot set up interrupt\n");
++		goto bad_hw;
++	}
++
++	pcm_init(dev, sc);
++	pcm_addchan(dev, PCMDIR_REC, &acpchan_class, sc);
++	snprintf(status, SND_STATUSLEN, "mem 0x%jx irq %jd on %s",
++	    rman_get_start(sc->reg), rman_get_start(sc->irq),
++	    device_get_nameunit(device_get_parent(dev)));
++	if (pcm_register(dev, status) != 0)
++		goto bad_hw;
++	return (0);
++
++bad_hw:
++	acp_hw_fini(sc);
++bad:
++	acp_release(sc);
++	return (ENXIO);
++}
++
++static int
++acp_detach(device_t dev)
++{
++	struct acp_info *sc;
++	int error;
++
++	sc = pcm_getdevinfo(dev);
++	if ((error = pcm_unregister(dev)) != 0)
++		return (error);
++	mtx_lock(&sc->lock);
++	if (sc->rch.running)
++		acp_pdm_stop(sc, &sc->rch);
++	acp_hw_fini(sc);
++	mtx_unlock(&sc->lock);
++	acp_release(sc);
++	return (0);
++}
++
++static int
++acp_suspend(device_t dev)
++{
++	struct acp_info *sc = pcm_getdevinfo(dev);
++	bool running;
++
++	mtx_lock(&sc->lock);
++	running = sc->rch.running;
++	if (running)
++		acp_pdm_stop(sc, &sc->rch);
++	sc->rch.running = running;	/* restart on resume */
++	acp_hw_fini(sc);
++	mtx_unlock(&sc->lock);
++	return (0);
++}
++
++static int
++acp_resume(device_t dev)
++{
++	struct acp_info *sc = pcm_getdevinfo(dev);
++	int error;
++
++	mtx_lock(&sc->lock);
++	error = acp_hw_init(sc);
++	if (error == 0 && sc->rch.running) {
++		sc->rch.running = false;
++		acp_pdm_start(sc, &sc->rch);
++	}
++	mtx_unlock(&sc->lock);
++	return (error);
++}
++
++static device_method_t acp_methods[] = {
++	DEVMETHOD(device_probe,		acp_probe),
++	DEVMETHOD(device_attach,	acp_attach),
++	DEVMETHOD(device_detach,	acp_detach),
++	DEVMETHOD(device_suspend,	acp_suspend),
++	DEVMETHOD(device_resume,	acp_resume),
++	DEVMETHOD_END
++};
++
++static driver_t acp_driver = {
++	"pcm",
++	acp_methods,
++	PCM_SOFTC_SIZE,
++};
++
++DRIVER_MODULE(snd_acp, pci, acp_driver, 0, 0);
++MODULE_DEPEND(snd_acp, sound, 1, 1, 1);
++MODULE_DEPEND(snd_acp, acpi, 1, 1, 1);
++MODULE_VERSION(snd_acp, 1);
+diff --git a/sys/modules/sound/driver/Makefile b/sys/modules/sound/driver/Makefile
+index 02703d4b591a..6abbb7fa93ed 100644
+--- a/sys/modules/sound/driver/Makefile
++++ b/sys/modules/sound/driver/Makefile
+@@ -18,6 +18,10 @@ _maestro3=	maestro3
+ SUBDIR+=	cmi
+ .endif
+ 
++.if ${MACHINE_CPUARCH} == "amd64"
++SUBDIR+=	acp
++.endif
++
+ .if ${MACHINE_CPUARCH} == "powerpc"
+ SUBDIR+=	ai2s davbus
+ .endif
+diff --git a/sys/modules/sound/driver/acp/Makefile b/sys/modules/sound/driver/acp/Makefile
+new file mode 100644
+index 000000000000..40b6a1df79aa
+--- /dev/null
++++ b/sys/modules/sound/driver/acp/Makefile
+@@ -0,0 +1,7 @@
++.PATH: ${SRCTOP}/sys/dev/sound/pci
++
++KMOD=	snd_acp
++SRCS=	device_if.h bus_if.h pci_if.h opt_acpi.h
++SRCS+=	acp.c
++
++.include <bsd.kmod.mk>
+-- 
+2.56.0
+
