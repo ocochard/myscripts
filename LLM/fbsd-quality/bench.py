@@ -984,7 +984,7 @@ def _translate_tool_call(text, tool_names):
     # into a bare XML body (caught in end-to-end testing, not by reading).
     params = re.findall(r"<parameter=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*"
                         r"(?=</parameter>|</function>|</tool_call>|"
-                        r"<parameter=|</code>\s*$)", text, re.S)
+                        r"<parameter=|</code>\s*$|\s*\Z)", text, re.S)
     params = [(k, v) for k, v in params if v.strip()]
     if params:
         fn = re.search(r"<function=([A-Za-z_][A-Za-z0-9_]*)", text)
@@ -1030,8 +1030,10 @@ def _translate_tool_call(text, tool_names):
     #     <function=code>\n print(run_shell(...))\n </parameter>\n</function>
     # Without it the stray tag lands inside the body and the result does not
     # parse. Found by replaying captured samples, not by reasoning.
+    # \Z too: CodeAgent passes </code> as a stop sequence, so the reply this
+    # wrapper sees ends right before it (smolagents re-appends it later).
     m = re.search(r"<function=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*"
-                  r"(?:</parameter>|</function>|</tool_call>|</code>\s*$)",
+                  r"(?:</parameter>|</function>|</tool_call>|</code>\s*$|\Z)",
                   text, re.S)
     if m and m.group(2).strip():
         name, body = m.group(1), m.group(2).strip()

@@ -18,7 +18,7 @@ then cost.
 |--:|---|---|---|---|---|---|---|---|---|---:|---|
 | 1 | claude-opus-4-5 | — | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | PASS | **6/6** | 99 | reference; 1 rep per tier |
 | 2 | Qwen3.8-Flash-Next | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 1/3 | 3/3 | PASS | **14/16** | 1 740 | best local; 17× Opus wall time |
-| 3 | Qwen3.8-Flash-Next (llama.cpp v1.0.0) | UD-IQ3_XXS | 2/3 | 2/3 | 3/3 | 3/3 | 1/3 | not run | **11/15** | 1 777 | 26 % of steps lost to a harness bug, since fixed; see below |
+| 3 | Qwen3.8-Flash-Next (llama.cpp v1.0.0) | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 2/3 | 1/3 | not run | **12/15** | 1 199 | fixed harness (`v44`); see below |
 | 4 | Qwen3.8-27B | Q8_0 MTP | 4/10 | 3/7 | 2/5 | 1/3 | 0/3 | PASS | **10/28** | 1 646 | fewest t6 steps of the locals (36) |
 | 5 | Qwen3.8-27B | UD3.1 UD-Q4_K_XL | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | not run | **6/15** | 1 600 | no MTP, ~11 t/s; tree 1600031, see below |
 | 6 | Sage-A1.5 35B-A3B | Q8_0 MTP | 0/3 | 0/3 | 2/3 | 1/3 | 0/3 | not run | **3/15** | 408 | ~60 t/s; fails the easy tiers; see below |
@@ -67,19 +67,22 @@ no rows) produced degenerate text (fused words, dropped articles, invented
 APIs). Same tree and image as row 4. Served on llama.cpp v1.0.0 with the
 GGUF's embedded MTP head at N=3.
 
-**Qwen3.8-Flash-Next on llama.cpp v1.0.0** (run-id `v41-flashnext-v100`,
-2026-11-15) is row 2's model on mainline v1.0.0 with the self-contained Q8_0
-MTP head (`llmsrv.sh MODEL=flashnext`), same tree and image as rows 5-6. It is
-the first row with 3/3 on t4, and every tier passed at least once; the lower
-t1, t2 and t5 scores are not directly comparable with row 2, which mixed
-harness versions, the 1600022 tree and single reps. 263 of its 1 029 steps
-(26 %) were parse errors from a harness bug: the native tool-call fallback
-wrapped the model's `__call__` while CodeAgent calls `generate()`, so it never
-ran. The failed t5 rep 3 lost 98 of 143 steps that way, so t5 understates the
-model. Fixed in `bench.py` after this run; replaying the run's raw replies, 197
-of the 204 native tool-call turns now translate to valid Python. Not yet seen
-firing live: the two check runs (`v42`, `v43`, both PASS) had 8 and 0 parse
-errors, and rows now record `tool_calls_recovered` to show it.
+**Qwen3.8-Flash-Next on llama.cpp v1.0.0** (run-id `v44-flashnext-tcfix`,
+2026-11-16) is row 2's model on mainline v1.0.0 with the self-contained Q8_0
+MTP head (`llmsrv.sh` default, `MODEL=flashnext`), same image as rows 5-6 on a
+newer tree (`6871285f194d`, still 1600031). 12/15, every tier passed at least
+once. The t4 failure is a real guest panic (general protection fault at
+`kldload`); the two t5 failures are `no_progress`. Its first run (`v41`,
+11/15, median model_s 1 777) lost 263 of 1 029 steps (26 %) to a harness bug:
+the native tool-call fallback wrapped the model's `__call__` while CodeAgent
+calls `generate()`, so it never ran. With the fix the same model lost 80 of 817
+steps (10 %) and the fallback recovered 31 turns (`tool_calls_recovered`),
+and median model_s fell to 1 199. 38 of the remaining 80 hit a second gap,
+fixed after this run: CodeAgent stops generation at `</code>`, so the reply
+the fallback sees has no closing tag, which the translator required. The other
+42 are empty `<function=print></function>` calls, malformed tags or prose.
+Not directly comparable with row 2, which mixed harness versions, the 1600022
+tree and single reps.
 
 Compare models on **`model_s`** and `tokens_out`, never on steps: a
 `ToolCallingAgent` step is one tool call, a `CodeAgent` step is one Python block

@@ -237,8 +237,13 @@ Verified by replay: 41 of 43 captured emissions recovered, 39 valid Python
 replaced the model's `__call__`, but CodeAgent calls `model.generate()`, and the
 copied `generate` bypassed the translation (v41: 263 parse errors in 1 029
 steps). `generate()` is now wrapped; a replay of v41's raw replies recovers 197
-of 204 to valid Python. Each result row records `tool_calls_recovered`; a
-non-zero value is the live proof, not yet observed.
+of 204 to valid Python. Each result row records `tool_calls_recovered`; the
+first live run with the fix (`v44`, Flash-Next) recovered 31 turns and cut
+parse errors from 26 % to 10 % of steps. A second gap showed up there: CodeAgent
+passes `</code>` as a stop sequence, so the reply the wrapper sees ends before
+any closing tag, and the translator now also accepts end of text. Replaying
+v44's 80 failures as the wrapper saw them, 38 now translate; the rest are
+empty `<function=print>` calls, malformed tags or prose.
 
 Two alternatives tested and rejected: widening `code_block_tags` to accept
 `<tool_call>` parses and then fails at execution (the payload is
