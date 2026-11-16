@@ -1,0 +1,123 @@
+From 3c04f4e4c8ded02d0a9753e5582bb02088cb9ac5 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 14:18:03 +0100
+Subject: [PATCH] rtlbtfw: Log errors to syslog
+
+devd(8) runs rtlbtfw with stderr on /dev/null, so a failed firmware
+download, such as a missing rtlbt-firmware package, leaves no trace.
+
+Send errors to syslog as well as stderr, keeping the stderr format.
+At boot devd starts before syslogd: LOG_CONS sends the message to the
+console instead.
+
+MFC after:	1 week
+---
+ usr.sbin/bluetooth/rtlbtfw/main.c      |  4 ++++
+ usr.sbin/bluetooth/rtlbtfw/rtlbt_dbg.h |  6 ++++--
+ usr.sbin/bluetooth/rtlbtfw/rtlbt_fw.c  | 10 +++++-----
+ usr.sbin/bluetooth/rtlbtfw/rtlbt_hw.c  |  1 +
+ 4 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/usr.sbin/bluetooth/rtlbtfw/main.c b/usr.sbin/bluetooth/rtlbtfw/main.c
+index dc9ccd6c5fcd..5efdd1df04a5 100644
+--- a/usr.sbin/bluetooth/rtlbtfw/main.c
++++ b/usr.sbin/bluetooth/rtlbtfw/main.c
+@@ -38,6 +38,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <syslog.h>
+ #include <unistd.h>
+ 
+ #include <libusb.h>
+@@ -324,6 +325,9 @@ main(int argc, char *argv[])
+ 	enum rtlbt_fw_type fw_type;
+ 	uint16_t fw_lmp_subversion;
+ 
++	/* devd(8) runs us with stderr on /dev/null: report errors to syslog. */
++	openlog("rtlbtfw", LOG_CONS | LOG_NDELAY | LOG_PID, LOG_USER);
++
+ 	/* Parse command line arguments */
+ 	while ((n = getopt(argc, argv, "Dd:f:hIm:p:v:")) != -1) {
+ 		switch (n) {
+diff --git a/usr.sbin/bluetooth/rtlbtfw/rtlbt_dbg.h b/usr.sbin/bluetooth/rtlbtfw/rtlbt_dbg.h
+index 54c982119d40..7fa92ba1b003 100644
+--- a/usr.sbin/bluetooth/rtlbtfw/rtlbt_dbg.h
++++ b/usr.sbin/bluetooth/rtlbtfw/rtlbt_dbg.h
+@@ -32,8 +32,10 @@
+ extern	int rtlbt_do_debug;
+ extern	int rtlbt_do_info;
+ 
+-#define	rtlbt_err(fmt, ...)						\
+-	fprintf(stderr, "rtlbtfw: %s: "fmt"\n", __func__, ##__VA_ARGS__)
++#define	rtlbt_err(fmt, ...)	do {					\
++	fprintf(stderr, "rtlbtfw: %s: "fmt"\n", __func__, ##__VA_ARGS__);\
++	syslog(LOG_ERR, "%s: "fmt, __func__, ##__VA_ARGS__);		\
++} while (0)
+ #define	rtlbt_info(fmt, ...)	do {					\
+ 	if (rtlbt_do_info)						\
+ 		fprintf(stderr, "%s: "fmt"\n", __func__, ##__VA_ARGS__);\
+diff --git a/usr.sbin/bluetooth/rtlbtfw/rtlbt_fw.c b/usr.sbin/bluetooth/rtlbtfw/rtlbt_fw.c
+index aadd254571bb..73e18bb2748f 100644
+--- a/usr.sbin/bluetooth/rtlbtfw/rtlbt_fw.c
++++ b/usr.sbin/bluetooth/rtlbtfw/rtlbt_fw.c
+@@ -32,12 +32,12 @@
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+ 
+-#include <err.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <syslog.h>
+ #include <unistd.h>
+ 
+ #include "rtlbt_fw.h"
+@@ -171,26 +171,26 @@ rtlbt_fw_read(struct rtlbt_firmware *fw, const char *fwname)
+ 
+ 	fd = open(fwname, O_RDONLY);
+ 	if (fd < 0) {
+-		warn("%s: open: %s", __func__, fwname);
++		rtlbt_err("open: %s: %s", fwname, strerror(errno));
+ 		return (0);
+ 	}
+ 
+ 	if (fstat(fd, &sb) != 0) {
+-		warn("%s: stat: %s", __func__, fwname);
++		rtlbt_err("stat: %s: %s", fwname, strerror(errno));
+ 		close(fd);
+ 		return (0);
+ 	}
+ 
+ 	buf = calloc(1, sb.st_size);
+ 	if (buf == NULL) {
+-		warn("%s: calloc", __func__);
++		rtlbt_err("calloc: %s", strerror(errno));
+ 		close(fd);
+ 		return (0);
+ 	}
+ 
+ 	mmap_addr = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
+ 	if (mmap_addr == MAP_FAILED) {
+-		warn("%s: mmap: %s", __func__, fwname);
++		rtlbt_err("mmap: %s: %s", fwname, strerror(errno));
+ 		free(buf);
+ 		close(fd);
+ 		return (0);
+diff --git a/usr.sbin/bluetooth/rtlbtfw/rtlbt_hw.c b/usr.sbin/bluetooth/rtlbtfw/rtlbt_hw.c
+index 82e22d406ea9..375fbcba3428 100644
+--- a/usr.sbin/bluetooth/rtlbtfw/rtlbt_hw.c
++++ b/usr.sbin/bluetooth/rtlbtfw/rtlbt_hw.c
+@@ -38,6 +38,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <syslog.h>
+ #include <time.h>
+ #include <unistd.h>
+ 
+-- 
+2.56.0
+

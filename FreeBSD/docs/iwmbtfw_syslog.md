@@ -100,7 +100,7 @@ What the patch does NOT fix:
 - Interactive use with syslogd running prints each error twice on the console
   (stderr, plus the `*.err` console rule).
   Same behavior as bcmfw and most daemons.
-- `rtlbtfw(8)` (Realtek) has the same stderr-only `rtlbt_err()` macro and the same problem. Not changed here.
+- `rtlbtfw(8)` (Realtek) has the same stderr-only `rtlbt_err()` macro: separate patch, see [rtlbtfw_syslog.md](rtlbtfw_syslog.md).
 - Unrelated: `main()` has a `case 'p'` that `getopt()` never returns, because `"Dd:f:hI"` has no `p`.
 
 ## Tested
