@@ -333,8 +333,14 @@ of the fork has all 32 commits in this order on FreeBSD main 46ce9acd6d15
 (2026-11-16), for testing everything at once (steps 1 to 8). It builds
 (`buildkernel KERNCONF=GENERIC-NODEBUG`, plus the mt76 modules, which
 `sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
-`amdisp` modules of step 10 against it), but has not been booted yet;
-each document gives the tests of its own branch. Steps 10 and 11 are outside the kernel source.
+`amdisp` modules of step 10 against it). Boot test on the laptop
+(2026-11-16, kernel `zbook-n291256-f7d7c068c5b5` with those modules in
+the kernel directory): Wi-Fi associates and carries the session, `amdgpio`
+attaches `gpio0`, the four `ig4` controllers attach, `snd_cs35l54` attaches
+the 4 amplifiers (calibration read, firmware 3.11.18; no sound played),
+`amdsmu` attaches (SMU 100.7.0), and the camera streams 1920x1080 NV12 at
+29.84 fps; no panic or fault in the boot log. Suspend was not tried. Each
+document gives the deeper tests of its own branch. Steps 10 and 11 are outside the kernel source.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
