@@ -941,8 +941,31 @@ where AMD's oscillator outputs are controlled) during a stream is the same
 on both systems except `0xFED80E78`/`0xE7C`, which change between reads
 or between boots (`0xb0003f64` on FreeBSD, `0xb000aa8f` on Linux, upper
 half constant). They look like status, not configuration, and are
-undocumented. The 24 fps on FreeBSD stays unexplained; the remaining
-suspects are the sensor's MCLK and its page-0 PLL settings.
+undocumented.
+
+Page 0 was then read too (`amd_isp/linux_sensor_page0.py` on Linux, the
+same sequence in the debug sysctl on FreeBSD). This one has to write the
+page register under the firmware, so it waits for the end of a firmware
+I2C burst plus 1 ms of quiet, switches to page 0, reads 40 registers,
+checks the page is still 0 (no firmware write in between), and restores
+page 1; the window is about 5 ms and the streams kept their rate. Two
+reads on each system, all identical:
+
+```
+00=43 01=05 02=56 10=00 11=4e 12=12 13=05 14=78 15=02 16=00 17=00 18=00
+19=06 1a=02 1b=96 1c=08 1d=00 1e=42 1f=1f 20=1f 21=00 22=08 23=10 24=01
+25=00 26=00 27=03 28=00 29=00 2a=00 2b=00 2c=00 2d=00 2e=00 2f=00 c0=0c
+c1=08 c2=00 c3=00 e7=00
+```
+
+`0x00`-`0x02` is the chip ID (`0x430556`), and the registers AMD's
+driver writes on page 0 at start (`0x14` = `0x78`, `0xc1`, `0x20`, `0x21`,
+`0xe7`) hold the same values on both systems. The sensor is programmed the
+same in everything read, on both pages, yet it delivers 30 frames a
+second on Linux and 24 on FreeBSD. What is left is outside the registers:
+the clock the sensor receives (MCLK), whose source on this laptop is not
+known, or an external frame trigger, if the ISP paces the sensor. The 24
+fps on FreeBSD stays unexplained.
 
 The first stream start after a boot sometimes gets no answer to
 `SET_STREAM_CONFIG` (seen twice in a day of tests); the next start works.
