@@ -151,12 +151,89 @@ failure, so the port bypasses the check on FreeBSD and prints a warning.
    `linux-xrt-sysfs.sh` mounts a tmpfs on `/compat/ubuntu/sys` and writes
    the entries XRT reads from the FreeBSD sysctls.
 
+The scripts are in this repository, `FreeBSD/npu/`
+(`git clone https://github.com/ocochard/myscripts`). All commands below
+run as root.
+
+### Quick start
+
+Check that the driver attached and found the NPU:
+
 ```
-amdxdna0: <amdxdna> mem 0xb0a00000-0xb0afffff,... at device 0.1 on pci4
-amdxdna0: [drm] aie2_init: Running without IOMMU, carveout memory only
-amdxdna0: successfully loaded firmware image 'amdnpu/17f0_11/npu_7.sbin'
-[drm] Initialized amdxdna_accel_driver 0.10.0 for amdxdna0 on minor 1
+# dmesg | grep -E '^amdxdna0: <|carveout'
+amdxdna0: <amdxdna> mem 0xb0a00000-0xb0afffff,...,0xb0b02000-0xb0b02fff at device 0.1 on pci4
+# ls /dev/accel
+accel0
+# xrt-smi examine
+...
+  NPU Firmware Version : 1.1.2.65
+Device(s) Present
+|BDF             |Name            |Architecture  |Topology  |
+|[0000:c2:00.1]  |NPU Strix Halo  |aie2p         |6x8       |
 ```
+
+Run AMD's self tests. They need a test archive that is not part of XRT
+(devel/xrt's pkg-message gives the same command):
+
+```
+$ mkdir -p ~/.local/share/xrt/2.27.0/amdxdna/bins
+$ fetch -o ~/.local/share/xrt/2.27.0/amdxdna/bins/ \
+    https://raw.githubusercontent.com/Xilinx/VTD/main/archive/strx/xrt_smi_strx.a
+$ xrt-smi validate
+...
+Test 1 [0000:c2:00.1]     : gemm
+    Details               : TOPS: 51.0
+    Test Status           : [PASSED]
+Test 2 [0000:c2:00.1]     : latency
+    Details               : Average latency: 46.0 us
+    Test Status           : [PASSED]
+```
+
+FastFlowLM, once its userland is installed (step 4). `flm` runs inside
+the Ubuntu userland, so each command goes through chroot(8). Models are
+downloaded on first use into `/compat/ubuntu/root/.config/flm/models`
+(1.3 GB for llama3.2:1b, 5.6 GB for qwen3:8b); `flm list` shows the
+catalog, with a check mark on the downloaded ones:
+
+```
+# chroot /compat/ubuntu flm list
+Models:
+  ...
+  - llama3.2:1b ✅
+  - qwen3:8b ✅
+# chroot /compat/ubuntu flm pull qwen3:8b
+```
+
+Chat in the terminal (`/?` for help, `/bye` to quit); a question can also
+be piped in:
+
+```
+# echo "What is FreeBSD? Answer in one sentence." | \
+    chroot /compat/ubuntu flm run llama3.2:1b
+[FLM]  Model loaded in 1.48 s
+[FLM]  Loading model: llama3.2:1b
+...
+FreeBSD is a free and open-source operating system (OS) that is designed
+to be stable, secure, and reliable, ...
+```
+
+Or serve an OpenAI-compatible API, for any client that speaks it
+(llama.cpp's web UI, Open WebUI, editors):
+
+```
+# chroot /compat/ubuntu /bin/sh -c 'cd /tmp; flm serve llama3.2:1b --port 52625' &
+$ curl -s http://127.0.0.1:52625/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model": "llama3.2:1b", "max_tokens": 20,
+         "messages": [{"role": "user", "content": "Name the capital of France in one word."}]}'
+{... "content":"Paris" ... "decoding_speed_tps":111.9 ...}
+```
+
+The carveout (`hw.amdxdna.carveout_mb`) must hold the model: 8192 MB is
+enough up to qwen3:8b. If `flm` cannot find the NPU, check that the
+fastflowlm service runs (`service fastflowlm status`) and rerun
+`service fastflowlm restart` after reloading amdxdna: its `/sys` entries
+describe the loaded driver.
 
 ## 3. What the port had to change
 
