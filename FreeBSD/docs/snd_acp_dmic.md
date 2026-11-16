@@ -52,6 +52,27 @@ processing and wake on voice are the only features missing. A laptop
 whose speakers or headset codec sit on I2S or SoundWire would need the
 driver extended to those ports.
 
+Would the DSP be worth a driver on FreeBSD? What it brings, against the
+alternatives:
+
+- Noise suppression and echo cancellation: the CPU can do it in user
+  space (PipeWire's echo-cancel module, the WebRTC audio processing
+  library) for a few percent of one core, and video-call software often
+  does it itself.
+- Wake on voice: needs the DSP, which listens while the system sleeps.
+  It is only useful once the laptop reaches deep sleep (S0i3), which
+  FreeBSD does not do yet on this laptop.
+- Lower power while recording or playing: small, and only once deep
+  sleep and idle power are in order.
+
+The cost is a much larger driver than `snd_acp`: AMD's signed SOF
+firmware (from linux-firmware), the SOF message protocol between the
+driver and that firmware, and "topology" files that describe the audio
+pipeline. So for this laptop: deep sleep first, then decide whether wake
+on voice is worth the SOF work. The DC offset of the microphones does
+not need the DSP: a high-pass filter in the driver or in user space
+removes it.
+
 **DMA through a page table.** The ACP does not write to system memory
 by physical address directly. It writes to its own address space; an
 *address translation unit* (ATU) maps those addresses to system pages
