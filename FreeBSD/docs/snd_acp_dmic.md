@@ -2,9 +2,10 @@
 
 Patch: [snd_acp_dmic.patch](snd_acp_dmic.patch), branch
 [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp)
-(commit 6ba38c3ca4a6 on FreeBSD main d546356523f3).
+(commits 6ba38c3ca4a6, e4c888c47347 and eac669d546ee on FreeBSD main
+d546356523f3).
 Laptop: HP ZBook Ultra G1a (AMD Ryzen AI Max+ PRO 395, Strix Halo).
-Line numbers below are `sys/dev/sound/pci/acp.c` in that commit.
+Line numbers below are `sys/dev/sound/pci/acp.c` in eac669d546ee.
 Raw data from Linux: [acp/](acp/).
 
 ## 1. Background
@@ -70,14 +71,13 @@ firmware (from linux-firmware), the SOF message protocol between the
 driver and that firmware, and "topology" files that describe the audio
 pipeline. So for this laptop: deep sleep first, then decide whether wake
 on voice is worth the SOF work. The DC offset of the microphones does
-not need the DSP: a high-pass filter in the driver or in user space
-removes it.
+not need the DSP: the driver removes it with a small filter (below).
 
 **DMA through a page table.** The ACP does not write to system memory
 by physical address directly. It writes to its own address space; an
 *address translation unit* (ATU) maps those addresses to system pages
 through a small page table that the driver fills, one entry per 4 KB
-page (`acp_pdm_start()`, line 235):
+page (`acp_pdm_start()`, line 240):
 
 ```mermaid
 flowchart LR
@@ -86,7 +86,8 @@ flowchart LR
   DMA -- ATU + page table<br>16 entries at 0x16000 --> RAM[64 KB ring<br>in system memory]
   DMA -- every 8 KB --> IRQ[interrupt<br>ACP_EXT_INTR_STAT bit 16]
   IRQ --> PCM["pcm(4): chn_intr()"]
-  RAM --> PCM
+  RAM --> PROC["acp_rec_process()<br>mute first 100 ms<br>DC high-pass"]
+  PROC --> PCM
   PCM --> DSP[/dev/dsp6/]
 ```
 
@@ -94,11 +95,38 @@ flowchart LR
 conversion, mixing and the `/dev/dsp` interface. A hardware driver gives
 it channels: methods to set format and block size, start and stop
 (`trigger`), and report the position in the ring (`getptr`). It calls
-`chn_intr()` each time a block is ready (`acp_intr()`, line 294).
+`chn_intr()` each time a block is ready (`acp_intr()`, line 300).
 
 **Power and reset.** Before use, the ACP is powered on through its
 power-gating state machine (`ACP_PGFSM_CONTROL`/`STATUS`) and reset
-(`ACP_SOFT_RESET`) (`acp_hw_init()`, line 184; `acp_reset()`, line 173).
+(`ACP_SOFT_RESET`) (`acp_hw_init()`, line 189; `acp_reset()`, line 178).
+
+**DC offset and high-pass filter.** A recording is a list of numbers
+that swing around zero. When the microphone's zero point is off, every
+sample carries the same constant on top of the sound: a *DC offset*
+(DC as in direct current, a level that does not change). It cannot be
+heard, but it eats headroom (the signal clips sooner on one side),
+fools level meters and voice detectors, and clicks when a recording
+starts or stops. A *high-pass filter* lets fast changes through and
+blocks slow ones; a constant is the slowest change there is (0 Hz). The
+simplest one keeps a running average of the signal and subtracts it:
+
+```
+mean = mean + (x - mean) / 1024     /* follows slow changes only */
+y    = x - mean                     /* what is left: the sound */
+```
+
+The average follows changes slower than about 7.5 Hz at 48 kHz
+(48000 / 1024 / 2 pi); speech (100 Hz and up) passes unchanged. The
+kernel does not use floating point, so `mean` is kept multiplied by
+1024 in a 64-bit integer and the division is a shift (`ACP_DC_SHIFT`,
+line 113).
+
+**How a driver module gets loaded.** At boot, `devmatch(8)` lists the
+devices that have no driver and loads the modules that declare their
+IDs with `MODULE_PNP_INFO` (`kldxref(8)` collects these declarations in
+`linker.hints`). A driver without that declaration loads only when it
+is in the kernel configuration or named in `kld_list`.
 
 ## 2. The problem
 
@@ -117,6 +145,19 @@ pcm4: <Realtek ALC245 (Analog)> (play/rec) default
 configuration (`dev.hdaa.1.nid*_config`) has one microphone pin, nid 25,
 "Mic, Jack, Left", and no internal one.
 
+Once the first version of the driver recorded, two flaws showed in the
+samples (1 s recordings, raw samples saved and analysed afterwards):
+
+- Every recording starts with a burst of noise at full scale (peak 0
+  dBFS) that lasts about 60 ms, in all 5 recordings; then the level of
+  channel 0 drifts for 300 to 500 ms before it settles. This is the
+  click at the start of each recording.
+- After that, channel 0 carries a DC offset of -22 to -24 dBFS (Linux
+  on the same laptop: -22.9), channel 1 a much smaller one.
+
+And the driver did not load by itself: `devmatch -v` compared 1022:15e2
+with no table of `snd_acp`, which declared none.
+
 On Ubuntu the microphones work, through the Linux driver `snd_acp_pci`
 and its `acp-pdm-mach` card: 2 channels, 32-bit, 48 kHz. A register
 trace of Linux (mmiotrace, [acp/mmiotrace-summary.txt](acp/mmiotrace-summary.txt))
@@ -128,21 +169,34 @@ then enable; one interrupt per 8 KB.
 
 A new `pcm(4)` driver, `snd_acp`, record only:
 
-- Probe (line 438): PCI 1022:15e2 revisions 0x70 to 0x72.
-- Attach (line 470): map BAR 0, power on and reset the ACP, then
+- Probe (line 486): PCI 1022:15e2 revisions 0x70 to 0x72.
+- Attach (line 518): map BAR 0, power on and reset the ACP, then
   check that the firmware reports digital microphones (`acp_has_dmic()`,
-  line 418): the pin configuration must route the PDM interface (the
+  line 466): the pin configuration must route the PDM interface (the
   values Linux accepts), and the ACPI method `_WOV` of the ACP device,
   when present, must not return 0. Then one recording channel.
-- Start (`acp_pdm_start()`, line 235): page table for the 64 KB ring
+- Start (`acp_pdm_start()`, line 240): page table for the 64 KB ring
   (a contiguous buffer below 4 GB from `sndbuf_alloc()`), ATU, PDM
   interrupt enabled, 2 channels, decimation 64, PDM clock and control,
   ring address, size and interrupt watermark (the block size), then PDM
   and DMA enable, and wait for the DMA's running bit.
-- Position (`acpchan_getptr()`, line 380): the ACP counts the bytes it
-  wrote in a 64-bit counter (`acp_pdm_pos()`, line 223); the driver
+- Position (`acpchan_getptr()`, line 427): the ACP counts the bytes it
+  wrote in a 64-bit counter (`acp_pdm_pos()`, line 228); the driver
   keeps the value at start and returns the difference modulo the ring
   size.
+- Cleaning (`acp_rec_process()`, line 392, commit e4c888c47347):
+  `pcm(4)` calls `getptr` before it reads the ring, so the driver
+  processes the samples that arrived since the last call in place, and
+  only then reports them: it writes zeros over the first 100 ms
+  (`ACP_MUTE_BYTES`, line 114), starts the running average of each
+  channel from its first sample after that, and subtracts it (the
+  filter above, saturated to 32 bits). It tracks its progress in bytes
+  since the start, not as a ring offset, so the mute window survives the
+  ring wrapping. The sysctl `dev.pcm.N.dc_filter` (line 563, default 1)
+  turns the filter off; the mute stays, since the burst is not sound.
+- Loading (line 655, commit eac669d546ee): `MODULE_PNP_INFO` with
+  vendor 0x1022 and device 0x15e2, so `devmatch(8)` loads the module.
+  The revision and microphone checks stay in probe and attach.
 - Stop, detach, suspend and resume undo or redo the above.
 
 Where the values come from: there is no public datasheet. Register
@@ -161,11 +215,21 @@ Alternatives:
   path a single `pcm(4)` driver is far smaller.
 - Use the ACP's DSP (Linux SOF): needs firmware and a much larger
   driver; only needed for offloaded processing or wake on voice.
+- Remove the DC offset in user space (each application, or a sound
+  server): every program would have to do it, and the start burst would
+  still reach them. In the driver it costs one pass over the new samples.
+- A filter with a higher cutoff (say 20 Hz) follows the drift of the
+  first 500 ms better but starts to touch low notes; 7.5 Hz leaves all
+  audible sound alone.
+- Add `device snd_acp` to GENERIC, as the other PCI sound drivers are:
+  every amd64 kernel would carry it. With `MODULE_PNP_INFO` the module
+  is loaded only on machines with an ACP; on an ACP without
+  microphones it loads, attach fails, and it stays unused.
 
-What it does not do: no gain control (no mixer), no removal of the DC
-offset the microphones carry (channel 0 at about -22 dBFS), no wake on
-voice, no I2S or SoundWire devices, and no other ACP revisions (Renoir,
-Rembrandt, ACP 6.3).
+What it does not do: no gain control (no mixer), no wake on voice, no
+I2S or SoundWire devices, and no other ACP revisions (Renoir,
+Rembrandt, ACP 6.3). The residual drift in the first half second is
+reduced, not removed (see the tests).
 
 ## 4. Tested
 
@@ -184,9 +248,24 @@ per 0.5 s window; audio discarded):
 | two recordings back to back | stop and start work |
 | default OSS format (`dd if=/dev/dsp6`) | 187 KB/s, 16-bit stereo 48 kHz converted by `pcm(4)` |
 
+Mute, filter and loading, 2026-11-17, kernel olivier-npu-n291242
+(module built from the three commits). Each 1 s recording saved and
+analysed on another machine:
+
+| Test | Result |
+|---|---|
+| start of 6 recordings, filter on and off | first 100 ms exactly zero on both channels; peak after it -21 to -44 dBFS (before: 0 dBFS) |
+| `dc_filter=0`, 3 runs | channel 0 DC from 0.5 to 1 s -23.5 to -23.6 dBFS |
+| `dc_filter=1`, 3 runs | channel 0 DC from 0.5 to 1 s -49.2, -72.1, -88.2 dBFS (first run after load: the drift was not over) |
+| 5 s, `dc_filter=1` | DC -74.7 dBFS channel 0, -92.9 dBFS channel 1 (before: -21.8); peak -37.4 dBFS; -54 to -60 dBFS per window |
+| filter in the driver vs the same arithmetic in Python on a raw recording | same output shape; both settle to zero after the start |
+| `kldxref -d` | `pnp info for bus pci format U16:vendor;U16:device 1 entries` |
+| `devmatch -a` with the module unloaded | `unattached: snd_acp.ko` (plain `devmatch` skips a device that had a driver since boot) |
+
 Same laptop on Ubuntu (Linux 7.0.0-43) for comparison: quiet -42 to -48
 dBFS per window, clapping peak -2 dBFS. The quieter floor there may be
 the room; it was not compared in the same conditions.
 
-Not tested: suspend and resume while recording, desktop applications,
-ACP revisions 0x71 and 0x72, other laptops.
+Not tested: loading by `devmatch` at an actual boot (no installed
+kernel carries the module yet), suspend and resume while recording,
+desktop applications, ACP revisions 0x71 and 0x72, other laptops.

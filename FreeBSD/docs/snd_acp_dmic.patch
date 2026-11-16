@@ -1,27 +1,7 @@
-From 6ba38c3ca4a6fd4b499cbcf47ca3ffbe0e25807f Mon Sep 17 00:00:00 2001
-From: Olivier Cochard <olivier@FreeBSD.org>
-Date: Mon, 16 Nov 2026 22:19:30 +0100
-Subject: [PATCH] snd_acp: Add a driver for AMD ACP 7.x digital microphones
-
-The built-in microphones of Strix Halo laptops are wired to the ACP's PDM
-interface, not to the HDA codec, so FreeBSD had no way to record from
-them.  Capture only: no DSP, I2S or SoundWire.
----
- share/man/man4/Makefile               |   1 +
- share/man/man4/snd_acp.4              |  86 ++++
- sys/conf/files.amd64                  |   1 +
- sys/dev/sound/pci/acp.c               | 596 ++++++++++++++++++++++++++
- sys/modules/sound/driver/Makefile     |   4 +
- sys/modules/sound/driver/acp/Makefile |   7 +
- 6 files changed, 695 insertions(+)
- create mode 100644 share/man/man4/snd_acp.4
- create mode 100644 sys/dev/sound/pci/acp.c
- create mode 100644 sys/modules/sound/driver/acp/Makefile
-
-diff --git a/share/man/man4/Makefile b/share/man/man4/Makefile
+diff --git share/man/man4/Makefile share/man/man4/Makefile
 index 4a39645fcba3..f7afabd8d0e4 100644
---- a/share/man/man4/Makefile
-+++ b/share/man/man4/Makefile
+--- share/man/man4/Makefile
++++ share/man/man4/Makefile
 @@ -567,6 +567,7 @@ MAN=	aac.4 \
  	smbus.4 \
  	smp.4 \
@@ -30,12 +10,12 @@ index 4a39645fcba3..f7afabd8d0e4 100644
  	snd_als4000.4 \
  	snd_atiixp.4 \
  	snd_cmi.4 \
-diff --git a/share/man/man4/snd_acp.4 b/share/man/man4/snd_acp.4
+diff --git share/man/man4/snd_acp.4 share/man/man4/snd_acp.4
 new file mode 100644
-index 000000000000..61f85015ab08
+index 000000000000..c1458ce3274c
 --- /dev/null
-+++ b/share/man/man4/snd_acp.4
-@@ -0,0 +1,86 @@
++++ share/man/man4/snd_acp.4
+@@ -0,0 +1,94 @@
 +.\"-
 +.\" SPDX-License-Identifier: BSD-2-Clause
 +.\"
@@ -110,6 +90,15 @@ index 000000000000..61f85015ab08
 +AMD Audio Coprocessor 7.x (PCI 1022:15e2, revisions 0x70 to 0x72),
 +as found in the Ryzen AI Max (Strix Halo) processors
 +.El
++.Sh SYSCTL VARIABLES
++.Bl -tag -width indent
++.It Va dev.pcm.%d.dc_filter
++Remove the DC offset that the microphones carry, with a high-pass filter
++at about 7.5 Hz.
++Default 1; 0 delivers the samples unchanged.
++In both cases the first 100 ms of each recording are muted: the
++microphones start with a full-scale burst.
++.El
 +.Sh SEE ALSO
 +.Xr sound 4
 +.Sh HISTORY
@@ -121,11 +110,10 @@ index 000000000000..61f85015ab08
 +.An Olivier Cochard Aq Mt olivier@FreeBSD.org
 +.Sh BUGS
 +The microphones' gain cannot be changed; there is no mixer.
-+Recordings carry a DC offset that the driver does not remove.
-diff --git a/sys/conf/files.amd64 b/sys/conf/files.amd64
+diff --git sys/conf/files.amd64 sys/conf/files.amd64
 index 0eb78e3f7557..435b73f5eac8 100644
---- a/sys/conf/files.amd64
-+++ b/sys/conf/files.amd64
+--- sys/conf/files.amd64
++++ sys/conf/files.amd64
 @@ -388,6 +388,7 @@ dev/smartpqi/smartpqi_request.c optional 	smartpqi
  dev/smartpqi/smartpqi_response.c	optional 	smartpqi
  dev/smartpqi/smartpqi_sis.c     optional 	smartpqi
@@ -134,12 +122,12 @@ index 0eb78e3f7557..435b73f5eac8 100644
  dev/sume/if_sume.c		optional	sume
  dev/syscons/apm/apm_saver.c	optional	apm_saver apm
  dev/thunderbolt/hcm.c		optional	thunderbolt
-diff --git a/sys/dev/sound/pci/acp.c b/sys/dev/sound/pci/acp.c
+diff --git sys/dev/sound/pci/acp.c sys/dev/sound/pci/acp.c
 new file mode 100644
-index 000000000000..bb5d6022c513
+index 000000000000..292fcdd856b2
 --- /dev/null
-+++ b/sys/dev/sound/pci/acp.c
-@@ -0,0 +1,596 @@
++++ sys/dev/sound/pci/acp.c
+@@ -0,0 +1,659 @@
 +/*-
 + * SPDX-License-Identifier: BSD-2-Clause
 + *
@@ -252,6 +240,8 @@ index 000000000000..bb5d6022c513
 +#define	ACP_RATE		48000
 +#define	ACP_POLL_US		5
 +#define	ACP_TIMEOUT_US		500
++#define	ACP_DC_SHIFT		10	/* high-pass at about 7.5 Hz */
++#define	ACP_MUTE_BYTES		(ACP_RATE / 10 * 8)	/* first 100 ms */
 +
 +struct acp_info;
 +
@@ -260,6 +250,8 @@ index 000000000000..bb5d6022c513
 +	struct pcm_channel	*channel;
 +	struct acp_info		*parent;
 +	uint64_t		start_pos;
++	uint64_t		hpos;	/* bytes since start, processed */
++	int64_t			dc[2];	/* DC estimate per channel, Q10 */
 +	uint32_t		blksz;
 +	bool			running;
 +};
@@ -274,6 +266,7 @@ index 000000000000..bb5d6022c513
 +	void			*ih;
 +	bus_dma_tag_t		dmat;
 +	struct acp_chinfo	rch;
++	int			dc_filter;
 +};
 +
 +static uint32_t acp_fmt[] = {
@@ -409,6 +402,7 @@ index 000000000000..bb5d6022c513
 +	acp_wr(sc, ACP_ATU_CTRL, 1);
 +
 +	ch->start_pos = acp_pdm_pos(sc);
++	ch->hpos = 0;
 +	acp_wr(sc, ACP_PDM_ENABLE, 1);
 +	acp_wr(sc, ACP_PDM_DMA_ENABLE, 1);
 +	if (acp_poll(sc, ACP_PDM_DMA_ENABLE, ACP_PDM_DMA_RUNNING,
@@ -518,6 +512,47 @@ index 000000000000..bb5d6022c513
 +	return (0);
 +}
 +
++/*
++ * Process the samples that arrived since the last call, in place: mute
++ * the first 100 ms (the microphones start with a full-scale burst), then
++ * remove their DC offset with a first-order high-pass, y = x - mean, the
++ * mean being a running average over 2^ACP_DC_SHIFT samples.
++ */
++static void
++acp_rec_process(struct acp_info *sc, struct acp_chinfo *ch, uint64_t end)
++{
++	struct snd_dbuf *b = ch->buffer;
++	int32_t *s = (int32_t *)b->buf;
++	int32_t *p;
++	int64_t y;
++	uint64_t k;
++	int c;
++
++	if (end - ch->hpos > b->bufsize)
++		ch->hpos = end - b->bufsize;	/* overrun */
++	if (sc->dc_filter == 0 && ch->hpos >= ACP_MUTE_BYTES)
++		ch->hpos = end;
++	if (ch->hpos == end)
++		return;
++	bus_dmamap_sync(b->dmatag, b->dmamap, BUS_DMASYNC_POSTREAD);
++	for (k = ch->hpos; k < end; k += 4) {
++		p = &s[(k % b->bufsize) / 4];
++		c = (k / 4) & 1;
++		if (k < ACP_MUTE_BYTES) {
++			*p = 0;
++			continue;
++		}
++		if (k < ACP_MUTE_BYTES + 8)
++			ch->dc[c] = (int64_t)*p << ACP_DC_SHIFT;
++		if (sc->dc_filter == 0)
++			continue;
++		ch->dc[c] += *p - (ch->dc[c] >> ACP_DC_SHIFT);
++		y = *p - (ch->dc[c] >> ACP_DC_SHIFT);
++		*p = MIN(MAX(y, INT32_MIN), INT32_MAX);
++	}
++	ch->hpos = end;
++}
++
 +static uint32_t
 +acpchan_getptr(kobj_t obj, void *data)
 +{
@@ -526,9 +561,10 @@ index 000000000000..bb5d6022c513
 +	uint64_t pos;
 +
 +	mtx_lock(&sc->lock);
-+	pos = acp_pdm_pos(sc) - ch->start_pos;
++	pos = (acp_pdm_pos(sc) - ch->start_pos) & ~7ULL;
++	acp_rec_process(sc, ch, pos);
 +	mtx_unlock(&sc->lock);
-+	return ((uint32_t)(pos % ch->buffer->bufsize) & ~7U);
++	return ((uint32_t)(pos % ch->buffer->bufsize));
 +}
 +
 +static struct pcmchan_caps *
@@ -651,6 +687,12 @@ index 000000000000..bb5d6022c513
 +		goto bad_hw;
 +	}
 +
++	sc->dc_filter = 1;
++	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
++	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
++	    "dc_filter", CTLFLAG_RW, &sc->dc_filter, 0,
++	    "Remove the DC offset of the microphones");
++
 +	pcm_init(dev, sc);
 +	pcm_addchan(dev, PCMDIR_REC, &acpchan_class, sc);
 +	snprintf(status, SND_STATUSLEN, "mem 0x%jx irq %jd on %s",
@@ -732,14 +774,23 @@ index 000000000000..bb5d6022c513
 +	PCM_SOFTC_SIZE,
 +};
 +
++static const struct {
++	uint16_t	vendor;
++	uint16_t	device;
++} acp_ids[] = {
++	{ ACP_VENDOR, ACP_DEVICE },
++};
++
 +DRIVER_MODULE(snd_acp, pci, acp_driver, 0, 0);
++MODULE_PNP_INFO("U16:vendor;U16:device", pci, snd_acp, acp_ids,
++    nitems(acp_ids));
 +MODULE_DEPEND(snd_acp, sound, 1, 1, 1);
 +MODULE_DEPEND(snd_acp, acpi, 1, 1, 1);
 +MODULE_VERSION(snd_acp, 1);
-diff --git a/sys/modules/sound/driver/Makefile b/sys/modules/sound/driver/Makefile
+diff --git sys/modules/sound/driver/Makefile sys/modules/sound/driver/Makefile
 index 02703d4b591a..6abbb7fa93ed 100644
---- a/sys/modules/sound/driver/Makefile
-+++ b/sys/modules/sound/driver/Makefile
+--- sys/modules/sound/driver/Makefile
++++ sys/modules/sound/driver/Makefile
 @@ -18,6 +18,10 @@ _maestro3=	maestro3
  SUBDIR+=	cmi
  .endif
@@ -751,11 +802,11 @@ index 02703d4b591a..6abbb7fa93ed 100644
  .if ${MACHINE_CPUARCH} == "powerpc"
  SUBDIR+=	ai2s davbus
  .endif
-diff --git a/sys/modules/sound/driver/acp/Makefile b/sys/modules/sound/driver/acp/Makefile
+diff --git sys/modules/sound/driver/acp/Makefile sys/modules/sound/driver/acp/Makefile
 new file mode 100644
 index 000000000000..40b6a1df79aa
 --- /dev/null
-+++ b/sys/modules/sound/driver/acp/Makefile
++++ sys/modules/sound/driver/acp/Makefile
 @@ -0,0 +1,7 @@
 +.PATH: ${SRCTOP}/sys/dev/sound/pci
 +
@@ -764,6 +815,3 @@ index 000000000000..40b6a1df79aa
 +SRCS+=	acp.c
 +
 +.include <bsd.kmod.mk>
--- 
-2.56.0
-
