@@ -814,7 +814,35 @@ Later tests, all without effect on the frame rate:
 
 So the ISP clock requests do not limit the frame rate (even skipping them
 changes nothing), and on Linux neither the platform profile nor `amd_pmf`
-at run time brings it down to 24. Not tested: Linux booted with `amd_pmf`
+at run time brings it down to 24.
+
+The firmware's own clock explains the number. Word 2 of the meta info
+(offset `0x08`) is a timestamp in firmware ticks. Over 30 frames, mid-stream,
+in the same scene with the same firmware (`hw.amdisp.meta` on FreeBSD,
+`bpftrace` on the driver's meta buffers on Linux):
+
+| | Ticks for 30 frames | Real time per frame | One tick | Clock |
+|---|---|---|---|---|
+| Linux (29.8 fps) | 24121608 | 33.54 ms | 41.7 ns | 24.0 MHz |
+| FreeBSD (23.9 fps) | 24121528 | 41.5 ms | 51.6 ns | 19.4 MHz |
+
+The firmware counts the same 804051 ticks per frame on both systems: in its
+own time it produces the same 30 fps stream. On FreeBSD its reference clock
+runs at about 19.4 MHz instead of 24 MHz (the usual camera master clock,
+and the 24 MHz that Linux's `amd_isp4.c` declares for this sensor), so every
+frame takes 1.237 times longer, exactly 41.5 / 33.5 ms. The rest of the
+meta info has the same layout and fixed values on both. The host does not
+program this clock on Linux (no clock divider among the driver's register
+accesses), so it is an SoC clock set by the SMU or the platform firmware.
+
+Tested and ruled out: the `ig4(4)` patch that gives the AMD platform I2C
+controllers their 150 MHz input clock (branch `olivier-ig4-amd-clock`,
+needed on this laptop anyway and now in the test kernel). With it the frame
+interval stays at 41.4 ms and the ticks per 30 frames at 24109836. It only
+changes how FreeBSD computes those buses' timings; the ISP's three I2C
+controllers are not `AMDI0010` devices and are programmed by the firmware,
+and on Linux the `AMDI0010` 150 MHz clocks are fixed-rate entries with no
+hardware behind them (`/sys/kernel/debug/clk/clk_summary`). Not tested: Linux booted with `amd_pmf`
 never loaded. The 24 fps on FreeBSD stays unexplained.
 
 The first stream start after a boot sometimes gets no answer to
