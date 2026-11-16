@@ -632,11 +632,12 @@ for the flavours a port lists in `COMPAT_LINUXKPI_HWCRYPTO_HT_VHT`
 neither. [mt7925_wifi_firmware_port.patch](mt7925_wifi_firmware_port.patch)
 adds `COMPAT_LINUXKPI_SKB_MEM_LIMIT=1` (every mt76 PCI chip sets a 32-bit
 DMA mask: mt7615, mt7915, mt7921, mt7925; mt7996 36-bit data, 32-bit
-coherent) and `COMPAT_LINUXKPI_HWCRYPTO_HT_VHT= mt7925` (the only flavour
-tested), with `PORTREVISION=1`. Poudriere `testport` and `bulk` pass; the
-mt7925 package installs `mt7925.conf` (`mem_limit=1`) and
-`mt76-mt7925.conf` (`hw_crypto=1` and the 11n/11ac enables), the mt7921
-package only `mt7921.conf`. portlint reports the same structural errors as
+coherent) and `COMPAT_LINUXKPI_HWCRYPTO_HT_VHT= mt7921 mt7925` (mt7925
+tested; mt7921 at the reviewer's request, untested, no hardware; the
+mt7921 flavour also carries the MT7922 firmware, there is no mt7922
+flavour), with `PORTREVISION=1`. Poudriere `testport` and `bulk` pass; the
+mt7925 and mt7921 packages each install `<flavour>.conf` (`mem_limit=1`)
+and `mt76-<flavour>.conf` (`hw_crypto=1` and the 11n/11ac enables). portlint reports the same structural errors as
 the unmodified port (child Makefile of a shared `Makefile.inc`) plus a
 false "new ports should not set PORTREVISION". Submitted as
 [PR 300731](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=300731).
