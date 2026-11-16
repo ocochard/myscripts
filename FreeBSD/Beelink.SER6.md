@@ -116,19 +116,71 @@ IVHD entry type 0xf0 is an ACPI HID device entry; FreeBSD skips it, and the IOMM
 
 ## NVMe event flood
 
-The Kingston NV2 sends a SMART/health asynchronous event many times per hour:
+The Kingston NV2 (KINGSTON SNV2S500G, firmware SBJ00101) sends bursts of SMART/health asynchronous events:
 
 ```
 nvme0: async event occurred (type 0x1, info 0x01, page 0x02)
 ```
 
 Type 0x1 is SMART/health status, info 0x01 is "temperature above threshold".
-Count: 364 in the kernel message buffer about 50 minutes after boot.
-The health log reports no critical warning and 45.85 C (`nvmecontrol logpage -p 2 nvme0`).
-So the event fires below any real overheating; the drive threshold is probably low.
-Not checked: the threshold value (`nvmecontrol` feature 0x04, Temperature Threshold).
-Impact: log spam fills the message buffer and hides boot messages.
-`/var/run/dmesg.boot` also starts with 379 of these lines; use `/var/log/messages` for the boot log.
+
+### Thresholds
+
+Read on 2026-11-16 with `nvmecontrol admin-passthru`:
+
+| Value | Source | Result |
+|---|---|---|
+| WCTEMP (warning composite temperature) | Identify Controller, bytes 266-267 | 356 K, 82.85 C |
+| CCTEMP (critical composite temperature) | Identify Controller, bytes 268-269 | 363 K, 89.85 C |
+| Over-temperature threshold, composite | Get Features 0x04, `--cdw11 0` | 0x164 = 356 K, 82.85 C (same as WCTEMP) |
+| Under-temperature threshold, composite | Get Features 0x04, THSEL=1 | 0x111 = 273 K, -0.15 C |
+| Thresholds, sensor 1 | Get Features 0x04, TMPSEL=1 | 0: no extra sensor |
+| Async event config | Get Features 0x0b | 0x21f: all critical warnings + firmware activation enabled |
+
+The threshold is the drive default, 83 C. It is not set low.
+
+### When events fire
+
+Counted in `/var/log/messages` and `messages.0.bz2`, with `syslogd: last message repeated N times` added:
+
+- bursts of 10 to 35 per minute during heavy I/O, for example 09:07 to 09:57 on 2026-11-16 (probably the kernel build for a TPM test);
+- bursts of 3 to 26 around each reboot;
+- single bursts at night (2026-11-11 01:13 and 02:15, 2026-11-14 04:15);
+- none at idle: no event from 12:16 to 13:30 on 2026-11-16.
+
+The first event in these logs is on 2026-11-08 08:29.
+Earlier text in this document gave "364 in about 50 minutes after boot": wrong.
+The kernel message buffer survives warm reboots, so `dmesg` and `/var/run/dmesg.boot` (379 lines) also hold events from earlier boots.
+
+### Load test
+
+90 s of `dd if=/dev/nda0 of=/dev/null bs=1m` (read only), health log every 10 s:
+
+| Time | Composite temperature | Critical warning | Warning temp time (min) | Critical temp time (min) |
+|---|---|---|---|---|
+| 13:30:16, before | 44.85 C | 0x00 | 17621 | 14383 |
+| 13:31:18 | 46.85 C | 0x00 | 17621 | 14383 |
+| 13:31:38 | 46.85 C | 0x00 | 17621 | 14384 |
+
+`/var/log/messages` got one event at 13:30:26, 10 s into the load.
+The composite temperature never passed 47 C, but the drive added one minute of "Error Temp Composite Time" (time above CCTEMP, 90 C).
+Lifetime totals: 17621 min (294 h) above 83 C and 14383 min (240 h) above 90 C, out of 7445 power-on hours.
+
+So the drive sees a temperature far above its reported composite value, probably on an internal sensor it does not expose.
+Another possible cause is a firmware bug in these counters.
+Measurements cannot separate the two without a thermocouple on the controller.
+Not checked: whether the drive has a heatsink or thermal pad.
+
+### Why FreeBSD repeats the message
+
+`sys/dev/nvme/nvme_ctrlr.c`: after a SMART/health event, the driver reads the health log page and masks the reported critical warning bits in the async event config, so a persistent warning fires once.
+On this drive the critical warning byte is already 0x00 when the driver reads it.
+Nothing gets masked, no `SMART WARNING: temperature above threshold` line is printed (0 in `dmesg`), and the next event comes.
+
+Impact: log spam, and a drive that runs above its critical temperature under load.
+Throttling was not measured: the 90 s read test was too short to show it.
+First step: open the case and check the drive cooling.
+`nvmecontrol` does not read the controller temperature, so heavy writes cannot be monitored from the composite value.
 
 ## Device purpose and impact
 
@@ -168,7 +220,7 @@ Three setup items give more than any new driver:
 
 1. Bluetooth: install `iwmbt-firmware` (done 2026-11-16). `fwget` patch for detection: see above.
 2. GPU: add `amdgpu` to `kld_list` if the machine runs a desktop. Today it is loaded by hand.
-3. NVMe log spam: read the temperature threshold and raise it, or replace the drive. Investigate before changing.
+3. NVMe: the threshold is the 83 C default; the drive heats under load, see [NVMe event flood](#nvme-event-flood). Fix the cooling, not the threshold.
 
 Skip:
 
