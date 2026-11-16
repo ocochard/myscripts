@@ -1,0 +1,39 @@
+From d2656d7394c90562035bf47cd815562937b53f27 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 20:55:36 +0100
+Subject: [PATCH] LinuxKPI: sysfs: Return binary attributes whole
+
+sysctl_handle_attr() hands every show() result to
+sysctl_handle_string(), which stops at the first NUL byte.  Binary
+attributes such as amdgpu's gpu_metrics (the SMU power, clock and
+activity table) were truncated to their 4-byte header.
+
+Text attributes never contain a NUL, so return the bytes show()
+produced as they are when the buffer has one, and refuse writes there.
+
+MFC after:	1 week
+---
+ sys/compat/linuxkpi/common/include/linux/sysfs.h | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/sys/compat/linuxkpi/common/include/linux/sysfs.h b/sys/compat/linuxkpi/common/include/linux/sysfs.h
+index e21498c41617..416525d23568 100644
+--- a/sys/compat/linuxkpi/common/include/linux/sysfs.h
++++ b/sys/compat/linuxkpi/common/include/linux/sysfs.h
+@@ -154,6 +154,13 @@ sysctl_handle_attr(SYSCTL_HANDLER_ARGS)
+ 			if (error != EIO)
+ 				goto out;
+ 			buf[0] = '\0';
++		} else if (len > 0 && memchr(buf, '\0', MIN(len, PAGE_SIZE))) {
++			/* Binary attribute, such as amdgpu gpu_metrics. */
++			if (req->newptr != NULL)
++				error = EPERM;
++			else
++				error = SYSCTL_OUT(req, buf, MIN(len, PAGE_SIZE));
++			goto out;
+ 		} else if (len) {
+ 			len--;
+ 			if (len >= PAGE_SIZE)
+-- 
+2.56.0
+

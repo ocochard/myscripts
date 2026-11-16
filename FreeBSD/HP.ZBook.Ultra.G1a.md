@@ -17,6 +17,8 @@ Linux comparison: Ubuntu with Linux 7.0.0-43 on the same laptop, same day (`lspc
 | HDMI/DP audio | 1002:1640 | `hdac0`, 4 `pcm` outputs |
 | Headphone jack | 1022:15e3 + Realtek ALC245 codec | `hdac1`, `pcm5` (headphones) |
 | Internal speakers | `pcm4` (ALC245) + 4 Cirrus Logic CS35L54 amplifiers (CSC3554) | not in FreeBSD yet: `snd_cs35l54` from branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) + firmware port (see below) |
+| Wi-Fi | MediaTek MT7925 (14c3:7925) | not in FreeBSD yet: `if_mt7925` from branch [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) + `wifi-firmware-mt76-kmod-mt7925`; TX 474-509, RX 289-314 Mbit/s, survives suspend-to-idle (see below) |
+| Built-in camera | OmniVision OV05C behind the ISP 4.1 | not in FreeBSD yet: `amdisp` from drm-kmod branch [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) + the August 2025 ISP firmware; `/dev/video0`, 30 fps (see below) |
 | NVMe | Samsung PM9A1 2 TB (144d:a80a) | `nvme`/`nda` |
 | USB 3 | four xHCI (1022:1587, 1588, 1589, 158b) | `xhci` |
 | Touchpad | Synaptics SYNA3133 (I2C HID) | `iichid0`, polling mode (see below) |
@@ -49,7 +51,7 @@ from `drm-latest-kmod` (drm 6.12), packages `libva-utils`, `vulkan-tools`,
 | Vulkan video | exposed | `VK_KHR_video_decode_{h264,h265,vp9,av1}`, `VK_KHR_video_encode_{h264,h265,av1}` |
 | VA-API decode | works, bit-exact | H.264, HEVC (Main, Main10), VP9 (profiles 0, 2), AV1, JPEG |
 | VA-API encode | works | H.264, HEVC (Main, Main10), AV1 |
-| VA-API video processing | listed | `VAProfileNone: VAEntrypointVideoProc` (the VPE engine) |
+| VA-API video processing | listed | `VAProfileNone: VAEntrypointVideoProc` (the VPE engine; switched off by the IOMMU workaround `hw.amdgpu.ip_block_mask=0xfffff7ff`, see [IOMMU](#iommu-002)) |
 | OpenCL | none | `clinfo`: 0 platforms; no FreeBSD package provides Mesa rusticl |
 | OpenGL | not tested | needs a desktop session |
 
@@ -86,8 +88,8 @@ Source: `pciconf -lv | grep -A4 '^none'`.
 
 | pciconf | Address | ID | Device | Purpose | Missing on FreeBSD | Linux driver |
 |---|---|---|---|---|---|---|
-| none0 | 0:0:2 | 1022:1508 | IOMMU | DMA protection, PCI passthrough | nothing: `amdiommu` exists, off by default | IOMMU core (no `lspci` driver line) |
-| none1 | 193:0:0 | 14c3:7925 | MediaTek MT7925 (Filogic 360) | Wi-Fi 7 | Wi-Fi | `mt7925e` |
+| none0 | 0:0:2 | 1022:1508 | IOMMU | DMA protection, PCI passthrough | nothing: `amdiommu` exists, off by default; usable with three fixes (see below) | IOMMU core (no `lspci` driver line) |
+| none1 | 193:0:0 | 14c3:7925 | MediaTek MT7925 (Filogic 360) | Wi-Fi 7 | Wi-Fi (works with branch `olivier-mt7925`, see below) | `mt7925e` |
 | none2 | 195:0:2 | 1022:17e0 | CCP/ASP | security processor (PSP) and crypto offload | crypto offload, nothing visible | `ccp` |
 | none3 | 195:0:5 | 1022:15e2 | Audio Coprocessor (ACP) | DSP for the internal digital microphones | internal microphone (probably) | `snd_acp_pci` |
 | none4 | 195:0:7 | 1022:164a | Sensor Fusion Hub / MP2 | sensor microcontroller; Linux uses it as an I2C controller | see below | `pcie_mp2_amd` (not `amd_sfh`) |
@@ -155,17 +157,29 @@ Status from the FreeBSD wiki (WiFi/Mt76, edited 2026-10-02):
 mt7921 is in a call for testing since July 2026, with mixed results;
 mt7925 comes next and "needs LinuxKPI IDR updates";
 all mt76 chips wait on a LinuxKPI rework for Linux page pools.
-Impact: no Wi-Fi; use USB or dock Ethernet. Track PR 273623 (mt76 meta-bug).
-Experiment (2026-11-12): with a LinuxKPI page pool side table, an init-failure fix, an idr fix and
-`compat.linuxkpi.skb.mem_limit=1` (plus `compat.linuxkpi.80211.hw_crypto=1` for A-MPDU), WPA2 works on 2.4 and 5 GHz (11ac), at 474 to 509 Mbit/s TX and 289 to 314 Mbit/s RX (Linux: 577/426);
-see [docs/mt7925_wifi.md](docs/mt7925_wifi.md).
+Impact with stock FreeBSD: no Wi-Fi; use USB or dock Ethernet. Track PR 273623 (mt76 meta-bug).
+With branch [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) (12 commits: LinuxKPI page pool side table, skb allocator, idr,
+airtime and TX status fixes, init-failure fixes, suspend and resume) and the firmware package (port PR 300731, which also sets
+`compat.linuxkpi.skb.mem_limit=1` and `compat.linuxkpi.80211.hw_crypto=1`), WPA2 works on 2.4 and 5 GHz (11ac),
+at 474 to 509 Mbit/s TX and 289 to 314 Mbit/s RX (Linux: 577/426), and Wi-Fi passes traffic again 10 s after suspend-to-idle
+(three suspends in a row tested); see [docs/mt7925_wifi.md](docs/mt7925_wifi.md).
 
 ### IOMMU (0:0:2)
 
 Not a missing driver: `amdiommu` is in GENERIC but off by default.
 It attaches only with `hw.amdiommu.enable=1` in `/boot/loader.conf` (`sys/x86/iommu/amd_drv.c:448`).
-Use: DMA protection, bhyve PCI passthrough.
-Not tested on this machine.
+Use: DMA protection, bhyve PCI passthrough, and the NPU (its firmware is about 1000 times slower with the IOMMU off).
+Tested 2026-11-16 with three fixes (branches `olivier-amdiommu` and `olivier-amdiommu-irte`, all in `zbook`):
+
+- `hw.amdiommu.enable=1 hw.iommu.dma=1` (DMA remapping): works; NVMe 128 KB reads 433 MB/s against 200 with the stock driver (890 without IOMMU).
+- `hw.amdiommu.enable=1` alone (interrupt remapping only): the stock kernel loops attaching USB devices at boot; with the fix it boots,
+  but in about half the boots with `boot_verbose` amdgpu's SMU hangs on `PowerDownVpe` and the display stalls;
+  `hw.amdgpu.ip_block_mask=0xfffff7ff` (VPE off) avoids it.
+- Without the IRTE fix, each MSI release loses an interrupt remap entry (`hdac0` falls back to INTx after 31 detach/attach cycles).
+
+Reports: [docs/bugreport_amdiommu_ir_only_loop.md](docs/bugreport_amdiommu_ir_only_loop.md),
+[docs/bugreport_amdiommu_map_invalidation.md](docs/bugreport_amdiommu_map_invalidation.md),
+[docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md).
 
 ### CCP/ASP (195:0:2)
 
@@ -216,7 +230,7 @@ Measured on a Framework Desktop with the same NPU (1022:17f0 rev 0x11), not yet 
 native XRT port (devel/xrt) `xrt-smi validate` gemm 51 TOPS, latency 47 to 58 us;
 FastFlowLM under linuxlator (its NPU engines are closed Linux binaries) runs llama3.2:1b at 65 tok/s decode and qwen3:8b at 10.8 tok/s decode.
 Details: [docs/amdxdna_npu.md](docs/amdxdna_npu.md).
-Impact: LLM inference on the NPU, leaving the iGPU free; not compared with llama.cpp on the iGPU.
+Impact: LLM inference at about 23 W package power (the NPU block itself about 2 W) against 85 W on the iGPU, which is 3.9 times faster; same energy per token (measured on the Framework Desktop, [section 5](docs/amdxdna_npu.md#5-power-npu-against-igpu)).
 
 ### USB4 host routers (197:0:5, 197:0:6)
 
@@ -225,7 +239,7 @@ Linux driver: `thunderbolt`.
 FreeBSD `thunderbolt(4)` (module `tb`, not in GENERIC) lists AMD Pink Sardine IDs (1022:1668, 1669) in `nhi_reg.h`,
 but its `nhi` driver probes any USB4 host by class and attaches to these too
 (with "Cannot find Upstream Facing Port" and "Error finding LC registers: 22");
-with it loaded, resume from suspend-to-idle hangs (see [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md)).
+with it loaded, resume from suspend-to-idle hung until the PCI D3hot fix; with that fix and amdgpu, resume works (see [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md)).
 USB 3 on the USB-C ports works through the xHCI functions; DisplayPort alt mode goes through amdgpu.
 Impact: no PCIe tunneling (eGPU, NVMe enclosure, PCIe docks).
 
@@ -235,7 +249,9 @@ The cameras are MIPI sensors behind the AMD ISP, not USB (UVC) cameras:
 an OmniVision OV05C RGB camera (`_DDN` "OV05C-RGB") and a Himax HM1092 IR camera (`_DDN` "HM1092-IR").
 Linux binds `amd-isp4` to the RGB camera; nothing binds the IR camera.
 The ISP firmware is already loaded on FreeBSD: `amdgpu_isp_4_1_1_bin.ko` comes with amdgpu, but nothing uses it.
-Impact: no webcam with stock FreeBSD; a test driver (`amdisp`, see below) gives a working `/dev/video0`. A USB webcam works with the native `uvideo(4)` driver (or `webcamd`).
+Impact: no webcam with stock FreeBSD. The `amdisp` driver (drm-kmod branch `olivier-amdisp`, see below) gives a working `/dev/video0`:
+NV12 and YUYV, 640x360 to 2888x1808, 30 fps, works in VLC; it needs the August 2025 ISP firmware, as the packaged one
+(February 2025) never finds the sensor. A USB webcam works with the native `uvideo(4)` driver (or `webcamd`).
 FreeBSD 16 has a kernel V4L2 capture framework, `video(4)` (9c9428825f4c, 2026-08): it provides
 `/dev/videoN`, buffers, `mmap` and the V4L2 ioctls, so an ISP driver would only implement the
 `video_if` hardware methods (formats, controls, start/stop stream), like `uvideo(4)` and `fwcam(4)`.
@@ -261,11 +277,20 @@ Impact: none for normal use; the EC handles PD negotiation.
 
 ## Suspend
 
-Tested 2026-11-12 on main 83c8ec72ac6a: the firmware offers only S4/S5
-(`hw.acpi.supported_sleep_state: S4 S5`), so `zzz` uses suspend-to-idle
-(`kern.power.suspend: suspend_to_idle`). The laptop goes to sleep (power LED
-blinks slowly); the power button does not wake it, a key press does. Resume
-is broken platform-wide:
+The firmware offers only S4/S5 (`hw.acpi.supported_sleep_state: S4 S5`),
+so `zzz` uses suspend-to-idle (`kern.power.suspend: suspend_to_idle`).
+The laptop goes to sleep (power LED blinks slowly); the power button does
+not wake it, a key press does.
+
+With the `zbook` branch (2026-11-16: suspend-to-idle wake, PCI D3hot,
+amdsmu and the mt7925 suspend commit), suspend and resume work: Xorg,
+amdgpu, NVMe, USB and the dock, the camera, the speaker driver and Wi-Fi
+come back (Wi-Fi also checked after three suspends in a row). The SoC still does not reach
+S0i3: it stays in software DRIPS, with DISPLAY, USB3_0, USB3_1, MPM and
+JPEG_1 reported as blockers by amdsmu; battery drain during sleep is
+therefore high.
+
+With stock main 83c8ec72ac6a (2026-11-12), resume was broken platform-wide:
 
 - `acpi0: Resumed from suspend-to-idle on AMD processor but amdsmu(4) is not
   attached; unable to verify S0i3 entry. It is unlikely the system entered a
@@ -277,7 +302,7 @@ is broken platform-wide:
   timers work; `shutdown -r` hangs on a black screen; only a forced power
   off recovers.
 
-Do not suspend this laptop on FreeBSD until this is fixed.
+Do not suspend this laptop with a stock kernel.
 Stock `amdsmu(4)` does not attach (its table lacks the Strix Halo root
 complex 1022:1507); with a one-row patch it attaches, but suspend then
 hangs with no wake at all. Linux reaches S0i3 and wakes on a key on the
@@ -330,9 +355,10 @@ the document that explains each one.
 | ACPI properties | [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) | 1 | `acpi: Refuse property requests for other buses children` | |
 | LinuxKPI SRCU (needed by the NPU) | [`olivier-lkpi-srcu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-srcu) | 1 | fix, tested (test module, stress, mutant) | [docs/linuxkpi_srcu_per_struct.md](docs/linuxkpi_srcu_per_struct.md) |
 | LinuxKPI `pcim_iomap()` BAR leak (needed by the NPU) | [`olivier-lkpi-pcim-iomap`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-pcim-iomap) | 1 | fix, tested on a Framework Desktop | [docs/linuxkpi_pcim_iomap_release.md](docs/linuxkpi_pcim_iomap_release.md) |
-| AMD IOMMU interrupt remap entries (needed by the NPU) | [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) | 1 | fix, tested on a Framework Desktop | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
+| LinuxKPI binary sysfs attributes (amdgpu `gpu_metrics`, SMU power) | [`olivier-lkpi-sysfs-binary`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-sysfs-binary) | 1 | fix, tested on a Framework Desktop; rebuild `amdgpu.ko` | [docs/linuxkpi_sysfs_binary_attr.md](docs/linuxkpi_sysfs_binary_attr.md) |
+| AMD IOMMU interrupt remap entries (needed by the NPU) | [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) (in `zbook`) | 1 | fix, tested on a Framework Desktop and on this laptop (`hdac0`: INTx after 31 detach/attach cycles without it, 64 clean cycles with it) | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
 | NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna); ports [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu) (devel/xrt) | 7; 3 | jobs, XRT and FastFlowLM work (tested on a Framework Desktop, needs the IOMMU on) | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
-| AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) and [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte), all three in `zbook` | 2 + 1 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu's SMU hangs on `PowerDownVpe` in about half the boots with `boot_verbose` (workaround `hw.amdgpu.ip_block_mask=0xfffff7ff`); interrupt remap entries leaked on every MSI release until the IRTE fix (`hdac0`: INTx after 31 detach/attach cycles without it, 64 clean cycles with it); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
+| AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) (in `zbook`) | 2 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu's SMU hangs on `PowerDownVpe` in about half the boots with `boot_verbose` (workaround `hw.amdgpu.ip_block_mask=0xfffff7ff`); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
 ### Applying the work, in order
@@ -349,7 +375,9 @@ to the stack tested in the AMD IOMMU bug reports. The branch builds
 `sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
 `amdisp` modules of step 12 against it). Boot test on the laptop
 (2026-11-16, kernel `zbook-n291256-f7d7c068c5b5` with those modules in
-the kernel directory): Wi-Fi associates and passes traffic, `amdgpio`
+the kernel directory; again with the 36-commit kernel
+`zbook-n291260-5e39e91e9442`: all the drivers below load from its directory,
+Wi-Fi associates, camera 29.82 fps, no panic, pools healthy): Wi-Fi associates and passes traffic, `amdgpio`
 attaches `gpio0`, the four `ig4` controllers attach, `snd_cs35l54` attaches
 the 4 amplifiers (calibration read, firmware 3.11.18; no sound played),
 `amdsmu` attaches (SMU 100.7.0), and the camera streams 1920x1080 NV12 at
@@ -397,25 +425,34 @@ and `olivier-amdiommu-irte`) it needs `olivier-lkpi-srcu` and `olivier-lkpi-pcim
 
 ## Which drivers are worth the work
 
-1. Wi-Fi (MT7925).
-   The biggest gap. Built by hand with an experimental LinuxKPI patch it associates and passes traffic,
-   TX reaches 82 to 88% of Linux, RX 68 to 74% (474 to 509 and 289 to 314 Mbit/s against 577/426 on the same AP).
-   Status, patches and next steps: [docs/mt7925_wifi.md](docs/mt7925_wifi.md).
-   Upstream: follow PR 273623 (mt76 meta-bug).
-2. Speaker amplifier (CS35L54).
-   Done, waiting for review: branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54), see the speaker section.
-3. Touch interrupts (amdgpio + GpioInt in acpi_iicbus).
+Done, waiting to be sent or reviewed:
+
+- Wi-Fi (MT7925): 12-commit series on branch [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925),
+  TX 82 to 88% of Linux, RX 68 to 74%, survives suspend-to-idle; next step is sending it to the LinuxKPI maintainer
+  ([docs/mt7925_wifi.md](docs/mt7925_wifi.md)). Upstream: follow PR 273623 (mt76 meta-bug).
+- Speaker amplifiers (CS35L54): branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54), see the speaker section.
+- Camera (ISP 4.1): drm-kmod branch `olivier-amdisp`, 30 fps; needs the newer ISP firmware in the firmware port
+  ([docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md)).
+- IOMMU fixes: three commits, see the IOMMU section.
+- NPU: works on a Framework Desktop (LLM inference with FastFlowLM, XRT); not yet tested on this laptop.
+
+Still worth the work:
+
+1. Deep sleep (S0i3).
+   Suspend and resume work, but the SoC stays in software DRIPS; amdsmu names the blockers
+   (DISPLAY, USB3_0, USB3_1, MPM, JPEG_1): [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md).
+2. Touch interrupts (amdgpio + GpioInt in acpi_iicbus).
    Gives lower latency on the first touch after idle and no dropped reports during fast movement.
    Builds on the Meteor Lake GpioInt work.
-4. MediaTek Bluetooth firmware loader.
+3. MediaTek Bluetooth firmware loader.
    A small `ubt` companion like `rtlbtfw`; needs the MediaTek firmware download protocol.
-5. Internal microphone (ACP).
+4. Internal microphone (ACP).
    Needed for calls without a headset; ASoC-style driver, medium to large effort.
 
 Skip for laptop use:
 
-- NPU, CCP/PSP, UCSI: no user-visible gain.
+- CCP/PSP, UCSI: no user-visible gain.
 - Sensor Fusion Hub / MP2: Linux uses it only as an I2C controller here, with no visible function.
 - USB4 routers: only for PCIe tunneling devices.
-- Cameras: a large job (now in progress, see [docs/amd_isp_camera.md](docs/amd_isp_camera.md)); a USB webcam works today with `uvideo(4)`.
+- IR camera (HM1092): no driver on Linux either.
 - PMF: useful for power modes, but the firmware default works.

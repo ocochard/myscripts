@@ -7,6 +7,9 @@ through a native XRT port. FastFlowLM runs llama3.2:1b (65 tok/s decode)
 and qwen3:8b (10.8 tok/s decode, 396 tok/s prefill on a 1246-token
 prompt) under linuxlator, because its NPU engines are closed Linux
 binaries. The driver reloads cleanly (6 kldload/kldunload cycles).
+Power (section 5): the NPU draws about 2 W itself and the APU package
+23 W, against 85 W on the iGPU, which is 3.9 times faster; energy per
+token is about the same.
 
 Code:
 
@@ -27,6 +30,10 @@ Code:
   - [`olivier-lkpi-pcim-iomap`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-pcim-iomap):
     LinuxKPI `pcim_iomap()` leaked every BAR on unload
     ([linuxkpi_pcim_iomap_release.md](linuxkpi_pcim_iomap_release.md)).
+  - Optional, for power measurements:
+    [`olivier-lkpi-sysfs-binary`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-sysfs-binary),
+    makes amdgpu `gpu_metrics` readable (rebuild `amdgpu.ko`)
+    ([linuxkpi_sysfs_binary_attr.md](linuxkpi_sysfs_binary_attr.md)).
 - freebsd-ports branch [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu):
   new port devel/xrt (XRT plus the amdxdna plugin, NPU only).
 - [../npu/linux-xrt-sysfs.sh](../npu/linux-xrt-sysfs.sh): builds the Linux
@@ -238,3 +245,74 @@ Not done: `xrt-smi validate` on frwk-linux, a native FastFlowLM (its NPU engines
 libraries), models larger than 8B, userptr BOs (`amdxdna_ubuf.c` returns
 `EOPNOTSUPP`), the NPU with a translated IOMMU domain, suspend, the ZBook
 itself. Known leak: 240 bytes of debugfs memory per unload.
+
+## 5. Power: NPU against iGPU
+
+Same model, Qwen3-8B 4-bit: FastFlowLM `qwen3:8b` on the NPU, and
+llama.cpp b1b770d90 (Vulkan, RADV) with `Qwen3-8B-Q4_1.gguf` (unsloth,
+5.2 GB) fully offloaded to the iGPU, `-fa on` and `-fa off`. Measured
+on 2026-11-16 with [../npu/npu-power-run.sh](../npu/npu-power-run.sh)
+on both systems, median of 3 runs:
+
+- *decode*: a story prompt of about 30 tokens, 768 tokens out
+  (FastFlowLM stops at about 700);
+- *prefill*: a 1242-token prompt and a one-sentence answer; tok/s is
+  prompt tokens over the whole request, so it is lower than the prefill
+  speed FastFlowLM reports alone.
+
+Power sources: RAPL package energy (whole APU, energy per token is
+computed from it), and the SMU's own averages from amdgpu `gpu_metrics`
+(socket = the PPT Linux hwmon shows, NPU, GFX, CPU cores). On FreeBSD
+`gpu_metrics` needs the LinuxKPI fix
+[linuxkpi_sysfs_binary_attr.md](linuxkpi_sysfs_binary_attr.md); RAPL
+is read through cpuctl(4). The SMU averages lag on the 2 s iGPU prefill
+requests, so trust RAPL there.
+
+Linux (frwk-linux), idle 9.1 W:
+
+| Run | tok/s | RAPL W | J/token | SMU socket / NPU / GFX / cores W |
+|---|---|---|---|---|
+| NPU decode | 10.8 | 23.0 | 2.13 | 22.8 / 2.2 / 0.0 / 0.2 |
+| iGPU decode, fa on | 41.8 | 89.1 | 2.15 | 85.1 / 0.0 / 29.1 / 0.5 |
+| iGPU decode, fa off | 38.9 | 84.8 | 2.18 | 80.8 / 0.0 / 28.3 / 0.6 |
+| NPU prefill | 257.8 | 24.4 | 0.095 | 22.3 / 1.4 / 0.0 / 0.4 |
+| iGPU prefill, fa on | 678.6 | 99.9 | 0.147 | 56.9 / 0.0 / 23.7 / 0.3 |
+| iGPU prefill, fa off | 511.2 | 86.7 | 0.171 | 56.5 / 0.0 / 21.9 / 0.3 |
+
+FreeBSD (frwk-bsd), idle 17.0 W at the start, 14.6 W at the end:
+
+| Run | tok/s | RAPL W | J/token | SMU socket / NPU / GFX / cores W |
+|---|---|---|---|---|
+| NPU decode | 10.8 | 26.1 | 2.43 | 27.5 / 1.8 / 0.0 / 0.9 |
+| iGPU decode, fa on | 41.5 | 101.1 | 2.44 | 97.0 / 0.0 / 26.2 / 1.5 |
+| iGPU decode, fa off | 38.8 | 96.8 | 2.49 | 93.1 / 0.0 / 26.0 / 1.6 |
+| NPU prefill | 264.8 | 27.9 | 0.105 | 27.0 / 1.1 / 0.0 / 1.4 |
+| iGPU prefill, fa on | 646.7 | 92.2 | 0.149 | 60.1 / 0.0 / 17.9 / 0.9 |
+| iGPU prefill, fa off | 492.3 | 84.3 | 0.171 | 61.1 / 0.0 / 17.4 / 1.3 |
+
+What it shows:
+
+- The NPU block itself draws about 2 W, which is the "< 2 W" that
+  FastFlowLM advertises. But the package goes from 9 to 23 W (Linux):
+  streaming the 5.6 GB model 10.8 times a second keeps the memory
+  controller and fabric busy. The iGPU block draws 26 to 29 W, the
+  package 85 to 101 W.
+- Decode: the iGPU is 3.9 times faster and draws 3.9 times the power,
+  so the energy per token of the whole package is the same, 2.1 to
+  2.2 J on Linux. Counting only the power above idle, the NPU costs
+  1.29 J per token and the iGPU 1.92 J: one third less on the NPU.
+- Prefill: the iGPU is 2.6 times faster; the NPU uses 35% less energy
+  per prompt token (0.095 against 0.147 J).
+- So the NPU wins when power or heat is the limit (laptop on battery,
+  the iGPU busy with something else), not on speed or on total energy.
+- FreeBSD: same speeds, but more power than Linux: 6 to 8 W at idle,
+  3 W during NPU decode, 12 W during iGPU decode. Energy per decoded
+  token is 13 to 14% higher for both engines. Of the
+  idle gap, 2.7 W is the loaded amdxdna driver (FreeBSD keeps the NPU
+  powered; Linux puts it in D3cold, measured by unloading the driver);
+  the rest is a platform idle difference not studied here.
+- `-fa on` is faster than `-fa off` on both systems, although llama.cpp
+  warns that one flash-attention operation runs on the CPU.
+
+Not measured: wall power (no meter), the ZBook on battery, larger or MoE
+models, the NPU with the driver's runtime power management.
