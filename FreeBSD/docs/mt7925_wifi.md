@@ -568,8 +568,13 @@ was taken down so that the ping could only go over `wlan0`:
 | without commit 12 | `wlan0` "associated", no traffic after 30 s, still none 7 min later, no link change logged |
 | with commit 12 | `wlan0` goes down and up by itself, ping to the gateway OK 10 s after resume, no reload |
 
-Not tested: suspend without amdgpu or Xorg, several suspends in a row,
-WoWLAN (LinuxKPI's `suspend_type` 2), and the USB attachment of mt7925.
+Three suspends in a row (2026-11-16, same boot, no Xorg, amdgpu loaded):
+all three resume, and after the third, with every USB Ethernet down, Wi-Fi
+reaches the gateway and the Internet; no mt7925 error in the log. Only the
+check after the third isolated Wi-Fi (after the first two the dock's
+adapter had come back as `dock0` before the ping).
+
+Not tested: suspend without amdgpu, WoWLAN (LinuxKPI's `suspend_type` 2), and the USB attachment of mt7925.
 
 ## How to reproduce
 
@@ -745,3 +750,4 @@ A-MPDU is on, and TCP TX/RX on channel 100 is 463/324 Mbit/s.
 | 2026-11-12 | patched firmware package, no `-e` tunables | both tunables from `/boot/loader.conf.d/`; TCP TX 463, RX 324 Mbit/s |
 | 2026-11-16 | `zbook` branch, suspend-to-idle, commit 12 | Wi-Fi ping OK 10 s after resume, no reload |
 | 2026-11-16 | same, without commit 12 (control) | associated, no traffic 30 s and 7 min after resume |
+| 2026-11-16 | commit 12, three suspends in a row, no Xorg | all resume; Wi-Fi alone OK after the third (gateway and Internet) |
