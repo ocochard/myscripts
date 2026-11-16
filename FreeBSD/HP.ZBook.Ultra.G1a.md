@@ -230,7 +230,7 @@ The cameras are MIPI sensors behind the AMD ISP, not USB (UVC) cameras:
 an OmniVision OV05C RGB camera (`_DDN` "OV05C-RGB") and a Himax HM1092 IR camera (`_DDN` "HM1092-IR").
 Linux binds `amd-isp4` to the RGB camera; nothing binds the IR camera.
 The ISP firmware is already loaded on FreeBSD: `amdgpu_isp_4_1_1_bin.ko` comes with amdgpu, but nothing uses it.
-Impact: no webcam. A USB webcam works with the native `uvideo(4)` driver (or `webcamd`).
+Impact: no webcam with stock FreeBSD; a test driver (`amdisp`, see below) gives a working `/dev/video0`. A USB webcam works with the native `uvideo(4)` driver (or `webcamd`).
 FreeBSD 16 has a kernel V4L2 capture framework, `video(4)` (9c9428825f4c, 2026-08): it provides
 `/dev/videoN`, buffers, `mmap` and the V4L2 ioctls, so an ISP driver would only implement the
 `video_if` hardware methods (formats, controls, start/stop stream), like `uvideo(4)` and `fwcam(4)`.
@@ -323,7 +323,7 @@ the document that explains each one.
 | I2C controller clock | [`olivier-ig4-amd-clock`](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock) | 1 | `ig4: Use the 150 MHz input clock of AMD AMDI0010 controllers` | |
 | GPIO driver autoload | [`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) | 1 | `amdgpio: Add PNP info for devmatch` | |
 | ACPI properties | [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) | 1 | `acpi: Refuse property requests for other buses children` | |
-| Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 5, on the port's Strix Halo patches | firmware boots and accepts the stream set-up, no frame yet | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
+| Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 8, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, works in VLC (NV12 1920x1080, about 24 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
 ## Which drivers are worth the work
 

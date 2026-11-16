@@ -8,7 +8,8 @@ records what the Linux driver does, measured on the laptop, so the FreeBSD
 driver can be written from this description instead of from the Linux code.
 
 Status (2026-11-16): the camera works on Linux; on FreeBSD a test driver
-(`amdisp.ko`) captures correct 1920x1080 frames with the newer ISP firmware. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
+(`amdisp.ko`) provides `/dev/video0` (NV12 1920x1080, about 24 fps), usable
+with VLC, with the newer ISP firmware. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
 Raw traces: [amd_isp/](amd_isp/).
 
 ## 1. Background
@@ -738,6 +739,53 @@ does not drive this HP module, and refreshing `isp_4_1_1.bin` in the
 drm-kmod-firmware fork and the port is needed for any FreeBSD camera
 driver here.
 
+### Sixth step: `/dev/video0`, `v4l2-ctl` and VLC
+
+`amdisp` is now a newbus driver (a child of `nexus`, attached only when
+amdgpu has an ISP 4.1 block) that registers with `video(4)`:
+
+```
+amdisp0: <AMD ISP 4.1 camera (test)>
+amdisp0: registered as /dev/video0
+```
+
+It offers one mode, NV12 1920x1080 at 30 frames per second, through the
+`video_if` methods (`querycap`, `enum_format`, `enum_framesizes`,
+`enum_frameintervals`, formats, input, `start_stream`, `stop_stream`).
+`start_stream` boots the ISP firmware and sends the stream set-up; a kernel
+thread then reads the response ring every millisecond, copies each finished
+frame into a `video(4)` buffer (`video_buf_acquire`, `video_buf_write`,
+`video_buf_done`) and gives the ISP buffers back; `stop_stream` stops the
+thread, sends the stop commands and powers the ISP down.
+
+The driver drives AMD GPIO 85 itself (through `amdgpio(4)`'s GPIO
+interface): low then high at each stream start, low at stop. Left high
+between streams, as in the first version, the second stream start got no
+answer to `SET_STREAM_CONFIG` (VLC: `libv4l2: error turning on stream:
+Operation timed out`).
+
+Measured, with the 2025/08 ISP firmware:
+
+| Test | Result |
+|---|---|
+| `v4l2-ctl --all` | driver `amdisp`, capture + read/write + streaming, NV12 1920x1080, sRGB |
+| `v4l2-ctl --stream-mmap=4 --stream-count=60`, three times in a row | 60 frames each at 23.8 fps, clean stop |
+| `vlc v4l2:///dev/video0` | live picture; VLC selects I420 and `libv4l` converts from NV12; first picture received, clean stop |
+
+Limits of this version: 24 fps instead of 30 (each 3 MB frame is copied
+out of a write-combined GPU buffer, which the CPU reads slowly, and the
+response ring is polled), one mode, about one second of latency seen in
+VLC, and it needs the newer ISP firmware.
+
+Latency, not measured yet: part of the second is VLC's own buffering
+(`--live-caching`, "Caching value for cameras and microphones", 300 ms by
+default). On the driver side a frame waits at most for the next 1 ms poll
+and its copy (a few ms); the ISP keeps four frame buffers in flight, so a
+frame can be up to about 130 ms old when delivered; `video(4)` timestamps
+each buffer with the uptime when it is completed. Next check: the same
+view with `vlc --live-caching=0`, and timing a known event (a stopwatch on
+screen) against the captured frame.
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
@@ -787,4 +835,5 @@ the next reboot hung; a forced power off was needed. Always set the format
 | FreeBSD, `hw.amdgpu.isp_cmd=2` (full set-up, `START_STREAM`) | all 19 commands acknowledged; no frame, notification `0x00030002` code `0xe` after 1.1 s |
 | FreeBSD, `hw.amdisp.cmd=2` with the old (2025/02) ISP firmware | no frame: firmware reads `0x50`, notification `0x00030002` code `0xe` |
 | FreeBSD, `hw.amdisp.cmd=2` with Ubuntu's (2025/08) ISP firmware | 90 frames 1920x1080 NV12, correct picture |
+| FreeBSD, `/dev/video0` with `v4l2-ctl` and VLC | 23.8 fps, live picture in VLC, repeated streams work |
 | IR camera (HM1092) | untested, no driver on any system |
