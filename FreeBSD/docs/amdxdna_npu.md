@@ -428,6 +428,7 @@ at idle):
 | virtual_oss stopped | 3.97 W | 12.3 W |
 | both | 3.44 W | 12.4 W |
 | frwk-linux, as configured (docker running, EPP balance_performance) | 9.1 W | no plug |
+| frwk-linux, docker and containerd stopped (timer interrupts 1200 to 208 a second) | 8.8 W | no plug |
 
 So a quiet FreeBSD idles below this Linux setup. To get it: run
 virtual_oss only when needed, and for CPPC, in `/boot/loader.conf`, for
