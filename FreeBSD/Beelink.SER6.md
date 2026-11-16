@@ -213,6 +213,26 @@ On the HP ZBook its `nhi` driver attaches to unlisted AMD USB4 hosts too (see [H
 USB 3 on the USB-C ports works through xHCI.
 Impact: no PCIe tunneling (eGPU, NVMe enclosure, PCIe docks).
 
+## Driver work in progress
+
+None of this is needed to run the machine: the patches fix detection and error reporting for the Bluetooth firmware.
+The branches are local (`~/src-fwget` worktree), not pushed to the fork; the patch files hold the same commits.
+
+### Applying the work, in order
+
+Both freebsd-src patches apply on FreeBSD main 563c2f27e0ff (2026-11-16) in this order, without conflict
+(checked with `git cherry-pick` of both branches on a scratch branch).
+Neither touches the kernel.
+
+| # | Apply | Commits | Depends on | Then | Document |
+|---|---|---|---|---|---|
+| 1 | freebsd-src `olivier-fwget-intel-bt` ([patch](docs/fwget_usb_intel_bluetooth.patch)) | 1 | | `fwget` lists `iwmbt-firmware` | [docs/fwget_usb_intel_bluetooth.md](docs/fwget_usb_intel_bluetooth.md), [bug report](docs/bugreport_fwget_usb_intel_bluetooth.md) |
+| 2 | freebsd-src `olivier-iwmbtfw-syslog` ([patch](docs/iwmbtfw_syslog.patch)) | 1 | | iwmbtfw errors reach syslog, or `dmesg -a` at boot | [docs/iwmbtfw_syslog.md](docs/iwmbtfw_syslog.md), [bug report](docs/bugreport_iwmbtfw_syslog.md) |
+| 3 | build and install world, or only `usr.sbin/fwget` and `usr.sbin/bluetooth/iwmbtfw` | | 1, 2 | | |
+| 4 | `fwget` (or `pkg install iwmbt-firmware`) | | 3 for `fwget` | reboot, or `iwmbtfw -d ugen1.3 -f /usr/local/share/iwmbt-firmware`; `ubt0` attaches | |
+
+Not for this machine: `olivier-rtlbtfw-syslog` ([docs/rtlbtfw_syslog.md](docs/rtlbtfw_syslog.md)) fixes the same bug in the Realtek loader; the SER6 has no Realtek Bluetooth.
+
 ## Which drivers are worth the work
 
 Nothing important is missing on this machine.
