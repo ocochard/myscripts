@@ -1,0 +1,78 @@
+From 35ef248849a3fb78eec3ba908028a0119011e37b Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 13:18:53 +0100
+Subject: [PATCH] fwget: Detect Intel Bluetooth adapters
+
+Intel USB Bluetooth adapters stay in bootloader mode until iwmbtfw(8)
+loads their firmware from the iwmbt-firmware package.  Without the
+package nothing reports the failure: iwmbtfw writes to stderr under
+devd and ng_ubt_intel rejects the device silently.
+
+Map the product IDs from iwmbtfw.conf to iwmbt-firmware.
+
+MFC after:	1 week
+---
+ usr.sbin/fwget/usb/Makefile  |  1 +
+ usr.sbin/fwget/usb/usb       |  1 +
+ usr.sbin/fwget/usb/usb_intel | 25 +++++++++++++++++++++++++
+ 3 files changed, 27 insertions(+)
+ create mode 100755 usr.sbin/fwget/usb/usb_intel
+
+diff --git a/usr.sbin/fwget/usb/Makefile b/usr.sbin/fwget/usb/Makefile
+index 315e9c743cc8..9a0b280c7363 100644
+--- a/usr.sbin/fwget/usb/Makefile
++++ b/usr.sbin/fwget/usb/Makefile
+@@ -1,6 +1,7 @@
+ PACKAGE=	fwget
+ 
+ SCRIPTS=usb \
++	usb_intel \
+ 	usb_ralink
+ 
+ BINDIR= ${LIBEXECDIR}/fwget
+diff --git a/usr.sbin/fwget/usb/usb b/usr.sbin/fwget/usb/usb
+index fef6bc76ba89..d6f61d4459a6 100755
+--- a/usr.sbin/fwget/usb/usb
++++ b/usr.sbin/fwget/usb/usb
+@@ -11,6 +11,7 @@ usb_get_vendor()
+ 	local hexvendor=$(echo $1 | sed 's/.*idVendor=\(0x[0-9a-z]*\).*/\1/')
+ 	case "${hexvendor}" in
+ 		0x148f)	echo "ralink" ;;
++		0x8087)	echo "intel" ;;
+ 	esac
+ }
+ 
+diff --git a/usr.sbin/fwget/usb/usb_intel b/usr.sbin/fwget/usb/usb_intel
+new file mode 100755
+index 000000000000..86f571517c00
+--- /dev/null
++++ b/usr.sbin/fwget/usb/usb_intel
+@@ -0,0 +1,25 @@
++#
++# Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
++#
++# SPDX-License-Identifier: BSD-2-Clause
++
++# Bluetooth devices handled by ng_ubt_intel and iwmbtfw(8).
++# Keep in sync with usr.sbin/bluetooth/iwmbtfw/iwmbtfw.conf.
++usb_intel()
++{
++
++	case "$1" in
++	0x07dc)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0a2a)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0aa7)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0a2b)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0aaa)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0025)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0026)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0029)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0032)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0033)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0035)	addpkg "iwmbt-firmware"; return 1 ;;
++	0x0036)	addpkg "iwmbt-firmware"; return 1 ;;
++	esac
++}
+-- 
+2.56.0
+

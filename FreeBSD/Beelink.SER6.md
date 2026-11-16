@@ -57,13 +57,14 @@ Source: `pciconf -l | grep ^none`.
 
 | ugen | ID | Device | State |
 |---|---|---|---|
-| ugen1.3 | 8087:0029 (bcdDevice 0x0001) | Intel AX200 Bluetooth | no driver attached: firmware not loaded |
+| ugen1.3 | 8087:0029 (bcdDevice 0x0001) | Intel AX200 Bluetooth | no driver attached: firmware not loaded (fixed 2026-11-16, see below) |
 
 The AX200 Bluetooth part starts in bootloader mode and needs host-loaded firmware.
 FreeBSD has the loader: `/etc/devd/iwmbtfw.conf` runs `iwmbtfw -f /usr/local/share/iwmbt-firmware`.
 The firmware package (`comms/iwmbt-firmware`) is not installed, so the directory does not exist.
 `ubt0` attached in October (`/var/log/messages` of 2026-10-13); the firmware state then is not known.
-Fix: `pkg install iwmbt-firmware`, then replug or reboot. Not tested.
+Fix, tested 2026-11-16: `pkg install iwmbt-firmware`, then `iwmbtfw -d ugen1.3 -f /usr/local/share/iwmbt-firmware` (or reboot).
+`iwmbtfw` prints `Firmware download is successful!`, `ubt0` attaches, and `hccontrol -n ubt0hci read_bd_addr` answers.
 
 Nothing tells the user that this package is missing:
 
@@ -74,7 +75,7 @@ Nothing tells the user that this package is missing:
 - In bootloader mode, `ng_ubt_intel` rejects the device without a message (`ENXIO` in probe).
   The only trace is a `ugen1.3` with no driver.
 
-Possible fix in FreeBSD: a `usb_intel` script for `fwget` that maps the 8087 product IDs from `iwmbtfw.conf` to `iwmbt-firmware`.
+Fix in FreeBSD: a `usb_intel` script for `fwget`, see [docs/fwget_usb_intel_bluetooth.md](docs/fwget_usb_intel_bluetooth.md).
 
 ## ACPI devices without driver
 
@@ -165,7 +166,7 @@ Impact: no PCIe tunneling (eGPU, NVMe enclosure, PCIe docks).
 Nothing important is missing on this machine.
 Three setup items give more than any new driver:
 
-1. Bluetooth: install `iwmbt-firmware`. No code needed.
+1. Bluetooth: install `iwmbt-firmware` (done 2026-11-16). `fwget` patch for detection: see above.
 2. GPU: add `amdgpu` to `kld_list` if the machine runs a desktop. Today it is loaded by hand.
 3. NVMe log spam: read the temperature threshold and raise it, or replace the drive. Investigate before changing.
 
