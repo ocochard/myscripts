@@ -51,6 +51,9 @@ if [ ! -s /etc/apt/keyrings/lemonade.gpg ]; then
 	export GNUPGHOME=$(mktemp -d)
 	gpg -q --keyserver hkps://keyserver.ubuntu.com --recv-keys "$key"
 	gpg -q --export "$key" > /etc/apt/keyrings/lemonade.gpg
+	# The key fetch starts dirmngr and gpg-agent: stop them, or they
+	# keep the chroot's /dev busy.
+	gpgconf --kill all
 fi
 echo "deb [signed-by=/etc/apt/keyrings/lemonade.gpg]" \
     "https://ppa.launchpadcontent.net/lemonade-team/stable/ubuntu $suite main" \

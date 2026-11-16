@@ -6,7 +6,8 @@ runs NPU jobs (`xrt-smi validate`: gemm 51 TOPS, latency 47 to 58 us)
 through a native XRT port. FastFlowLM runs llama3.2:1b (65 tok/s decode)
 and qwen3:8b (10.8 tok/s decode, 396 tok/s prefill on a 1246-token
 prompt) under linuxlator, because its NPU engines are closed Linux
-binaries. The driver reloads cleanly (6 kldload/kldunload cycles).
+binaries. The driver reloads cleanly (6 kldload/kldunload cycles),
+and survives suspend-to-idle on the HP ZBook Ultra G1a.
 Power (section 5): the NPU draws about 2 W itself and the APU package
 23 W, against 85 W on the iGPU, which is 3.9 times faster; energy per
 token is about the same in the package, and 26% lower on the iGPU at the
@@ -183,6 +184,7 @@ are `#ifdef __linux__` blocks, most marked `XXX FreeBSD`.
 | NPU firmware with the IOMMU unit off | every firmware message about 141 ms, `xrt-smi validate` latency about 95 ms per job | boot with `hw.amdiommu.enable=1` ([amdiommu_ser6.md](amdiommu_ser6.md)) |
 | amd_iommu never frees interrupt remapping entries; the NPU uses all 32 | second kldload: `failed to alloc irq vectors, ret -22` | amd_iommu fix, [amdiommu_irte_free.md](amdiommu_irte_free.md) |
 | LinuxKPI has no runtime PM core: `pm_runtime_*()` are no-ops | NPU stays in D0 with its firmware running when unused: idle 38.9 W at the wall, 16.7 W RAPL, against 35.3 and 14.7 W with the driver unloaded | runtime PM in the driver: count the users it already declares (`amdxdna_pm_resume_get()` / `_suspend_put()`), and 5 s after the last one run its suspend op and put the NPU in D3; wake on the next use (about 0.1 s), FastFlowLM contexts survive |
+| System suspend with the NPU runtime-suspended: the driver's suspend op ran on stopped firmware, its resume op restarted it | after the wake (HP ZBook Ultra G1a): `smu cmd 4 failed, 0xff`, `aie2_hw_start: failed to init smu`, and even a fresh kldload fails until a reboot; a suspend with no driver loaded is fine | as the Linux PCI core does, the system sleep ops first wake a runtime-suspended NPU and hold a reference across the sleep |
 | LinuxKPI `pcim_iomap()` stores a bus handle as a resource | kldunload: `driver did not clean up; leaking mmio resources` | LinuxKPI fix, [linuxkpi_pcim_iomap_release.md](linuxkpi_pcim_iomap_release.md) |
 
 ### XRT on FreeBSD (devel/xrt)
@@ -249,10 +251,27 @@ FastFlowLM runs under linuxlator (Ubuntu 26.04 chroot). It logs
 `SVA bind device failed` and `PASID not available` at open, as expected
 in carveout mode, and works.
 
+HP ZBook Ultra G1a (same NPU, 1022:17f0 rev 0x11, at pci0:196:0:1),
+2026-11-16: kernel `olivier-npu-n291242-854a0944970d` booted once with
+`hw.amdiommu.enable=1 hw.amdgpu.ip_block_mask=0xfffff7ff
+hw.amdxdna.carveout_mb=2048` (the mask avoids an amdgpu SMU hang of the
+IR-only mode on this laptop, see the AMD IOMMU bug reports), with
+drm.ko, amdgpu.ko and amdxdna.ko built against that tree in the kernel
+directory, and the devel/xrt package:
+
+| Test | Result |
+|---|---|
+| attach (devmatch loads it), firmware 1.1.2.65 | OK, then D3 after 5 s |
+| `xrt-smi validate` gemm / latency / throughput | 51.0 TOPS / 53 to 82 us / 94554 ops/s, PASSED |
+| suspend-to-idle, no driver loaded, then kldload | PASSED |
+| suspend-to-idle with the NPU in D3, before the system sleep fix | NPU dead until reboot |
+| same, with the fix | gemm 51.0 TOPS, latency 53 us, PASSED; back to D3 |
+| suspend-to-idle right after a job (NPU in D0), with the fix | gemm 51.0 TOPS, latency 52 us, PASSED |
+
 Not done: `xrt-smi validate` on frwk-linux, a native FastFlowLM (its NPU engines are closed Linux
 libraries), models larger than 8B, userptr BOs (`amdxdna_ubuf.c` returns
-`EOPNOTSUPP`), the NPU with a translated IOMMU domain, suspend, the ZBook
-itself. The 240-byte debugfs leak per unload is fixed by
+`EOPNOTSUPP`), the NPU with a translated IOMMU domain, FastFlowLM on the
+ZBook. The 240-byte debugfs leak per unload is fixed by
 `olivier-lindebugfs-symlink`.
 
 Install path, on frwk-bsd from a cold boot (2026-11-16): kernel
