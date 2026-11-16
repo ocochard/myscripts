@@ -42,7 +42,7 @@ The 28 files that differ from linux-firmware 20260519:
 
 A sync of all amdgpu files to linux-firmware 20260519 (copy the `.bin`
 files, run `amdgpukmsfw/gen-makefiles`) is in
-https://github.com/ocochard/drm-kmod-firmware/commit/5997c08
+https://github.com/ocochard/drm-kmod-firmware/commit/41e5783
 (branch `sync-linux-firmware-20260519`), if it helps. The ISP file has not
 changed in linux-firmware since 2025-08-25, so a newer tag gives the same
 ISP firmware.
