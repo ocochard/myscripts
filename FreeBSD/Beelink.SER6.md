@@ -226,8 +226,14 @@ Impact: no crypto offload; AES-NI on the CPU is faster for most loads anyway.
 
 ACP 6.x, the DSP for PDM digital microphones.
 On this mini PC the microphone input goes through the HDA codec (`pcm4`, "Internal Analog Mic").
-Whether any digital microphone is wired to the ACP is not checked.
-Impact: probably none.
+The firmware does not declare a digital microphone on the ACP (checked on 2026-11-16 with `acpidump -b` and `iasl -d`):
+`Device (ACP)` in the DSDT has only `_ADR` and no `_DSD`, so no `AcpDmicConnected` property.
+`_WOV` (SSDT) returns `F5WV`, a static `Name (F5WV, 0x01)`.
+Linux `acp6x-mach.c` registers a card only when `AcpDmicConnected` is 1 or the DMI matches its quirk table,
+and the table has no entry for this machine (DMI `AZW` / `SER`).
+So Linux also binds no ACP card here, and a FreeBSD driver would have no microphone to drive.
+Not confirmed on hardware: no Linux boot checked `arecord -l`.
+Impact: none expected.
 
 ### USB4 NHI (117:0:5)
 
