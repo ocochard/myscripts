@@ -250,10 +250,45 @@ Not for this machine: [`rtlbtfw_syslog.patch`](docs/rtlbtfw_syslog.patch) (branc
 
 ## Interrupt rates at idle
 
-Seen on 2026-11-16 in `vmstat -i`, with and without the IOMMU:
-`xhci1` takes 1000 to 1850 interrupts per second and `hdac1` about 810 per second, on an idle machine.
-`xhci1` (usbus1) has the keyboard and the Bluetooth adapter; `hdac1` is the Conexant analog codec.
-Cause not investigated; it costs wakeups and some power.
+Measured on 2026-11-16 with `vmstat -i` over 10 s, machine idle, nobody using audio or Bluetooth:
+`xhci1` takes about 1085 interrupts per second and `hdac1` about 937 per second.
+Both have one cause each, found by switching the suspect off and on again:
+
+| Source | Change | `xhci1`/s | `hdac1`/s |
+|---|---|---|---|
+| baseline | | 1083 | 938 |
+| Bluetooth | `usbconfig -d ugen1.3 set_config 255` (unconfigure the AX200 Bluetooth) | 0 | |
+| Bluetooth | `set_config 0` again | 1084 | |
+| Bluetooth | `net.bluetooth.usb_isoc_enable=0`, then re-attach | 0 | |
+| Bluetooth | back to `usb_isoc_enable=1`, re-attach | 1083 | |
+| audio | `service virtual_oss stop` | | 0 |
+| audio | `service virtual_oss start` | | 937 |
+
+### Bluetooth: SCO transfers run all the time
+
+`usbdump -i usbus1` shows only the Bluetooth adapter (`usbus1.3`) talking: isochronous transfers on endpoints 0x83 (in) and 0x03 (out),
+32 frames each, without pause.
+These endpoints carry SCO, the voice channel of headsets (HSP/HFP calls).
+
+`sys/netgraph/bluetooth/drivers/ubt/ng_ubt.c`, `ubt_attach()`: it selects the alternate setting of interface 1 with the largest packet size
+and sets up the isochronous transfers at attach, so they run whether or not a SCO link exists.
+Linux `btusb` keeps the zero-bandwidth alternate setting until a SCO connection is opened.
+
+Workaround: `net.bluetooth.usb_isoc_enable=0` (a tunable, read when `ubt` attaches, so it belongs in `/boot/loader.conf`).
+With it, HCI still works (`hccontrol read_local_version_information`: HCI 5.2; `inquiry` found 2 devices) and `xhci1` drops to 0 interrupts per second.
+Cost: no SCO, so no headset voice. Data links (ACL) are unaffected: keyboards, mice, file transfer, A2DP music.
+Left at the default (1) on this machine.
+
+Proper fix: set the isochronous alternate setting and start the SCO transfers only while a SCO link is open, as Linux does. Not written.
+
+### Audio: virtual_oss keeps the codec busy
+
+`virtual_oss` (`virtual_oss_enable="YES"`) holds `/dev/dsp3` (`hdac1`, Conexant codec) open all the time,
+with an 8 ms buffer (`-s 8ms`), playback and recording, so the codec never idles.
+This is how `virtual_oss` works, not a bug. To lower the rate: a larger buffer (`-s 20ms` or more, at the cost of latency),
+or stop the service when the machine needs no audio.
+
+Not measured: the power or C-state cost of these 2000 interrupts per second.
 
 ## Which drivers are worth the work
 
