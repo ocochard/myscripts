@@ -385,7 +385,8 @@ The same gap on Meteor Lake is described in [docs/x86_gpio_intr_mtl.md](docs/x86
 ## Driver work in progress
 
 Branches of the FreeBSD fork (github.com/ocochard/freebsd-src) and of the
-drm-kmod fork (github.com/ocochard/drm-kmod) written for this laptop, with
+drm-kmod and ports forks (github.com/ocochard/drm-kmod and
+github.com/ocochard/freebsd-ports) written for this laptop, with
 the document that explains each one.
 
 | Area | Branch | Commits | Status | Document |
@@ -404,6 +405,7 @@ the document that explains each one.
 | AMD IOMMU interrupt remap entries (needed by the NPU) | [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) (in `zbook`) | 1 | fix, tested on a Framework Desktop and on this laptop (`hdac0`: INTx after 31 detach/attach cycles without it, 64 clean cycles with it) | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
 | NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna); ports [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu) (devel/xrt) | 8; 3 | jobs, XRT, FastFlowLM and runtime PM (NPU in D3 when idle) work (tested on a Framework Desktop, needs the IOMMU on) | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
 | AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) (in `zbook`) | 2 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu's SMU hangs on `PowerDownVpe` in about half the boots with `boot_verbose` (workaround `hw.amdgpu.ip_block_mask=0xfffff7ff`); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
+| GPU (amdgpu panic when it loads) | ports [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo) (graphics/drm-latest-kmod) | 1 | fix, the installed package is built from it; [ports PR #625](https://github.com/freebsd/freebsd-ports/pull/625) | [GPU features](#gpu-features) |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
 ### Applying the work, in order
