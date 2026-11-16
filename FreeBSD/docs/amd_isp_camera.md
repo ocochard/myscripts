@@ -772,9 +772,8 @@ Measured, with the 2025/08 ISP firmware:
 | `v4l2-ctl --stream-mmap=4 --stream-count=60`, three times in a row | 60 frames each at 23.8 fps, clean stop |
 | `vlc v4l2:///dev/video0` | live picture; VLC selects I420 and `libv4l` converts from NV12; first picture received, clean stop |
 
-Limits of this version: 24 fps instead of 30 (each 3 MB frame is copied
-out of a write-combined GPU buffer, which the CPU reads slowly, and the
-response ring is polled), one mode (VLC needs `--live-caching=0` for low
+Limits of this version: 24 fps instead of 30 (the firmware's own frame
+interval, see below), one mode (VLC needs `--live-caching=0` for low
 latency), and it needs the newer ISP firmware.
 
 Latency: the second seen in VLC is VLC's own buffering
@@ -786,6 +785,22 @@ and its copy (a few ms); the ISP keeps four frame buffers in flight, so a
 frame can be up to about 130 ms old when delivered; `video(4)` timestamps
 each buffer with the uptime when it is completed. A precise measurement (a stopwatch on screen against the captured frame)
 is still to do.
+
+Frame rate: 24 fps on FreeBSD, 30 on Linux, in the same scene under the same
+lamp (Linux: 29.8 fps, 33.5 ms between firmware frame timestamps; FreeBSD:
+23.8 fps, 41.5 ms between "frame done" responses). It is not the driver: the
+copy into the `video(4)` buffer takes under 0.1 ms, a buffer is always free,
+and polling the response ring every 0.1 ms instead of every 1-2 ms changes
+nothing. It is not the light either (no change in front of a lamp). Linux
+sends the same SMU messages during a capture (`PowerUpIspByTile 0x7ff`,
+both ISP clocks at `0x314`, `PowerDownIspByTile`), and with the same ISP
+firmware every ISP register read while streaming is identical on both
+systems, including the tiles (`0x60000` = `0xf`), the I2C controllers and
+the MIPI PHY. A steady 41.5 ms looks like the firmware choosing a 24 fps
+sensor mode; what makes it choose is still unknown (candidates: the real
+clock frequencies behind the SMU requests, or SoC power state set on Linux
+by `amd_pmf`, which FreeBSD lacks). A test with eight frame buffers got no
+frames and a test with two crashed the laptop; the driver stays at four.
 
 ## 5. Next steps
 
