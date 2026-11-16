@@ -262,6 +262,34 @@ What the patches do NOT fix:
 - The first boot with `hw.iommu.dma=1` lost Ethernet for minutes (82 `rge0` interrupts in 6 minutes, DHCP after 53 s, no ssh);
   a second boot with the same settings worked. Cause unknown.
 
+## 5. Other machines: Framework Desktop (Strix Halo)
+
+Read-only checks on 2026-11-16 (`pciconf`, `acpidump -t -T IVRS`, `kenv`); the IOMMU was not enabled there, and the patches are not tested there.
+Machine: Framework Desktop, AMD Ryzen AI Max+ 395, IOMMU 1022:1508 at 0:0:2 (`none0`, no driver),
+FreeBSD main n291187 (6871285f194d). See [../Framework-desktop.md](../Framework-desktop.md).
+
+What is the same as on the SER6:
+
+- Driver code: no commit touches `sys/x86/iommu` or `sys/dev/iommu` between 6871285f194d and the patches' base 563c2f27e0ff, so both patches apply unchanged.
+- Capability header `0x190b640f` (NpCache clear) and EFR `0x246577efa2254afa`: the reasoning of patch 2 holds.
+- IVHD device entries: range 0x0003-0xfffe, alias FF00-FFFF to 00A5, HPET and two IOAPIC special entries, AMDI0020 UART HID entries.
+  With `hw.amdiommu.enable=1` alone the stock kernel builds the same translating interrupt-remapping contexts, so the USB loop of section 3.1 is expected there too.
+
+What differs:
+
+- Two IVMD blocks, which FreeBSD ignores (section 2):
+  a 1 MB unity map at 0x7d900000 (IR, IW) for requester 0x0060, the Pluton security processor (`MSFT0201`, `\_SB_.MHSP`),
+  and a 128 KB exclusion range at 0x77e00000 for requester 0xc107.
+  Neither requester is a PCI device on FreeBSD (no 0:12:0, no 193:0:7 in `pciconf -l`), so no context is created for them.
+  Their DTEs stay invalid, that is pass-through, so ignoring the IVMDs should be harmless there. Inferred from the code, not tested.
+- amdgpu: with `hw.iommu.dma=1`, its LinuxKPI busdma traffic is translated. Linux gives AMD GPUs an identity mapping by default.
+  Not tested on FreeBSD; exempt the GPU with `hw.busdma.pci0.B.S.F=bounce` for a first test.
+- amdxdna NPU port (in progress): on Linux it normally relies on the IOMMU (PASID, SVA).
+  FreeBSD's `amdiommu` has no PASID support, so turning it on does not help the NPU, and may change how its DMA behaves.
+
+Suggested test order there: patched kernel with `hw.amdiommu.enable=1` alone, then `hw.iommu.dma=1` with the GPU exempted,
+each as a one-shot `nextboot` boot with a remote console available.
+
 ## Tested
 
 Beelink SER6, 2026-11-16, one-shot `nextboot` settings.
