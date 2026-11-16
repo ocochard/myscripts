@@ -843,7 +843,40 @@ changes how FreeBSD computes those buses' timings; the ISP's three I2C
 controllers are not `AMDI0010` devices and are programmed by the firmware,
 and on Linux the `AMDI0010` 150 MHz clocks are fixed-rate entries with no
 hardware behind them (`/sys/kernel/debug/clk/clk_summary`). Not tested: Linux booted with `amd_pmf`
-never loaded. The 24 fps on FreeBSD stays unexplained.
+never loaded.
+
+Linux does not choose this clock either. The camera driver has no clock
+code, amdgpu only asks the SMU for a 788 MHz minimum on the two ISP clocks
+(`isp_v4_1_1.c`, the same two messages FreeBSD sends), and the 24 MHz in
+`amd_isp4.c` is a property for an `ov05c10` sensor driver that is not in
+the tree. Ubuntu does not ship one either: its `i2c-ov05c10` device has no
+driver bound while Linux streams 30 fps, so the ISP firmware alone drives
+the sensor on Linux, as on FreeBSD. The ACPI sensor device (`CAMF`, `OMNI5C10`) has only `_STA` and a
+`_DSM` returning constants, no power method. The SMU has no message that
+reads an ISP clock, and its metrics table has no ISP clock field.
+
+What the SMU does report was compared during a 1920x1080 NV12 stream. On
+FreeBSD, amdgpu's `gpu_metrics` table and the SMU feature mask come from
+`sysctl -b hw.amdisp.gpu_metrics` and `hw.amdisp.smu_features`; on Linux,
+from sysfs `gpu_metrics` and the "SMC Feature Mask" line of debugfs
+`amdgpu_pm_info`. `amd_isp/gpu_metrics_decode.py` decodes both:
+
+| | FreeBSD (23.9 fps) | Linux (29.7 fps) |
+|---|---|---|
+| SMU feature mask | `0x5eb5f3f2cbfffffd` | `0x5eb5f3f2cbfffffd` |
+| GFXCLK / SOCCLK / VCLK / VPECLK | 600 / 600 / 800 / 800 MHz | 600 / 600 / 800 / 800 MHz |
+| FCLK / UCLK | 465 / 432 MHz | 1637 / 931 MHz |
+| NPU clocks (ipuclk / mpipu) | 12 / 6 MHz | 0 / 0 MHz |
+
+The feature masks are identical, including ISP DPM (bit 18) and ISP clock
+deep sleep (bit 55). The fabric and memory clocks are not the cause: with
+`power_dpm_force_performance_level` set to `low` Linux runs at FCLK 401 and
+UCLK 401 MHz and still streams 29.85 fps. The NPU clock difference is
+untested: removing Linux's `amdxdna` driver leaves the NPU clocks at 0 and
+the stream at 29.85 fps, so Linux cannot reproduce FreeBSD's NPU state.
+The ISP firmware's log ring stays empty on Linux too (write pointer 0 with
+debugfs `amd_isp4/fw_log_enable` set), and the firmware interface has no
+command to raise its log level. The 24 fps on FreeBSD stays unexplained.
 
 The first stream start after a boot sometimes gets no answer to
 `SET_STREAM_CONFIG` (seen twice in a day of tests); the next start works.
