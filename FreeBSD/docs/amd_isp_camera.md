@@ -876,7 +876,17 @@ untested: removing Linux's `amdxdna` driver leaves the NPU clocks at 0 and
 the stream at 29.85 fps, so Linux cannot reproduce FreeBSD's NPU state.
 The ISP firmware's log ring stays empty on Linux too (write pointer 0 with
 debugfs `amd_isp4/fw_log_enable` set), and the firmware interface has no
-command to raise its log level. The 24 fps on FreeBSD stays unexplained.
+command to raise its log level.
+
+Two host-side differences from Linux's sequence were tested and ruled
+out. Linux writes `ISP_POWER_STATUS` (`0x60000`) = `0x7ff` before its two
+788 MHz clock requests, FreeBSD after them; with FreeBSD's order changed to
+Linux's the frame interval stays at 41.5 ms. FreeBSD sets bit 4 of the
+sensor GPIO (`0x6613c`) from the host before the stream set-up, while on
+Linux nothing on the host writes it (only the missing `ov05c10` driver
+would); without that write the firmware sets the bit itself, the stream
+works, and it still runs at 23.9 fps. The 24 fps on FreeBSD stays
+unexplained.
 
 The first stream start after a boot sometimes gets no answer to
 `SET_STREAM_CONFIG` (seen twice in a day of tests); the next start works.
