@@ -7,8 +7,8 @@ write a FreeBSD driver for it. This first part explains the hardware and
 records what the Linux driver does, measured on the laptop, so the FreeBSD
 driver can be written from this description instead of from the Linux code.
 
-Status (2026-11-15): the camera works on Linux; on FreeBSD there is no driver
-yet. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
+Status (2026-11-16): the camera works on Linux; on FreeBSD a test driver
+(`amdisp.ko`) captures correct 1920x1080 frames with the newer ISP firmware. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
 Raw traces: [amd_isp/](amd_isp/).
 
 ## 1. Background
@@ -704,6 +704,40 @@ chooses the sensor path after reading `0x55`, a build that does not know
 this HP module would explain the `0x50` fallback with identical host
 commands. Next: run FreeBSD with the Ubuntu file.
 
+### Fifth step: the first picture on FreeBSD
+
+With Ubuntu's ISP firmware (build `2025/08/22`) in
+`/boot/firmware/amdgpu/isp_4_1_1.bin` and the packaged firmware module moved
+aside (`amdgpu_isp_4_1_1_bin.ko.orig`), amdgpu loads the raw file
+(`successfully loaded firmware image 'amdgpu/isp_4_1_1.bin'`) and the
+firmware behaves as on Linux: after `0x55` it goes to the sensor at `0x10`
+(6.1 ms later, like Linux's 6 ms), `SET_STREAM_CONFIG` takes 177 ms, and
+frames arrive.
+
+`amdisp.ko` now gives every finished buffer back to the firmware (the meta
+info and the frame buffer, two `SEND_BUFFER` per frame, as Linux does) and
+streams 90 frames:
+
+```
+amdisp: frame 1 status 3 1920x1080 buffer 0 mean Y 1
+amdisp: frame 4 status 3 1920x1080 buffer 3 mean Y 1
+amdisp: frame 72 status 3 1920x1080 buffer 2 mean Y 81
+amdisp: frame 142 status 3 1920x1080 buffer 2 mean Y 94
+amdisp: 90 frames
+```
+
+The first frames are dark while the firmware's auto exposure settles, then
+the brightness reaches 80-94 out of 255. The last frame, read with
+`sysctl -b hw.amdisp.frame` and converted with
+`ffmpeg -f rawvideo -pix_fmt nv12 -s 1920x1080`, is a correct, well-exposed
+picture of the room (not kept, it shows a person).
+
+So the stream failure was the firmware, not the driver: FreeBSD's
+`gpu-firmware-amd-kmod-isp-4-1-1` ships a February 2025 ISP firmware that
+does not drive this HP module, and refreshing `isp_4_1_1.bin` in the
+drm-kmod-firmware fork and the port is needed for any FreeBSD camera
+driver here.
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
@@ -751,5 +785,6 @@ the next reboot hung; a forced power off was needed. Always set the format
 | FreeBSD, `hw.amdgpu.isp_boot=1` with GPIO 85 high | firmware boot status `0x2402` after 2 ms; stop leaves amdgpu working |
 | FreeBSD, `hw.amdgpu.isp_cmd=1` (memory pool `SEND_BUFFER`) | "command done" in 10 ms, sequence and identifier echoed, checksum valid |
 | FreeBSD, `hw.amdgpu.isp_cmd=2` (full set-up, `START_STREAM`) | all 19 commands acknowledged; no frame, notification `0x00030002` code `0xe` after 1.1 s |
-| FreeBSD, streaming | not working yet |
+| FreeBSD, `hw.amdisp.cmd=2` with the old (2025/02) ISP firmware | no frame: firmware reads `0x50`, notification `0x00030002` code `0xe` |
+| FreeBSD, `hw.amdisp.cmd=2` with Ubuntu's (2025/08) ISP firmware | 90 frames 1920x1080 NV12, correct picture |
 | IR camera (HM1092) | untested, no driver on any system |
