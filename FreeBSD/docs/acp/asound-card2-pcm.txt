@@ -1,0 +1,27 @@
+card: 2
+device: 0
+subdevice: 0
+stream: CAPTURE
+id: DMIC capture dmic-hifi-0
+name: 
+subname: subdevice #0
+class: 0
+subclass: 0
+subdevices_count: 1
+subdevices_avail: 1
+closed
+card: 2
+device: 0
+subdevice: 0
+stream: CAPTURE
+id: DMIC capture dmic-hifi-0
+name: 
+subname: subdevice #0
+class: 0
+subclass: 0
+subdevices_count: 1
+subdevices_avail: 1
+64
+64
+closed
+closed

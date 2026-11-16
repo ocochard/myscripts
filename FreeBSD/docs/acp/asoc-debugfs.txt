@@ -1,0 +1,10 @@
+dmic-codec
+acp_asoc_acp70.0
+snd-soc-dummy
+snd-soc-dummy
+dmic-hifi
+acp-i2s-sp
+acp-i2s-bt
+acp-i2s-hs
+acp-pdm-dmic
+snd-soc-dummy-dai

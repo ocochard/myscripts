@@ -233,9 +233,18 @@ For a driver:
   child `HDA0` with `acp-audio-device-type` 1 and two endpoints (2 channels, 48 kHz, 16-bit, `dsp-offload-supported`).
   The ACP's power methods (`RPRM`, `DSTA`, `PW3S`) are in SSDT 2.
 - Raw data (PCI configuration, modules and parameters, ALSA card, ASoC components, ACPI extracts): [docs/acp/](docs/acp/).
-- Not captured yet: a register trace of the probe and a capture (mmiotrace). A first attempt, reloading `snd_acp_pci` under mmiotrace,
-  failed: the unload under tracing stopped half way (`ACP dis-interrupts failed`), left BAR 0 reserved, and Linux oopsed on every
-  `/proc/iomem` read until reboot. Next attempt: keep `snd_acp_pci` from loading at boot, then load it for the first time under mmiotrace.
+- Register trace (mmiotrace, first load of `snd_acp_pci` and one 3 s capture, 1083 accesses), summarized per phase in
+  [docs/acp/mmiotrace-summary.txt](docs/acp/mmiotrace-summary.txt):
+  - probe: power and reset (`ACP_PGFSM_CONTROL`/`STATUS`, `ACP_SOFT_RESET`, `ACP_CONTROL`), `ACP_ZSC_DSP_CTRL`, `ACP_PIN_CONFIG`
+    read (0xa), external interrupt enabled (`ACP_EXTERNAL_INTR_ENB`, `ACP_EXTERNAL_INTR_CNTL1`);
+  - capture: address translation (`ACPAXI2AXI_ATU_*` groups 1, 2 and 5, then 16 entries at 0x16000-0x1607c, one per 4 KB page,
+    for a 64 KB ring), PDM set-up (`ACP_PDM_CLK_CTRL` 7, `ACP_PDM_MISC_CTRL` 0x18, `ACP_PDM_DECIMATION_FACTOR` 2,
+    `ACP_PDM_RX_RINGBUFADDR` 0x04c00000, `ACP_PDM_RX_RINGBUFSIZE` 0x10000, `ACP_PDM_RX_INTR_WATERMARK_SIZE` 0x2000), then
+    `ACP_PDM_ENABLE` and `ACP_PDM_DMA_ENABLE`; one interrupt per 8 KB (141 in 3 s: 48 kHz x 2 channels x 4 bytes / 8 KB = 47/s),
+    acknowledged in `ACP_EXTERNAL_SW0_INTR_CNTL` bit 16, position from `ACP_PDM_RX_LINEARPOSITIONCNTR_LOW`/`HIGH`;
+  - end: PDM and DMA disabled, `ACP_SOFT_RESET`, `ACP_ZSC_DSP_CTRL`.
+  How it was taken, and two mmiotrace traps (an unload under tracing oopses Linux; stop the `trace_pipe` reader before the
+  tracer, or the CPUs stay offline): [docs/acp/README.md](docs/acp/README.md).
 - License: the Linux files of this path are dual-licensed `(GPL-2.0-only OR BSD-3-Clause)` (`sound/soc/amd/acp/`: `acp-pci.c`,
   `acp70.c`, `acp-pdm.c`, `acp-platform.c`, `acp-legacy-common.c`, `acp-mach-common.c`, `amd.h`), so they can be used under the
   BSD license. GPL-only in that directory: the SoundWire machine drivers and headers (`acp-sdw-*`, `soc_amd_sdw_common.h`),

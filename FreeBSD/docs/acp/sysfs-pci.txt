@@ -1,0 +1,46 @@
+total 0
+drwxr-xr-x 4 root root       0 Nov 16 21:28 acp_asoc_acp70.0
+drwxr-xr-x 2 root root       0 Nov 16 21:32 aer
+-r--r--r-- 1 root root    4096 Nov 16 21:32 ari_enabled
+-rw-r--r-- 1 root root    4096 Nov 16 21:32 broken_parity_status
+-r--r--r-- 1 root root    4096 Nov 16 21:29 class
+-rw-r--r-- 1 root root    4096 Nov 16 21:29 config
+-r--r--r-- 1 root root    4096 Nov 16 21:32 consistent_dma_mask_bits
+-r--r--r-- 1 root root    4096 Nov 16 21:32 current_link_speed
+-r--r--r-- 1 root root    4096 Nov 16 21:32 current_link_width
+-rw-r--r-- 1 root root    4096 Nov 16 21:32 d3cold_allowed
+-r--r--r-- 1 root root    4096 Nov 16 21:28 device
+-r--r--r-- 1 root root    4096 Nov 16 21:32 dma_mask_bits
+drwxr-xr-x 3 root root       0 Nov 16 21:28 dmic-codec
+lrwxrwxrwx 1 root root       0 Nov 16 21:29 driver -> ../../../../bus/pci/drivers/snd_acp_pci
+-rw-r--r-- 1 root root    4096 Nov 16 21:32 driver_override
+-rw-r--r-- 1 root root    4096 Nov 16 21:32 enable
+lrwxrwxrwx 1 root root       0 Nov 16 21:32 firmware_node -> ../../../LNXSYSTM:00/LNXSYBUS:00/PNP0A08:00/device:13/device:23
+lrwxrwxrwx 1 root root       0 Nov 16 21:32 iommu -> ../../0000:00:00.2/iommu/ivhd0
+lrwxrwxrwx 1 root root       0 Nov 16 21:32 iommu_group -> ../../../../kernel/iommu_groups/21
+-r--r--r-- 1 root root    4096 Nov 16 21:32 irq
+drwxr-xr-x 2 root root       0 Nov 16 21:32 link
+-r--r--r-- 1 root root    4096 Nov 16 21:32 local_cpulist
+-r--r--r-- 1 root root    4096 Nov 16 21:32 local_cpus
+-r--r--r-- 1 root root    4096 Nov 16 21:32 max_link_speed
+-r--r--r-- 1 root root    4096 Nov 16 21:32 max_link_width
+-r--r--r-- 1 root root    4096 Nov 16 21:29 modalias
+-rw-r--r-- 1 root root    4096 Nov 16 21:32 msi_bus
+-rw-r--r-- 1 root root    4096 Nov 16 21:32 numa_node
+drwxr-xr-x 2 root root       0 Nov 16 21:32 power
+-r--r--r-- 1 root root    4096 Nov 16 21:32 power_state
+--w--w---- 1 root root    4096 Nov 16 21:32 remove
+--w------- 1 root root    4096 Nov 16 21:32 rescan
+-r--r--r-- 1 root root    4096 Nov 16 21:32 resource
+-rw------- 1 root root  262144 Nov 16 21:32 resource0
+-rw------- 1 root root 8388608 Nov 16 21:32 resource2
+-rw------- 1 root root 8388608 Nov 16 21:32 resource2_wc
+-r--r--r-- 1 root root    4096 Nov 16 21:29 revision
+lrwxrwxrwx 1 root root       0 Nov 16 21:28 subsystem -> ../../../../bus/pci
+-r--r--r-- 1 root root    4096 Nov 16 21:29 subsystem_device
+-r--r--r-- 1 root root    4096 Nov 16 21:29 subsystem_vendor
+-rw-r--r-- 1 root root    4096 Nov 16 21:28 uevent
+-r--r--r-- 1 root root    4096 Nov 16 21:28 vendor
+drwxr-xr-x 3 root root       0 Nov 16 21:28 wakeup
+acp_asoc_acp70.0
+dmic-codec

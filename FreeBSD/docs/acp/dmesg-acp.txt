@@ -1,0 +1,301 @@
+[    0.000000] BIOS-e820: [mem 0x0000000009f00000-0x0000000009f87fff]  ACPI NVS
+[    0.000000] BIOS-e820: [mem 0x00000000489b0000-0x00000000490affff]  ACPI NVS
+[    0.000000] BIOS-e820: [mem 0x00000000490b0000-0x0000000049152fff]  ACPI data
+[    0.000000] efi: ACPI=0x49152000 ACPI 2.0=0x49152014 SMBIOS=0x45eb4000 SMBIOS 3.0=0x45eb2000 TPMFinalLog=0x48f7c000 ESRT=0x45eb0118 RTPROP=0x45e40f98 MEMATTR=0x39263018 MOKvar=0x45ede000 INITRD=0x2e1cf598 RNG=0x490cc018 TPMEventLog=0x490bf018 
+[    0.003808] ACPI: Early table checksum verification disabled
+[    0.003812] ACPI: RSDP 0x0000000049152014 000024 (v02 HPQOEM)
+[    0.003816] ACPI: XSDT 0x00000000490E4228 0001C4 (v01 HPQOEM SLIC-BPC 00000001      01000013)
+[    0.003822] ACPI: FACP 0x0000000049151000 00010C (v05 HPQOEM SLIC-BPC 00000001 HP   00000001)
+[    0.003826] ACPI: DSDT 0x0000000049119000 01ADEA (v02 HPQOEM 8D01     00000000 INTL 20200717)
+[    0.003828] ACPI: FACS 0x0000000048D4E000 000040
+[    0.003829] ACPI: SSDT 0x0000000049150000 000353 (v02 HP     NVTEC    00000001 INTL 20200717)
+[    0.003830] ACPI: SSDT 0x000000004914F000 00013E (v02 HP     ShmTable 00000001 INTL 20200717)
+[    0.003832] ACPI: ASF! 0x000000004914E000 000085 (v32 HPQOEM EDK2     00000002      01000013)
+[    0.003833] ACPI: SDEV 0x000000004914D000 000097 (v01 AMD    SdevTble 00000001 ACPI 00000002)
+[    0.003834] ACPI: SSDT 0x000000004914C000 000076 (v02 AMD    SECBIO   00000001 INTL 20200717)
+[    0.003835] ACPI: SSDT 0x0000000049143000 0084B3 (v02 AMD    AmdTable 00000002 MSFT 04000000)
+[    0.003836] ACPI: RTMA 0x0000000049142000 00009E (v01 HP     _HBMART_ 00001000 HP   00000001)
+[    0.003838] ACPI: SSDT 0x0000000049140000 001A39 (v02 HP     UcsiAcpi 00000001 INTL 20200717)
+[    0.003839] ACPI: SSDT 0x000000004913F000 0000FB (v02 HP     UcsiCntr 00000001 INTL 20200717)
+[    0.003840] ACPI: SSDT 0x000000004913E000 0000C2 (v01 HP     OPALPWD  00000001 INTL 20200717)
+[    0.003841] ACPI: OEML 0x000000004913D000 000028 (v03 HPQOEM EDK2     00000002      01000013)
+[    0.003842] ACPI: SSDT 0x000000004913C000 0005FB (v02 HPQOEM Tpm2Tabl 00001000 INTL 20200717)
+[    0.003844] ACPI: TPM2 0x000000004913B000 000034 (v03 HPQOEM EDK2     00000002      01000013)
+[    0.003845] ACPI: MSDM 0x0000000049139000 000055 (v03 HPQOEM SLIC-BPC 00000000 HP   00000001)
+[    0.003846] ACPI: WSMT 0x0000000049138000 000028 (v01 HPQOEM 8D01     00000001 HP   00000001)
+[    0.003847] ACPI: ASF! 0x0000000049137000 00006E (v32 HPQOEM 8D01     00000001 HP   00000001)
+[    0.003848] ACPI: HPET 0x0000000049136000 000038 (v01 HPQOEM 8D01     00000001 HP   00000001)
+[    0.003849] ACPI: APIC 0x0000000049135000 000222 (v02 HPQOEM 8D01     00000001 HP   00000001)
+[    0.003851] ACPI: MCFG 0x0000000049134000 00003C (v01 HPQOEM 8D01     00000001 HP   00000001)
+[    0.003852] ACPI: SSDT 0x0000000049118000 00014A (v01 HPQOEM AMDNFCI2 00000001 INTL 20200717)
+[    0.003853] ACPI: SSDT 0x000000004910C000 00A8CE (v02 AMD    AMD CPU  00000001 AMD  00000001)
+[    0.003854] ACPI: FPDT 0x000000004913A000 000044 (v01 HPQOEM EDK2     00000002      01000013)
+[    0.003855] ACPI: SSDT 0x000000004910B000 000045 (v02 HP     HPNBCONV 00001000 INTL 20200717)
+[    0.003856] ACPI: SSDT 0x000000004910A000 00079B (v01 HP     AMDTPL   00001000 INTL 20200717)
+[    0.003858] ACPI: SSDT 0x0000000049106000 003A9C (v02 HP     HPAMD_WL 00001000 INTL 20200717)
+[    0.003859] ACPI: SSDT 0x0000000049105000 000032 (v02 HP     HPCONDEV 00001000 INTL 20200717)
+[    0.003860] ACPI: SSDT 0x0000000049104000 000E9F (v02 HPQOEM HPPATT   00001000 INTL 20200717)
+[    0.003861] ACPI: VFCT 0x00000000490FF000 004484 (v01 HPQOEM SLIC-BPC 00000001 AMD  33504F47)
+[    0.003862] ACPI: SSDT 0x00000000490FD000 0017CC (v02 AMD    OEMACP   00000001 INTL 20200717)
+[    0.003863] ACPI: SSDT 0x00000000490FB000 001152 (v02 AMD    OEMPMF   00000001 INTL 20200717)
+[    0.003865] ACPI: SSDT 0x00000000490F9000 001DB7 (v02 AMD    CPMPMF   00000001 INTL 20200717)
+[    0.003866] ACPI: SSDT 0x00000000490F8000 00047A (v02 AMD    CPMWBH   00000001 INTL 20200717)
+[    0.003867] ACPI: SSDT 0x00000000490EE000 009A93 (v02 AMD    CPMCMN   00000001 INTL 20200717)
+[    0.003868] ACPI: BGRT 0x00000000490ED000 000038 (v01 HPQOEM EDK2     00000002      01000013)
+[    0.003869] ACPI: SSDT 0x00000000490EC000 000612 (v02 AMD    CAM11    00000001 INTL 20200717)
+[    0.003871] ACPI: SSDT 0x00000000490EB000 000A7F (v02 AMD    SDCR     00000001 INTL 20200717)
+[    0.003872] ACPI: SSDT 0x00000000490EA000 000A34 (v02 AMD    LOM      00000001 INTL 20200717)
+[    0.003873] ACPI: SSDT 0x00000000490E9000 000DB4 (v02 AMD    NVME     00000001 INTL 20200717)
+[    0.003874] ACPI: SSDT 0x00000000490E7000 001672 (v02 AMD    UPEP     00000001 INTL 20200717)
+[    0.003875] ACPI: SSDT 0x00000000490E5000 0010BB (v02 AMD    GPP_PME_ 00000001 INTL 20200717)
+[    0.003876] ACPI: SSDT 0x00000000490DA000 0097A5 (v02 AMD    INTBUSC_ 00000001 INTL 20200717)
+[    0.003878] ACPI: SSDT 0x00000000490D5000 0046FB (v02 AMD    INTGPPA_ 00000001 INTL 20200717)
+[    0.003879] ACPI: SSDT 0x0000000049117000 000AF6 (v02 AMD    CPMGPIO0 00000001 INTL 20200717)
+[    0.003880] ACPI: SSDT 0x00000000490D4000 00010D (v02 MSFT   MHSP     00000004 INTL 20200717)
+[    0.003881] ACPI: SSDT 0x00000000490D3000 000051 (v02 AMD    DRTM     00000001 INTL 20200717)
+[    0.003882] ACPI: IVRS 0x00000000490D2000 000215 (v02 AMD    AmdTable 00000001 AMD  00000001)
+[    0.003883] ACPI: SSDT 0x00000000490D1000 000500 (v02 AMD    MEMTOOL0 00000002 INTL 20200717)
+[    0.003885] ACPI: SSDT 0x00000000490D0000 0009D0 (v02 AMD    CPMMSOSC 00000001 INTL 20200717)
+[    0.003886] ACPI: SSDT 0x00000000490CF000 00008D (v02 AMD    CPMMSLPI 00000001 INTL 20200717)
+[    0.003887] ACPI: SSDT 0x00000000490CE000 000509 (v02 AMD    CPMSFAML 00000001 INTL 20200717)
+[    0.003888] ACPI: SSDT 0x00000000490CD000 000F5C (v02 AMD    CPMACPV8 00000001 INTL 20200717)
+[    0.003889] ACPI: Reserving FACP table memory at [mem 0x49151000-0x4915110b]
+[    0.003890] ACPI: Reserving DSDT table memory at [mem 0x49119000-0x49133de9]
+[    0.003890] ACPI: Reserving FACS table memory at [mem 0x48d4e000-0x48d4e03f]
+[    0.003890] ACPI: Reserving SSDT table memory at [mem 0x49150000-0x49150352]
+[    0.003891] ACPI: Reserving SSDT table memory at [mem 0x4914f000-0x4914f13d]
+[    0.003891] ACPI: Reserving ASF! table memory at [mem 0x4914e000-0x4914e084]
+[    0.003891] ACPI: Reserving SDEV table memory at [mem 0x4914d000-0x4914d096]
+[    0.003891] ACPI: Reserving SSDT table memory at [mem 0x4914c000-0x4914c075]
+[    0.003892] ACPI: Reserving SSDT table memory at [mem 0x49143000-0x4914b4b2]
+[    0.003892] ACPI: Reserving RTMA table memory at [mem 0x49142000-0x4914209d]
+[    0.003892] ACPI: Reserving SSDT table memory at [mem 0x49140000-0x49141a38]
+[    0.003892] ACPI: Reserving SSDT table memory at [mem 0x4913f000-0x4913f0fa]
+[    0.003893] ACPI: Reserving SSDT table memory at [mem 0x4913e000-0x4913e0c1]
+[    0.003893] ACPI: Reserving OEML table memory at [mem 0x4913d000-0x4913d027]
+[    0.003893] ACPI: Reserving SSDT table memory at [mem 0x4913c000-0x4913c5fa]
+[    0.003894] ACPI: Reserving TPM2 table memory at [mem 0x4913b000-0x4913b033]
+[    0.003894] ACPI: Reserving MSDM table memory at [mem 0x49139000-0x49139054]
+[    0.003894] ACPI: Reserving WSMT table memory at [mem 0x49138000-0x49138027]
+[    0.003894] ACPI: Reserving ASF! table memory at [mem 0x49137000-0x4913706d]
+[    0.003895] ACPI: Reserving HPET table memory at [mem 0x49136000-0x49136037]
+[    0.003895] ACPI: Reserving APIC table memory at [mem 0x49135000-0x49135221]
+[    0.003895] ACPI: Reserving MCFG table memory at [mem 0x49134000-0x4913403b]
+[    0.003895] ACPI: Reserving SSDT table memory at [mem 0x49118000-0x49118149]
+[    0.003896] ACPI: Reserving SSDT table memory at [mem 0x4910c000-0x491168cd]
+[    0.003896] ACPI: Reserving FPDT table memory at [mem 0x4913a000-0x4913a043]
+[    0.003896] ACPI: Reserving SSDT table memory at [mem 0x4910b000-0x4910b044]
+[    0.003897] ACPI: Reserving SSDT table memory at [mem 0x4910a000-0x4910a79a]
+[    0.003897] ACPI: Reserving SSDT table memory at [mem 0x49106000-0x49109a9b]
+[    0.003897] ACPI: Reserving SSDT table memory at [mem 0x49105000-0x49105031]
+[    0.003897] ACPI: Reserving SSDT table memory at [mem 0x49104000-0x49104e9e]
+[    0.003898] ACPI: Reserving VFCT table memory at [mem 0x490ff000-0x49103483]
+[    0.003898] ACPI: Reserving SSDT table memory at [mem 0x490fd000-0x490fe7cb]
+[    0.003898] ACPI: Reserving SSDT table memory at [mem 0x490fb000-0x490fc151]
+[    0.003899] ACPI: Reserving SSDT table memory at [mem 0x490f9000-0x490fadb6]
+[    0.003899] ACPI: Reserving SSDT table memory at [mem 0x490f8000-0x490f8479]
+[    0.003899] ACPI: Reserving SSDT table memory at [mem 0x490ee000-0x490f7a92]
+[    0.003899] ACPI: Reserving BGRT table memory at [mem 0x490ed000-0x490ed037]
+[    0.003900] ACPI: Reserving SSDT table memory at [mem 0x490ec000-0x490ec611]
+[    0.003900] ACPI: Reserving SSDT table memory at [mem 0x490eb000-0x490eba7e]
+[    0.003900] ACPI: Reserving SSDT table memory at [mem 0x490ea000-0x490eaa33]
+[    0.003901] ACPI: Reserving SSDT table memory at [mem 0x490e9000-0x490e9db3]
+[    0.003901] ACPI: Reserving SSDT table memory at [mem 0x490e7000-0x490e8671]
+[    0.003901] ACPI: Reserving SSDT table memory at [mem 0x490e5000-0x490e60ba]
+[    0.003902] ACPI: Reserving SSDT table memory at [mem 0x490da000-0x490e37a4]
+[    0.003902] ACPI: Reserving SSDT table memory at [mem 0x490d5000-0x490d96fa]
+[    0.003902] ACPI: Reserving SSDT table memory at [mem 0x49117000-0x49117af5]
+[    0.003903] ACPI: Reserving SSDT table memory at [mem 0x490d4000-0x490d410c]
+[    0.003903] ACPI: Reserving SSDT table memory at [mem 0x490d3000-0x490d3050]
+[    0.003903] ACPI: Reserving IVRS table memory at [mem 0x490d2000-0x490d2214]
+[    0.003903] ACPI: Reserving SSDT table memory at [mem 0x490d1000-0x490d14ff]
+[    0.003904] ACPI: Reserving SSDT table memory at [mem 0x490d0000-0x490d09cf]
+[    0.003904] ACPI: Reserving SSDT table memory at [mem 0x490cf000-0x490cf08c]
+[    0.003904] ACPI: Reserving SSDT table memory at [mem 0x490ce000-0x490ce508]
+[    0.003905] ACPI: Reserving SSDT table memory at [mem 0x490cd000-0x490cdf5b]
+[    0.004391] ACPI: PM-Timer IO Port: 0x408
+[    0.004398] ACPI: LAPIC_NMI (acpi_id[0x00] high edge lint[0x1])
+[    0.004399] ACPI: LAPIC_NMI (acpi_id[0x01] high edge lint[0x1])
+[    0.004400] ACPI: LAPIC_NMI (acpi_id[0x02] high edge lint[0x1])
+[    0.004400] ACPI: LAPIC_NMI (acpi_id[0x03] high edge lint[0x1])
+[    0.004400] ACPI: LAPIC_NMI (acpi_id[0x04] high edge lint[0x1])
+[    0.004400] ACPI: LAPIC_NMI (acpi_id[0x05] high edge lint[0x1])
+[    0.004401] ACPI: LAPIC_NMI (acpi_id[0x06] high edge lint[0x1])
+[    0.004401] ACPI: LAPIC_NMI (acpi_id[0x07] high edge lint[0x1])
+[    0.004401] ACPI: LAPIC_NMI (acpi_id[0x08] high edge lint[0x1])
+[    0.004401] ACPI: LAPIC_NMI (acpi_id[0x09] high edge lint[0x1])
+[    0.004402] ACPI: LAPIC_NMI (acpi_id[0x0a] high edge lint[0x1])
+[    0.004402] ACPI: LAPIC_NMI (acpi_id[0x0b] high edge lint[0x1])
+[    0.004402] ACPI: LAPIC_NMI (acpi_id[0x0c] high edge lint[0x1])
+[    0.004402] ACPI: LAPIC_NMI (acpi_id[0x0d] high edge lint[0x1])
+[    0.004403] ACPI: LAPIC_NMI (acpi_id[0x0e] high edge lint[0x1])
+[    0.004403] ACPI: LAPIC_NMI (acpi_id[0x0f] high edge lint[0x1])
+[    0.004403] ACPI: LAPIC_NMI (acpi_id[0x10] high edge lint[0x1])
+[    0.004404] ACPI: LAPIC_NMI (acpi_id[0x11] high edge lint[0x1])
+[    0.004404] ACPI: LAPIC_NMI (acpi_id[0x12] high edge lint[0x1])
+[    0.004404] ACPI: LAPIC_NMI (acpi_id[0x13] high edge lint[0x1])
+[    0.004404] ACPI: LAPIC_NMI (acpi_id[0x14] high edge lint[0x1])
+[    0.004405] ACPI: LAPIC_NMI (acpi_id[0x15] high edge lint[0x1])
+[    0.004405] ACPI: LAPIC_NMI (acpi_id[0x16] high edge lint[0x1])
+[    0.004405] ACPI: LAPIC_NMI (acpi_id[0x17] high edge lint[0x1])
+[    0.004405] ACPI: LAPIC_NMI (acpi_id[0x18] high edge lint[0x1])
+[    0.004406] ACPI: LAPIC_NMI (acpi_id[0x19] high edge lint[0x1])
+[    0.004406] ACPI: LAPIC_NMI (acpi_id[0x1a] high edge lint[0x1])
+[    0.004406] ACPI: LAPIC_NMI (acpi_id[0x1b] high edge lint[0x1])
+[    0.004406] ACPI: LAPIC_NMI (acpi_id[0x1c] high edge lint[0x1])
+[    0.004407] ACPI: LAPIC_NMI (acpi_id[0x1d] high edge lint[0x1])
+[    0.004407] ACPI: LAPIC_NMI (acpi_id[0x1e] high edge lint[0x1])
+[    0.004407] ACPI: LAPIC_NMI (acpi_id[0x1f] high edge lint[0x1])
+[    0.004462] ACPI: INT_SRC_OVR (bus 0 bus_irq 1 global_irq 1 low edge)
+[    0.004464] ACPI: INT_SRC_OVR (bus 0 bus_irq 0 global_irq 2 dfl dfl)
+[    0.004464] ACPI: INT_SRC_OVR (bus 0 bus_irq 9 global_irq 9 low level)
+[    0.004467] ACPI: Using ACPI (MADT) for SMP configuration information
+[    0.004468] ACPI: HPET id: 0x10228210 base: 0xfed00000
+[    0.056779] software IO TLB: area num 32.
+[    0.151200] ACPI: Core revision 20251212
+[    0.302029] ACPI: PM: Registering ACPI NVS region [mem 0x09f00000-0x09f87fff] (557056 bytes)
+[    0.302029] ACPI: PM: Registering ACPI NVS region [mem 0x489b0000-0x490affff] (7340032 bytes)
+[    0.307851] ACPI FADT declares the system doesn't support PCIe ASPM, so disable it
+[    0.307852] acpiphp: ACPI Hot Plug PCI Controller Driver version: 0.5
+[    0.309145] ACPI: Added _OSI(Module Device)
+[    0.309146] ACPI: Added _OSI(Processor Device)
+[    0.309147] ACPI: Added _OSI(Processor Aggregator Device)
+[    0.339072] ACPI: 37 ACPI AML tables successfully acquired and loaded
+[    0.341715] ACPI: [Firmware Bug]: BIOS _OSI(Linux) query ignored
+[    0.350198] ACPI: \_SB_: platform _OSC: OS support mask [006e7eff]
+[    0.350665] ACPI: \_SB_: platform _OSC: OS control mask [006e7e7f]
+[    0.350862] ACPI: USB4 _OSC: OS supports USB3+ DisplayPort+ PCIe+ XDomain+
+[    0.350863] ACPI: USB4 _OSC: OS controls USB3+ DisplayPort+ PCIe+ XDomain+
+[    0.351374] ACPI: EC: EC started
+[    0.351375] ACPI: EC: interrupt blocked
+[    0.378077] ACPI: EC: EC_CMD/EC_SC=0x66, EC_DATA=0x62
+[    0.378078] ACPI: \_SB_.PCI0.LPCB.EC0_: Boot DSDT EC used to handle transactions
+[    0.378079] ACPI: Interpreter enabled
+[    0.378108] ACPI: PM: (supports S0 S4 S5)
+[    0.378108] ACPI: Using IOAPIC for interrupt routing
+[    0.379152] PCI: Using host bridge windows from ACPI; if necessary, use "pci=nocrs" and report a bug
+[    0.379490] ACPI: Enabled 6 GPEs in block 00 to 1F
+[    0.381155] ACPI: \_SB_.PCI0.GP11.PWRS: New power resource
+[    0.382333] ACPI: \_SB_.PCI0.GP11.SWUS.PWRS: New power resource
+[    0.383509] ACPI: \_SB_.PCI0.GP12.PWRS: New power resource
+[    0.384667] ACPI: \_SB_.PCI0.GP12.SWUS.PWRS: New power resource
+[    0.384953] ACPI: \_SB_.PCI0.GP21.PWRS: New power resource
+[    0.385723] ACPI: \_SB_.PCI0.GP22.PWRS: New power resource
+[    0.386313] ACPI: \_SB_.PCI0.GP23.NCRD.WRST: New power resource
+[    0.386516] ACPI: \_SB_.PCI0.GP25.P0NV: New power resource
+[    0.387550] ACPI: \_SB_.PCI0.GPPA.PWRS: New power resource
+[    0.387753] ACPI: \_SB_.PCI0.GPPA.GFX0.PWRS: New power resource
+[    0.388187] ACPI: \_SB_.PCI0.GPPA.HDAU.PWRS: New power resource
+[    0.388587] ACPI: \_SB_.PCI0.GPPA.XHC1.PWRS: New power resource
+[    0.389130] ACPI: \_SB_.PCI0.GPPA.ACP_.PWRS: New power resource
+[    0.389652] ACPI: \_SB_.PCI0.GPPA.HDEF.PWRS: New power resource
+[    0.390373] ACPI: \_SB_.PCI0.BUSC.XHC0.PWRS: New power resource
+[    0.390873] ACPI: \_SB_.PCI0.BUSC.XHC0.RHUB.HS05.DBTR: New power resource
+[    0.391439] ACPI: \_SB_.PCI0.BUSC.XHC3.PWRS: New power resource
+[    0.392535] ACPI: \_SB_.PCI0.BUSC.XHC4.PWRS: New power resource
+[    0.393624] ACPI: \_SB_.PCI0.BUSC.NHI0.PWRS: New power resource
+[    0.394413] ACPI: \_SB_.PCI0.BUSC.NHI1.PWRS: New power resource
+[    0.400978] ACPI: PCI Root Bridge [PCI0] (domain 0000 [bus 00-ff])
+[    0.400983] acpi PNP0A08:00: _OSC: OS supports [ExtendedConfig ASPM ClockPM Segments MSI EDR HPX-Type3]
+[    0.401006] acpi PNP0A08:00: _OSC: platform does not support [SHPCHotplug AER]
+[    0.401040] acpi PNP0A08:00: _OSC: OS now controls [PCIeHotplug PME PCIeCapability LTR DPC]
+[    0.401041] acpi PNP0A08:00: FADT indicates ASPM is unsupported, using BIOS configuration
+[    0.430533] ACPI: PCI: Interrupt link LNKA configured for IRQ 0
+[    0.430534] ACPI: PCI: Interrupt link LNKA disabled
+[    0.430659] ACPI: PCI: Interrupt link LNKB configured for IRQ 0
+[    0.430659] ACPI: PCI: Interrupt link LNKB disabled
+[    0.430749] ACPI: PCI: Interrupt link LNKC configured for IRQ 0
+[    0.430749] ACPI: PCI: Interrupt link LNKC disabled
+[    0.430873] ACPI: PCI: Interrupt link LNKD configured for IRQ 0
+[    0.430873] ACPI: PCI: Interrupt link LNKD disabled
+[    0.430982] ACPI: PCI: Interrupt link LNKE configured for IRQ 0
+[    0.430983] ACPI: PCI: Interrupt link LNKE disabled
+[    0.431068] ACPI: PCI: Interrupt link LNKF configured for IRQ 0
+[    0.431068] ACPI: PCI: Interrupt link LNKF disabled
+[    0.431152] ACPI: PCI: Interrupt link LNKG configured for IRQ 0
+[    0.431152] ACPI: PCI: Interrupt link LNKG disabled
+[    0.431237] ACPI: PCI: Interrupt link LNKH configured for IRQ 0
+[    0.431237] ACPI: PCI: Interrupt link LNKH disabled
+[    0.431408] ACPI: EC: interrupt unblocked
+[    0.431408] ACPI: EC: event unblocked
+[    0.431414] ACPI: EC: EC_CMD/EC_SC=0x66, EC_DATA=0x62
+[    0.431414] ACPI: EC: GPE=0x3
+[    0.431415] ACPI: \_SB_.PCI0.LPCB.EC0_: Boot DSDT EC initialization complete
+[    0.431416] ACPI: \_SB_.PCI0.LPCB.EC0_: EC: Used to handle transactions and events
+[    0.431579] ACPI: bus type USB registered
+[    0.455828] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.456656] PCI: Using ACPI for IRQ routing
+[    0.467733] acpi PNP0C02:00: Skipped [io  0x0010-0x001f]
+[    0.467735] acpi PNP0C02:00: Skipped [io  0x002e-0x002f]
+[    0.467735] acpi PNP0C02:00: Skipped [io  0x0072-0x0073]
+[    0.467736] acpi PNP0C02:00: Skipped [io  0x0080]
+[    0.467736] acpi PNP0C02:00: Skipped [io  0x00b0-0x00b1]
+[    0.467736] acpi PNP0C02:00: Skipped [io  0x0092]
+[    0.467737] acpi PNP0C02:00: Reserved [io  0x0400-0x04cf]
+[    0.467738] acpi PNP0C02:00: Reserved [io  0x04d0-0x04d1]
+[    0.467738] acpi PNP0C02:00: Reserved [io  0x04d6]
+[    0.467739] acpi PNP0C02:00: Reserved [io  0x0680-0x06ff]
+[    0.467739] acpi PNP0C02:00: Reserved [io  0x077a]
+[    0.467740] acpi PNP0C02:00: Reserved [io  0x0c00-0x0c01]
+[    0.467741] acpi PNP0C02:00: Reserved [io  0x0c14]
+[    0.467741] acpi PNP0C02:00: Reserved [io  0x0c50-0x0c52]
+[    0.467742] acpi PNP0C02:00: Reserved [io  0x0c6c]
+[    0.467742] acpi PNP0C02:00: Reserved [io  0x0c6f]
+[    0.467743] acpi PNP0C02:00: Reserved [io  0x0cd0-0x0cdb]
+[    0.467743] acpi PNP0C02:00: Reserved [io  0x0840-0x0847]
+[    0.467784] acpi PNP0C01:00: Could not reserve [mem 0x000e0000-0x000fffff]
+[    0.467800] acpi PNP0C02:01: Reserved [io  0x0600-0x067f]
+[    0.467800] acpi PNP0C02:01: Reserved [mem 0xfedf1000-0xfedf1fff]
+[    0.467859] acpi PNP0C02:02: Could not reserve [mem 0xfec00000-0xfec00fff]
+[    0.467859] acpi PNP0C02:02: Reserved [mem 0xfee00000-0xfee00fff]
+[    0.467860] acpi PNP0C02:02: Reserved [mem 0xfec20000-0xfec20fff]
+[    0.467880] pnp: PnP ACPI init
+[    0.472041] pnp: PnP ACPI: found 1 devices
+[    0.477813] clocksource: acpi_pm: mask: 0xffffff max_cycles: 0xffffff, max_idle_ns: 2085701024 ns
+[    0.503117] platform AMDI0201:00: AMD-Vi: [Firmware Bug]: No ACPI device matched UID, but 1 device matched HID.
+[    0.509522] PCI-DMA: Using software bounce buffering for IO (SWIOTLB)
+[    0.509532] software IO TLB: mapped [mem 0x0000000064000000-0x0000000068000000] (64MB)
+[    0.536838] ACPI: AC: AC Adapter [AC] (on-line)
+[    0.536962] ACPI: button: Sleep Button [SLPB]
+[    0.537036] ACPI: button: Lid Switch [LID]
+[    0.545474] acpi LNXTHERM:00: registered as thermal_zone0
+[    0.545477] ACPI: thermal: Thermal Zone [CPUZ] (62 C)
+[    0.546806] acpi LNXTHERM:01: registered as thermal_zone1
+[    0.546807] ACPI: thermal: Thermal Zone [GFXZ] (25 C)
+[    0.548473] acpi LNXTHERM:02: registered as thermal_zone2
+[    0.548479] ACPI: thermal: Thermal Zone [EXTZ] (46 C)
+[    0.549964] acpi LNXTHERM:03: registered as thermal_zone3
+[    0.549966] ACPI: thermal: Thermal Zone [LOCZ] (53 C)
+[    0.551279] acpi LNXTHERM:04: registered as thermal_zone4
+[    0.551280] ACPI: thermal: Thermal Zone [BATZ] (31 C)
+[    0.552570] acpi LNXTHERM:05: registered as thermal_zone5
+[    0.552572] ACPI: thermal: Thermal Zone [CHGZ] (52 C)
+[    0.552679] acpi LNXTHERM:06: registered as thermal_zone6
+[    0.552680] ACPI: thermal: Thermal Zone [MSHZ] (30 C)
+[    0.564946] ACPI: battery: Slot [BAT0] (battery present)
+[    0.580592] ACPI: bus type drm_connector registered
+[    0.608738] x86/amd: Previous system reset reason [0x00080800]: software wrote 0x6 to reset control register 0xCF9
+[    0.653275] integrity: Loaded X.509 cert 'Microsoft Corporation: Windows UEFI CA 2023: aefc5fbbbe055d8f8daa585473499417ab5a5272'
+[    0.653281] integrity: Loaded X.509 cert 'Microsoft Windows Production PCA 2011: a92902398e16c49778cd90f99e4f9ae17c55af53'
+[    0.782160] ACPI: bus type thunderbolt registered
+[    0.793737] input: gpio-keys as /devices/platform/ACPI0011:00/gpio-keys.1.auto/input/input3
+[    0.866544] i2c_hid_acpi i2c-ELAN2513:00: i2c_hid_get_input: IRQ triggered but there's no data
+[    0.931124] ACPI: video: Video Device [GFX0] (multi-head: yes  rom: no  post: no)
+[    0.931459] input: Video Bus as /devices/pci0000:00/0000:00:08.1/acpi.video_bus.0/input/input11
+[    2.533296] snd_acp_pci 0000:c3:00.5: enabling device (0000 -> 0002)
+[    2.590201] snd_hda_intel 0000:c3:00.1: enabling device (0000 -> 0002)
+[    2.590572] snd_hda_intel 0000:c3:00.6: enabling device (0000 -> 0002)
+[    2.613013] snd_hda_codec_alc269 hdaudioC1D0: ALC245: picked fixup  for PCI SSID 103c:8d01
+[    2.613177] snd_hda_codec_alc269 hdaudioC1D0: Found 4 CSC3554 on i2c (-%s:00-cs35l54-hda.%d)
+[    2.613725] snd_hda_codec_alc269 hdaudioC1D0: autoconfig for ALC245: line_outs=1 (0x17/0x0/0x0/0x0/0x0) type:speaker
+[    2.613729] snd_hda_codec_alc269 hdaudioC1D0:    speaker_outs=0 (0x0/0x0/0x0/0x0/0x0)
+[    2.613730] snd_hda_codec_alc269 hdaudioC1D0:    hp_outs=1 (0x21/0x0/0x0/0x0/0x0)
+[    2.613731] snd_hda_codec_alc269 hdaudioC1D0:    mono: mono_out=0x0
+[    2.613732] snd_hda_codec_alc269 hdaudioC1D0:    inputs:
+[    2.613733] snd_hda_codec_alc269 hdaudioC1D0:      Mic=0x19
+[    2.620462] snd_hda_codec_alc269 hdaudioC1D0: bound i2c-CSC3554:00-cs35l54-hda.0 (ops cs35l56_hda_comp_ops [snd_hda_scodec_cs35l56])
+[    2.620471] snd_hda_codec_alc269 hdaudioC1D0: bound i2c-CSC3554:00-cs35l54-hda.1 (ops cs35l56_hda_comp_ops [snd_hda_scodec_cs35l56])
+[    2.620476] snd_hda_codec_alc269 hdaudioC1D0: bound i2c-CSC3554:00-cs35l54-hda.2 (ops cs35l56_hda_comp_ops [snd_hda_scodec_cs35l56])
+[    2.620480] snd_hda_codec_alc269 hdaudioC1D0: bound i2c-CSC3554:00-cs35l54-hda.3 (ops cs35l56_hda_comp_ops [snd_hda_scodec_cs35l56])
+[    4.315578] snd_hda_intel 0000:c3:00.1: bound 0000:c3:00.0 (ops amdgpu_dm_audio_component_bind_ops [amdgpu])
+[    4.368885] amdgpu 0000:c3:00.0: [drm] Using ACPI provided EDID for eDP-1

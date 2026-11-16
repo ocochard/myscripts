@@ -1,0 +1,2 @@
+/sys/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0A08:00/device:13/device:23
+\_SB_.PCI0.GPPA.ACP_

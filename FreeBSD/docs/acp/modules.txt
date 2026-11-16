@@ -1,0 +1,343 @@
+== snd_acp_legacy_mach
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-acp-legacy-mach.ko.zst
+description:    ACP chrome audio support
+srcversion:     359B4155CC7D43BE0356DE2
+alias:          platform:acp-pdm-mach
+alias:          platform:rmb-rt5682s-rt1019
+alias:          platform:rmb-nau8825-max
+alias:          platform:acp3x-es83xx
+alias:          platform:acp3xalc5682s1019
+alias:          platform:acp3xalc5682sm98360
+alias:          platform:acp3xalc56821019
+depends:        snd-soc-core,snd-acp-mach,snd-pcm,snd
+== snd_acp_mach
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-acp-mach.ko.zst
+description:    AMD ACP Common Machine driver
+srcversion:     17D9137EA67301337F4983B
+depends:        snd-soc-core,snd-pcm,snd,snd-soc-nau8821
+== snd_soc_nau8821
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/codecs/snd-soc-nau8821.ko.zst
+description:    ASoC nau8821 driver
+srcversion:     BE10C5572B080990512C735
+alias:          i2c:nau8821
+alias:          acpi*:NVTN2020:*
+depends:        snd-soc-core,snd-pcm
+parm:           quirk:Board-specific quirk override (uint)
+param quirk=4294967295
+== snd_acp3x_rn
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/renoir/snd-acp3x-rn.ko.zst
+alias:          platform:acp_pdm_mach
+description:    AMD Renoir support for DMIC
+srcversion:     EE55C39BB79787DF3D5D82B
+depends:        snd-soc-core
+== snd_acp70
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-acp70.ko.zst
+alias:          platform:acp_asoc_acp70
+description:    AMD ACP ACP70 Driver
+srcversion:     DEB2854C0B034DF0C31CAB7
+depends:        snd-acp-pcm,snd-acp-pdm,snd-acp-legacy-common,snd-acp-i2s
+== snd_acp_i2s
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-acp-i2s.ko.zst
+alias:          acp_i2s_playcap
+description:    AMD ACP Audio I2S controller
+srcversion:     D909FC5666A81757094A655
+depends:        
+== snd_acp_pdm
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-acp-pdm.ko.zst
+alias:          acp-pdm
+description:    AMD ACP Audio PDM controller
+srcversion:     F6BAF46A155660B8977D432
+depends:        
+== snd_soc_dmic
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/codecs/snd-soc-dmic.ko.zst
+description:    Generic DMIC driver
+alias:          platform:dmic-codec
+srcversion:     1C40EFD98AFF0926635AC85
+alias:          of:N*T*Cdmic-codecC*
+alias:          of:N*T*Cdmic-codec
+depends:        snd-soc-core
+parm:           modeswitch_delay:uint
+parm:           wakeup_delay:uint
+param modeswitch_delay=0
+param wakeup_delay=0
+== snd_acp_pcm
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-acp-pcm.ko.zst
+alias:          acp_i2s_dma
+description:    AMD ACP PCM Driver
+srcversion:     1064E04C665CCE5C58E3A0E
+depends:        snd-pcm,snd-soc-core
+== snd_sof_amd_acp70
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/sof/amd/snd-sof-amd-acp70.ko.zst
+description:    ACP70 SOF Driver
+srcversion:     F4A0D8C0B1149940F3174DD
+alias:          pci:v00001022d000015E2sv*sd*bc*sc*i*
+depends:        snd-sof-pci,snd-sof-amd-acp,snd-acp-config,snd-soc-acpi-amd-match
+== snd_sof_amd_acp63
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/sof/amd/snd-sof-amd-acp63.ko.zst
+description:    ACP63 SOF Driver
+srcversion:     8C5EC48FC616C5C3C36D5C8
+alias:          pci:v00001022d000015E2sv*sd*bc*sc*i*
+depends:        snd-sof-pci,snd-soc-acpi-amd-match,snd-sof-amd-acp,snd-acp-config
+== snd_sof_amd_acp
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/sof/amd/snd-sof-amd-acp.ko.zst
+description:    AMD ACP sof driver
+description:    AMD ACP sof-ipc driver
+description:    ACP SOF COMMON Driver
+srcversion:     BE42EABF54D42FB4624733F
+depends:        snd-pcm,snd-amd-sdw-acpi,soundwire-amd,snd-sof,snd-soc-acpi,snd-sof-xtensa-dsp
+parm:           enable_fw_debug:Enable Firmware debug (bool)
+param enable_fw_debug=N
+== snd_sof_pci
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/sof/snd-sof-pci.ko.zst
+description:    SOF support for PCI platforms
+srcversion:     3A9438223B96CA93FE8CEB2
+depends:        snd-sof
+parm:           fw_path:deprecated - moved to snd-sof module. (charp)
+parm:           fw_filename:deprecated - moved to snd-sof module. (charp)
+parm:           lib_path:deprecated - moved to snd-sof module. (charp)
+parm:           tplg_path:deprecated - moved to snd-sof module. (charp)
+parm:           tplg_filename:deprecated - moved to snd-sof module. (charp)
+parm:           sof_pci_debug:SOF PCI debug options (0x0 all off) (int)
+parm:           ipc_type:deprecated - moved to snd-sof module. (int)
+param fw_filename=(null)
+param fw_path=(null)
+param ipc_type=-1
+param lib_path=(null)
+param sof_pci_debug=0
+param tplg_filename=(null)
+param tplg_path=(null)
+== snd_sof_xtensa_dsp
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/sof/xtensa/snd-sof-xtensa-dsp.ko.zst
+description:    SOF Xtensa DSP support
+srcversion:     D43B54EFB437D6E7E764308
+depends:        
+== snd_sof
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/sof/snd-sof.ko.zst
+alias:          platform:sof-audio
+description:    Sound Open Firmware (SOF) Core
+srcversion:     148DCD2B45290B7FE29C3E7
+depends:        snd-pcm,snd,snd-soc-core,snd-sof-utils,snd-intel-dspcfg
+parm:           ipc4_ignore_cpc:Ignore CPC values. This option will disable clock scaling in firmware. (bool)
+parm:           disable_function_topology:Disable function topology loading (bool)
+parm:           on_demand_boot:Force on-demand DSP boot: 0 - disabled, 1 - enabled (int)
+parm:           fw_path:alternate path for SOF firmware. (charp)
+parm:           fw_filename:alternate filename for SOF firmware. (charp)
+parm:           lib_path:alternate path for SOF firmware libraries. (charp)
+parm:           tplg_path:alternate path for SOF topology. (charp)
+parm:           tplg_filename:alternate filename for SOF topology. (charp)
+parm:           ipc_type:Force SOF IPC type. 0 - IPC3, 1 - IPC4 (int)
+parm:           sof_debug:SOF core debug options (0x0 all off) (int)
+param disable_function_topology=N
+param fw_filename=(null)
+param fw_path=(null)
+param ipc4_ignore_cpc=N
+param ipc_type=-1
+param lib_path=(null)
+param on_demand_boot=-1
+param sof_debug=0
+param tplg_filename=(null)
+param tplg_path=(null)
+== snd_pci_ps
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/ps/snd-pci-ps.ko.zst
+description:    AMD common ACP PCI driver for ACP6.3, ACP7.0 & ACP7.1 platforms
+srcversion:     18AC8FC3EB186B1FFD865BD
+alias:          pci:v00001022d000015E2sv*sd*bc04sc80i00*
+depends:        soundwire-amd,snd-acp-config,snd-soc-acpi-amd-match,snd-pcm,snd-soc-acpi,snd-amd-sdw-acpi
+== snd_soc_acpi_amd_match
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-soc-acpi-amd-match.ko.zst
+description:    AMD ACP6.3 tables and support for ACPI enumeration
+description:    AMD ACP7.0 & ACP7.1 tables and support for ACPI enumeration
+srcversion:     5B2C18959D3EDE0CDBBF063
+depends:        snd-soc-sdca
+== snd_amd_sdw_acpi
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-amd-sdw-acpi.ko.zst
+description:    AMD SoundWire ACPI helpers
+srcversion:     5000F1D930902C66EC68FC1
+depends:        
+== soundwire_amd
+filename:       /lib/modules/7.0.0-43-generic/kernel/drivers/soundwire/soundwire-amd.ko.zst
+description:    AMD SoundWire Init Library
+alias:          platform:amd_sdw_manager
+description:    AMD SoundWire driver
+srcversion:     4075DA328E4FB19DD17EF75
+depends:        soundwire-bus,soundwire-generic-allocation,snd-pcm,snd-soc-core
+== snd_soc_sdca
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/sdca/snd-soc-sdca.ko.zst
+description:    SDCA library
+srcversion:     7B09059F358175A59394CEE
+depends:        snd-soc-core,snd,snd-pcm,hid
+== snd_soc_core
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/snd-soc-core.ko.zst
+alias:          platform:soc-audio
+description:    ALSA SoC Core
+description:    Dynamic Audio Power Management core for ALSA SoC
+description:    ASoC helpers for generic PCM dmaengine API
+srcversion:     48E31133BD16A575E30065F
+depends:        snd,snd-pcm-dmaengine,snd-pcm,ac97_bus,snd-compress
+parm:           prealloc_buffer_size_kbytes:Preallocate DMA buffer size (KB). (uint)
+parm:           pmdown_time:DAPM stream powerdown time (msecs) (int)
+param prealloc_buffer_size_kbytes=512
+== snd_compress
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/core/snd-compress.ko.zst
+description:    ALSA Compressed offload framework
+srcversion:     43869358899E795A3394143
+depends:        snd,snd-pcm
+== ac97_bus
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/ac97_bus.ko.zst
+description:    Legacy AC97 bus interface
+srcversion:     C759B46C2862C07BBB9C616
+depends:        
+== snd_pcm_dmaengine
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/core/snd-pcm-dmaengine.ko.zst
+description:    PCM dmaengine helper APIs
+srcversion:     EAFBB5C1A000EBCFF6B6A3F
+depends:        snd-pcm
+== snd_rpl_pci_acp6x
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/rpl/snd-rpl-pci-acp6x.ko.zst
+description:    AMD ACP RPL PCI driver
+srcversion:     40DAD18FE8DAA1403D1317F
+alias:          pci:v00001022d000015E2sv*sd*bc04sc80i00*
+depends:        
+== snd_intel_sdw_acpi
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/hda/core/snd-intel-sdw-acpi.ko.zst
+description:    Intel Soundwire ACPI helpers
+srcversion:     CC473390E3EE60A74412769
+depends:        
+parm:           sdw_link_mask:Intel link mask (one bit per link) (int)
+parm:           sdw_ctrl_addr:Intel SoundWire Controller _ADR (ulong)
+param sdw_ctrl_addr=1073741824
+param sdw_link_mask=0
+== snd_acp_pci
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-acp-pci.ko.zst
+alias:          acp_pci
+description:    AMD ACP common PCI support
+srcversion:     39D211FBB1F4BCA651D2ABD
+alias:          pci:v00001022d000015E2sv*sd*bc*sc*i*
+depends:        snd-acp-legacy-common,snd-amd-acpi-mach,snd-acp-config
+== snd_amd_acpi_mach
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-amd-acpi-mach.ko.zst
+description:    AMD ACP tables and support for ACPI enumeration
+srcversion:     828FAE06470CB97C33F94FB
+depends:        snd-soc-acpi
+== snd_acp_legacy_common
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/acp/snd-acp-legacy-common.ko.zst
+description:    AMD ACP legacy common features
+srcversion:     D7BE234FAF809D880AF5ECE
+depends:        snd-soc-acpi,snd-pcm
+== snd_soc_cs35l56_shared
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/codecs/snd-soc-cs35l56-shared.ko.zst
+description:    ASoC CS35L56 Shared
+srcversion:     8C36AD313D517595FA10B8F
+depends:        snd-soc-cs-amp-lib,cs_dsp
+== snd_pci_acp6x
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/yc/snd-pci-acp6x.ko.zst
+description:    AMD ACP Yellow Carp PCI driver
+srcversion:     163DF0F4836DC2A48AC6855
+alias:          pci:v00001022d000015E2sv*sd*bc04sc80i00*
+depends:        snd-acp-config,snd-pcm
+== snd_soc_cs_amp_lib
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/codecs/snd-soc-cs-amp-lib.ko.zst
+description:    Cirrus Logic amplifier library
+srcversion:     94E44F5454DC098566EB613
+depends:        cs_dsp
+== cs_dsp
+filename:       /lib/modules/7.0.0-43-generic/kernel/drivers/firmware/cirrus/cs_dsp.ko.zst
+description:    Cirrus Logic DSP Support
+srcversion:     BDE34C4136673B0959F9729
+depends:        
+== snd_pcm
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/core/snd-pcm.ko.zst
+description:    Midlevel PCM code for ALSA.
+srcversion:     309518A68E2BDCB97C49295
+depends:        snd,snd-timer
+parm:           preallocate_dma:Preallocate DMA memory when the PCM devices are initialized. (int)
+parm:           maximum_substreams:Maximum substreams with preallocated DMA memory. (int)
+parm:           max_alloc_per_card:Max total allocation bytes per card. (ulong)
+param max_alloc_per_card=33554432
+param maximum_substreams=4
+param preallocate_dma=1
+== snd_pci_acp5x
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/vangogh/snd-pci-acp5x.ko.zst
+description:    AMD Vangogh ACP PCI driver
+srcversion:     A9C68B7AF0F989A67CCEAAC
+alias:          pci:v00001022d000015E2sv*sd*bc04sc80i00*
+depends:        snd-acp-config
+== snd_rn_pci_acp3x
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/renoir/snd-rn-pci-acp3x.ko.zst
+description:    AMD ACP Renoir PCI driver
+srcversion:     788FB9007198EC3FB5B3EEB
+alias:          pci:v00001022d000015E2sv*sd*bc04sc80i00*
+depends:        snd-acp-config
+parm:           acp_power_gating:Enable acp power gating (int)
+parm:           dmic_acpi_check:Digital microphone presence (-1=auto, 0=none, 1=force) (bint)
+param acp_power_gating=0
+param dmic_acpi_check=-1
+== snd_acp_config
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/snd-acp-config.ko.zst
+description:    AMD ACP Machine Configuration Module
+srcversion:     05D6553B2B36959FC329A4F
+depends:        snd-soc-acpi
+== snd
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/core/snd.ko.zst
+alias:          char-major-116-*
+description:    Advanced Linux Sound Architecture driver for soundcards.
+srcversion:     87F358835A7F87D77A23DF9
+depends:        soundcore
+parm:           max_user_ctl_alloc_size:Max allocation size for user controls (int)
+parm:           slots:Module names assigned to the slots. (array of charp)
+parm:           major:Major # for sound driver. (int)
+parm:           cards_limit:Count of auto-loadable soundcards. (int)
+param cards_limit=1
+param major=116
+param max_user_ctl_alloc_size=8388608
+param slots=(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null),(null)
+== snd_soc_acpi
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/snd-soc-acpi.ko.zst
+description:    ALSA SoC ACPI module
+srcversion:     5DFA5C9AC001847091F6BBB
+depends:        
+== snd_pci_acp3x
+filename:       /lib/modules/7.0.0-43-generic/kernel/sound/soc/amd/raven/snd-pci-acp3x.ko.zst
+description:    AMD ACP3x PCI driver
+srcversion:     F592EC16A09A7917C49D5AC
+alias:          pci:v00001022d000015E2sv*sd*bc04sc80i00*
+depends:        
+== ucsi_acpi
+filename:       /lib/modules/7.0.0-43-generic/kernel/drivers/usb/typec/ucsi/ucsi_acpi.ko.zst
+description:    UCSI ACPI driver
+srcversion:     818842146D25040918CB2D1
+alias:          acpi*:PNP0CA0:*
+depends:        typec_ucsi
+== typec_ucsi
+filename:       /lib/modules/7.0.0-43-generic/kernel/drivers/usb/typec/ucsi/typec_ucsi.ko.zst
+description:    USB Type-C Connector System Software Interface driver
+srcversion:     32715082C5E2109F2C79F6E
+depends:        typec
+== i2c_hid_acpi
+filename:       /lib/modules/7.0.0-43-generic/kernel/drivers/hid/i2c-hid/i2c-hid-acpi.ko.zst
+description:    HID over I2C ACPI driver
+srcversion:     A4D5680ECC219099D1FA06D
+alias:          acpi*:PNP0C50:*
+alias:          acpi*:ACPI0C50:*
+depends:        i2c-hid
+== amd_sfh
+filename:       /lib/modules/7.0.0-43-generic/kernel/drivers/hid/amd-sfh-hid/amd_sfh.ko.zst
+description:    AMD(R) PCIe MP2 Communication Driver
+srcversion:     2F2D8F2D670352072A98DB2
+alias:          pci:v00001022d0000164Asv*sd*bc*sc*i*
+alias:          pci:v00001022d000015E4sv*sd*bc*sc*i*
+depends:        hid
+parm:           sensor_mask:override the detected sensors mask (int)
+param sensor_mask=-1
+== i2c_hid
+filename:       /lib/modules/7.0.0-43-generic/kernel/drivers/hid/i2c-hid/i2c-hid.ko.zst
+description:    HID over I2C core driver
+srcversion:     BF7BA56C24E69AB6875BB75
+depends:        hid
+== hid
+filename:       /lib/modules/7.0.0-43-generic/kernel/drivers/hid/hid.ko.zst
+description:    HID support for Linux
+srcversion:     B22572068E1963E96619C0F
+depends:        
+parm:           ignore_special_drivers:Ignore any special drivers and handle all devices by generic driver (int)
+param ignore_special_drivers=

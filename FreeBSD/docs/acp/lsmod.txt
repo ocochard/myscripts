@@ -1,0 +1,46 @@
+snd_acp_legacy_mach    24576  0
+snd_acp_mach           53248  1 snd_acp_legacy_mach
+snd_soc_nau8821        65536  1 snd_acp_mach
+snd_acp3x_rn           12288  0
+snd_acp70              12288  1
+snd_acp_i2s            16384  1 snd_acp70
+snd_acp_pdm            12288  1 snd_acp70
+snd_soc_dmic           12288  1
+snd_acp_pcm            12288  1 snd_acp70
+snd_sof_amd_acp70      16384  0
+snd_sof_amd_acp63      16384  0
+snd_sof_amd_acp        65536  5 snd_sof_amd_acp70,snd_sof_amd_rembrandt,snd_sof_amd_vangogh,snd_sof_amd_acp63,snd_sof_amd_renoir
+snd_sof_pci            24576  5 snd_sof_amd_acp70,snd_sof_amd_rembrandt,snd_sof_amd_vangogh,snd_sof_amd_acp63,snd_sof_amd_renoir
+snd_sof_xtensa_dsp     12288  1 snd_sof_amd_acp
+snd_sof               438272  2 snd_sof_amd_acp,snd_sof_pci
+snd_pci_ps             32768  0
+snd_soc_acpi_amd_match    28672  3 snd_sof_amd_acp70,snd_sof_amd_acp63,snd_pci_ps
+snd_amd_sdw_acpi       16384  2 snd_sof_amd_acp,snd_pci_ps
+soundwire_amd          49152  2 snd_sof_amd_acp,snd_pci_ps
+snd_soc_sdca          126976  2 snd_soc_acpi_amd_match,soundwire_bus
+snd_soc_core          446464  9 snd_soc_nau8821,snd_acp_mach,snd_acp3x_rn,snd_sof,snd_soc_sdca,snd_acp_legacy_mach,snd_acp_pcm,soundwire_amd,snd_soc_dmic
+snd_compress           40960  1 snd_soc_core
+ac97_bus               12288  1 snd_soc_core
+snd_pcm_dmaengine      20480  1 snd_soc_core
+snd_rpl_pci_acp6x      16384  0
+snd_intel_sdw_acpi     16384  1 snd_intel_dspcfg
+snd_acp_pci            12288  0
+snd_amd_acpi_mach      12288  1 snd_acp_pci
+snd_acp_legacy_common    28672  2 snd_acp70,snd_acp_pci
+snd_soc_cs35l56_shared    57344  3 snd_hda_scodec_cs35l56_i2c,snd_hda_scodec_cs35l56,snd_hda_scodec_cs35l56_spi
+snd_pci_acp6x          16384  0
+snd_soc_cs_amp_lib     24576  2 snd_soc_cs35l56_shared,snd_hda_scodec_cs35l56
+cs_dsp                 73728  3 snd_soc_cs35l56_shared,snd_hda_scodec_cs35l56,snd_soc_cs_amp_lib
+snd_pcm               212992  19 snd_sof_amd_acp,snd_soc_nau8821,snd_hda_codec_hdmi,snd_pci_acp6x,snd_acp_mach,snd_acp_legacy_common,snd_hda_intel,snd_hda_codec,snd_sof,snd_soc_sdca,snd_compress,snd_acp_legacy_mach,snd_soc_core,snd_acp_pcm,snd_sof_utils,soundwire_amd,snd_hda_core,snd_pci_ps,snd_pcm_dmaengine
+snd_pci_acp5x          16384  0
+snd_rn_pci_acp3x       16384  0
+snd_acp_config         24576  10 snd_rn_pci_acp3x,snd_sof_amd_acp70,snd_pci_acp6x,snd_pci_acp5x,snd_sof_amd_rembrandt,snd_sof_amd_vangogh,snd_sof_amd_acp63,snd_acp_pci,snd_pci_ps,snd_sof_amd_renoir
+snd                   147456  20 snd_ctl_led,snd_hda_codec_generic,snd_seq,snd_seq_device,snd_hda_codec_hdmi,snd_hwdep,snd_acp_mach,snd_hda_intel,snd_hda_codec,snd_sof,snd_soc_sdca,snd_timer,snd_hda_codec_realtek_lib,snd_compress,snd_hda_codec_alc269,snd_acp_legacy_mach,snd_soc_core,snd_hda_scodec_cs35l56,snd_pcm,snd_rawmidi
+snd_soc_acpi           16384  5 snd_sof_amd_acp,snd_acp_legacy_common,snd_acp_config,snd_amd_acpi_mach,snd_pci_ps
+snd_pci_acp3x          16384  0
+ucsi_acpi              12288  0
+typec_ucsi             77824  1 ucsi_acpi
+i2c_hid_acpi           12288  0
+amd_sfh                73728  1 amd_pmf
+i2c_hid                40960  1 i2c_hid_acpi
+hid                   286720  7 i2c_hid,usbhid,hid_multitouch,hid_sensor_hub,snd_soc_sdca,hid_generic,amd_sfh

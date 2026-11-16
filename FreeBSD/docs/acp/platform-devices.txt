@@ -1,0 +1,16 @@
+acp_asoc_acp70.0 -> acp_asoc_acp70
+acpi-cpufreq -> driver
+acp-pdm-mach -> acp_mach
+AMDI000B:00 -> amd_pmc
+AMDI0010:00 -> i2c_designware
+AMDI0010:01 -> i2c_designware
+AMDI0010:02 -> i2c_designware
+AMDI0010:03 -> i2c_designware
+AMDI0030:00 -> amd_gpio
+AMDI0051:00 -> driver
+AMDI0052:00 -> driver
+AMDI0080:00 -> driver
+AMDI0081:00 -> driver
+AMDI0105:00 -> amd-pmf
+AMDI0201:00 -> driver
+dmic-codec -> dmic-codec

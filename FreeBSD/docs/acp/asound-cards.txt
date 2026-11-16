@@ -1,0 +1,6 @@
+ 0 [Generic        ]: HDA-Intel - HD-Audio Generic
+                      HD-Audio Generic at 0xa0448000 irq 157
+ 1 [Generic_1      ]: HDA-Intel - HD-Audio Generic
+                      HD-Audio Generic at 0xa0440000 irq 158
+ 2 [acppdmmach     ]: acp-pdm-mach - acp-pdm-mach
+                      HP-HPZBookUltraG1a14inchMobileWorkstationPC-SBKPFV3-8D01
