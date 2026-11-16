@@ -47,7 +47,7 @@ loads: `panic: Unregistered use of FPU in kernel`, in
 `dml2_create()`, `dml2_create_copy()` and the DCN 3.5, 3.5.1 and 4.0.1
 bandwidth validation without the `DC_FP_START()`/`DC_FP_END()` brackets
 that LinuxKPI requires. Commit
-[ff1194b9b1d5](https://github.com/ocochard/freebsd-ports/commit/ff1194b9b1d5)
+[8fa58cf0be56](https://github.com/ocochard/freebsd-ports/commit/8fa58cf0be56)
 on ports branch [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo)
 adds them as four port patches (`dc_state.c`, `dcn35_resource.c`,
 `dcn351_resource.c`, `dcn401_resource.c`) and sets `PORTREVISION=1`; the
