@@ -94,6 +94,11 @@ Same reads as above (`dd if=/dev/nda0`, 1000 MB in 128 KB blocks three times at 
 The patch doubles read throughput and halves the IOMMU interrupts here too, but DMA remapping still costs half of the
 no-IOMMU speed on this machine (the SER6 came close to it). In both IOMMU boots Wi-Fi associated and amdgpu logged no display error; USB enumerated in the patched one (not checked in the stock one); `zpool status -x`: all pools are healthy.
 
+Framework Desktop (Strix Halo, IOMMU capability header `0x190b640f`), 2026-11-16, kernel 6871285f194d plus both patches:
+`hw.amdiommu.enable=1 hw.iommu.dma=1` with the NPU and GPU exempted (`bounce`) boots, `rge0`, `nvme0`, `hdac0`, `xhci0`, `hdac1` are "re-mapped",
+and the IOMMU logged 0 events after boot, amdxdna load and a full `xrt-smi validate`.
+No throughput was measured there.
+
 Not tested:
 
 - Disk writes under DMA remapping (avoided, to protect the pool).

@@ -15,6 +15,8 @@ In that mix, each device that sets up MSI gets a Device Table Entry that transla
 while busdma keeps giving the device physical addresses. All its DMA is blocked.
 On a Ryzen 7 7735HS the USB devices attach again and again, and the machine never reaches a usable shell.
 The patch gives such contexts the identity mapping.
+This mode matters on Strix Halo: the AMD XDNA NPU firmware answers about 1000 times slower with the IOMMU unit off,
+and `hw.amdiommu.enable=1` alone, with this patch, is enough to fix it (see Tested).
 
 ## How to repeat
 
@@ -85,6 +87,21 @@ capability header `0x190b640f`; kernels from FreeBSD main 46ce9acd6d15 plus the 
 The display stall with interrupt remapping alone is a separate problem, not understood yet:
 GPU interrupts do arrive (about 120/s on `vgapci0`), and the stall is gone once DMA remapping is on too.
 The context count of the SER6 row could not be checked here: `boot_verbose` overflows the message buffer before syslog starts.
+
+Framework Desktop, 2026-11-16: AMD Ryzen AI Max+ 395 (Strix Halo), IOMMU 1022:1508 at 0:0:2, capability header `0x190b640f`,
+NPU 1022:17f0 at pci0:194:0:1 with the amdxdna port (drm-kmod branch `olivier-amdxdna`, "carveout" mode: NPU buffers in one physically contiguous region,
+firmware DMA by physical address). Kernel 6871285f194d plus both amdiommu patches and a LinuxKPI SRCU patch; no display attached.
+
+| Kernel | Tunables | NPU firmware round trips (CREATE_CONTEXT / MAP_HOST_BUFFER / DESTROY_CONTEXT) | `xrt-smi validate` | Other |
+|---|---|---|---|---|
+| stock, IOMMU off | none | about 141 ms / 142 ms / 142 ms (476 us for the first CREATE_CONTEXT only) | latency test about 95 ms per job | |
+| patched | `hw.amdiommu.enable=1` | 169 us / 73 us / 119 us | gemm 51.0 TOPS, latency 49.0 us, throughput 93777 ops/s, all PASSED | all contexts "id-mapped", e.g. `amdxdna0: amdiommu0 pci0:194:0:1 rid c201 domain 11 id-mapped`; 0 IOMMU events; amdgpu loads |
+| patched | `hw.amdiommu.enable=1 hw.iommu.dma=1 hw.busdma.pci0.194.0.1=bounce hw.busdma.pci0.193.0.0=bounce` | 160-224 us / 91-110 us / 130-134 us | gemm 51.0 TOPS, latency 47.0 us, throughput 93807 ops/s, all PASSED | NPU and GPU pass-through, other devices "re-mapped"; 0 IOMMU events |
+
+The NPU firmware only needs the IOMMU unit on; its own DTE is in pass-through (mode 0) in both patched boots.
+Upstream Linux refuses to run amdxdna without an IOMMU (a8878e19d2f5, "The AIE2 device firmware requires IOMMU on").
+Why the firmware is slow with the unit off is not known.
+The stock kernel with `hw.amdiommu.enable=1` was not booted on this machine; the loop is expected, as on the SER6 and the ZBook.
 
 Not tested:
 
