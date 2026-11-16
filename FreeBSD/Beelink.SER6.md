@@ -216,7 +216,7 @@ Impact: no PCIe tunneling (eGPU, NVMe enclosure, PCIe docks).
 ## Driver work in progress
 
 None of this is needed to run the machine: the patches fix detection and error reporting for the Bluetooth firmware.
-The branches are local (`~/src-fwget` worktree), not pushed to the fork; the patch files hold the same commits.
+Branches on the fork, one commit each on FreeBSD main 563c2f27e0ff; the fork's `main` is older, so the links point at the commits.
 
 ### Applying the work, in order
 
@@ -226,12 +226,12 @@ Neither touches the kernel.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
-| 1 | freebsd-src `olivier-fwget-intel-bt` ([patch](docs/fwget_usb_intel_bluetooth.patch)) | 1 | | `fwget` lists `iwmbt-firmware` | [docs/fwget_usb_intel_bluetooth.md](docs/fwget_usb_intel_bluetooth.md), [bug report](docs/bugreport_fwget_usb_intel_bluetooth.md) |
-| 2 | freebsd-src `olivier-iwmbtfw-syslog` ([patch](docs/iwmbtfw_syslog.patch)) | 1 | | iwmbtfw errors reach syslog, or `dmesg -a` at boot | [docs/iwmbtfw_syslog.md](docs/iwmbtfw_syslog.md), [bug report](docs/bugreport_iwmbtfw_syslog.md) |
+| 1 | freebsd-src [`olivier-fwget-intel-bt`](https://github.com/ocochard/freebsd-src/commit/35ef248849a3) ([patch](docs/fwget_usb_intel_bluetooth.patch)) | 1 | | `fwget` lists `iwmbt-firmware` | [docs/fwget_usb_intel_bluetooth.md](docs/fwget_usb_intel_bluetooth.md), [bug report](docs/bugreport_fwget_usb_intel_bluetooth.md) |
+| 2 | freebsd-src [`olivier-iwmbtfw-syslog`](https://github.com/ocochard/freebsd-src/commit/b0af6733c346) ([patch](docs/iwmbtfw_syslog.patch)) | 1 | | iwmbtfw errors reach syslog, or `dmesg -a` at boot | [docs/iwmbtfw_syslog.md](docs/iwmbtfw_syslog.md), [bug report](docs/bugreport_iwmbtfw_syslog.md) |
 | 3 | build and install world, or only `usr.sbin/fwget` and `usr.sbin/bluetooth/iwmbtfw` | | 1, 2 | | |
 | 4 | `fwget` (or `pkg install iwmbt-firmware`) | | 3 for `fwget` | reboot, or `iwmbtfw -d ugen1.3 -f /usr/local/share/iwmbt-firmware`; `ubt0` attaches | |
 
-Not for this machine: `olivier-rtlbtfw-syslog` ([docs/rtlbtfw_syslog.md](docs/rtlbtfw_syslog.md)) fixes the same bug in the Realtek loader; the SER6 has no Realtek Bluetooth.
+Not for this machine: [`olivier-rtlbtfw-syslog`](https://github.com/ocochard/freebsd-src/commit/3c04f4e4c8de) ([docs/rtlbtfw_syslog.md](docs/rtlbtfw_syslog.md)) fixes the same bug in the Realtek loader; the SER6 has no Realtek Bluetooth.
 
 ## Which drivers are worth the work
 
