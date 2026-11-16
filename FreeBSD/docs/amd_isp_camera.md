@@ -822,6 +822,35 @@ between them (refused while streaming).
 The copy into the `video(4)` buffer takes 0.17 ms per YUYV frame (4 MB),
 against 0.09 ms for NV12 (3 MB).
 
+### Eighth step: the ISP interrupt through amdgpu
+
+In Linux the camera's interrupts reach its driver through amdgpu's generic
+interrupt mapping (`amdgpu_irq_create_mapping()`), which is compiled out on
+FreeBSD (the function returns 0). amdgpu's interrupt dispatcher has a
+second path, though: a source registered with `amdgpu_irq_add_id()` for a
+given IH client and source number gets its `process` callback called. The
+glue now registers one source for IH client ISP (`SOC15_IH_CLIENTID_ISP`,
+`0x05`) and the eight ring-buffer sources Linux uses
+(`ISP_4_1__SRCID__ISP_RINGBUFFER_WPT9` to `WPT16`, from amdgpu's MIT
+headers), once, when the ISP block initializes, and forwards each interrupt
+to the handler the camera driver installs with
+`amdgpu_isp_fbsd_set_intr()` (glue interface version 2).
+
+In `amdisp` the handler only counts and wakes the service thread, which now
+sleeps until woken instead of waking every millisecond (a 100 ms timeout
+stays as a safety net). Measured over a 130-frame `v4l2-ctl` capture:
+
+```
+hw.amdisp.intr_count: 452
+amdisp: 60 frames: interval 41513 us, copy 252 us, no buffer 0
+23.83 fps
+```
+
+About 3.5 interrupts per frame: one per response (the "frame done" and the
+two "command done" answers for the buffers given back each frame, plus the
+set-up commands). Frame delivery is unchanged; the frame rate stays at the
+firmware's 41.5 ms.
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
@@ -873,4 +902,5 @@ the next reboot hung; a forced power off was needed. Always set the format
 | FreeBSD, `hw.amdisp.cmd=2` with Ubuntu's (2025/08) ISP firmware | 90 frames 1920x1080 NV12, correct picture |
 | FreeBSD, `/dev/video0` with `v4l2-ctl` and VLC | 23.8 fps, live picture in VLC, repeated streams work |
 | FreeBSD, `/dev/video0` in YUYV with `v4l2-ctl` and VLC | 23.8 fps, correct picture, VLC uses YUYV directly |
+| FreeBSD, interrupt-driven (amdgpu IH client ISP) | 452 interrupts for 130 frames, 23.8 fps, no polling |
 | IR camera (HM1092) | untested, no driver on any system |
