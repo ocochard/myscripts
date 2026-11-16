@@ -1,0 +1,84 @@
+From 178556dca3e1917492e1558afa57378cf4e1a229 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 15:15:50 +0100
+Subject: [PATCH] mt76: mt7925: enable suspend and resume
+
+The Linux PCI suspend and resume handlers were compiled out, so after
+suspend-to-idle the card had to be reloaded.  Build them, with mt76_core
+which holds the HIF suspend command, and attach lkpi80211_pm as iwlwifi
+does so that net80211 is stopped before and restarted after them.
+---
+ .../dev/mediatek/mt76/mt7925/lkpi_mt7925_pm.c      | 14 ++++++++++++++
+ sys/modules/mt76/Makefile.inc                      |  1 +
+ sys/modules/mt76/core/Makefile                     |  2 ++
+ sys/modules/mt76/mt7925/Makefile                   |  5 +++++
+ 4 files changed, 22 insertions(+)
+ create mode 100644 sys/contrib/dev/mediatek/mt76/mt7925/lkpi_mt7925_pm.c
+
+diff --git a/sys/contrib/dev/mediatek/mt76/mt7925/lkpi_mt7925_pm.c b/sys/contrib/dev/mediatek/mt76/mt7925/lkpi_mt7925_pm.c
+new file mode 100644
+index 000000000000..7e3ae081741c
+--- /dev/null
++++ b/sys/contrib/dev/mediatek/mt76/mt7925/lkpi_mt7925_pm.c
+@@ -0,0 +1,14 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
++ */
++
++#include <sys/types.h>
++#include <sys/bus.h>
++#include <sys/kernel.h>
++#include <sys/module.h>
++
++/* Suspend and resume net80211 around the PCI suspend and resume. */
++extern driver_t lkpi_80211_pm_driver;
++DRIVER_MODULE(lkpi80211_pm, mt7925, lkpi_80211_pm_driver, 0, 0);
+diff --git a/sys/modules/mt76/Makefile.inc b/sys/modules/mt76/Makefile.inc
+index 27151f99087a..491cc185c9fe 100644
+--- a/sys/modules/mt76/Makefile.inc
++++ b/sys/modules/mt76/Makefile.inc
+@@ -25,6 +25,7 @@ CFLAGS+=	-DCONFIG_ARCH_DMA_ADDR_T_64BIT
+ 
+ .if defined(MT76_CONFIG_PM) && ${MT76_CONFIG_PM} > 0
+ CFLAGS+=	-DCONFIG_PM
++CFLAGS+=	-DCONFIG_PM_SLEEP
+ .endif
+ 
+ .if defined(MT76_SOC_WED) && ${MT76_SOC_WED} > 0
+diff --git a/sys/modules/mt76/core/Makefile b/sys/modules/mt76/core/Makefile
+index 81b30b554ee5..fa66fc7e436f 100644
+--- a/sys/modules/mt76/core/Makefile
++++ b/sys/modules/mt76/core/Makefile
+@@ -1,4 +1,6 @@
+ MT76_DRIVER_NAME=	mt76_core
++# Suspend and resume (dev_pm_ops) through LinuxKPI.
++MT76_CONFIG_PM=		1
+ 
+ .include <kmod.opts.mk>
+ 
+diff --git a/sys/modules/mt76/mt7925/Makefile b/sys/modules/mt76/mt7925/Makefile
+index 047dc9157bf8..fe349ea7b959 100644
+--- a/sys/modules/mt76/mt7925/Makefile
++++ b/sys/modules/mt76/mt7925/Makefile
+@@ -1,4 +1,6 @@
+ MT76_DRIVER_NAME=	mt7925
++# Suspend and resume (dev_pm_ops) through LinuxKPI.
++MT76_CONFIG_PM=		1
+ 
+ .include <kmod.opts.mk>
+ 
+@@ -16,6 +18,9 @@ SRCS+=	init.c main.c mac.c mcu.c regd.c
+ .if defined(MT76_PCI) && ${MT76_PCI} > 0 && ${KERN_OPTS:MDEV_PCI} && \
+     defined(MT7925_PCI) && ${MT7925_PCI} > 0
+ SRCS+=	pci.c pci_mac.c pci_mcu.c
++.if defined(MT76_CONFIG_PM) && ${MT76_CONFIG_PM} > 0
++SRCS+=	lkpi_mt7925_pm.c
++.endif
+ .endif
+ 
+ # USB parts; USB can be loaded and is unconditional on any kernel config.
+-- 
+2.56.0
+

@@ -319,7 +319,7 @@ the document that explains each one.
 
 | Area | Branch | Commits | Status | Document |
 |---|---|---|---|---|
-| Wi-Fi (MT7925) | [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 11 | works, TX 82-88% / RX 68-74% of Linux; firmware port PR 300731 | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
+| Wi-Fi (MT7925) | [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 12 | works, TX 82-88% / RX 68-74% of Linux, survives suspend-to-idle; firmware port PR 300731 | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
 | Internal speakers (CS35L54) | [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | works, waiting for review | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
 | SMU power metrics (amdsmu) | [`olivier-amdsmu-strixhalo`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) | 4 | attaches, S0i3 blocker report | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
 | Suspend-to-idle wake and C-states | [`olivier-s2idle-wake`](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) | 3 | key wake and clean resume; no S0i3 yet | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
@@ -333,15 +333,17 @@ the document that explains each one.
 
 ### Applying the work, in order
 
-The eight freebsd-src branches apply in this order, without conflict.
+The eight freebsd-src branches apply in this order, without conflict
+(checked with 32 commits; mt7925's 12th, the suspend fix, was added later
+and applies on top).
 Branch [`zbook`](https://github.com/ocochard/freebsd-src/compare/main...zbook)
-of the fork has all 32 commits in this order on FreeBSD main 46ce9acd6d15
+of the fork has all 33 commits in this order on FreeBSD main 46ce9acd6d15
 (2026-11-16), for testing everything at once (steps 1 to 8). It builds
 (`buildkernel KERNCONF=GENERIC-NODEBUG`, plus the mt76 modules, which
 `sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
 `amdisp` modules of step 10 against it). Boot test on the laptop
 (2026-11-16, kernel `zbook-n291256-f7d7c068c5b5` with those modules in
-the kernel directory): Wi-Fi associates and carries the session, `amdgpio`
+the kernel directory): Wi-Fi associates and passes traffic, `amdgpio`
 attaches `gpio0`, the four `ig4` controllers attach, `snd_cs35l54` attaches
 the 4 amplifiers (calibration read, firmware 3.11.18; no sound played),
 `amdsmu` attaches (SMU 100.7.0), and the camera streams 1920x1080 NV12 at
@@ -350,8 +352,14 @@ Xorg running, amdsmu loaded, dock attached): the space key wakes it after
 84 s, Xorg, amdgpu, NVMe (queued writes resubmitted, no error), USB and
 the dock come back, the camera streams at 29.81 fps and the speaker driver
 stays loaded; no S0i3 (70 s software DRIPS, blockers DISPLAY, USB3_0,
-USB3_1, MPM, JPEG_1); Wi-Fi does not pass traffic until `if_mt7925` is
-reloaded (`wlan0` still shows associated with its address). Each
+USB3_1, MPM, JPEG_1). Wi-Fi after resume: without the 12th mt7925 commit
+`wlan0` stays "associated" but passes no traffic (none 7 min after resume)
+until `if_mt7925` is reloaded; with it, traffic passes 10 s after resume
+(see [docs/mt7925_wifi.md](docs/mt7925_wifi.md#suspend-and-resume)). A
+test trap: `rc.conf` gives the dock's USB Ethernet a static address as
+`ue0`, but USB adapters are renumbered on resume, so a second USB
+Ethernet (the KVM's) can come back as `ue0` and take the address and the
+default route. Each
 document gives the deeper tests of its own branch. Steps 10 and 11 are outside the kernel source.
 
 | # | Apply | Commits | Depends on | Then | Document |
@@ -363,7 +371,7 @@ document gives the deeper tests of its own branch. Steps 10 and 11 are outside t
 | 5 | freebsd-src [`olivier-s2idle-wake`](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) | 3 | `amdgpio` loaded | | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
 | 6 | freebsd-src [`olivier-amdsmu-strixhalo`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) | 4 | | | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
 | 7 | freebsd-src [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | 1, 2, 3 | firmware port `audio/sound-firmware-cirrus-kmod` (not committed yet); devmatch loads `snd_cs35l54` | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
-| 8 | freebsd-src [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 11 | | MT7925 firmware (port PR 300731); `if_mt7925` in `kld_list` | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
+| 8 | freebsd-src [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 12 | | MT7925 firmware (port PR 300731); `if_mt7925` in `kld_list` | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
 | 9 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-8 | | |
 | 10 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 9 | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 | 11 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 10 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |

@@ -746,7 +746,7 @@ power, and the no-wake is a hang, not a lost S0i3 wake.
 | 2026-11-15 | second suspend in one boot, amdgpu + `tb` (routers not re-slept) | JPEG_1 time = sum of both sleeps (no per-suspend log reset); USB3_0/1, DISPLAY, MPM back |
 | 2026-11-15 | amdsmu log reset + start before each hint, GFX filter, amdgpu + `tb` | only JPEG_1 blocks (13.3 s); still no S0i3 attempt |
 | 2026-11-15 | + every driverless PCI function in D3cold (Wi-Fi, PSP, ACP, sensor hub, NPU) | resume works; JPEG_1 still the only blocker, no S0i3 attempt |
-| 2026-11-16 | `zbook` branch (all 32 commits), Xorg, amdgpu, amdisp, mt7925, dock attached, no `tb`, `zzz` | space key wakes it after 84 s; Xorg, NVMe, USB, dock, camera (29.81 fps) and speaker driver back; no S0i3 (69.9 s software DRIPS): DISPLAY, USB3_0, USB3_1, MPM, JPEG_1; Wi-Fi passes no traffic until `if_mt7925` is reloaded |
+| 2026-11-16 | `zbook` branch (all 32 commits), Xorg, amdgpu, amdisp, mt7925, dock attached, no `tb`, `zzz` | space key wakes it after 84 s; Xorg, NVMe, USB, dock, camera (29.81 fps) and speaker driver back; no S0i3 (69.9 s software DRIPS): DISPLAY, USB3_0, USB3_1, MPM, JPEG_1; Wi-Fi passes no traffic until `if_mt7925` is reloaded (fixed by mt7925 commit 12, see `mt7925_wifi.md`) |
 | 2026-11-15 | Ubuntu boot with amdgpu SMU debug | boot list same as FreeBSD plus ISP up/down (`0x7ff`) and GFXOFF pairs |
 | 2026-11-15 | debug amdgpu sends `PowerDownIspByTile(0x7FF)` | resp 1; JPEG_1 still blocks (1277 s sleep), no S0i3 attempt |
 | 2026-11-15 | debug: every CPU forced to C3 at suspend, no BM demotion, `sleep_delay=0` | quiet sleep, no wake (key, power button); forced power off |

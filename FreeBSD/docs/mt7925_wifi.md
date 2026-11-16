@@ -522,6 +522,55 @@ afterwards, and the same slow reassociation after `wpa_cli reassociate`
 75 Mbit/s TX on the series kernel: channel noise, the pinned runs above
 do not reproduce it. Not covered: 5 GHz, rtw88 and rtw89.
 
+### Suspend and resume
+
+A PCI device driver gets two calls around a system sleep: suspend, to save
+its state and quiesce the hardware, and resume, to bring it back. Linux's
+mt7925 has both (`mt7925_pci_suspend()` and `_mt7925_pci_resume()` in
+`sys/contrib/dev/mediatek/mt76/mt7925/pci.c`): suspend turns on the chip's
+deep sleep, tells the firmware the host is going away (the "HIF suspend"
+command, `mt76_connac_mcu_set_hif_suspend()`), stops NAPI and DMA, masks
+the interrupts and hands power control to the firmware; resume does the
+reverse. On Linux, mac80211 also stops the wireless side first (it removes
+the interfaces and stops the device) and replays its configuration after
+the driver resumed.
+
+On FreeBSD none of it ran. The handlers sit behind
+`#if !defined(__FreeBSD__) || defined(CONFIG_PM_SLEEP)` and the PM table
+behind `pm_sleep_ptr()`, which LinuxKPI turns into NULL without
+`CONFIG_PM_SLEEP` (`linux/pm.h`); mt76's module Makefiles defined neither
+`CONFIG_PM_SLEEP` nor, by default, `CONFIG_PM`. So LinuxKPI's PCI suspend
+(`lkpi_pci_suspend()`, `linux_pci.c`) found no handler, and after
+suspend-to-idle the card stayed "associated" but passed no traffic until
+`if_mt7925` was reloaded.
+
+LinuxKPI already has the mac80211 part: the `lkpi80211_pm` child device
+(`linuxkpi_80211_pm.c`). Attached under a driver, it wraps the driver's PCI
+suspend and resume: on suspend it runs `ieee80211_suspend_all()`, removes the
+interfaces and stops the device, then calls the driver's handler; on resume
+it calls the driver first, then starts the device, adds the interfaces back
+and runs `ieee80211_resume_all()`. iwlwifi uses it through one
+`DRIVER_MODULE()` line (`lkpi_iwlwifi_pm.c`).
+
+Commit 12 does the same for mt7925: `MT76_CONFIG_PM` now defines
+`CONFIG_PM_SLEEP` as well as `CONFIG_PM`, `mt76_core` and `mt7925` set it
+(the HIF suspend command is in `mt76_connac_mcu.c`, built into
+`mt76_core`), and the new `lkpi_mt7925_pm.c` attaches `lkpi80211_pm`. The
+other mt76 drivers keep the default (off): they have no `lkpi80211_pm`
+child, so their handlers would run with net80211 still active.
+
+Test (2026-11-16, `zbook` branch kernel, Xorg, dock and a USB KVM attached,
+`zzz`, woken with the space key). After resume, every USB Ethernet interface
+was taken down so that the ping could only go over `wlan0`:
+
+| Modules | After resume |
+|---|---|
+| without commit 12 | `wlan0` "associated", no traffic after 30 s, still none 7 min later, no link change logged |
+| with commit 12 | `wlan0` goes down and up by itself, ping to the gateway OK 10 s after resume, no reload |
+
+Not tested: suspend without amdgpu or Xorg, several suspends in a row,
+WoWLAN (LinuxKPI's `suspend_type` 2), and the USB attachment of mt7925.
+
 ## How to reproduce
 
 All measurements were made on main 6e87733f73ff, because a full
@@ -602,14 +651,14 @@ rows; lindebugfs also had dumbbell@ (Jean-Sébastien Pédron) on 3521cce445d4.
 | 9 | LinuxKPI: 802.11: request TX status only when needed (mt76 sends status frames outside the BA session); a missing status is not a TX error | [0009](mt7925/0009-LinuxKPI-802.11-request-TX-status-only-when-needed.patch) [5182efbe747d](https://github.com/ocochard/freebsd-src/commit/5182efbe747d) | `linux_80211.c` | done, tested: TCP RX 79 to 289-314, TX 474-509 Mbit/s; WPA2 still associates; no iwlwifi regression | 8 (same file) |
 | 10 | mt76: mt7921: do not hang kldload when hardware init fails (same wait as mt7925; mt7915 and mt7996 register synchronously before their wait, so they cannot hang) | [0010](mt7925/0010-mt76-mt7921-do-not-hang-kldload-when-hardware-init-f.patch) [f322198bba6a](https://github.com/ocochard/freebsd-src/commit/f322198bba6a) | `mt7921/init.c` | done, builds; no mt7921 hardware to run it | nothing |
 | 11 | mt76: remove the debugfs directory when the device goes away (it stayed after `kldunload`; reading it after a reload panicked) | [0011](mt7925/0011-mt76-remove-the-debugfs-directory-when-the-device-go.patch) [c2a848cc904e](https://github.com/ocochard/freebsd-src/commit/c2a848cc904e) | `mt76.h`, `debugfs.c`, `mac80211.c` | done, tested: three load/read/unload cycles, the directory goes and comes back, no panic | 3 |
+| 12 | mt76: mt7925: enable suspend and resume (the Linux PCI PM handlers were compiled out; attach `lkpi80211_pm` as iwlwifi does) | [0012](mt7925/0012-mt76-mt7925-enable-suspend-and-resume.patch) [178556dca3e1](https://github.com/ocochard/freebsd-src/commit/178556dca3e1) | `sys/modules/mt76/Makefile.inc`, `core/Makefile`, `mt7925/Makefile`, new `mt7925/lkpi_mt7925_pm.c` | done, tested: Wi-Fi passes traffic 10 s after suspend-to-idle, no reload; without it none after 7 min | nothing |
 
 Rows 8 and 9 change behaviour for every LinuxKPI wireless driver: tested
 with iwlwifi (see the iwlwifi regression test), not with rtw88 or rtw89.
 Still open, no commit yet: a page-crossing DMA map that works without the
 `skb.mem_limit=1` tunable (until then the firmware package sets it, see
 [Boot settings from the firmware package](#boot-settings-from-the-firmware-package)),
-flow queueing and AQL in LinuxKPI, mt76 PM handlers (`MT76_CONFIG_PM`
-defines `CONFIG_PM` but not `CONFIG_PM_SLEEP`, which mt7925 checks).
+flow queueing and AQL in LinuxKPI.
 
 ## Boot settings from the firmware package
 
@@ -649,14 +698,9 @@ A-MPDU is on, and TCP TX/RX on channel 100 is 463/324 Mbit/s.
 
 ## Next steps
 
-1. Send the series to bz@ (iwlwifi tested, no regression). Suspend/resume
-   with mt7925 is blocked: suspend-to-idle breaks the whole laptop on
-   resume (failed NVMe controller, no network at all, not even loopback;
-   see [Suspend](../HP.ZBook.Ultra.G1a.md#suspend)). Note for when it
-   works: mt76's Makefiles leave `CONFIG_PM`/`CONFIG_PM_SLEEP` undefined,
-   so `if_mt7925.ko` has no suspend or resume handler at all
-   (`MT76_CONFIG_PM?=0`, and mt7925 checks `CONFIG_PM_SLEEP`); iwlwifi sets
-   both. A build with both compiles and contains `mt7925_pm_ops`, untested. AQL alone did not lower latency under load
+1. Send the series to bz@ (iwlwifi tested, no regression). Suspend and
+   resume work since commit 12 (see [Suspend and resume](#suspend-and-resume)).
+   AQL alone did not lower latency under load
    (see the AQL experiment); a real fix needs flow queueing (fq_codel) in
    LinuxKPI's TXQs and the firmware's TX rate in net80211.
 2. Regdomain: set the country automatically (`wlan_regdomain`/`country` in
@@ -699,3 +743,5 @@ A-MPDU is on, and TCP TX/RX on channel 100 is 463/324 Mbit/s.
 | 2026-11-12 | iwlwifi, X1 Carbon, stock vs series on 584f44221f45 | same AP: TX 78-98 vs 88-95, RX 29-53 vs 49-56 Mbit/s; no new messages, no leak |
 | 2026-11-12 | suspend-to-idle with mt7925 (no PM handlers) | laptop wakes on a key, but NVMe controller fails and no traffic passes on any interface; mt7925 logs nothing; blocked by the platform |
 | 2026-11-12 | patched firmware package, no `-e` tunables | both tunables from `/boot/loader.conf.d/`; TCP TX 463, RX 324 Mbit/s |
+| 2026-11-16 | `zbook` branch, suspend-to-idle, commit 12 | Wi-Fi ping OK 10 s after resume, no reload |
+| 2026-11-16 | same, without commit 12 (control) | associated, no traffic 30 s and 7 min after resume |
