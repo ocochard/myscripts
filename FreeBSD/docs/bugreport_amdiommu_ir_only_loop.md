@@ -73,6 +73,19 @@ Beelink SER6, 2026-11-16, one-shot `nextboot` settings, `boot_verbose`.
 | patched | `hw.amdiommu.enable=1` | boots normally; all 11 contexts "id-mapped", none "re-mapped"; `dev.amdiommu.0.ir: 1`, `dev.amdiommu.0.dma: 0`; USB enumerated once (8 devices); no IOMMU event; Ethernet up |
 | patched | `hw.amdiommu.enable=1 hw.iommu.dma=1` | contexts "re-mapped", as before the patch; works (tested together with the map-invalidation patch) |
 
+HP ZBook Ultra G1a, 2026-11-16: AMD Ryzen AI Max+ PRO 395 (Strix Halo), IOMMU 1022:1508 at 0:0:2,
+capability header `0x190b640f`; kernels from FreeBSD main 46ce9acd6d15 plus the laptop's branch `zbook`, one-shot `nextboot` settings.
+
+| Kernel | Tunables | Result |
+|---|---|---|
+| stock | `hw.amdiommu.enable=1` | USB driver attach loop during boot, as on the SER6; forced power off |
+| patched | `hw.amdiommu.enable=1` (+ `boot_verbose`) | boots; `dev.amdiommu.0.ir: 1`, `dev.amdiommu.0.dma: 0`; GPU and Wi-Fi contexts "id-mapped"; NVMe, USB, Wi-Fi, keyboard (IOAPIC IRQ 1) and I2C (IRQs 3, 4, 6) all get their interrupts and work; no IOMMU event; but amdgpu's display stalls: repeated `flip_done timed out`, `commit wait timed out` and `DMCUB error`, the console redraws only every few seconds |
+| patched | `hw.amdiommu.enable=1 hw.iommu.dma=1` | boots; no IOMMU event; no display error |
+
+The display stall with interrupt remapping alone is a separate problem, not understood yet:
+GPU interrupts do arrive (about 120/s on `vgapci0`), and the stall is gone once DMA remapping is on too.
+The context count of the SER6 row could not be checked here: `boot_verbose` overflows the message buffer before syslog starts.
+
 Not tested:
 
 - The event log in the failing case: the console was unusable, and no capture could be saved.

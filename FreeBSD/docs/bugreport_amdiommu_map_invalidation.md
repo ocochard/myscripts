@@ -80,6 +80,20 @@ Patched kernel with `hw.iommu.dma=1`, other checks:
 0 IOMMU events after 6 GB of reads and 2 GB over ssh; `rge0` 117 MB/s in, 115 MB/s out over ssh;
 `zpool status -x`: all pools are healthy.
 
+HP ZBook Ultra G1a, 2026-11-16: AMD Ryzen AI Max+ PRO 395 (Strix Halo), IOMMU 1022:1508,
+capability header `0x190b640f` (NpCache clear, as on the SER6), Samsung MZVL22T0HBLB NVMe;
+kernels from FreeBSD main 46ce9acd6d15 plus the laptop's branch `zbook`, the patched one with both amdiommu commits.
+Same reads as above (`dd if=/dev/nda0`, 1000 MB in 128 KB blocks three times at fixed offsets, then 3000 MB in 1 MB blocks), one boot each, all on the same day:
+
+| Kernel, tunables | 128 KB reads | 1 MB reads | IOMMU interrupts per read (128 KB / 1 MB) | Idle IOMMU interrupts | IOMMU events |
+|---|---|---|---|---|---|
+| no IOMMU | 960, 794, 913 MB/s | 1743 MB/s | n/a | n/a | n/a |
+| stock, `hw.amdiommu.enable=1 hw.iommu.dma=1` | 198, 200, 200 MB/s | 219 MB/s | 66 / 516 | 168/s | 0 |
+| patched, `hw.amdiommu.enable=1 hw.iommu.dma=1` | 433, 430, 433 MB/s | 441 MB/s | 33 / 260 | 52/s | 0 |
+
+The patch doubles read throughput and halves the IOMMU interrupts here too, but DMA remapping still costs half of the
+no-IOMMU speed on this machine (the SER6 came close to it). In both IOMMU boots Wi-Fi associated and amdgpu logged no display error; USB enumerated in the patched one (not checked in the stock one); `zpool status -x`: all pools are healthy.
+
 Not tested:
 
 - Disk writes under DMA remapping (avoided, to protect the pool).
