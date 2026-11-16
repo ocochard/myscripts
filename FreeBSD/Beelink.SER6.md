@@ -227,14 +227,15 @@ Impact: no PCIe tunneling (eGPU, NVMe enclosure, PCIe docks).
 ## Driver work in progress
 
 None of this is needed to run the machine. Patches 1 and 2 fix detection and error reporting for the Bluetooth firmware;
-patches 5 and 6 make the AMD IOMMU usable ([docs/amdiommu_ser6.md](docs/amdiommu_ser6.md)).
+patches 5 and 6 make the AMD IOMMU usable ([docs/amdiommu_ser6.md](docs/amdiommu_ser6.md));
+patch 7 stops the idle Bluetooth interrupts ([docs/ng_ubt_sco_on_demand.md](docs/ng_ubt_sco_on_demand.md)).
 Each patch is one commit, also pushed to the fork as the branch of the same name.
 
 ### Applying the work, in order
 
-The four freebsd-src patches apply on FreeBSD main 563c2f27e0ff (2026-11-16) in this order, without conflict
-(checked with `git cherry-pick` of all four on a scratch branch).
-Patches 1 and 2 are userland; 5 and 6 are kernel.
+The five freebsd-src patches apply on FreeBSD main 563c2f27e0ff (2026-11-16) in this order, without conflict
+(checked with `git cherry-pick` of all five on a scratch branch).
+Patches 1 and 2 are userland; 5, 6 and 7 are kernel.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
@@ -244,7 +245,8 @@ Patches 1 and 2 are userland; 5 and 6 are kernel.
 | 4 | `fwget` (or `pkg install iwmbt-firmware`) | | 3 for `fwget` | reboot, or `iwmbtfw -d ugen1.3 -f /usr/local/share/iwmbt-firmware`; `ubt0` attaches | |
 | 5 | freebsd-src [`iommu_idmap_when_dma_disabled.patch`](docs/iommu_idmap_when_dma_disabled.patch) (branch `olivier-amdiommu`) | 1 | | `hw.amdiommu.enable=1` alone no longer loops | [docs/amdiommu_ser6.md](docs/amdiommu_ser6.md) |
 | 6 | freebsd-src [`amdiommu_skip_map_invalidation.patch`](docs/amdiommu_skip_map_invalidation.patch) (branch `olivier-amdiommu`) | 1 | | fewer IOMMU interrupts with `hw.iommu.dma=1` | [docs/amdiommu_ser6.md](docs/amdiommu_ser6.md) |
-| 7 | build and install the kernel | | 5, 6 | `hw.amdiommu.enable=1`, plus `hw.iommu.dma=1` for DMA protection, in `/boot/loader.conf`; test with `nextboot -e` first | |
+| 7 | freebsd-src [`ng_ubt_sco_on_demand.patch`](docs/ng_ubt_sco_on_demand.patch) (branch `olivier-ubt-sco`) | 1 | | idle `xhci1` interrupts go from about 1100/s to 0; SCO calls untested | [docs/ng_ubt_sco_on_demand.md](docs/ng_ubt_sco_on_demand.md), [bug report](docs/bugreport_ng_ubt_idle_isoc.md) |
+| 8 | build and install the kernel and modules | | 5, 6, 7 | for the IOMMU: `hw.amdiommu.enable=1`, plus `hw.iommu.dma=1` for DMA protection, in `/boot/loader.conf`; test with `nextboot -e` first | |
 
 Not for this machine: [`rtlbtfw_syslog.patch`](docs/rtlbtfw_syslog.patch) (branch `olivier-rtlbtfw-syslog`, [docs/rtlbtfw_syslog.md](docs/rtlbtfw_syslog.md)) fixes the same bug in the Realtek loader; the SER6 has no Realtek Bluetooth.
 
@@ -279,7 +281,8 @@ With it, HCI still works (`hccontrol read_local_version_information`: HCI 5.2; `
 Cost: no SCO, so no headset voice. Data links (ACL) are unaffected: keyboards, mice, file transfer, A2DP music.
 Left at the default (1) on this machine.
 
-Proper fix: set the isochronous alternate setting and start the SCO transfers only while a SCO link is open, as Linux does. Not written.
+Fix: start the SCO transfers only while a SCO link is open, as Linux does; patch 7 in [Applying the work](#applying-the-work-in-order),
+see [docs/ng_ubt_sco_on_demand.md](docs/ng_ubt_sco_on_demand.md). Tested at idle (0 interrupts per second); a real SCO call is not tested.
 
 ### Audio: virtual_oss keeps the codec busy
 
