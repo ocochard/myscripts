@@ -137,6 +137,6 @@ here is the IOMMU itself, which does not use the IRT), amdxdna from drm-kmod `ol
 | amdxdna second kldload | `failed to alloc irq vectors, ret -22` | attaches |
 | kldload/kldunload cycles | 1 of 4 | 6 of 6, `/dev/accel/accel0` each time |
 | `xrt-smi validate` after the cycles | | gemm 51.0 TOPS, latency 56 us, PASSED |
-| `hw.iommu.dma=1` (DMA remapping too) | untested with this patch | untested |
+| HP ZBook Ultra G1a, `hw.iommu.dma=1`, `devctl detach`/`attach` of `hdac0` (1 MSI vector), branch cherry-picked on `olivier-amdiommu` | MSI for cycles 1 to 31, then INTx fallback from cycle 32 (boot entry + 31 lost) | 64 cycles, MSI every time, interrupts counting, 0 IOMMU events |
 | multiple-message MSI device under IR | untested (none on this machine) | untested |
 | other devices, other AMD machines | untested | untested |
