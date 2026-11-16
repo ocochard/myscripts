@@ -332,7 +332,7 @@ the document that explains each one.
 | LinuxKPI `pcim_iomap()` BAR leak (needed by the NPU) | [`olivier-lkpi-pcim-iomap`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-pcim-iomap) | 1 | fix, tested on a Framework Desktop | [docs/linuxkpi_pcim_iomap_release.md](docs/linuxkpi_pcim_iomap_release.md) |
 | AMD IOMMU interrupt remap entries (needed by the NPU) | [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) | 1 | fix, tested on a Framework Desktop | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
 | NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna); ports [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu) (devel/xrt) | 7; 3 | jobs, XRT and FastFlowLM work (tested on a Framework Desktop, needs the IOMMU on) | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
-| AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) (not in `zbook`) | 2 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu display stalls (`flip_done timed out`); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
+| AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) (not in `zbook`), and [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) (in `zbook`) | 2 + 1 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu's SMU hangs on `PowerDownVpe` in about half the boots with `boot_verbose` (workaround `hw.amdgpu.ip_block_mask=0xfffff7ff`); interrupt remap entries leaked on every MSI release until the IRTE fix (`hdac0`: INTx after 31 detach/attach cycles without it, 64 clean cycles with it); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
 ### Applying the work, in order
@@ -341,7 +341,8 @@ The eight freebsd-src branches apply in this order, without conflict
 (checked with 32 commits; mt7925's 12th, the suspend fix, was added later
 and applies on top).
 Branch [`zbook`](https://github.com/ocochard/freebsd-src/compare/main...zbook)
-of the fork has all 33 commits in this order on FreeBSD main 46ce9acd6d15
+of the fork has all 33 commits in this order on FreeBSD main 46ce9acd6d15,
+plus the AMD IOMMU interrupt remapping fix (34 commits; that one builds there, and was tested on top of the two `olivier-amdiommu` commits)
 (2026-11-16), for testing everything at once (steps 1 to 8). It builds
 (`buildkernel KERNCONF=GENERIC-NODEBUG`, plus the mt76 modules, which
 `sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
