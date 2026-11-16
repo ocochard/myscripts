@@ -885,8 +885,19 @@ Linux's the frame interval stays at 41.5 ms. FreeBSD sets bit 4 of the
 sensor GPIO (`0x6613c`) from the host before the stream set-up, while on
 Linux nothing on the host writes it (only the missing `ov05c10` driver
 would); without that write the firmware sets the bit itself, the stream
-works, and it still runs at 23.9 fps. The 24 fps on FreeBSD stays
-unexplained.
+works, and it still runs at 23.9 fps.
+
+Every SMU message from boot on was logged on both systems (FreeBSD: a
+`printf` in `smu_cmn_send_smc_msg_with_param`; Linux: `options amdgpu
+dyndbg="file smu_cmn.c +p"`). A stream sends the same four messages on
+both: `PowerUpIspByTile` `0x7ff`, `SetHardMinIspxclkByFreq` and
+`SetHardMinIspiclkByFreq` `0x314`, `PowerDownIspByTile` `0x7ff` at stop.
+Initialisation differs only in order and in one pair: Linux powers the
+ISP tiles up and down again (16 ms apart, while its ISP child devices
+probe), FreeBSD does not touch the ISP until the first stream. FreeBSD
+streams after an earlier stream, which went through the same power
+cycle, still run at 24 fps, so that pair is not the cause either. The
+24 fps on FreeBSD stays unexplained.
 
 The first stream start after a boot sometimes gets no answer to
 `SET_STREAM_CONFIG` (seen twice in a day of tests); the next start works.
