@@ -833,7 +833,10 @@ and the 24 MHz that Linux's `amd_isp4.c` declares for this sensor), so every
 frame takes 1.237 times longer, exactly 41.5 / 33.5 ms. The rest of the
 meta info has the same layout and fixed values on both. The host does not
 program this clock on Linux (no clock divider among the driver's register
-accesses), so it is an SoC clock set by the SMU or the platform firmware.
+accesses), so it is an SoC clock set by the SMU or the platform firmware. (A later measurement contradicts this reading: the ISP's I2C
+controller runs at the same speed on both systems, see the sensor
+register read below. The meta word is probably derived from the sensor's
+frame timing rather than counted by a free-running timer.)
 
 Tested and ruled out: the `ig4(4)` patch that gives the AMD platform I2C
 controllers their 150 MHz input clock (branch `olivier-ig4-amd-clock`,
@@ -896,8 +899,50 @@ Initialisation differs only in order and in one pair: Linux powers the
 ISP tiles up and down again (16 ms apart, while its ISP child devices
 probe), FreeBSD does not touch the ISP until the first stream. FreeBSD
 streams after an earlier stream, which went through the same power
-cycle, still run at 24 fps, so that pair is not the cause either. The
-24 fps on FreeBSD stays unexplained.
+cycle, still run at 24 fps, so that pair is not the cause either.
+
+The sensor's own registers were then read while streaming on both
+systems, through the ISP's first I2C controller (DesignWare, at ISP
+offset `0x66400`) that the firmware drives: on FreeBSD with a debug
+sysctl in `amdisp`, on Linux with `amd_isp/linux_sensor_read.py` over
+debugfs `amdgpu_regs`, the same register sequence on both. A read is
+issued only when the controller is enabled, idle, with empty FIFOs and
+already aimed at the sensor (`IC_TAR` `0x10`), and the sensor's page
+register (`0xfd`) is never written, so the firmware's own transfers are
+not disturbed (the streams kept running at their usual rate). Register
+addresses are from AMD's OV05C10 driver submission (v4, July 2025, not
+merged), used here as a reference only:
+
+| Register (page 1) | FreeBSD (23.9 fps) | Linux (29.8 fps) |
+|---|---|---|
+| `0xfd` page | `0x01` | `0x01` |
+| exposure `0x02`-`0x04` | `0x000d1e` | `0x000d1e` |
+| VTS `0x05`-`0x06` | `0x0744` (1860) | `0x0744` (1860) |
+| timing VTS `0x35`-`0x36` | `0x0e88` | `0x0e88` |
+| HTS `0x37`-`0x38` | `0x0192` | `0x0192` |
+
+The firmware programs the sensor's frame timing identically, and 1860
+lines is the 30 fps value of AMD's driver; on FreeBSD the sensor still
+delivers 24 frames a second, so its pixel clock is slower: either its
+input clock (MCLK) or its PLL (page 0, not read, since that needs a page
+switch under the firmware) differs.
+
+The I2C controller also gives a clock check on the ISP side. The firmware
+sets its fast-mode SCL counts in controller clock cycles (`HCNT`/`LCNT`
+15/31 on both), so a slower ISP clock would stretch every transfer. One
+register read (address byte, restart, one data byte) takes a median of
+105.3 us on FreeBSD (p10-p90 105.2-106.4, 300 reads) and 105.7 us on Linux
+(104.9-106.0): the same. The ISP's I2C clock, and with it presumably the
+ISP's reference clock, is not slower on FreeBSD; the 19.4 MHz derived
+from the meta word above does not hold.
+
+A read-only dump of the FCH MISC clock block (`0xFED80E00`-`0xFED80EFF`,
+where AMD's oscillator outputs are controlled) during a stream is the same
+on both systems except `0xFED80E78`/`0xE7C`, which change between reads
+or between boots (`0xb0003f64` on FreeBSD, `0xb000aa8f` on Linux, upper
+half constant). They look like status, not configuration, and are
+undocumented. The 24 fps on FreeBSD stays unexplained; the remaining
+suspects are the sensor's MCLK and its page-0 PLL settings.
 
 The first stream start after a boot sometimes gets no answer to
 `SET_STREAM_CONFIG` (seen twice in a day of tests); the next start works.
