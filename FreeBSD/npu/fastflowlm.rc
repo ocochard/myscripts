@@ -1,0 +1,80 @@
+#!/bin/sh
+#
+# PROVIDE: fastflowlm
+# REQUIRE: FILESYSTEMS kld linux
+# KEYWORD: shutdown
+#
+# Mounts the file systems that FastFlowLM's Ubuntu userland needs under
+# linuxlator, and its /sys tree for the amdxdna NPU (see
+# linux-xrt-sysfs.sh).  Load amdxdna before (kld_list="amdxdna").
+#
+# fastflowlm_enable (bool):	Set to "YES" to enable.  Default "NO".
+# fastflowlm_root (path):	Ubuntu userland.  Default "/compat/ubuntu".
+# fastflowlm_sysfs (path):	linux-xrt-sysfs.sh.
+#				Default "/usr/local/libexec/linux-xrt-sysfs.sh".
+
+. /etc/rc.subr
+
+name=fastflowlm
+rcvar=fastflowlm_enable
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+load_rc_config $name
+: ${fastflowlm_enable:=NO}
+: ${fastflowlm_root:=/compat/ubuntu}
+: ${fastflowlm_sysfs:=/usr/local/libexec/linux-xrt-sysfs.sh}
+
+fastflowlm_mounted()
+{
+	mount -p | awk -v m="$1" '$2 == m { found = 1 } END { exit !found }'
+}
+
+fastflowlm_mount()
+{
+	fastflowlm_mounted "$fastflowlm_root/$3" ||
+	    mount -t "$1" "$2" "$fastflowlm_root/$3"
+}
+
+fastflowlm_start()
+{
+	local r=$fastflowlm_root
+
+	# /usr/bin/flm is an absolute symlink: test its target in $r.
+	if [ ! -x "$r/opt/fastflowlm/bin/flm" ]; then
+		warn "no FastFlowLM in $r (run fastflowlm-setup.sh)"
+		return 1
+	fi
+	mkdir -p "$r/dev/shm" "$r/dev/fd"
+	fastflowlm_mount linprocfs linprocfs proc
+	fastflowlm_mount devfs devfs dev
+	fastflowlm_mount tmpfs tmpfs dev/shm
+	fastflowlm_mount fdescfs fdescfs dev/fd
+	cp /etc/resolv.conf "$r/etc/resolv.conf"
+	# The /sys entries come from the amdxdna sysctls.
+	sh "$fastflowlm_sysfs" "$r"
+}
+
+fastflowlm_stop()
+{
+	local r=$fastflowlm_root m
+
+	for m in sys dev/fd dev/shm dev proc; do
+		if fastflowlm_mounted "$r/$m"; then
+			umount "$r/$m"
+		fi
+	done
+}
+
+fastflowlm_status()
+{
+	if fastflowlm_mounted "$fastflowlm_root/sys"; then
+		echo "$name is running."
+	else
+		echo "$name is not running."
+		return 1
+	fi
+}
+
+run_rc_command "$1"

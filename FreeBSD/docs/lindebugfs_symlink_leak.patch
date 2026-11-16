@@ -1,0 +1,35 @@
+From fe023d63ee0d3bed383261fec1acc306a651059b Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 21:57:22 +0100
+Subject: [PATCH] lindebugfs: Free symlink nodes on destroy
+
+debugfs_create_symlink() allocates the node metadata and a copy of the
+target, but registers no destroy callback, so both leak when the link
+is removed.  DRM creates such links for every minor ("dri/128" pointing
+at the device directory): 4 allocations leak at each kldunload of a DRM
+driver.
+
+debugfs_destroy() already frees the target of a DM_SYMLINK node.
+
+Fixes:		3f6cab079cb2 ("import linux debugfs support")
+MFC after:	1 week
+---
+ sys/compat/lindebugfs/lindebugfs.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sys/compat/lindebugfs/lindebugfs.c b/sys/compat/lindebugfs/lindebugfs.c
+index b79990ae36d4..b26d2b31b62f 100644
+--- a/sys/compat/lindebugfs/lindebugfs.c
++++ b/sys/compat/lindebugfs/lindebugfs.c
+@@ -349,7 +349,7 @@ debugfs_create_symlink(const char *name, struct dentry *parent,
+ 		pnode = debugfs_root;
+ 
+ 	pfs_create_link(pnode, &dnode->d_pfs_node, name, &debugfs_fill_data,
+-	    NULL, NULL, NULL, PFS_NOWAIT);
++	    NULL, NULL, debugfs_destroy, PFS_NOWAIT);
+ 	if (dnode->d_pfs_node == NULL)
+ 		goto fail;
+ 	dnode->d_pfs_node->pn_data = dm;
+-- 
+2.56.0
+

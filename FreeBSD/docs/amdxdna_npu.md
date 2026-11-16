@@ -31,12 +31,19 @@ Code:
   - [`olivier-lkpi-pcim-iomap`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-pcim-iomap):
     LinuxKPI `pcim_iomap()` leaked every BAR on unload
     ([linuxkpi_pcim_iomap_release.md](linuxkpi_pcim_iomap_release.md)).
+  - [`olivier-lindebugfs-symlink`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lindebugfs-symlink):
+    debugfs symlinks leaked on unload
+    ([lindebugfs_symlink_leak.md](lindebugfs_symlink_leak.md)).
+  - All of them on main, in one branch:
+    [`olivier-npu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-npu).
   - Optional, for power measurements:
     [`olivier-lkpi-sysfs-binary`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-sysfs-binary),
     makes amdgpu `gpu_metrics` readable (rebuild `amdgpu.ko`)
     ([linuxkpi_sysfs_binary_attr.md](linuxkpi_sysfs_binary_attr.md)).
 - freebsd-ports branch [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu):
-  new port devel/xrt (XRT plus the amdxdna plugin, NPU only).
+  graphics/amdxdna-kmod (the driver), graphics/npu-firmware-amd-kmod,
+  devel/xrt (XRT plus the amdxdna plugin, NPU only), and two fixes in
+  graphics/drm-latest-kmod.
 - [../npu/linux-xrt-sysfs.sh](../npu/linux-xrt-sysfs.sh): builds the Linux
   `/sys` entries that Linux XRT and FastFlowLM read, for linuxlator.
 - Test programs: [amdxdna_query.c](amdxdna_query.c) (firmware and hardware
@@ -90,59 +97,58 @@ failure, so the port bypasses the check on FreeBSD and prints a warning.
 
 ## 2. Using it
 
-1. Kernel with the four freebsd-src branches above (main has
-   71d26da7e43d, devres release on PCI detach, since 2026-11-04), booted
-   with the IOMMU on. Interrupt remapping only is enough:
+1. Kernel from the fork branch
+   [`olivier-npu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-npu):
+   main 611046b15dbb plus the kernel branches listed above, one commit
+   each. Build and install it as usual (`buildkernel`, `installkernel`).
+   Build the ports below against this source tree too: drm.ko embeds a
+   `struct srcu_struct`, whose size the SRCU fix changes.
+2. In `/boot/loader.conf`, the IOMMU (interrupt remapping only is
+   enough) and the NPU carveout in MB (FastFlowLM needs several GB; 8192
+   covers the 1B to 8B models):
 
    ```
-   hw.amdiommu.enable=1
+   hw.amdiommu.enable="1"
+   hw.amdxdna.carveout_mb="8192"
    ```
 
    `hw.iommu.dma=1` (DMA remapping too) also works, with
    `hw.busdma.pci0.194.0.1=bounce` for the NPU (carveout addresses are
    physical).
-2. Firmware from linux-firmware, decompressed:
-   `/boot/firmware/amdnpu/17f0_11/npu_7.sbin` (1.1.2.65, md5
-   `4840b9b0d5966228f07686b62e8accba`) and `npu.sbin` (1.0.0.166). The
-   drm-kmod-firmware ports do not ship `amdnpu/` yet.
-3. Build `drm` and `amdxdna` from the drm-kmod branch against that kernel
-   source and install the new `drm.ko` in `/boot/modules` (the drm fix
-   below):
+3. Ports, from the ports fork branch
+   [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu),
+   built with poudriere in a jail whose `/usr/src` is the tree of step 1:
 
-   ```
-   cd drm-kmod/drm && make SYSDIR=<src>/sys
-   cd ../amdxdna && make SYSDIR=<src>/sys
-   ```
-4. Load, with the carveout size in MB (FastFlowLM needs several GB; 8192
-   for the 1B to 8B models):
+   | Port | Content |
+   |---|---|
+   | graphics/amdxdna-kmod | the driver, `/boot/modules/amdxdna.ko` |
+   | graphics/npu-firmware-amd-kmod | NPU firmware from linux-firmware 20261019 in `/boot/firmware/amdnpu/` |
+   | graphics/drm-latest-kmod | two fixes for reloading a DRM driver (PORTREVISION 1) |
+   | devel/xrt | XRT and its amdxdna plugin: `xrt-smi examine`, `xrt-smi validate` |
 
-   ```
-   kenv hw.amdxdna.carveout_mb=8192
-   kldload ./amdxdna.ko
-   ```
-5. Native XRT: build devel/xrt from the ports branch with poudriere, then
-   `xrt-smi examine` and `xrt-smi validate`.
-6. FastFlowLM, under linuxlator. Its per-model NPU engines and core
+   Then `sysrc kld_list+=amdxdna`. The NPU stays in D3 until a program
+   uses it.
+4. FastFlowLM, under linuxlator. Its per-model NPU engines and core
    libraries are closed Linux binaries that need glibc 2.38, newer than
-   the linux_base ports, so it runs in an Ubuntu 26.04 chroot with AMD's
-   packages:
+   the linux_base ports, so it runs in an Ubuntu 26.04 userland with
+   AMD's Linux XRT. [../npu/fastflowlm-setup.sh](../npu/fastflowlm-setup.sh)
+   builds it in `/compat/ubuntu`; the rc.d script
+   [../npu/fastflowlm.rc](../npu/fastflowlm.rc) mounts what it needs at
+   boot and builds its `/sys` with
+   [../npu/linux-xrt-sysfs.sh](../npu/linux-xrt-sysfs.sh):
 
    ```
-   debootstrap --variant=minbase resolute /compat/ubuntu
-   # in the chroot: add the lemonade PPA, then
-   apt install libxrt-npu2 libxrt-utils-npu fastflowlm
-   R=/compat/ubuntu
-   mount -t linprocfs linprocfs $R/proc
-   mount -t devfs devfs $R/dev
-   mount -t tmpfs tmpfs $R/dev/shm
-   mount -t fdescfs fdescfs $R/dev/fd
-   sh linux-xrt-sysfs.sh $R      # after each amdxdna load
-   chroot $R flm run llama3.2:1b
+   sh fastflowlm-setup.sh
+   install -m 555 fastflowlm.rc /usr/local/etc/rc.d/fastflowlm
+   install -m 555 linux-xrt-sysfs.sh /usr/local/libexec/
+   sysrc fastflowlm_enable=YES
+   service fastflowlm start
+   chroot /compat/ubuntu flm run llama3.2:1b
    ```
 
    linsysfs has no `bus/pci/drivers/` and no NPU attributes, so
-   `linux-xrt-sysfs.sh` mounts a tmpfs on `$R/sys` and writes the entries
-   XRT reads from the FreeBSD sysctls.
+   `linux-xrt-sysfs.sh` mounts a tmpfs on `/compat/ubuntu/sys` and writes
+   the entries XRT reads from the FreeBSD sysctls.
 
 ```
 amdxdna0: <amdxdna> mem 0xb0a00000-0xb0afffff,... at device 0.1 on pci4
@@ -246,7 +252,15 @@ in carveout mode, and works.
 Not done: `xrt-smi validate` on frwk-linux, a native FastFlowLM (its NPU engines are closed Linux
 libraries), models larger than 8B, userptr BOs (`amdxdna_ubuf.c` returns
 `EOPNOTSUPP`), the NPU with a translated IOMMU domain, suspend, the ZBook
-itself. Known leak: 240 bytes of debugfs memory per unload.
+itself. The 240-byte debugfs leak per unload is fixed by
+`olivier-lindebugfs-symlink`.
+
+Install path, on frwk-bsd from a cold boot (2026-11-16): kernel
+`olivier-npu-n291242-854a0944970d`, the four packages of section 2, amdxdna
+in `kld_list`, `fastflowlm_enable=YES`. amdxdna attaches and suspends the
+NPU to D3, the fastflowlm service mounts the Ubuntu userland and builds
+its `/sys`, and `flm run llama3.2:1b` answers on the NPU; the packaged
+amdgpu returns the whole `gpu_metrics` (264 bytes).
 
 ## 5. Power: NPU against iGPU
 
@@ -355,3 +369,25 @@ less (1.72 against 2.80 J). The NPU keeps the machine at 54 W instead of
 
 Not measured: the ZBook on battery, larger or MoE models, wall power on
 frwk-linux (no plug there).
+
+## 6. To do
+
+- **FreeBSD idles 5.5 W above Linux on the same machine** (not the NPU).
+  frwk-bsd with amdxdna unloaded or the NPU in D3: 14.7 W RAPL, 15.3 W
+  SMU socket, 35.3 W at the wall. frwk-linux: 9.1 W RAPL, 9.1 W SMU
+  socket (no wall meter there). The CPU cores are not the cause: 0.4 to
+  0.5 W of SMU core power on FreeBSD against 0.0 to 0.3 W on Linux, and
+  91% of the time in C3. Candidates, not measured yet: PCIe ASPM and
+  device D-states (NVMe, rge, USB, the GPU's audio), the GPU and memory
+  clocks at idle (`pp_dpm_*` sysctls against Linux), the fabric clock,
+  and the display engine (frwk-bsd has amdgpu with no display attached).
+  Compare `gpu_metrics` field by field on both systems first.
+- **SVA mode.** The driver runs in carveout mode only: FreeBSD's IOMMU
+  driver has no PASID or shared virtual addressing. SVA would remove the
+  carveout reservation and allow user-pointer buffers
+  (`amdxdna_ubuf.c` returns `EOPNOTSUPP` until then).
+- **Upstream.** The kernel branches (section "Code") are ready for
+  review; each has a tutorial and was tested on frwk-bsd. The ports are
+  on `olivier-npu` in the ports fork.
+- **A native FastFlowLM.** Not possible while its NPU engines are closed
+  Linux libraries.
