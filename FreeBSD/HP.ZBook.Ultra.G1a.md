@@ -13,7 +13,7 @@ Linux comparison: Ubuntu with Linux 7.0.0-43 on the same laptop, same day (`lspc
 
 | Function | Device | FreeBSD driver |
 |---|---|---|
-| GPU, display, Vulkan, video decode/encode | 1002:1586 Radeon 8060S | `amdgpu` from `graphics/drm-latest-kmod` + `gpu-firmware-amd-kmod`, Mesa (see [GPU features](#gpu-features)) |
+| GPU, display, Vulkan, video decode/encode | 1002:1586 Radeon 8060S | `amdgpu` from `graphics/drm-latest-kmod` with 4 FPU patches from ports branch [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo) (stock: panic when amdgpu loads) + `gpu-firmware-amd-kmod`, Mesa (see [GPU features](#gpu-features)) |
 | HDMI/DP audio | 1002:1640 | `hdac0`, 4 `pcm` outputs |
 | Headphone jack | 1022:15e3 + Realtek ALC245 codec | `hdac1`, `pcm5` (headphones) |
 | Internal speakers | `pcm4` (ALC245) + 4 Cirrus Logic CS35L54 amplifiers (CSC3554) | not in FreeBSD yet: `snd_cs35l54` from branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) + firmware port (see below) |
@@ -39,6 +39,24 @@ The `/boot/loader.conf` hint `hint.pcib.7.disabled="1"` from older kernels is no
 without it, `pcib7` attaches the xHCI at 197:0:0 and the boot does not hang (2026-11-11).
 
 ## GPU features
+
+The stock `graphics/drm-latest-kmod` port panics on this GPU when amdgpu
+loads: `panic: Unregistered use of FPU in kernel`, in
+`dml2_init_socbb_params` <- `dml2_init` <- `dml2_create` <-
+`dc_state_create`. The display code (DCN 3.5) uses FPU instructions in
+`dml2_create()`, `dml2_create_copy()` and the DCN 3.5, 3.5.1 and 4.0.1
+bandwidth validation without the `DC_FP_START()`/`DC_FP_END()` brackets
+that LinuxKPI requires. Commit
+[ff1194b9b1d5](https://github.com/ocochard/freebsd-ports/commit/ff1194b9b1d5)
+on ports branch [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo)
+adds them as four port patches (`dc_state.c`, `dcn35_resource.c`,
+`dcn351_resource.c`, `dcn401_resource.c`) and sets `PORTREVISION=1`; the
+drm-kmod pull request (#435) was closed without merge, and the upstream port
+(drm_v6.12.85_3) still lacks them. The package installed on the laptop,
+`drm-latest-kmod-6.12.85.1600029_1`, is built from that branch. The camera
+branch `olivier-amdisp` carries the same change as its first commit
+(identical added and removed lines).
+The panic was seen on 2026-05-28 and not re-tested with the stock port since.
 
 Tested on 2026-11-15 with `mesa-dri` 26.2.2 (radeonsi and RADV), `amdgpu`
 from `drm-latest-kmod` (drm 6.12), packages `libva-utils`, `vulkan-tools`,
@@ -373,7 +391,7 @@ code runs only with `hw.amdiommu.enable=1`; its sources there are identical
 to the stack tested in the AMD IOMMU bug reports. The branch builds
 (`buildkernel KERNCONF=GENERIC-NODEBUG`, plus the mt76 modules, which
 `sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
-`amdisp` modules of step 12 against it). Boot test on the laptop
+`amdisp` modules of step 13 against it). Boot test on the laptop
 (2026-11-16, kernel `zbook-n291256-f7d7c068c5b5` with those modules in
 the kernel directory; again with the 36-commit kernel
 `zbook-n291260-5e39e91e9442`: all the drivers below load from its directory,
@@ -401,7 +419,7 @@ default route. Fixed on the laptop with a fixed name: a devd rule
 `ifconfig_dock0` instead of `ifconfig_ue0`; tested by resetting the
 adapter (`usbconfig reset`): it came back as `ue1`, was renamed `dock0`
 and got both addresses. Each
-document gives the deeper tests of its own branch. Steps 12 and 13 are outside the kernel source.
+document gives the deeper tests of its own branch. Steps 12 to 14 are outside the kernel source.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
@@ -416,8 +434,9 @@ document gives the deeper tests of its own branch. Steps 12 and 13 are outside t
 | 9 | freebsd-src [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) | 1 | | interrupt remap entries are freed and aligned (only with `hw.amdiommu.enable=1`) | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
 | 10 | freebsd-src [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) | 2 | | opt-in: `hw.amdiommu.enable=1 hw.iommu.dma=1` (DMA remapping); with `hw.amdiommu.enable=1` alone also `hw.amdgpu.ip_block_mask=0xfffff7ff` (VPE off, SMU hang) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
 | 11 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-10 | | |
-| 12 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 11 | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
-| 13 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 12 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
+| 12 | freebsd-ports [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo): `graphics/drm-latest-kmod` with four `DC_FP_START`/`DC_FP_END` patches | 1 | kernel source of step 11 | build the package with poudriere and install it (without it amdgpu panics when it loads) | [GPU features](#gpu-features) |
+| 13 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 11; replaces the `amdgpu.ko` of step 12 (same four patches, plus the camera glue) | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
+| 14 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 13 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
 
 The NPU work is not in `zbook` and was not tested on this laptop. On top of steps 1 to 11 (which include `olivier-amdiommu`
 and `olivier-amdiommu-irte`) it needs `olivier-lkpi-srcu` and `olivier-lkpi-pcim-iomap`, a boot with `hw.amdiommu.enable=1`, then drm-kmod `olivier-amdxdna` and the devel/xrt port:
