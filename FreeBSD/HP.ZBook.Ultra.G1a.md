@@ -275,7 +275,7 @@ Measured on a Framework Desktop with the same NPU (1022:17f0 rev 0x11), not yet 
 native XRT port (devel/xrt) `xrt-smi validate` gemm 51 TOPS, latency 47 to 58 us;
 FastFlowLM under linuxlator (its NPU engines are closed Linux binaries) runs llama3.2:1b at 65 tok/s decode and qwen3:8b at 10.8 tok/s decode.
 Details: [docs/amdxdna_npu.md](docs/amdxdna_npu.md).
-Impact: LLM inference at about 23 W package power (the NPU block itself about 2 W) against 85 W on the iGPU, which is 3.9 times faster; same energy per token in the package; at the wall 54 W against 147 W, but 26% more energy per token on the NPU because the desktop's 35 W idle counts longer (measured on the Framework Desktop, [section 5](docs/amdxdna_npu.md#5-power-npu-against-igpu)). Idle, the driver puts the NPU in D3.
+Impact: LLM inference at about 23 W package power (the NPU block itself about 2 W) against 85 W on the iGPU, which is 3.9 times faster; same energy per token in the package; at the wall 54 W against 147 W, but 35% more energy per token on the NPU because the desktop's 35 W idle counts longer (measured on the Framework Desktop, [section 5](docs/amdxdna_npu.md#5-power-npu-against-igpu)). Idle, the driver puts the NPU in D3.
 
 ### USB4 host routers (197:0:5, 197:0:6)
 
