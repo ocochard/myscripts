@@ -210,10 +210,37 @@ Impact: no crypto offload; nothing visible for laptop use.
 ### Audio Coprocessor (195:0:5)
 
 DSP for the internal digital microphones (DMIC) and audio offload.
-On AMD laptops the internal microphones go through the ACP, not through the HDA codec.
-Linux driver: `snd_acp_pci` (ASoC drivers in `sound/soc/amd`).
-Impact: probably no internal microphone; the headset jack goes through the ALC245 codec (`pcm4` record).
-Not tested.
+The built-in microphones are on the ACP's PDM (pulse density modulation) interface, not on the HDA codec:
+the ALC245 has no internal microphone pin (its only microphone pin, nid 25, is the headset jack).
+Impact: no built-in microphone on FreeBSD; the headset jack microphone goes through the ALC245 codec (`pcm4` record, not tested).
+
+On Ubuntu (Linux 7.0.0-43, 2026-11-16) they record. Linux uses the plain ACP stack, not SOF:
+`snd_acp_pci` on the PCI function creates the platform device `acp_asoc_acp70` (`snd_acp70`, with `snd_acp_pdm` and `snd_acp_pcm`),
+the machine driver `acp-pdm-mach` (`snd_acp_mach`) and the generic `dmic-codec`. ALSA card 2, `acp-pdm-mach`, device 0
+"DMIC capture dmic-hifi-0": 2 channels (two microphones, presumably), 32-bit samples, 48 kHz. Five-second recordings, measured and deleted:
+
+| Recording | Peak | Level per 0.5 s window |
+|---|---|---|
+| quiet room | about -12 dBFS (first window) | -42 to -48 dBFS after the first window |
+| clapping | -2 dBFS, both channels | -29 to -38 dBFS |
+
+Channel 0 carries a constant DC offset (-23 dBFS) that a driver or the audio stack has to filter.
+
+For a driver:
+
+- PCI 1022:15e2 rev 0x70 at 195:0:5: BAR 0 MMIO, 256 KB (the ACP registers); BAR 2, 8 MB prefetchable; INTx (Linux does not enable its MSI).
+- ACPI `\_SB_.PCI0.GPPA.ACP_`, SSDT "OEMACP": `_WOV` (wake on voice), `_DSD` `acp-audio-config-flag` 0x10 and `acp-audio-zsc-enable` 1;
+  child `HDA0` with `acp-audio-device-type` 1 and two endpoints (2 channels, 48 kHz, 16-bit, `dsp-offload-supported`).
+  The ACP's power methods (`RPRM`, `DSTA`, `PW3S`) are in SSDT 2.
+- Raw data (PCI configuration, modules and parameters, ALSA card, ASoC components, ACPI extracts): [docs/acp/](docs/acp/).
+- Not captured yet: a register trace of the probe and a capture (mmiotrace). A first attempt, reloading `snd_acp_pci` under mmiotrace,
+  failed: the unload under tracing stopped half way (`ACP dis-interrupts failed`), left BAR 0 reserved, and Linux oopsed on every
+  `/proc/iomem` read until reboot. Next attempt: keep `snd_acp_pci` from loading at boot, then load it for the first time under mmiotrace.
+- License: the Linux files of this path are dual-licensed `(GPL-2.0-only OR BSD-3-Clause)` (`sound/soc/amd/acp/`: `acp-pci.c`,
+  `acp70.c`, `acp-pdm.c`, `acp-platform.c`, `acp-legacy-common.c`, `acp-mach-common.c`, `amd.h`), so they can be used under the
+  BSD license. GPL-only in that directory: the SoundWire machine drivers and headers (`acp-sdw-*`, `soc_amd_sdw_common.h`),
+  `acp_common.h`, the ACPI match tables (`amd-acp63-acpi-match.c`, `amd-acp70-acpi-match.c`, `amd-acpi-mach.c`) and the SDCA quirks; the generic
+  `sound/soc/codecs/dmic.c` is GPL-2.0-only as well.
 
 ### Internal speakers: Cirrus CS35L54 amplifiers (CSC3554)
 
@@ -248,7 +275,7 @@ Measured on a Framework Desktop with the same NPU (1022:17f0 rev 0x11), not yet 
 native XRT port (devel/xrt) `xrt-smi validate` gemm 51 TOPS, latency 47 to 58 us;
 FastFlowLM under linuxlator (its NPU engines are closed Linux binaries) runs llama3.2:1b at 65 tok/s decode and qwen3:8b at 10.8 tok/s decode.
 Details: [docs/amdxdna_npu.md](docs/amdxdna_npu.md).
-Impact: LLM inference at about 23 W package power (the NPU block itself about 2 W) against 85 W on the iGPU, which is 3.9 times faster; same energy per token (measured on the Framework Desktop, [section 5](docs/amdxdna_npu.md#5-power-npu-against-igpu)).
+Impact: LLM inference at about 23 W package power (the NPU block itself about 2 W) against 85 W on the iGPU, which is 3.9 times faster; same energy per token in the package; at the wall 54 W against 147 W, but 26% more energy per token on the NPU because the desktop's 35 W idle counts longer (measured on the Framework Desktop, [section 5](docs/amdxdna_npu.md#5-power-npu-against-igpu)). Idle, the driver puts the NPU in D3.
 
 ### USB4 host routers (197:0:5, 197:0:6)
 
@@ -375,7 +402,7 @@ the document that explains each one.
 | LinuxKPI `pcim_iomap()` BAR leak (needed by the NPU) | [`olivier-lkpi-pcim-iomap`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-pcim-iomap) | 1 | fix, tested on a Framework Desktop | [docs/linuxkpi_pcim_iomap_release.md](docs/linuxkpi_pcim_iomap_release.md) |
 | LinuxKPI binary sysfs attributes (amdgpu `gpu_metrics`, SMU power) | [`olivier-lkpi-sysfs-binary`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-sysfs-binary) | 1 | fix, tested on a Framework Desktop; rebuild `amdgpu.ko` | [docs/linuxkpi_sysfs_binary_attr.md](docs/linuxkpi_sysfs_binary_attr.md) |
 | AMD IOMMU interrupt remap entries (needed by the NPU) | [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) (in `zbook`) | 1 | fix, tested on a Framework Desktop and on this laptop (`hdac0`: INTx after 31 detach/attach cycles without it, 64 clean cycles with it) | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
-| NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna); ports [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu) (devel/xrt) | 7; 3 | jobs, XRT and FastFlowLM work (tested on a Framework Desktop, needs the IOMMU on) | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
+| NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna); ports [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu) (devel/xrt) | 8; 3 | jobs, XRT, FastFlowLM and runtime PM (NPU in D3 when idle) work (tested on a Framework Desktop, needs the IOMMU on) | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
 | AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) (in `zbook`) | 2 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu's SMU hangs on `PowerDownVpe` in about half the boots with `boot_verbose` (workaround `hw.amdgpu.ip_block_mask=0xfffff7ff`); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 

@@ -4,13 +4,14 @@
 # (Qwen3-8B, 4-bit), with npu-power-bench.py.  Same steps on FreeBSD
 # (FastFlowLM in the linuxlator chroot) and Linux.
 #
-# Usage: npu-power-run.sh [runs]   (as the user owning the models; uses sudo)
+# Usage: [SHELLY=<plug address>] npu-power-run.sh [runs]
+# (as the user owning the models; uses sudo; SHELLY adds wall power)
 
 set -eu
 
 runs=${1:-3}
 dir=$(dirname "$(realpath "$0")")
-bench="sudo python3 $dir/npu-power-bench.py"
+bench="sudo env SHELLY=${SHELLY:-} python3 $dir/npu-power-bench.py"
 gguf=$HOME/models/Qwen3-8B-Q4_1.gguf
 llama=$HOME/llama.cpp/build/bin/llama-server
 

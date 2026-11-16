@@ -9,7 +9,8 @@ prompt) under linuxlator, because its NPU engines are closed Linux
 binaries. The driver reloads cleanly (6 kldload/kldunload cycles).
 Power (section 5): the NPU draws about 2 W itself and the APU package
 23 W, against 85 W on the iGPU, which is 3.9 times faster; energy per
-token is about the same.
+token is about the same in the package, and 26% lower on the iGPU at the
+wall (54 W against 147 W). With runtime PM the idle NPU costs nothing.
 
 Code:
 
@@ -175,6 +176,7 @@ are `#ifdef __linux__` blocks, most marked `XXX FreeBSD`.
 | XRT reads the PCI revision from sysfs to pick the device class | `xrt-smi`: `Unsupported hardware type` | publish `sys.device.amdxdnaN.revision` |
 | NPU firmware with the IOMMU unit off | every firmware message about 141 ms, `xrt-smi validate` latency about 95 ms per job | boot with `hw.amdiommu.enable=1` ([amdiommu_ser6.md](amdiommu_ser6.md)) |
 | amd_iommu never frees interrupt remapping entries; the NPU uses all 32 | second kldload: `failed to alloc irq vectors, ret -22` | amd_iommu fix, [amdiommu_irte_free.md](amdiommu_irte_free.md) |
+| LinuxKPI has no runtime PM core: `pm_runtime_*()` are no-ops | NPU stays in D0 with its firmware running when unused: idle 38.9 W at the wall, 16.7 W RAPL, against 35.3 and 14.7 W with the driver unloaded | runtime PM in the driver: count the users it already declares (`amdxdna_pm_resume_get()` / `_suspend_put()`), and 5 s after the last one run its suspend op and put the NPU in D3; wake on the next use (about 0.1 s), FastFlowLM contexts survive |
 | LinuxKPI `pcim_iomap()` stores a bus handle as a resource | kldunload: `driver did not clean up; leaking mmio resources` | LinuxKPI fix, [linuxkpi_pcim_iomap_release.md](linuxkpi_pcim_iomap_release.md) |
 
 ### XRT on FreeBSD (devel/xrt)
@@ -307,12 +309,49 @@ What it shows:
   the iGPU busy with something else), not on speed or on total energy.
 - FreeBSD: same speeds, but more power than Linux: 6 to 8 W at idle,
   3 W during NPU decode, 12 W during iGPU decode. Energy per decoded
-  token is 13 to 14% higher for both engines. Of the
-  idle gap, 2.7 W is the loaded amdxdna driver (FreeBSD keeps the NPU
-  powered; Linux puts it in D3cold, measured by unloading the driver);
+  token is 13 to 14% higher for both engines. Those runs predate the
+  driver's runtime PM, which removes 1.8 W (RAPL) of the idle gap (below);
   the rest is a platform idle difference not studied here.
 - `-fa on` is faster than `-fa off` on both systems, although llama.cpp
   warns that one flash-attention operation runs on the CPU.
 
-Not measured: wall power (no meter), the ZBook on battery, larger or MoE
-models, the NPU with the driver's runtime power management.
+### Runtime power management (frwk-bsd)
+
+The driver now suspends the NPU (firmware stopped, PCI D3) 5 s after its
+last use and wakes it on the next one. Idle, 60 s, same boot, wall power
+from a Shelly Plug S Gen3 between frwk-bsd and the mains:
+
+| Driver | NPU state | Wall W | RAPL W | SMU socket W |
+|---|---|---|---|---|
+| without runtime PM | D0 | 38.9 | 16.7 | 18.2 |
+| with runtime PM | D3 | 35.7 | 14.9 | 15.5 |
+| unloaded | | 35.3 | 14.7 | 15.3 |
+
+So the NPU costs nothing at idle now: 3.2 W saved at the wall. Waking
+adds 30 to 150 ms to a request (FastFlowLM, one token, 3 pairs from D0 and
+from D3). A FastFlowLM server that holds a hardware context also lets the
+NPU suspend: the context is saved and restored by the driver's
+`aie2_hwctx_suspend()` / `_resume()`, and later answers are correct at the
+same speed. `xrt-smi validate` passes after a wake-up, and kldunload from
+D3 is clean (4 cycles).
+
+### Wall power (frwk-bsd)
+
+The same runs as above with runtime PM and the Shelly plug, decode only
+(prefill requests last 2 to 5 s, too short for a plug that updates about
+once a second). Idle at the wall: 35.1 W.
+
+| Run | tok/s | Wall W | J/token at the wall | Above idle, J/token |
+|---|---|---|---|---|
+| NPU decode | 10.8 | 53.6 | 4.98 | 1.72 |
+| iGPU decode, fa on | 40.0 | 147.1 | 3.68 | 2.80 |
+| iGPU decode, fa off | 38.9 | 137.8 | 3.54 | 2.65 |
+
+At the wall the 35 W the machine draws anyway dominates: the iGPU
+finishes 3.7 times sooner, so for a batch job it uses 26% less energy per
+token than the NPU. Counting only the power above idle, the NPU uses 39%
+less (1.72 against 2.80 J). The NPU keeps the machine at 54 W instead of
+147 W: less heat and fan, and the iGPU stays free.
+
+Not measured: the ZBook on battery, larger or MoE models, wall power on
+frwk-linux (no plug there).
