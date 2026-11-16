@@ -337,16 +337,17 @@ the document that explains each one.
 
 ### Applying the work, in order
 
-The eight freebsd-src branches apply in this order, without conflict
-(checked with 32 commits; mt7925's 12th, the suspend fix, was added later
-and applies on top).
+The ten freebsd-src branches apply in this order, without conflict
+(first checked with the first eight and 32 commits; mt7925's 12th, the suspend fix,
+and the three AMD IOMMU commits were added later and apply on top).
 Branch [`zbook`](https://github.com/ocochard/freebsd-src/compare/main...zbook)
-of the fork has all 33 commits in this order on FreeBSD main 46ce9acd6d15,
-plus the three AMD IOMMU commits (36 commits: the interrupt remapping fix, then the two `olivier-amdiommu` commits; their IOMMU sources are identical to the tested stack, and the kernel builds)
-(2026-11-16), for testing everything at once (steps 1 to 8). It builds
+of the fork has all 36 commits in this order on FreeBSD main 46ce9acd6d15
+(2026-11-16), for testing everything at once (steps 1 to 10). The IOMMU
+code runs only with `hw.amdiommu.enable=1`; its sources there are identical
+to the stack tested in the AMD IOMMU bug reports. The branch builds
 (`buildkernel KERNCONF=GENERIC-NODEBUG`, plus the mt76 modules, which
 `sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
-`amdisp` modules of step 10 against it). Boot test on the laptop
+`amdisp` modules of step 12 against it). Boot test on the laptop
 (2026-11-16, kernel `zbook-n291256-f7d7c068c5b5` with those modules in
 the kernel directory): Wi-Fi associates and passes traffic, `amdgpio`
 attaches `gpio0`, the four `ig4` controllers attach, `snd_cs35l54` attaches
@@ -372,7 +373,7 @@ default route. Fixed on the laptop with a fixed name: a devd rule
 `ifconfig_dock0` instead of `ifconfig_ue0`; tested by resetting the
 adapter (`usbconfig reset`): it came back as `ue1`, was renamed `dock0`
 and got both addresses. Each
-document gives the deeper tests of its own branch. Steps 10 and 11 are outside the kernel source.
+document gives the deeper tests of its own branch. Steps 12 and 13 are outside the kernel source.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
@@ -384,12 +385,14 @@ document gives the deeper tests of its own branch. Steps 10 and 11 are outside t
 | 6 | freebsd-src [`olivier-amdsmu-strixhalo`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) | 4 | | | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
 | 7 | freebsd-src [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | 1, 2, 3 | firmware port `audio/sound-firmware-cirrus-kmod` (not committed yet); devmatch loads `snd_cs35l54` | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
 | 8 | freebsd-src [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 12 | | MT7925 firmware (port PR 300731); `if_mt7925` in `kld_list` | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
-| 9 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-8 | | |
-| 10 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 9 | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
-| 11 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 10 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
+| 9 | freebsd-src [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) | 1 | | interrupt remap entries are freed and aligned (only with `hw.amdiommu.enable=1`) | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
+| 10 | freebsd-src [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) | 2 | | opt-in: `hw.amdiommu.enable=1 hw.iommu.dma=1` (DMA remapping); with `hw.amdiommu.enable=1` alone also `hw.amdgpu.ip_block_mask=0xfffff7ff` (VPE off, SMU hang) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
+| 11 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-10 | | |
+| 12 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 11 | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
+| 13 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 12 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
 
-The NPU work is not in `zbook` and was not tested on this laptop. On top of steps 1 to 9 it needs `olivier-lkpi-srcu`, `olivier-amdiommu`,
-`olivier-amdiommu-irte` and `olivier-lkpi-pcim-iomap`, a boot with `hw.amdiommu.enable=1`, then drm-kmod `olivier-amdxdna` and the devel/xrt port:
+The NPU work is not in `zbook` and was not tested on this laptop. On top of steps 1 to 11 (which include `olivier-amdiommu`
+and `olivier-amdiommu-irte`) it needs `olivier-lkpi-srcu` and `olivier-lkpi-pcim-iomap`, a boot with `hw.amdiommu.enable=1`, then drm-kmod `olivier-amdxdna` and the devel/xrt port:
 [docs/amdxdna_npu.md](docs/amdxdna_npu.md), section 2.
 
 ## Which drivers are worth the work
