@@ -964,8 +964,41 @@ driver writes on page 0 at start (`0x14` = `0x78`, `0xc1`, `0x20`, `0x21`,
 same in everything read, on both pages, yet it delivers 30 frames a
 second on Linux and 24 on FreeBSD. What is left is outside the registers:
 the clock the sensor receives (MCLK), whose source on this laptop is not
-known, or an external frame trigger, if the ISP paces the sensor. The 24
-fps on FreeBSD stays unexplained.
+known, or an external frame trigger, if the ISP paces the sensor.
+
+**Root cause, found later: no clock at all, a lost frame in every five.**
+Every measurement above averaged many frames. The per-frame timestamps
+(`v4l2-ctl --verbose`) show the real pattern on FreeBSD: three gaps of
+about 33.5 ms, then one of 67 ms, over and over, always before the same
+buffer:
+
+```
+seq 100 delta 67.072 ms
+seq 101 delta 33.657 ms
+seq 102 delta 32.999 ms
+seq 103 delta 34.001 ms
+seq 104 delta 66.999 ms
+```
+
+The sensor runs at 30 fps on both systems, as its registers say; FreeBSD
+delivers four frames out of every five, and 29.85 x 4 / 5 = 23.88, the
+measured rate. The 1.237 ratio and the "19.4 MHz clock" were an artefact
+of averaging: the meta word at `0x08` counts sensor frames' worth of time,
+and a lost frame is still counted. A counter in `isp_frame_done` confirms
+it: 15 times per 60 delivered frames, the firmware returns a meta info
+buffer with no frame buffer in it, because none was queued when that
+sensor frame started.
+
+The driver gave the firmware four frame buffers and re-queued each one
+as soon as it was copied. Linux gives eight: `isp4_video.c` raises any
+buffer request to `ISP4IF_MAX_STREAM_BUF_COUNT` (8), and the command trace
+shows four `SEND_BUFFER` before `START_STREAM` and four after it. (The
+earlier eight-buffer test sent all eight before the start and got no
+frames.) With eight buffers, four sent after `START_STREAM`, FreeBSD
+streams at 29.83 fps, 33.5 ms per frame, no meta info without a frame:
+the same as Linux. Tested at 1920x1080 NV12 and YUYV and 640x360 NV12;
+2888x1808 NV12 right after them reset the laptop (no panic message, no
+dump), which still has to be isolated before this change is committed.
 
 The first stream start after a boot sometimes gets no answer to
 `SET_STREAM_CONFIG` (seen twice in a day of tests); the next start works.
