@@ -1,0 +1,124 @@
+From b0af6733c3466808e319e058562ed1a2ff2db0f9 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 13:36:06 +0100
+Subject: [PATCH] iwmbtfw: Log errors to syslog
+
+devd(8) runs iwmbtfw with stderr on /dev/null, so a failed firmware
+download, such as a missing iwmbt-firmware package, leaves no trace.
+
+Send errors to syslog as well as stderr, keeping the stderr format.
+At boot devd starts before syslogd: LOG_CONS sends the message to the
+console instead.
+
+MFC after:	1 week
+---
+ usr.sbin/bluetooth/iwmbtfw/iwmbt_dbg.h |  6 ++++--
+ usr.sbin/bluetooth/iwmbtfw/iwmbt_fw.c  | 10 +++++-----
+ usr.sbin/bluetooth/iwmbtfw/iwmbt_hw.c  |  1 +
+ usr.sbin/bluetooth/iwmbtfw/main.c      |  4 ++++
+ 4 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/usr.sbin/bluetooth/iwmbtfw/iwmbt_dbg.h b/usr.sbin/bluetooth/iwmbtfw/iwmbt_dbg.h
+index 9cfded6f33cf..b16d57e4aea3 100644
+--- a/usr.sbin/bluetooth/iwmbtfw/iwmbt_dbg.h
++++ b/usr.sbin/bluetooth/iwmbtfw/iwmbt_dbg.h
+@@ -31,8 +31,10 @@
+ extern	int iwmbt_do_debug;
+ extern	int iwmbt_do_info;
+ 
+-#define	iwmbt_err(fmt, ...)						\
+-	fprintf(stderr, "iwmbtfw: %s: "fmt"\n", __func__, ##__VA_ARGS__)
++#define	iwmbt_err(fmt, ...)	do {					\
++	fprintf(stderr, "iwmbtfw: %s: "fmt"\n", __func__, ##__VA_ARGS__);\
++	syslog(LOG_ERR, "%s: "fmt, __func__, ##__VA_ARGS__);		\
++} while (0)
+ #define	iwmbt_info(fmt, ...)	do {					\
+ 	if (iwmbt_do_info)						\
+ 		fprintf(stderr, "%s: "fmt"\n", __func__, ##__VA_ARGS__);\
+diff --git a/usr.sbin/bluetooth/iwmbtfw/iwmbt_fw.c b/usr.sbin/bluetooth/iwmbtfw/iwmbt_fw.c
+index f71aacd6f2e9..3eae51b754e8 100644
+--- a/usr.sbin/bluetooth/iwmbtfw/iwmbt_fw.c
++++ b/usr.sbin/bluetooth/iwmbtfw/iwmbt_fw.c
+@@ -32,12 +32,12 @@
+ #include <sys/stat.h>
+ 
+ #include <assert.h>
+-#include <err.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <syslog.h>
+ #include <unistd.h>
+ 
+ #include "iwmbt_fw.h"
+@@ -53,19 +53,19 @@ iwmbt_fw_read(struct iwmbt_firmware *fw, const char *fwname)
+ 
+ 	fd = open(fwname, O_RDONLY);
+ 	if (fd < 0) {
+-		warn("%s: open: %s", __func__, fwname);
++		iwmbt_err("open: %s: %s", fwname, strerror(errno));
+ 		return (0);
+ 	}
+ 
+ 	if (fstat(fd, &sb) != 0) {
+-		warn("%s: stat: %s", __func__, fwname);
++		iwmbt_err("stat: %s: %s", fwname, strerror(errno));
+ 		close(fd);
+ 		return (0);
+ 	}
+ 
+ 	buf = calloc(1, sb.st_size);
+ 	if (buf == NULL) {
+-		warn("%s: calloc", __func__);
++		iwmbt_err("calloc: %s", strerror(errno));
+ 		close(fd);
+ 		return (0);
+ 	}
+@@ -73,7 +73,7 @@ iwmbt_fw_read(struct iwmbt_firmware *fw, const char *fwname)
+ 	/* XXX handle partial reads */
+ 	r = read(fd, buf, sb.st_size);
+ 	if (r < 0) {
+-		warn("%s: read", __func__);
++		iwmbt_err("read: %s: %s", fwname, strerror(errno));
+ 		free(buf);
+ 		close(fd);
+ 		return (0);
+diff --git a/usr.sbin/bluetooth/iwmbtfw/iwmbt_hw.c b/usr.sbin/bluetooth/iwmbtfw/iwmbt_hw.c
+index 81f1fbe7c5ce..027c909f2f2f 100644
+--- a/usr.sbin/bluetooth/iwmbtfw/iwmbt_hw.c
++++ b/usr.sbin/bluetooth/iwmbtfw/iwmbt_hw.c
+@@ -36,6 +36,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <syslog.h>
+ #include <time.h>
+ #include <unistd.h>
+ 
+diff --git a/usr.sbin/bluetooth/iwmbtfw/main.c b/usr.sbin/bluetooth/iwmbtfw/main.c
+index 560735fabd67..4aa4b2d3df4f 100644
+--- a/usr.sbin/bluetooth/iwmbtfw/main.c
++++ b/usr.sbin/bluetooth/iwmbtfw/main.c
+@@ -39,6 +39,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <syslog.h>
+ #include <unistd.h>
+ 
+ #include <libusb.h>
+@@ -713,6 +714,9 @@ main(int argc, char *argv[])
+ 	int retcode = 1;
+ 	enum iwmbt_device iwmbt_device;
+ 
++	/* devd(8) runs us with stderr on /dev/null: report errors to syslog. */
++	openlog("iwmbtfw", LOG_CONS | LOG_NDELAY | LOG_PID, LOG_USER);
++
+ 	/* Parse command line arguments */
+ 	while ((n = getopt(argc, argv, "Dd:f:hI")) != -1) {
+ 		switch (n) {
+-- 
+2.56.0
+
