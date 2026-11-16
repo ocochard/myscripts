@@ -92,7 +92,7 @@ Source: `pciconf -lv | grep -A4 '^none'`.
 | none3 | 195:0:5 | 1022:15e2 | Audio Coprocessor (ACP) | DSP for the internal digital microphones | internal microphone (probably) | `snd_acp_pci` |
 | none4 | 195:0:7 | 1022:164a | Sensor Fusion Hub / MP2 | sensor microcontroller; Linux uses it as an I2C controller | see below | `pcie_mp2_amd` (not `amd_sfh`) |
 | none5 | 196:0:0 | 1022:150d | PCIe dummy function | placeholder that carries the NPU function | nothing | none |
-| none6 | 196:0:1 | 1022:17f0 | NPU (XDNA 2) | low-power AI inference | NPU offload | `amdxdna` |
+| none6 | 196:0:1 | 1022:17f0 | NPU (XDNA 2) | low-power AI inference | job submission (port in progress, see below) | `amdxdna` |
 | none7 | 197:0:5 | 1022:158d | USB4 host router 0 | USB4/Thunderbolt fabric, PCIe tunneling | eGPU, PCIe docks | `thunderbolt` |
 | none8 | 197:0:6 | 1022:158e | USB4 host router 1 | same, second set of USB-C ports | same | `thunderbolt` |
 
@@ -209,9 +209,13 @@ Impact: unknown until the devices behind this I2C bus are identified; Linux expo
 
 ### Neural Processing Unit (196:0:1)
 
-AMD XDNA 2 NPU, about 50 TOPS INT8 (AMD figure, from memory, not checked).
-Linux driver: `amdxdna` (accel subsystem) plus AMD's XRT userspace.
-Impact: none for FreeBSD use; llama.cpp and similar run on the iGPU through Vulkan.
+AMD XDNA 2 NPU: 8 columns x 6 rows of AIE2 tiles, firmware 1.1.2.65.
+Linux driver: `amdxdna` (accel subsystem) plus AMD's XRT userspace; FastFlowLM runs LLMs on it.
+FreeBSD: a port of `amdxdna` to drm-kmod attaches, loads the firmware, answers queries and creates hardware contexts,
+in carveout mode (no IOMMU SVA on FreeBSD); measured on a Framework Desktop with the same NPU (1022:17f0 rev 0x11),
+not yet on this laptop. Job submission, XRT and FastFlowLM are not done.
+Details: [docs/amdxdna_npu.md](docs/amdxdna_npu.md).
+Impact: none yet; llama.cpp and similar run on the iGPU through Vulkan.
 
 ### USB4 host routers (197:0:5, 197:0:6)
 
@@ -323,6 +327,8 @@ the document that explains each one.
 | I2C controller clock | [`olivier-ig4-amd-clock`](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock) | 1 | `ig4: Use the 150 MHz input clock of AMD AMDI0010 controllers` | |
 | GPIO driver autoload | [`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) | 1 | `amdgpio: Add PNP info for devmatch` | |
 | ACPI properties | [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) | 1 | `acpi: Refuse property requests for other buses children` | |
+| LinuxKPI SRCU (needed by the NPU) | [`olivier-lkpi-srcu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-srcu) | 1 | fix, tested (test module, stress, mutant) | [docs/linuxkpi_srcu_per_struct.md](docs/linuxkpi_srcu_per_struct.md) |
+| NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna) | 3 | firmware, queries, hardware contexts work (tested on a Framework Desktop); no job submission yet | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
 ### Applying the work, in order
@@ -339,7 +345,13 @@ the kernel directory): Wi-Fi associates and carries the session, `amdgpio`
 attaches `gpio0`, the four `ig4` controllers attach, `snd_cs35l54` attaches
 the 4 amplifiers (calibration read, firmware 3.11.18; no sound played),
 `amdsmu` attaches (SMU 100.7.0), and the camera streams 1920x1080 NV12 at
-29.84 fps; no panic or fault in the boot log. Suspend was not tried. Each
+29.84 fps; no panic or fault in the boot log. Suspend-to-idle (`zzz`,
+Xorg running, amdsmu loaded, dock attached): the space key wakes it after
+84 s, Xorg, amdgpu, NVMe (queued writes resubmitted, no error), USB and
+the dock come back, the camera streams at 29.81 fps and the speaker driver
+stays loaded; no S0i3 (70 s software DRIPS, blockers DISPLAY, USB3_0,
+USB3_1, MPM, JPEG_1); Wi-Fi does not pass traffic until `if_mt7925` is
+reloaded (`wlan0` still shows associated with its address). Each
 document gives the deeper tests of its own branch. Steps 10 and 11 are outside the kernel source.
 
 | # | Apply | Commits | Depends on | Then | Document |
