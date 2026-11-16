@@ -1,0 +1,79 @@
+From 4ecb924619b207c9c0a8d76d95c8de9bdf5d9c5d Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 19:48:03 +0100
+Subject: [PATCH] LinuxKPI: pci: Fix pcim_iomap() BAR release
+
+pcim_iomap() passed the bus handle returned by pci_iomap() to
+lkpi_set_pcim_iomap_devres(), which expects a struct resource, so the
+devres table held a bogus handle and pci_iounmap() never matched the
+BAR on release.  Every pcim_iomap() BAR leaked and the driver could
+not attach again after a reload.  With want_iomap_res (iwlwifi) the
+release passed a bus handle where pci_iounmap() expects the resource,
+so that BAR leaked too.
+
+Store the resource and return the handle type the caller asked for,
+both on first and cached calls.  Release with that same handle type.
+
+Fixes:		2f9064a5d2b5 ("LinuxKPI: pci: implement pcim_iomap()")
+MFC after:	1 week
+---
+ sys/compat/linuxkpi/common/src/linux_pci.c | 32 ++++++++++++----------
+ 1 file changed, 18 insertions(+), 14 deletions(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_pci.c b/sys/compat/linuxkpi/common/src/linux_pci.c
+index 8270f3bed54a..34d039e84309 100644
+--- a/sys/compat/linuxkpi/common/src/linux_pci.c
++++ b/sys/compat/linuxkpi/common/src/linux_pci.c
+@@ -1004,20 +1004,22 @@ linuxkpi_pcim_iomap(struct pci_dev *pdev, int bar, unsigned long maxlen)
+ 	if (dr == NULL)
+ 		return (NULL);
+ 
+-	if (dr->res_table[bar] != NULL)
+-		return (dr->res_table[bar]);
+-
+-	res = linuxkpi_pci_iomap(pdev, bar, maxlen);
+-	if (res == NULL) {
+-		/*
+-		 * Do not free the devres in case there were
+-		 * other valid mappings before already.
+-		 */
+-		return (NULL);
++	if (dr->res_table[bar] == NULL) {
++		res = _lkpi_pci_iomap(pdev, bar, maxlen);
++		if (res == NULL) {
++			/*
++			 * Do not free the devres in case there were
++			 * other valid mappings before already.
++			 */
++			return (NULL);
++		}
++		lkpi_set_pcim_iomap_devres(dr, bar, res);
+ 	}
+-	lkpi_set_pcim_iomap_devres(dr, bar, res);
+ 
+-	return (res);
++	/* This is a FreeBSD extension so we can use bus_*(). */
++	if (pdev->want_iomap_res)
++		return (dr->res_table[bar]);
++	return (dr->mmio_table[bar]);
+ }
+ 
+ void
+@@ -1101,10 +1103,12 @@ lkpi_pcim_iomap_table_release(struct device *dev, void *p)
+ 	pdev = to_pci_dev(dev);
+ 	for (bar = PCIR_MAX_BAR_0; bar >= 0; bar--) {
+ 
+-		if (dr->mmio_table[bar] == NULL)
++		if (dr->res_table[bar] == NULL)
+ 			continue;
+ 
+-		pci_iounmap(pdev, dr->mmio_table[bar]);
++		/* pci_iounmap() takes what pcim_iomap() returned. */
++		pci_iounmap(pdev, pdev->want_iomap_res ?
++		    (void *)dr->res_table[bar] : dr->mmio_table[bar]);
+ 	}
+ }
+ 
+-- 
+2.56.0
+

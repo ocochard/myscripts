@@ -1,0 +1,120 @@
+From 65aadcde275b9ce185b904861b52fbf229aab5df Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 19:59:31 +0100
+Subject: [PATCH] amd_iommu: Free and align interrupt remapping entries
+
+The IRTE index allocator never got indexes back: amdiommu_ir_free_irte()
+cleared the entry but not its vmem index.  With the default 32 entries
+a device using 32 MSI-X vectors (the AMD XDNA NPU) gets ENOMEM from
+pci_alloc_msix() on its second attach.  A plain vmem_free() of one
+cookie is not enough: msi_alloc() takes a multiple-message group in
+one vmem segment and msi_release() frees it cookie by cookie.
+
+Track the indexes in a bitmap instead, and align a group on its size,
+since the device ORs the message number into the MSI data, which is
+the IRTE index.
+
+Fixes:		0f5116d7efe3 ("AMD IOMMU driver")
+MFC after:	1 week
+---
+ sys/x86/iommu/amd_intrmap.c | 31 +++++++++++++++++++------------
+ sys/x86/iommu/amd_iommu.h   |  3 ++-
+ 2 files changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/sys/x86/iommu/amd_intrmap.c b/sys/x86/iommu/amd_intrmap.c
+index 3e48281d1931..70f9309db13e 100644
+--- a/sys/x86/iommu/amd_intrmap.c
++++ b/sys/x86/iommu/amd_intrmap.c
+@@ -82,9 +82,8 @@ int
+ amdiommu_alloc_msi_intr(device_t src, u_int *cookies, u_int count)
+ {
+ 	struct amdiommu_ctx *ctx;
+-	vmem_addr_t vmem_res;
++	struct amdiommu_unit *unit;
+ 	u_int idx, i;
+-	int error;
+ 
+ 	ctx = amdiommu_ir_find(src, NULL, NULL);
+ 	if (ctx == NULL || !CTX2AMD(ctx)->irte_enabled) {
+@@ -92,15 +91,23 @@ amdiommu_alloc_msi_intr(device_t src, u_int *cookies, u_int count)
+ 			cookies[i] = -1;
+ 		return (EOPNOTSUPP);
+ 	}
++	unit = CTX2AMD(ctx);
+ 
+-	error = vmem_alloc(ctx->irtids, count, M_FIRSTFIT | M_NOWAIT,
+-	    &vmem_res);
+-	if (error != 0) {
+-		KASSERT(error != EOPNOTSUPP,
+-		    ("impossible EOPNOTSUPP from vmem"));
+-		return (error);
++	/*
++	 * The MSI data is the IRTE index, and a multiple message device
++	 * ORs the message number into it: align the block on count.
++	 */
++	AMDIOMMU_LOCK(unit);
++	for (idx = 0; idx + count <= unit->irte_nentries; idx += count) {
++		if (bit_ntest(ctx->irtids, idx, idx + count - 1, 0))
++			break;
+ 	}
+-	idx = vmem_res;
++	if (idx + count > unit->irte_nentries) {
++		AMDIOMMU_UNLOCK(unit);
++		return (ENOMEM);
++	}
++	bit_nset(ctx->irtids, idx, idx + count - 1);
++	AMDIOMMU_UNLOCK(unit);
+ 	for (i = 0; i < count; i++)
+ 		cookies[i] = idx + i;
+ 	return (0);
+@@ -301,6 +308,7 @@ amdiommu_ir_free_irte(struct amdiommu_ctx *ctx, device_t src,
+ 	MPASS(error == 0);
+ 	AMDIOMMU_LOCK(unit);
+ 	amdiommu_qi_invalidate_ir_locked(unit, rid);
++	bit_clear(ctx->irtids, cookie);
+ 	AMDIOMMU_UNLOCK(unit);
+ }
+ 
+@@ -339,8 +347,7 @@ amdiommu_ctx_init_irte(struct amdiommu_ctx *ctx)
+ 		ctx->irtx2 = ptr;
+ 	else
+ 		ctx->irtb = ptr;
+-	ctx->irtids = vmem_create("amdirt", 0, unit->irte_nentries, 1, 0,
+-	    M_FIRSTFIT | M_NOWAIT);
++	ctx->irtids = bit_alloc(unit->irte_nentries, M_DEVBUF, M_WAITOK);
+ 
+ 	intr_reprogram();	// XXXKIB
+ 
+@@ -359,7 +366,7 @@ amdiommu_ctx_fini_irte(struct amdiommu_ctx *ctx)
+ 		free(ctx->irtx2, M_DEVBUF);
+ 	else
+ 		free(ctx->irtb, M_DEVBUF);
+-	vmem_destroy(ctx->irtids);
++	free(ctx->irtids, M_DEVBUF);
+ }
+ 
+ int
+diff --git a/sys/x86/iommu/amd_iommu.h b/sys/x86/iommu/amd_iommu.h
+index b9f07418ca9d..4fad3ade0fda 100644
+--- a/sys/x86/iommu/amd_iommu.h
++++ b/sys/x86/iommu/amd_iommu.h
+@@ -31,6 +31,7 @@
+ #ifndef __X86_IOMMU_AMD_IOMMU_H
+ #define	__X86_IOMMU_AMD_IOMMU_H
+ 
++#include <sys/bitstring.h>
+ #include <dev/iommu/iommu.h>
+ 
+ #define	AMDIOMMU_DEV_REPORTED	0x00000001
+@@ -54,7 +55,7 @@ struct amdiommu_ctx {
+ 	struct iommu_ctx context;
+ 	struct amdiommu_irte_basic_novapic *irtb;
+ 	struct amdiommu_irte_basic_vapic_x2 *irtx2;
+-	vmem_t *irtids;
++	bitstr_t *irtids;		/* IRTE indexes in use */
+ };
+ 
+ struct amdiommu_unit {
+-- 
+2.56.0
+

@@ -1,18 +1,36 @@
 # AMD XDNA 2 NPU (Strix Halo) on FreeBSD: the amdxdna port
 
 Goal: run [FastFlowLM](https://fastflowlm.com/) on the NPU of a Strix Halo
-machine under FreeBSD. Status (2026-11-16): the driver attaches, loads the
-NPU firmware, answers queries, and creates and destroys hardware contexts.
-Running a job, XRT and FastFlowLM are not done yet.
+machine under FreeBSD. Status (2026-11-16): done on frwk-bsd. The driver
+runs NPU jobs (`xrt-smi validate`: gemm 51 TOPS, latency 47 to 58 us)
+through a native XRT port. FastFlowLM runs llama3.2:1b (65 tok/s decode)
+and qwen3:8b (10.8 tok/s decode, 396 tok/s prefill on a 1246-token
+prompt) under linuxlator, because its NPU engines are closed Linux
+binaries. The driver reloads cleanly (6 kldload/kldunload cycles).
 
 Code:
 
 - drm-kmod branch [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna)
   on tag `drm_v6.12.85_3` (the graphics/drm-latest-kmod port): the Linux
-  driver imported unmodified, a drm fix, then the FreeBSD port.
-- freebsd-src branch [`olivier-lkpi-srcu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-srcu):
-  per-struct LinuxKPI SRCU, needed to destroy a hardware context
-  ([linuxkpi_srcu_per_struct.md](linuxkpi_srcu_per_struct.md)).
+  driver imported unmodified, two drm fixes, then the FreeBSD port.
+- freebsd-src branches, one fix each, all needed:
+  - [`olivier-lkpi-srcu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-srcu):
+    per-struct LinuxKPI SRCU, needed to destroy a hardware context
+    ([linuxkpi_srcu_per_struct.md](linuxkpi_srcu_per_struct.md)).
+  - [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu):
+    boots with the AMD IOMMU on. The NPU firmware is about 1000 times
+    slower with the IOMMU unit off ([amdiommu_ser6.md](amdiommu_ser6.md),
+    section 5.1).
+  - [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte):
+    frees interrupt remapping entries; without it the second kldload
+    fails ([amdiommu_irte_free.md](amdiommu_irte_free.md)).
+  - [`olivier-lkpi-pcim-iomap`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-pcim-iomap):
+    LinuxKPI `pcim_iomap()` leaked every BAR on unload
+    ([linuxkpi_pcim_iomap_release.md](linuxkpi_pcim_iomap_release.md)).
+- freebsd-ports branch [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu):
+  new port devel/xrt (XRT plus the amdxdna plugin, NPU only).
+- [../npu/linux-xrt-sysfs.sh](../npu/linux-xrt-sysfs.sh): builds the Linux
+  `/sys` entries that Linux XRT and FastFlowLM read, for linuxlator.
 - Test programs: [amdxdna_query.c](amdxdna_query.c) (firmware and hardware
   queries), [amdxdna_hwctx.c](amdxdna_hwctx.c) (device heap, user
   addresses, hardware context). Both build on Linux and FreeBSD.
@@ -64,9 +82,17 @@ failure, so the port bypasses the check on FreeBSD and prints a warning.
 
 ## 2. Using it
 
-1. Kernel with the LinuxKPI SRCU fix (branch `olivier-lkpi-srcu`), or at
-   least main with 71d26da7e43d (devres release on PCI detach; without it
-   kldunload leaks the device and the next kldload spins).
+1. Kernel with the four freebsd-src branches above (main has
+   71d26da7e43d, devres release on PCI detach, since 2026-11-04), booted
+   with the IOMMU on. Interrupt remapping only is enough:
+
+   ```
+   hw.amdiommu.enable=1
+   ```
+
+   `hw.iommu.dma=1` (DMA remapping too) also works, with
+   `hw.busdma.pci0.194.0.1=bounce` for the NPU (carveout addresses are
+   physical).
 2. Firmware from linux-firmware, decompressed:
    `/boot/firmware/amdnpu/17f0_11/npu_7.sbin` (1.1.2.65, md5
    `4840b9b0d5966228f07686b62e8accba`) and `npu.sbin` (1.0.0.166). The
@@ -79,12 +105,36 @@ failure, so the port bypasses the check on FreeBSD and prints a warning.
    cd drm-kmod/drm && make SYSDIR=<src>/sys
    cd ../amdxdna && make SYSDIR=<src>/sys
    ```
-4. Load, with the carveout size in MB:
+4. Load, with the carveout size in MB (FastFlowLM needs several GB; 8192
+   for the 1B to 8B models):
 
    ```
-   kenv hw.amdxdna.carveout_mb=1024
+   kenv hw.amdxdna.carveout_mb=8192
    kldload ./amdxdna.ko
    ```
+5. Native XRT: build devel/xrt from the ports branch with poudriere, then
+   `xrt-smi examine` and `xrt-smi validate`.
+6. FastFlowLM, under linuxlator. Its per-model NPU engines and core
+   libraries are closed Linux binaries that need glibc 2.38, newer than
+   the linux_base ports, so it runs in an Ubuntu 26.04 chroot with AMD's
+   packages:
+
+   ```
+   debootstrap --variant=minbase resolute /compat/ubuntu
+   # in the chroot: add the lemonade PPA, then
+   apt install libxrt-npu2 libxrt-utils-npu fastflowlm
+   R=/compat/ubuntu
+   mount -t linprocfs linprocfs $R/proc
+   mount -t devfs devfs $R/dev
+   mount -t tmpfs tmpfs $R/dev/shm
+   mount -t fdescfs fdescfs $R/dev/fd
+   sh linux-xrt-sysfs.sh $R      # after each amdxdna load
+   chroot $R flm run llama3.2:1b
+   ```
+
+   linsysfs has no `bus/pci/drivers/` and no NPU attributes, so
+   `linux-xrt-sysfs.sh` mounts a tmpfs on `$R/sys` and writes the entries
+   XRT reads from the FreeBSD sysctls.
 
 ```
 amdxdna0: <amdxdna> mem 0xb0a00000-0xb0afffff,... at device 0.1 on pci4
@@ -113,6 +163,29 @@ are `#ifdef __linux__` blocks, most marked `XXX FreeBSD`.
 | LinuxKPI refuses a mapping whose `vm_ops` lacks `open`/`close` | `mmap heap: Invalid argument` | carveout `vm_ops` gain `open`/`close`; the mapping holds a dma-buf reference, as Linux `dma_buf_mmap()` does |
 | LinuxKPI calls the driver mmap with `vm_start` 0 | kernel reported heap `vaddr` 0, device BO addresses wrong | look the address up in the process map (device pager object whose handle is the BO) |
 | LinuxKPI SRCU is one global epoch | hardware context destroy spins forever in `ck_epoch_synchronize_wait()` | LinuxKPI fix, [linuxkpi_srcu_per_struct.md](linuxkpi_srcu_per_struct.md) |
+| drm-kmod registers the static `hw.dri` node in the device sysctl context | after kldunload, `sysctl -a` panics on the freed `hw.dri` children | drm fix: keep `hw.dri` out of the device context |
+| `drm_clflush_sg()` on a carveout BO, which has no page array | panic in `drm_clflush_sg()` at the first command | flush carveout BOs through their kernel mapping |
+| XRT reads the PCI revision from sysfs to pick the device class | `xrt-smi`: `Unsupported hardware type` | publish `sys.device.amdxdnaN.revision` |
+| NPU firmware with the IOMMU unit off | every firmware message about 141 ms, `xrt-smi validate` latency about 95 ms per job | boot with `hw.amdiommu.enable=1` ([amdiommu_ser6.md](amdiommu_ser6.md)) |
+| amd_iommu never frees interrupt remapping entries; the NPU uses all 32 | second kldload: `failed to alloc irq vectors, ret -22` | amd_iommu fix, [amdiommu_irte_free.md](amdiommu_irte_free.md) |
+| LinuxKPI `pcim_iomap()` stores a bus handle as a resource | kldunload: `driver did not clean up; leaking mmio resources` | LinuxKPI fix, [linuxkpi_pcim_iomap_release.md](linuxkpi_pcim_iomap_release.md) |
+
+### XRT on FreeBSD (devel/xrt)
+
+XRT is Linux-only upstream. The port builds the NPU part only, with the
+amdxdna plugin in the XRT tree. Changes:
+
+- Device discovery: Linux XRT walks `/sys/bus/pci/drivers/amdxdna`. The
+  port reads `dev.amdxdna.N.%location` and `%pnpinfo`, and the driver
+  attributes from `sys.device.amdxdnaN.*`.
+- Linux headers (`linux/ioctl.h`, `asm/mman.h`, ...) come from small
+  compat headers in `files/freebsd-compat`; `MAP_LOCKED` is 0 and
+  `EKEYREJECTED` maps to `EAUTH`.
+- XRT links with `-Bsymbolic`, so each library has its own copy of
+  inline type information. libc++ compares `typeinfo` by address by
+  default, and `std::any_cast` across libraries failed (`bad any cast`).
+  `-D_LIBCPP_TYPEINFO_COMPARISON_IMPLEMENTATION=2` compares by name, as
+  libstdc++ does.
 
 The heap must be mapped at a 64 MB aligned user address
 (`AIE2_DEVM_SIZE`); Linux rejects an unaligned one too
@@ -121,9 +194,11 @@ the firmware interface, not of the port.
 
 ## 4. Tested
 
-frwk-bsd: kernel main-n291187-6871285f194d with the SRCU patch, drm-kmod
-`drm_v6.12.85_3` plus the branch, carveout 1024 MB. frwk-linux: Ubuntu
-kernel 7.0.0-43, stock `amdxdna` 0.7.0.
+frwk-bsd, final setup: kernel main-n291189-34d10ebaa57e (6871285f194d
+plus `olivier-amdiommu`, `olivier-lkpi-srcu`, `olivier-amdiommu-irte`,
+`olivier-lkpi-pcim-iomap`), GENERIC-NODEBUG, `hw.amdiommu.enable=1`,
+drm-kmod `drm_v6.12.85_3` plus the branch, carveout 8192 MB. frwk-linux:
+Ubuntu kernel 7.0.0-43, stock `amdxdna` 0.7.0.
 
 | Test | frwk-linux | frwk-bsd |
 |---|---|---|
@@ -134,9 +209,21 @@ kernel 7.0.0-43, stock `amdxdna` 0.7.0.
 | Heap `vaddr` reported by the kernel equals the mapping | matches | matches |
 | Device BO address inside the heap mapping, write visible through the heap | yes | yes |
 | Hardware context create and destroy | OK | OK, 5 runs in a row |
-| kldload / kldunload cycles | | 3 cycles with queries, clean |
+| `xrt-smi validate` gemm (native devel/xrt) | not run | 51.0 TOPS, PASSED |
+| `xrt-smi validate` latency | not run | 47 to 58 us, PASSED |
+| Same without the IOMMU unit | | gemm 51 TOPS; latency about 95 ms per job |
+| kldload / kldunload cycles | | 6 cycles, no leak message, NPU validates after them |
+| FastFlowLM 1.0.13 llama3.2:1b, short prompt | not run | prefill 108 tok/s, decode 65 tok/s |
+| FastFlowLM qwen3:8b, 24-token prompt | not run | prefill 19 tok/s, decode 11.4 tok/s |
+| FastFlowLM qwen3:8b, 1246-token prompt, 169 tokens out | not run | prefill 396 tok/s, decode 10.8 tok/s |
 | amdgpu next to it (`vulkaninfo --summary`) | | RADV STRIX_HALO |
 
-Not done: command submission (needs an NPU program, an xclbin, and XRT's
-command format), XRT and FastFlowLM, userptr BOs (`amdxdna_ubuf.c` returns
-`EOPNOTSUPP`), suspend, the ZBook itself.
+FastFlowLM runs under linuxlator (Ubuntu 26.04 chroot). It logs
+`SVA bind device failed` and `PASID not available` at open, as expected
+in carveout mode, and works.
+
+Not done: FastFlowLM and XRT on frwk-linux for a same-machine
+comparison, a native FastFlowLM (its NPU engines are closed Linux
+libraries), models larger than 8B, userptr BOs (`amdxdna_ubuf.c` returns
+`EOPNOTSUPP`), the NPU with a translated IOMMU domain, suspend, the ZBook
+itself. Known leak: 240 bytes of debugfs memory per unload.

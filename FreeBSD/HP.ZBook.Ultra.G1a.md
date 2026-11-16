@@ -92,7 +92,7 @@ Source: `pciconf -lv | grep -A4 '^none'`.
 | none3 | 195:0:5 | 1022:15e2 | Audio Coprocessor (ACP) | DSP for the internal digital microphones | internal microphone (probably) | `snd_acp_pci` |
 | none4 | 195:0:7 | 1022:164a | Sensor Fusion Hub / MP2 | sensor microcontroller; Linux uses it as an I2C controller | see below | `pcie_mp2_amd` (not `amd_sfh`) |
 | none5 | 196:0:0 | 1022:150d | PCIe dummy function | placeholder that carries the NPU function | nothing | none |
-| none6 | 196:0:1 | 1022:17f0 | NPU (XDNA 2) | low-power AI inference | job submission (port in progress, see below) | `amdxdna` |
+| none6 | 196:0:1 | 1022:17f0 | NPU (XDNA 2) | low-power AI inference | works with the drm-kmod port, not tested on this laptop (see below) | `amdxdna` |
 | none7 | 197:0:5 | 1022:158d | USB4 host router 0 | USB4/Thunderbolt fabric, PCIe tunneling | eGPU, PCIe docks | `thunderbolt` |
 | none8 | 197:0:6 | 1022:158e | USB4 host router 1 | same, second set of USB-C ports | same | `thunderbolt` |
 
@@ -211,11 +211,12 @@ Impact: unknown until the devices behind this I2C bus are identified; Linux expo
 
 AMD XDNA 2 NPU: 8 columns x 6 rows of AIE2 tiles, firmware 1.1.2.65.
 Linux driver: `amdxdna` (accel subsystem) plus AMD's XRT userspace; FastFlowLM runs LLMs on it.
-FreeBSD: a port of `amdxdna` to drm-kmod attaches, loads the firmware, answers queries and creates hardware contexts,
-in carveout mode (no IOMMU SVA on FreeBSD); measured on a Framework Desktop with the same NPU (1022:17f0 rev 0x11),
-not yet on this laptop. Job submission, XRT and FastFlowLM are not done.
+FreeBSD: a port of `amdxdna` to drm-kmod runs NPU jobs in carveout mode (no IOMMU SVA on FreeBSD), with the AMD IOMMU on.
+Measured on a Framework Desktop with the same NPU (1022:17f0 rev 0x11), not yet on this laptop:
+native XRT port (devel/xrt) `xrt-smi validate` gemm 51 TOPS, latency 47 to 58 us;
+FastFlowLM under linuxlator (its NPU engines are closed Linux binaries) runs llama3.2:1b at 65 tok/s decode and qwen3:8b at 10.8 tok/s decode.
 Details: [docs/amdxdna_npu.md](docs/amdxdna_npu.md).
-Impact: none yet; llama.cpp and similar run on the iGPU through Vulkan.
+Impact: LLM inference on the NPU, leaving the iGPU free; not compared with llama.cpp on the iGPU.
 
 ### USB4 host routers (197:0:5, 197:0:6)
 
@@ -328,7 +329,9 @@ the document that explains each one.
 | GPIO driver autoload | [`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) | 1 | `amdgpio: Add PNP info for devmatch` | |
 | ACPI properties | [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) | 1 | `acpi: Refuse property requests for other buses children` | |
 | LinuxKPI SRCU (needed by the NPU) | [`olivier-lkpi-srcu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-srcu) | 1 | fix, tested (test module, stress, mutant) | [docs/linuxkpi_srcu_per_struct.md](docs/linuxkpi_srcu_per_struct.md) |
-| NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna) | 3 | firmware, queries, hardware contexts work (tested on a Framework Desktop); no job submission yet | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
+| LinuxKPI `pcim_iomap()` BAR leak (needed by the NPU) | [`olivier-lkpi-pcim-iomap`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-pcim-iomap) | 1 | fix, tested on a Framework Desktop | [docs/linuxkpi_pcim_iomap_release.md](docs/linuxkpi_pcim_iomap_release.md) |
+| AMD IOMMU interrupt remap entries (needed by the NPU) | [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) | 1 | fix, tested on a Framework Desktop | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
+| NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna); ports [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu) (devel/xrt) | 7; 3 | jobs, XRT and FastFlowLM work (tested on a Framework Desktop, needs the IOMMU on) | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
 | AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) (not in `zbook`) | 2 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu display stalls (`flip_done timed out`); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
@@ -383,6 +386,10 @@ document gives the deeper tests of its own branch. Steps 10 and 11 are outside t
 | 9 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-8 | | |
 | 10 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 9 | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 | 11 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 10 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
+
+The NPU work is not in `zbook` and was not tested on this laptop. On top of steps 1 to 9 it needs `olivier-lkpi-srcu`, `olivier-amdiommu`,
+`olivier-amdiommu-irte` and `olivier-lkpi-pcim-iomap`, a boot with `hw.amdiommu.enable=1`, then drm-kmod `olivier-amdxdna` and the devel/xrt port:
+[docs/amdxdna_npu.md](docs/amdxdna_npu.md), section 2.
 
 ## Which drivers are worth the work
 
