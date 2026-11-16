@@ -815,9 +815,15 @@ Later tests, all without effect on the frame rate:
 So the ISP clock requests do not limit the frame rate (even skipping them
 changes nothing), and on Linux neither the platform profile nor `amd_pmf`
 at run time brings it down to 24. Not tested: Linux booted with `amd_pmf`
-never loaded. The 24 fps on FreeBSD stays unexplained. One first stream
-start after a boot also timed out once (no answer to `SET_STREAM_CONFIG`);
-the next start worked.
+never loaded. The 24 fps on FreeBSD stays unexplained.
+
+The first stream start after a boot sometimes gets no answer to
+`SET_STREAM_CONFIG` (seen twice in a day of tests); the next start works.
+`start_stream` now handles it: on that time-out it powers the ISP down,
+drops GPIO 85, logs `amdisp: stream start timed out, retrying`, and runs
+the whole power-up and set-up once more. The normal path is tested (three
+streams in a row, no retry); the retry path is not yet, since the time-out
+cannot be triggered on demand.
 
 ### Seventh step: YUYV
 
