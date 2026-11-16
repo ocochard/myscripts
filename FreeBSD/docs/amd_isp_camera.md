@@ -8,8 +8,8 @@ records what the Linux driver does, measured on the laptop, so the FreeBSD
 driver can be written from this description instead of from the Linux code.
 
 Status (2026-11-16): the camera works on Linux; on FreeBSD a test driver
-(`amdisp.ko`) provides `/dev/video0` (NV12 1920x1080, about 24 fps), usable
-with VLC, with the newer ISP firmware. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
+(`amdisp.ko`) provides `/dev/video0` (NV12 and YUYV 1920x1080, about 24
+fps), usable with VLC, with the newer ISP firmware. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
 Raw traces: [amd_isp/](amd_isp/).
 
 ## 1. Background
@@ -802,6 +802,26 @@ clock frequencies behind the SMU requests, or SoC power state set on Linux
 by `amd_pmf`, which FreeBSD lacks). A test with eight frame buffers got no
 frames and a test with two crashed the laptop; the driver stays at four.
 
+### Seventh step: YUYV
+
+The driver now offers a second mode, YUYV 1920x1080 at 30 fps, next to
+NV12. The firmware's image format for it is `7` ("YUV 4:2:2 interleaved",
+against `1` for NV12; a constant of the firmware interface, from the format
+list in Linux's driver header). `SET_OUT_CHAN_PROP` then carries a luma
+pitch of 3840 bytes (twice the width) and no chroma plane, and each
+`SEND_BUFFER` describes a single 4147200-byte plane. Frame buffers are
+allocated at the YUYV size so they fit both formats; `set_format` switches
+between them (refused while streaming).
+
+| Test | Result |
+|---|---|
+| `v4l2-ctl --list-formats-ext` | `NV12` and `YUYV`, both 1920x1080 at 30 fps |
+| `v4l2-ctl --set-fmt-video=...pixelformat=YUYV --stream-count=90` | 90 frames at 23.8 fps, 3840 bytes per line, 4147200 per image; the last frame decodes correctly as `yuyv422` (correct colours, mean Y 85) |
+| `vlc --live-caching=0 --v4l2-chroma=YUYV v4l2:///dev/video0` | VLC takes YUYV directly (`selected format YUYV (YUY2)`, no conversion), live picture |
+
+The copy into the `video(4)` buffer takes 0.17 ms per YUYV frame (4 MB),
+against 0.09 ms for NV12 (3 MB).
+
 ## 5. Next steps
 
 1. Done: the register-level protocol above (`mmiotrace` needs the module
@@ -852,4 +872,5 @@ the next reboot hung; a forced power off was needed. Always set the format
 | FreeBSD, `hw.amdisp.cmd=2` with the old (2025/02) ISP firmware | no frame: firmware reads `0x50`, notification `0x00030002` code `0xe` |
 | FreeBSD, `hw.amdisp.cmd=2` with Ubuntu's (2025/08) ISP firmware | 90 frames 1920x1080 NV12, correct picture |
 | FreeBSD, `/dev/video0` with `v4l2-ctl` and VLC | 23.8 fps, live picture in VLC, repeated streams work |
+| FreeBSD, `/dev/video0` in YUYV with `v4l2-ctl` and VLC | 23.8 fps, correct picture, VLC uses YUYV directly |
 | IR camera (HM1092) | untested, no driver on any system |
