@@ -190,6 +190,7 @@ First step: open the case and check the drive cooling.
 `vmm.ko` has its own `amdviiommu` driver for bhyve passthrough.
 `amdviiommu0 at device 0.2` in the message buffer comes from an earlier `vmm.ko` load; `vmm.ko` is not loaded now.
 Impact: none for desktop use.
+With `hw.amdiommu.enable=1` alone the stock kernel loops on USB attach; see [docs/amdiommu_ser6.md](docs/amdiommu_ser6.md) for the cause, two patches and measurements.
 
 ### PSP/CCP (116:0:2)
 
@@ -215,14 +216,15 @@ Impact: no PCIe tunneling (eGPU, NVMe enclosure, PCIe docks).
 
 ## Driver work in progress
 
-None of this is needed to run the machine: the patches fix detection and error reporting for the Bluetooth firmware.
+None of this is needed to run the machine. Patches 1 and 2 fix detection and error reporting for the Bluetooth firmware;
+patches 5 and 6 make the AMD IOMMU usable ([docs/amdiommu_ser6.md](docs/amdiommu_ser6.md)).
 Each patch is one commit, also pushed to the fork as the branch of the same name.
 
 ### Applying the work, in order
 
-Both freebsd-src patches apply on FreeBSD main 563c2f27e0ff (2026-11-16) in this order, without conflict
-(checked with `git cherry-pick` of both branches on a scratch branch).
-Neither touches the kernel.
+The four freebsd-src patches apply on FreeBSD main 563c2f27e0ff (2026-11-16) in this order, without conflict
+(checked with `git cherry-pick` of all four on a scratch branch).
+Patches 1 and 2 are userland; 5 and 6 are kernel.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
@@ -230,6 +232,9 @@ Neither touches the kernel.
 | 2 | freebsd-src [`iwmbtfw_syslog.patch`](docs/iwmbtfw_syslog.patch) (branch `olivier-iwmbtfw-syslog`) | 1 | | iwmbtfw errors reach syslog, or `dmesg -a` at boot | [docs/iwmbtfw_syslog.md](docs/iwmbtfw_syslog.md), [bug report](docs/bugreport_iwmbtfw_syslog.md) |
 | 3 | build and install world, or only `usr.sbin/fwget` and `usr.sbin/bluetooth/iwmbtfw` | | 1, 2 | | |
 | 4 | `fwget` (or `pkg install iwmbt-firmware`) | | 3 for `fwget` | reboot, or `iwmbtfw -d ugen1.3 -f /usr/local/share/iwmbt-firmware`; `ubt0` attaches | |
+| 5 | freebsd-src [`iommu_idmap_when_dma_disabled.patch`](docs/iommu_idmap_when_dma_disabled.patch) (branch `olivier-amdiommu`) | 1 | | `hw.amdiommu.enable=1` alone no longer loops | [docs/amdiommu_ser6.md](docs/amdiommu_ser6.md) |
+| 6 | freebsd-src [`amdiommu_skip_map_invalidation.patch`](docs/amdiommu_skip_map_invalidation.patch) (branch `olivier-amdiommu`) | 1 | | fewer IOMMU interrupts with `hw.iommu.dma=1` | [docs/amdiommu_ser6.md](docs/amdiommu_ser6.md) |
+| 7 | build and install the kernel | | 5, 6 | `hw.amdiommu.enable=1`, plus `hw.iommu.dma=1` for DMA protection, in `/boot/loader.conf`; test with `nextboot -e` first | |
 
 Not for this machine: [`rtlbtfw_syslog.patch`](docs/rtlbtfw_syslog.patch) (branch `olivier-rtlbtfw-syslog`, [docs/rtlbtfw_syslog.md](docs/rtlbtfw_syslog.md)) fixes the same bug in the Realtek loader; the SER6 has no Realtek Bluetooth.
 

@@ -1,0 +1,107 @@
+From fec0a6923fdad7a02041ce0a96ea5a4e343a5de5 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 15:34:58 +0100
+Subject: [PATCH] amdiommu: Skip the invalidation after a map that only fills
+ PTEs
+
+amdiommu_map_buf() waited for an invalidation after every map, so each
+busdma load cost a command round trip and a completion interrupt.  On
+a Ryzen 7 7735HS this capped NVMe reads at 44 MB/s with 46 IOMMU
+interrupts per 128 KB read.
+
+Filling non-present PTEs needs no invalidation unless the capability
+header reports NpCache, which is how Linux handles it.  A new PDE still
+does: unmap frees empty page table pages and clears their PDE before
+the deferred invalidation runs, and skipping the flush then produced
+IO_PAGE_FAULTs from nvme(4).
+
+MFC after:	1 week
+---
+ sys/x86/iommu/amd_drv.c     |  2 ++
+ sys/x86/iommu/amd_idpgtbl.c | 16 ++++++++++++----
+ sys/x86/iommu/amd_iommu.h   |  2 ++
+ 3 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/sys/x86/iommu/amd_drv.c b/sys/x86/iommu/amd_drv.c
+index ba6abae055fa..c871681c3793 100644
+--- a/sys/x86/iommu/amd_drv.c
++++ b/sys/x86/iommu/amd_drv.c
+@@ -484,6 +484,8 @@ amdiommu_attach(device_t dev)
+ 	error = pci_find_cap(dev, PCIY_SECDEV, &sc->seccap_reg);
+ 	if (error != 0 || sc->seccap_reg == 0)
+ 		return (ENXIO);
++	sc->cap_hdr = pci_read_config(dev, sc->seccap_reg +
++	    PCIR_AMDIOMMU_CAP_HEADER, 4);
+ 
+ 	base_low = pci_read_config(dev, sc->seccap_reg +
+ 	    PCIR_AMDIOMMU_BASE_LOW, 4);
+diff --git a/sys/x86/iommu/amd_idpgtbl.c b/sys/x86/iommu/amd_idpgtbl.c
+index 007883ccdaa9..a84d543756aa 100644
+--- a/sys/x86/iommu/amd_idpgtbl.c
++++ b/sys/x86/iommu/amd_idpgtbl.c
+@@ -174,6 +174,7 @@ amdiommu_pgtbl_map_pte(struct amdiommu_domain *domain, iommu_gaddr_t base,
+ 			ptep->pte = VM_PAGE_TO_PHYS(m) |  AMDIOMMU_PTE_IR |
+ 			    AMDIOMMU_PTE_IW | AMDIOMMU_PTE_PR |
+ 			    ((domain->pglvl - lvl) << AMDIOMMU_PTE_NLVL_SHIFT);
++			domain->pde_set = true;
+ 			vm_page_wire(sf_buf_page(sfp));
+ 			vm_page_unwire_noq(m);
+ 			iommu_unmap_pgtbl(sfp);
+@@ -236,6 +237,7 @@ amdiommu_map_buf(struct iommu_domain *iodom, struct iommu_map_entry *entry,
+ 	uint64_t pflags;
+ 	iommu_gaddr_t base, size;
+ 	int error;
++	bool pde_set;
+ 
+ 	base = entry->start;
+ 	size = entry->end - entry->start;
+@@ -273,16 +275,22 @@ amdiommu_map_buf(struct iommu_domain *iodom, struct iommu_map_entry *entry,
+ 	KASSERT((flags & ~IOMMU_PGF_WAITOK) == 0, ("invalid flags %x", flags));
+ 
+ 	AMDIOMMU_DOMAIN_PGLOCK(domain);
++	domain->pde_set = false;
+ 	error = amdiommu_map_buf_locked(domain, base, size, ma, pflags,
+ 	    flags, entry);
++	pde_set = domain->pde_set;
+ 	AMDIOMMU_DOMAIN_PGUNLOCK(domain);
+ 
+ 	/*
+-	 * XXXKIB invalidation seems to be needed even for non-valid->valid
+-	 * updates.  Recheck.
++	 * Filling a non-present PTE needs no invalidation unless the
++	 * IOMMU caches non-present entries (NpCache).  A new PDE does:
++	 * unmap clears a PDE before its invalidation is done, so the
++	 * IOMMU may still hold the old one.
+ 	 */
+-	iommu_qi_invalidate_sync(iodom, base, size,
+-	    (flags & IOMMU_PGF_WAITOK) != 0);
++	if (pde_set ||
++	    (DOM2AMD(domain)->cap_hdr & PCIM_AMDIOMMU_CAP_NPCACHE) != 0)
++		iommu_qi_invalidate_sync(iodom, base, size,
++		    (flags & IOMMU_PGF_WAITOK) != 0);
+ 	return (error);
+ }
+ 
+diff --git a/sys/x86/iommu/amd_iommu.h b/sys/x86/iommu/amd_iommu.h
+index b9f07418ca9d..e033b29f35d3 100644
+--- a/sys/x86/iommu/amd_iommu.h
++++ b/sys/x86/iommu/amd_iommu.h
+@@ -48,6 +48,7 @@ struct amdiommu_domain {
+ 	vm_object_t pgtbl_obj;		/* (c) Page table pages */
+ 	vm_page_t pgtblr;		/* (c) Page table root page */
+ 	u_int pglvl;			/* (c) Page table levels */
++	bool pde_set;			/* Map wrote a PDE, under pglock */
+ };
+ 
+ struct amdiommu_ctx {
+@@ -65,6 +66,7 @@ struct amdiommu_unit {
+ 	u_int		unit_id;	/* Hypertransport Unit ID, deprecated */
+ 	TAILQ_ENTRY(amdiommu_unit) unit_next;
+ 	int		seccap_reg;
++	uint32_t	cap_hdr;	/* Capability header */
+ 	uint64_t	efr;
+ 	vm_paddr_t	mmio_base;
+ 	vm_size_t	mmio_sz;
+-- 
+2.56.0
+

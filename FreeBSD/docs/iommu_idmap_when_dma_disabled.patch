@@ -1,0 +1,45 @@
+From 9f87b7cf6fdb8f00a4976df59dff7486613ad32f Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 15:34:06 +0100
+Subject: [PATCH] iommu: Identity-map contexts when DMA remapping is disabled
+
+With hw.amdiommu.enable=1 alone, interrupt remapping is on and DMA
+remapping is off.  amdiommu_ir_find() still instantiates a context for
+each MSI source, and it got a translating domain with an empty page
+table while busdma kept handing out physical addresses, so every DMA
+from these devices faulted.  On a Ryzen 7 7735HS the USB devices
+attached in an endless loop.
+
+Treat a unit with DMA remapping disabled like a device with remapping
+disabled: give the context the identity mapping.
+
+Fixes:		0f5116d7efe3 ("AMD IOMMU driver")
+MFC after:	1 week
+---
+ sys/dev/iommu/busdma_iommu.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/sys/dev/iommu/busdma_iommu.c b/sys/dev/iommu/busdma_iommu.c
+index 3852429c4a8a..62fda6143892 100644
+--- a/sys/dev/iommu/busdma_iommu.c
++++ b/sys/dev/iommu/busdma_iommu.c
+@@ -261,10 +261,13 @@ iommu_instantiate_ctx(struct iommu_unit *unit, device_t dev, bool rmrr)
+ 	 * cannot disable the IOMMU unit, due to possibility of other
+ 	 * devices on the same IOMMU unit still requiring translation.
+ 	 * Instead provide the identity mapping for the device
+-	 * context.
++	 * context.  Do the same when DMA remapping is disabled for
++	 * the unit: busdma then does not use the context, but
++	 * interrupt remapping might still create it.
+ 	 */
+-	disabled = iommu_bus_dma_is_dev_disabled(pci_get_domain(requester),
+-	    pci_get_bus(requester), pci_get_slot(requester), 
++	disabled = !unit->dma_enabled ||
++	    iommu_bus_dma_is_dev_disabled(pci_get_domain(requester),
++	    pci_get_bus(requester), pci_get_slot(requester),
+ 	    pci_get_function(requester));
+ 	ctx = iommu_get_ctx(unit, requester, rid, disabled, rmrr);
+ 	if (ctx == NULL)
+-- 
+2.56.0
+
