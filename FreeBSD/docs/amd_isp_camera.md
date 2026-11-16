@@ -9,7 +9,7 @@ driver can be written from this description instead of from the Linux code.
 
 Status (2026-11-16): the camera works on Linux; on FreeBSD a test driver
 (`amdisp.ko`) provides `/dev/video0` (NV12 and YUYV, ten sizes from
-640x360 to 2888x1808, about 24 fps), usable with VLC, with the newer ISP
+640x360 to 2888x1808, 30 fps), usable with VLC, with the newer ISP
 firmware. Hardware context: [HP.ZBook.Ultra.G1a.md](../HP.ZBook.Ultra.G1a.md#cameras-isp-41--sensors).
 Raw traces: [amd_isp/](amd_isp/).
 
@@ -773,8 +773,8 @@ Measured, with the 2025/08 ISP firmware:
 | `v4l2-ctl --stream-mmap=4 --stream-count=60`, three times in a row | 60 frames each at 23.8 fps, clean stop |
 | `vlc v4l2:///dev/video0` | live picture; VLC selects I420 and `libv4l` converts from NV12; first picture received, clean stop |
 
-Limits of this version: 24 fps instead of 30 (the firmware's own frame
-interval, see below), one mode (VLC needs `--live-caching=0` for low
+Limits of this version: 24 fps instead of 30 (a lost frame in five, found
+and fixed later, see the root cause below), one mode (VLC needs `--live-caching=0` for low
 latency), and it needs the newer ISP firmware.
 
 Latency: the second seen in VLC is VLC's own buffering
@@ -996,9 +996,51 @@ shows four `SEND_BUFFER` before `START_STREAM` and four after it. (The
 earlier eight-buffer test sent all eight before the start and got no
 frames.) With eight buffers, four sent after `START_STREAM`, FreeBSD
 streams at 29.83 fps, 33.5 ms per frame, no meta info without a frame:
-the same as Linux. Tested at 1920x1080 NV12 and YUYV and 640x360 NV12;
-2888x1808 NV12 right after them reset the laptop (no panic message, no
-dump), which still has to be isolated before this change is committed.
+the same as Linux.
+
+Eight buffers then exposed a bug in the stop path. Back-to-back stream
+starts across formats reset the laptop twice (no panic message, no dump)
+and once left the ISP firmware unable to boot (status `0x2400` until a
+reboot), while the four-buffer driver ran 20 starts cleanly. The kernel
+log, streamed live to another machine during a failing run, shows why:
+
+```
+sent cmd 0x02010005 seq 142                       ENABLE_OUT_CHAN (disable)
+resp seq 140 ... w2 0x8c w3 0x2040001             done of a buffer re-queue
+resp seq 141 ... w2 0x8d w3 0x2040001             done of a buffer re-queue
+sent cmd 0x02010008 seq 143                       STOP_STREAM
+resp seq 142 ... w2 0x8e w3 0x2010005             done of ENABLE_OUT_CHAN
+stopped                                           ISP powered down
+```
+
+`isp_cmd_wait()` returned on the first "command done" in the response
+ring, whatever command it answered. When the stream stops, the dones of
+the last buffer re-queues are still waiting there, so the wait for
+`ENABLE_OUT_CHAN` returned on one of them, the wait for `STOP_STREAM`
+returned on the done of `ENABLE_OUT_CHAN`, and the driver halted and
+powered down the ISP while the firmware was still stopping the stream,
+with frame buffers in flight. With four buffers the race was rare; with
+eight, more re-queues are pending at stop and it hit within a few
+starts. A "command done" carries the command's sequence number in word 2
+(and its identifier in word 3), so `isp_cmd_wait()` now waits for the done
+whose word 2 is the sequence number of the command it sent. In the fixed
+driver `STOP_STREAM`'s own done (`w2 0x8f w3 0x2010008`) arrives 44 ms
+after the command, and only then is the ISP powered down. The start path
+also waits 25 ms, not 10, between dropping and raising GPIO 85: Linux
+notes that the hardware needs at least 20 ms (`isp4sd_pwroff_and_deinit`).
+
+Five formats in turn (1920x1080 YUYV, 640x360, 2888x1808, 1920x1080 and
+1280x720 NV12), one stream start each, 60 frames per stream:
+
+| Driver | Starts | Result |
+|---|---|---|
+| four frame buffers | 20 | all streams OK, 23.9 fps |
+| eight buffers, old command wait | 4, 1, 1 (three runs) | two laptop resets, one ISP that no longer boots |
+| eight buffers, command wait matched by sequence number | 25 + 10 | all streams OK, 29.8 fps, no lost frame |
+
+The two changes are commits `74e70fb273` ("amdisp: Wait for the done of
+the command just sent") and `08d18e0bde` ("amdisp: Give the firmware eight
+frame buffers") on branch `olivier-amdisp`.
 
 The first stream start after a boot sometimes gets no answer to
 `SET_STREAM_CONFIG` (seen twice in a day of tests); the next start works.
@@ -1080,7 +1122,8 @@ frame buffers are allocated for the largest mode (2888x1808 YUYV, about
 Every run delivered exactly 40 frames of the right size, and the firmware's
 meta info reports the requested size. Frames at the two extremes (2888x1808
 NV12 and 640x480 YUYV) decode to correct pictures with no stride errors.
-The frame rate stays at about 24 fps at every size.
+The frame rate stays at about 24 fps at every size (30 fps since the
+eight-buffer fix described above).
 
 ## 5. Next steps
 
@@ -1135,4 +1178,5 @@ the next reboot hung; a forced power off was needed. Always set the format
 | FreeBSD, `/dev/video0` in YUYV with `v4l2-ctl` and VLC | 23.8 fps, correct picture, VLC uses YUYV directly |
 | FreeBSD, interrupt-driven (amdgpu IH client ISP) | 452 interrupts for 130 frames, 23.8 fps, no polling |
 | FreeBSD, ten sizes 640x360 to 2888x1808, NV12 and YUYV | all modes stream at about 24 fps, correct size and picture |
+| FreeBSD, eight frame buffers and matched command wait, 35 back-to-back starts over five formats | 29.8 fps, no lost frame, no failure |
 | IR camera (HM1092) | untested, no driver on any system |
