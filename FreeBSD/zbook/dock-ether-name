@@ -1,0 +1,12 @@
+#!/bin/sh
+# Called by devd for every new ueN: give the dock's USB Ethernet the fixed
+# name dock0, so that rc.conf configures it whatever number USB gave it
+# (after a resume a second USB Ethernet can come back first as ue0).
+DOCK_MAC=00:e0:4c:68:03:2a
+
+ifc=$1
+ifconfig "$ifc" 2>/dev/null | grep -q "ether $DOCK_MAC" || exit 0
+ifconfig dock0 >/dev/null 2>&1 && exit 0
+ifconfig "$ifc" name dock0 >/dev/null || exit 1
+logger -t dock-ether-name "$ifc renamed dock0"
+/etc/pccard_ether dock0 start

@@ -360,8 +360,9 @@ test trap: `rc.conf` gives the dock's USB Ethernet a static address as
 `ue0`, but USB adapters are renumbered on resume, so a second USB
 Ethernet (the KVM's) can come back as `ue0` and take the address and the
 default route. Fixed on the laptop with a fixed name: a devd rule
-(`/usr/local/etc/devd/dock-ether.conf`, `IFNET` `ATTACH` on `ue[0-9]+`)
-runs a script that renames the adapter with the dock's MAC address to
+([zbook/dock-ether.conf](zbook/dock-ether.conf), installed in
+`/usr/local/etc/devd/`, `IFNET` `ATTACH` on `ue[0-9]+`) runs a script
+([zbook/dock-ether-name](zbook/dock-ether-name), in `/usr/local/sbin/`) that renames the adapter with the dock's MAC address to
 `dock0` and starts it with `/etc/pccard_ether`, and `rc.conf` configures
 `ifconfig_dock0` instead of `ifconfig_ue0`; tested by resetting the
 adapter (`usbconfig reset`): it came back as `ue1`, was renamed `dock0`
