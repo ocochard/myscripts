@@ -774,17 +774,18 @@ Measured, with the 2025/08 ISP firmware:
 
 Limits of this version: 24 fps instead of 30 (each 3 MB frame is copied
 out of a write-combined GPU buffer, which the CPU reads slowly, and the
-response ring is polled), one mode, about one second of latency seen in
-VLC, and it needs the newer ISP firmware.
+response ring is polled), one mode (VLC needs `--live-caching=0` for low
+latency), and it needs the newer ISP firmware.
 
-Latency, not measured yet: part of the second is VLC's own buffering
+Latency: the second seen in VLC is VLC's own buffering
 (`--live-caching`, "Caching value for cameras and microphones", 300 ms by
-default). On the driver side a frame waits at most for the next 1 ms poll
+default, plus its decoder and display queues): with
+`vlc --live-caching=0 v4l2:///dev/video0` the delay is gone (checked by eye
+on the laptop). On the driver side a frame waits at most for the next 1 ms poll
 and its copy (a few ms); the ISP keeps four frame buffers in flight, so a
 frame can be up to about 130 ms old when delivered; `video(4)` timestamps
-each buffer with the uptime when it is completed. Next check: the same
-view with `vlc --live-caching=0`, and timing a known event (a stopwatch on
-screen) against the captured frame.
+each buffer with the uptime when it is completed. A precise measurement (a stopwatch on screen against the captured frame)
+is still to do.
 
 ## 5. Next steps
 
