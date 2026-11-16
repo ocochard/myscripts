@@ -325,6 +325,29 @@ the document that explains each one.
 | ACPI properties | [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) | 1 | `acpi: Refuse property requests for other buses children` | |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
+### Applying the work, in order
+
+The eight freebsd-src branches apply in this order, without conflict, as
+32 cherry-picked commits on FreeBSD main 0bf5d86620d0 (2026-11-16). The
+whole combination is checked for applying only, not built or booted: the
+laptop's test kernel has `olivier-mt7925`, `olivier-s2idle-wake` and two
+of the four `olivier-amdsmu-strixhalo` commits; each document gives the
+tests of its own branch. Steps 10 and 11 are outside the kernel source.
+
+| # | Apply | Commits | Depends on | Then | Document |
+|---|---|---|---|---|---|
+| 1 | freebsd-src [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) | 1 | | | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) (section 3.4) |
+| 2 | freebsd-src [`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) | 1 | | devmatch loads `amdgpio` (otherwise add it to `kld_list`) | |
+| 3 | freebsd-src [`olivier-ig4-amd-clock`](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock) | 1 | | | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
+| 4 | freebsd-src [`olivier-pci-d3hot`](https://github.com/ocochard/freebsd-src/compare/main...olivier-pci-d3hot) | 1 | | | [docs/pci_d3hot.md](docs/pci_d3hot.md), [patch](docs/pci_d3hot.patch) |
+| 5 | freebsd-src [`olivier-s2idle-wake`](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) | 3 | `amdgpio` loaded | | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
+| 6 | freebsd-src [`olivier-amdsmu-strixhalo`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) | 4 | | | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
+| 7 | freebsd-src [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | 1, 2, 3 | firmware port `audio/sound-firmware-cirrus-kmod` (not committed yet); devmatch loads `snd_cs35l54` | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
+| 8 | freebsd-src [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 11 | | MT7925 firmware (port PR 300731); `if_mt7925` in `kld_list` | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
+| 9 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-8 | | |
+| 10 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 9 | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
+| 11 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 10 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
+
 ## Which drivers are worth the work
 
 1. Wi-Fi (MT7925).
