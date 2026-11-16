@@ -5,7 +5,7 @@ AMD Ryzen 7 7735HS (Rembrandt-R, Zen 3+, 8 cores / 16 threads), Radeon 680M.
 Memory: 64 GB (`hw.physmem` 64102391808), minus the BIOS VRAM carve-out (amdgpu: `4096M of VRAM`).
 Tested: FreeBSD 16.0-CURRENT main-n290674-7806832f23fb (2026-11-05, with local changes), GENERIC-NODEBUG.
 
-Sources, collected on 2026-11-16: `pciconf -lv`, `devinfo -v`, `usbconfig`, `/var/run/dmesg.boot`, `kldstat`, `/var/log/messages*`.
+Status as of 2026-11-16 evening. Sources, collected on 2026-11-16: `pciconf -lv`, `devinfo -v`, `usbconfig`, `/var/run/dmesg.boot`, `kldstat`, `/var/log/messages*`.
 Device IDs checked against FreeBSD main 70cf7c62ee14 (2026-11-15) and Linux 3b5f4b83c4ab (2026-07-28).
 No Linux boot on this machine: the "Linux driver" columns come from the Linux source, not from a running system.
 
@@ -18,14 +18,15 @@ No Linux boot on this machine: the "Linux driver" columns come from the Linux so
 | Analog audio | 1022:15e3 + Conexant 0x1f87 codec | `hdac1`, `pcm3` (jack, play/rec), `pcm4` (analog microphone) |
 | NVMe | Kingston NV2 (2646:5017) | `nvme`/`nda` (see [NVMe event flood](#nvme-event-flood)) |
 | 2.5G Ethernet | Realtek RTL8125B (10ec:8125) | `rge` |
-| Wi-Fi | Intel AX200 (8086:2723) | `iwlwifi`, loaded by devmatch; `wlan0` created, association not tested |
+| Wi-Fi | Intel AX200 (8086:2723) | `iwlwifi`, loaded by devmatch; `wlan0` associates with WPA and gets a DHCP lease (tested 2026-11-16, not enabled in `rc.conf`) |
+| Bluetooth | Intel AX200 (8087:0029 on USB) | `ng_ubt` after `iwmbtfw` loads the firmware; needs `iwmbt-firmware` (installed 2026-11-16), see [below](#usb-devices-without-a-working-driver) |
 | USB 3 | five xHCI (1022:161d, 161e, 161f, 15d6, 15d7) | `xhci` |
 | I2C controllers | AMDI0010 DesignWare | `ig4iic0-1`, no child device on either `iicbus` |
 | SMBus | FCH 1022:790b | `intsmb` |
 | CPU frequency | CPPC | `hwpstate_amd` |
 | CPU temperature | Family 19h data fabric | `amdtemp`, `amdsmn` |
 | CPU idle | ACPI C-states | `cx_lowest` C8, 97.7% of time in C3 on CPU 0 |
-| TPM 2.0 | MSFT0101, firmware TPM | `tpmcrb` (CRB, ACPI start method 2) |
+| TPM 2.0 | MSFT0101, firmware TPM | `tpmcrb` (CRB, ACPI start method 2), only with a kernel from main of 2026-11-12 or later, see below |
 | Power button, EC | ACPI | `acpi_button`, `acpi_ec` |
 | WMI | PNP0C14 | `acpi_wmi` |
 | Sleep | S3 (`hw.acpi.supported_sleep_state: S3 S4 S5`) | one resume logged on 2026-11-04 by `acpi[3149]: resumed`; not tested again |
@@ -37,10 +38,12 @@ and `REG_WAIT timeout 1us * 100000 tries - optc31_disable_crtc` (2026-10-13).
 GPU resets with a successful recovery (`GPU reset succeeded`, `SMU is resumed successfully!`) are logged on 2026-11-05 and 2026-11-08.
 The cause of these resets is not checked.
 
-TPM: on 2026-11-16 `\_SB_.TPM_` shows as `unknown` in `devinfo`, because it was detached with `devctl` for a test.
-`tpmcrb0` attaches at boot.
-The boot also prints `Module acpi/tpmcrb failed to register: 17` (and the same for `tpm`, `tpmtis`, `isa/tpm`):
-a `tpm.ko` was preloaded on top of the copy built into GENERIC. Harmless.
+TPM: this firmware TPM uses the ACPI start method (TPM2 table StartMethod 2).
+`tpm_crb` supports it since 6af18560a124 ("tpm: crb: Support the ACPI start method", main of 2026-11-12).
+The installed kernel (main-n290674, 2026-11-05) is older: `\_SB_.TPM_` stays `unknown` in `devinfo` and there is no `/dev/tpm0`.
+Earlier on 2026-11-16, a boot with a preloaded test `tpm.ko` attached `tpmcrb0: <Trusted Platform Module 2.0, CRB mode (ACPI start)>`,
+with `Module acpi/tpmcrb failed to register: 17` (and the same for `tpm`, `tpmtis`, `isa/tpm`) because GENERIC also has `device tpm`.
+That test kernel is removed. Fix: a kernel from current main.
 
 ## PCI devices without driver
 
@@ -48,7 +51,7 @@ Source: `pciconf -l | grep ^none`.
 
 | pciconf | Address | ID | Device | Purpose | Missing on FreeBSD | Linux driver |
 |---|---|---|---|---|---|---|
-| none0 | 0:0:2 | 1022:14b6 | IOMMU | DMA protection, PCI passthrough | nothing: `amdiommu` exists, off by default | IOMMU core |
+| none0 | 0:0:2 | 1022:14b6 | IOMMU | DMA protection, PCI passthrough | nothing: `amdiommu` exists, off by default; with two patches it works, see [docs/amdiommu_ser6.md](docs/amdiommu_ser6.md) | IOMMU core |
 | none1 | 116:0:2 | 1022:1649 | PSP/CCP | security processor and crypto offload | crypto offload, nothing visible | `ccp` (`sp-pci.c` lists 0x1649) |
 | none2 | 116:0:5 | 1022:15e2 rev 0x60 | Audio Coprocessor (ACP 6.x) | DSP for digital microphones | nothing seen on this machine | `snd_pci_acp6x` (Yellow Carp, rev 0x60) |
 | none3 | 117:0:5 | 1022:162e | USB4/Thunderbolt NHI | USB4 fabric, PCIe tunneling | eGPU, PCIe docks | `thunderbolt` |
@@ -57,11 +60,11 @@ Source: `pciconf -l | grep ^none`.
 
 | ugen | ID | Device | State |
 |---|---|---|---|
-| ugen1.3 | 8087:0029 (bcdDevice 0x0001) | Intel AX200 Bluetooth | no driver attached: firmware not loaded (fixed 2026-11-16, see below) |
+| ugen1.3 | 8087:0029 (bcdDevice 0x0001) | Intel AX200 Bluetooth | fixed 2026-11-16: `iwmbt-firmware` installed, `ubt0` attaches at every boot |
 
 The AX200 Bluetooth part starts in bootloader mode and needs host-loaded firmware.
 FreeBSD has the loader: `/etc/devd/iwmbtfw.conf` runs `iwmbtfw -f /usr/local/share/iwmbt-firmware`.
-The firmware package (`comms/iwmbt-firmware`) is not installed, so the directory does not exist.
+Before 2026-11-16 the firmware package (`comms/iwmbt-firmware`) was not installed, so the directory did not exist and no driver attached.
 `ubt0` attached in October (`/var/log/messages` of 2026-10-13); the firmware state then is not known.
 Fix, tested 2026-11-16: `pkg install iwmbt-firmware`, then `iwmbtfw -d ugen1.3 -f /usr/local/share/iwmbt-firmware` (or reboot).
 `iwmbtfw` prints `Firmware download is successful!`, `ubt0` attaches, and `hccontrol -n ubt0hci read_bd_addr` answers.
@@ -71,11 +74,12 @@ Nothing tells the user that this package is missing:
 - `fwget(8)` handles only one USB vendor, Ralink (`usr.sbin/fwget/usb/usb_ralink`).
   `fwget -n -v` lists the Wi-Fi and GPU packages for this machine, but no Bluetooth package.
 - `iwmbtfw` reports the missing file on stderr only (`warn()` in `iwmbt_fw_read()`).
-  devd starts it, so the message does not reach syslog: `/var/log/messages` has no `iwmbtfw` line.
+  devd starts it with stderr on `/dev/null`, and at boot before syslogd: `/var/log/messages` has no `iwmbtfw` line.
 - In bootloader mode, `ng_ubt_intel` rejects the device without a message (`ENXIO` in probe).
   The only trace is a `ugen1.3` with no driver.
 
-Fix in FreeBSD: a `usb_intel` script for `fwget`, see [docs/fwget_usb_intel_bluetooth.md](docs/fwget_usb_intel_bluetooth.md).
+Fixes in FreeBSD: a `usb_intel` script for `fwget` ([docs/fwget_usb_intel_bluetooth.md](docs/fwget_usb_intel_bluetooth.md))
+and syslog plus console logging in `iwmbtfw` ([docs/iwmbtfw_syslog.md](docs/iwmbtfw_syslog.md)); both tested on this machine.
 
 ## ACPI devices without driver
 
@@ -87,7 +91,7 @@ Source: `devinfo -v | grep 'unknown pnpinfo'`, without the `PWRS` power resource
 | AMDI0030 | `\_SB_.GPIO` | GPIO controller | `pinctrl-amd`; FreeBSD `amdgpio(4)` exists, not loaded by default |
 | AMDI0052 | `\_SB_.PPKG` | DSDT: `_HID` and `_STA` (always 0x0F) only | none bound; Linux uses the ID only as an ASoC machine match (`acp63-acp`) |
 | ACPI000E | `\_SB_.ACDC` | Time and Alarm Device: wake timer, RTC | `acpi_tad` |
-| MSFT0101 | `\_SB_.TPM_` | TPM 2.0 | detached for a test, see above |
+| MSFT0101 | `\_SB_.TPM_` | TPM 2.0 | installed kernel too old for its ACPI start method, see [What works](#what-works) |
 | PNP0800, PNP0000 | `SBRG.SPKR`, `SBRG.PIC_` | legacy PC speaker and 8259 PIC: nothing to do | n/a |
 
 `amdgpio` loads and attaches (2026-11-16):
@@ -190,7 +194,13 @@ First step: open the case and check the drive cooling.
 `vmm.ko` has its own `amdviiommu` driver for bhyve passthrough.
 `amdviiommu0 at device 0.2` in the message buffer comes from an earlier `vmm.ko` load; `vmm.ko` is not loaded now.
 Impact: none for desktop use.
-With `hw.amdiommu.enable=1` alone the stock kernel loops on USB attach; see [docs/amdiommu_ser6.md](docs/amdiommu_ser6.md) for the cause, two patches and measurements.
+Tested 2026-11-16 ([docs/amdiommu_ser6.md](docs/amdiommu_ser6.md)):
+
+- stock kernel, `hw.amdiommu.enable=1` alone: USB devices attach in an endless loop, power cycle needed;
+- stock kernel, plus `hw.iommu.dma=1`: works, but 128 KB NVMe reads lose about 45%;
+- with the two patches: both settings work; the read loss drops to about 25%, with 0 IOMMU events.
+
+On this machine the protection buys little (no PCIe tunneling over USB4 on FreeBSD yet), so the IOMMU stays off.
 
 ### PSP/CCP (116:0:2)
 
@@ -238,14 +248,22 @@ Patches 1 and 2 are userland; 5 and 6 are kernel.
 
 Not for this machine: [`rtlbtfw_syslog.patch`](docs/rtlbtfw_syslog.patch) (branch `olivier-rtlbtfw-syslog`, [docs/rtlbtfw_syslog.md](docs/rtlbtfw_syslog.md)) fixes the same bug in the Realtek loader; the SER6 has no Realtek Bluetooth.
 
+## Interrupt rates at idle
+
+Seen on 2026-11-16 in `vmstat -i`, with and without the IOMMU:
+`xhci1` takes 1000 to 1850 interrupts per second and `hdac1` about 810 per second, on an idle machine.
+`xhci1` (usbus1) has the keyboard and the Bluetooth adapter; `hdac1` is the Conexant analog codec.
+Cause not investigated; it costs wakeups and some power.
+
 ## Which drivers are worth the work
 
 Nothing important is missing on this machine.
-Three setup items give more than any new driver:
+Four setup items give more than any new driver:
 
-1. Bluetooth: install `iwmbt-firmware` (done 2026-11-16). `fwget` patch for detection: see above.
+1. Bluetooth: install `iwmbt-firmware` (done 2026-11-16). `fwget` and `iwmbtfw` patches: see above.
 2. GPU: add `amdgpu` to `kld_list` if the machine runs a desktop. Today it is loaded by hand.
 3. NVMe: the threshold is the 83 C default; the drive heats under load, see [NVMe event flood](#nvme-event-flood). Fix the cooling, not the threshold.
+4. TPM: update the kernel to main of 2026-11-12 or later.
 
 Skip:
 
