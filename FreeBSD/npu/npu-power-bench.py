@@ -35,9 +35,7 @@ FREEBSD = sys.platform.startswith("freebsd")
 
 def metrics():
     if FREEBSD:
-        raw = subprocess.run(["sysctl", "-b", "sys.device.drmn0.gpu_metrics"],
-                             capture_output=True, check=True).stdout
-        return gpu_metrics.decode(raw)
+        return gpu_metrics.decode(gpu_metrics.sysctl_raw())
     return gpu_metrics.read()
 
 

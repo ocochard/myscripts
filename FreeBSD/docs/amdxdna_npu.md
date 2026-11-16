@@ -343,8 +343,9 @@ What it shows:
 - FreeBSD: same speeds, but more power than Linux: 6 to 8 W at idle,
   3 W during NPU decode, 12 W during iGPU decode. Energy per decoded
   token is 13 to 14% higher for both engines. Those runs predate the
-  driver's runtime PM, which removes 1.8 W (RAPL) of the idle gap (below);
-  the rest is a platform idle difference not studied here.
+  driver's runtime PM, which removes 1.8 W (RAPL) of the idle gap; the
+  rest is virtual_oss and the CPPC default of frwk-bsd, plus the
+  sampler's own cost (section 6).
 - `-fa on` is faster than `-fa off` on both systems, although llama.cpp
   warns that one flash-attention operation runs on the CPU.
 
@@ -372,7 +373,10 @@ D3 is clean (4 cycles).
 
 The same runs as above with runtime PM and the Shelly plug, decode only
 (prefill requests last 2 to 5 s, too short for a plug that updates about
-once a second). Idle at the wall: 35.1 W.
+once a second). Idle at the wall: 35.1 W. These are the plug's 1 s power
+readings, which read about 3.5 W above its energy counter at idle
+(section 6), and include the sampler's cost; the comparison between the
+engines holds, the absolute watts are a few W high.
 
 | Run | tok/s | Wall W | J/token at the wall | Above idle, J/token |
 |---|---|---|---|---|
@@ -389,18 +393,57 @@ less (1.72 against 2.80 J). The NPU keeps the machine at 54 W instead of
 Not measured: the ZBook on battery, larger or MoE models, wall power on
 frwk-linux (no plug there).
 
-## 6. To do
+## 6. The idle gap against Linux
 
-- **FreeBSD idles 5.5 W above Linux on the same machine** (not the NPU).
-  frwk-bsd with amdxdna unloaded or the NPU in D3: 14.7 W RAPL, 15.3 W
-  SMU socket, 35.3 W at the wall. frwk-linux: 9.1 W RAPL, 9.1 W SMU
-  socket (no wall meter there). The CPU cores are not the cause: 0.4 to
-  0.5 W of SMU core power on FreeBSD against 0.0 to 0.3 W on Linux, and
-  91% of the time in C3. Candidates, not measured yet: PCIe ASPM and
-  device D-states (NVMe, rge, USB, the GPU's audio), the GPU and memory
-  clocks at idle (`pp_dpm_*` sysctls against Linux), the fabric clock,
-  and the display engine (frwk-bsd has amdgpu with no display attached).
-  Compare `gpu_metrics` field by field on both systems first.
+frwk-bsd seemed to idle 5.5 W above frwk-linux. It is not the kernel:
+it is two settings of frwk-bsd, plus a measurement artifact. Found on
+2026-11-16 by comparing every `gpu_metrics` field of both machines at
+idle ([../npu/gpu_metrics_idle.py](../npu/gpu_metrics_idle.py)): FreeBSD
+had 10 times the DRAM reads (740 against 69 MB/s), a higher fabric clock
+(1601 against 1416 MHz), CPU cores requested at 5150 MHz (Linux about
+2000), and 935 interrupts a second from `hdac1`.
+
+1. **virtual_oss** (`virtual_oss_enable="YES"`) streams `/dev/dsp4` in
+   8 ms blocks all the time, even when nothing plays: 935 HDA interrupts
+   a second keep the package out of deep idle.
+2. **CPPC at maximum performance.** hwpstate_amd(4) sets EPP 0 and the
+   highest requested performance at attach, on purpose (80d32a6b1d73,
+   "Switch the default to maximum performance"); powerd cannot change it
+   in CPPC mode (`hwpstate_set_cppc()` returns `EOPNOTSUPP`). Every
+   wake-up then runs at 5.15 GHz. Linux amd-pstate-epp uses autonomous
+   mode with EPP 128 ("balance_performance").
+3. **The measurement itself.** The first sampler forked sysctl(8) five
+   times a second to read `gpu_metrics`, which at 5.15 GHz cost about
+   2.5 W; it now calls sysctlbyname(3) (0.2 W). The FreeBSD idle figures
+   of section 5 (14.6 to 17.0 W RAPL) include that overhead.
+
+Measured with nothing running between two RAPL MSR reads 60 s apart and
+the plug's energy counter (its 1 s power readings read about 3.5 W high
+at idle):
+
+| frwk-bsd, idle 60 s | RAPL | Wall |
+|---|---|---|
+| as configured | 12.8 W | 24.7 W |
+| CPPC: EPP 128, desired 0 (autonomous) | 12.2 W | 24.6 W |
+| virtual_oss stopped | 3.97 W | 12.3 W |
+| both | 3.44 W | 12.4 W |
+| frwk-linux, as configured (docker running, EPP balance_performance) | 9.1 W | no plug |
+
+So a quiet FreeBSD idles below this Linux setup. To get it: run
+virtual_oss only when needed, and for CPPC, in `/boot/loader.conf`, for
+each CPU N:
+
+```
+dev.hwpstate_amd.N.epp="128"
+dev.hwpstate_amd.N.desired_performance="0"
+```
+
+The settings on frwk-bsd were put back as configured after the tests.
+Not explained: on FreeBSD the SMU's socket power reads 2.5 W above RAPL
+at idle (15.5 against 13.0 W), on Linux they match.
+
+## 7. To do
+
 - **SVA mode.** The driver runs in carveout mode only: FreeBSD's IOMMU
   driver has no PASID or shared virtual addressing. SVA would remove the
   carveout reservation and allow user-pointer buffers
