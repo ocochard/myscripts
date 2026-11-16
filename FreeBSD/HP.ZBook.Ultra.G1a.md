@@ -214,7 +214,7 @@ DSP for the internal digital microphones (DMIC) and audio offload.
 The built-in microphones are on the ACP's PDM (pulse density modulation) interface, not on the HDA codec:
 the ALC245 has no internal microphone pin (its only microphone pin, nid 25, is the headset jack).
 Impact with stock FreeBSD: no built-in microphone; the headset jack microphone goes through the ALC245 codec (`pcm4` record, not tested).
-Driver: `snd_acp`, branch [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) (commit 6ba38c3ca4a6, not in `zbook`):
+Driver: `snd_acp`, branch [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) (commit 6ba38c3ca4a6, also in `zbook`):
 a capture-only `pcm(4)` driver for ACP 7.x (rev 0x70-0x72). Tested 2026-11-16 on this laptop: `pcm6`, stereo 32-bit 48 kHz,
 quiet room -36 to -41 dBFS, clapping peaks at 0 dBFS, reload and restart work; no gain control, DC offset not removed.
 How it works, step by step: [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md).
@@ -420,22 +420,22 @@ the document that explains each one.
 | NPU (AMD XDNA 2, `amdxdna`) | drm-kmod [`olivier-amdxdna`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdxdna); ports [`olivier-npu`](https://github.com/ocochard/freebsd-ports/compare/main...olivier-npu) (devel/xrt) | 8; 3 | jobs, XRT, FastFlowLM and runtime PM (NPU in D3 when idle) work (tested on a Framework Desktop, needs the IOMMU on) | [docs/amdxdna_npu.md](docs/amdxdna_npu.md) |
 | AMD IOMMU (amdiommu) | [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) (in `zbook`) | 2 | `hw.amdiommu.enable=1` alone: stock loops attaching USB, patched boots but amdgpu's SMU hangs on `PowerDownVpe` in about half the boots with `boot_verbose` (workaround `hw.amdgpu.ip_block_mask=0xfffff7ff`); with `hw.iommu.dma=1`: works, NVMe reads 2x faster than stock (433 vs 200 MB/s at 128 KB, no IOMMU 890) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
 | GPU (amdgpu panic when it loads) | ports [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo) (graphics/drm-latest-kmod) | 1 | fix, the installed package is built from it; [ports PR #625](https://github.com/freebsd/freebsd-ports/pull/625) | [GPU features](#gpu-features) |
-| Built-in microphones (ACP PDM) | [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) (not in `zbook`) | 1 | `snd_acp`: records stereo 32-bit 48 kHz from the two digital microphones, tested | [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md) |
+| Built-in microphones (ACP PDM) | [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) (in `zbook`) | 1 | `snd_acp`: records stereo 32-bit 48 kHz from the two digital microphones, tested | [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md) |
 | Built-in camera (AMD ISP 4.1) | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) | 18, on the port's Strix Halo patches | `/dev/video0` through `video(4)`, interrupt-driven, works in VLC (NV12 and YUYV, 640x360 to 2888x1808, 30 fps); needs the 2025/08 ISP firmware | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
 
 ### Applying the work, in order
 
-The ten freebsd-src branches apply in this order, without conflict
+The eleven freebsd-src branches apply in this order, without conflict
 (first checked with the first eight and 32 commits; mt7925's 12th, the suspend fix,
-and the three AMD IOMMU commits were added later and apply on top).
+the three AMD IOMMU commits and the ACP microphone driver were added later and apply on top).
 Branch [`zbook`](https://github.com/ocochard/freebsd-src/compare/main...zbook)
-of the fork has all 36 commits in this order on FreeBSD main 46ce9acd6d15
-(2026-11-16), for testing everything at once (steps 1 to 10). The IOMMU
+of the fork has all 37 commits in this order on FreeBSD main 46ce9acd6d15
+(2026-11-16), for testing everything at once (steps 1 to 11). The IOMMU
 code runs only with `hw.amdiommu.enable=1`; its sources there are identical
 to the stack tested in the AMD IOMMU bug reports. The branch builds
 (`buildkernel KERNCONF=GENERIC-NODEBUG`, plus the mt76 modules, which
 `sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
-`amdisp` modules of step 13 against it). Boot test on the laptop
+`amdisp` modules of step 14 against it). Boot test on the laptop
 (2026-11-16, kernel `zbook-n291256-f7d7c068c5b5` with those modules in
 the kernel directory; again with the 36-commit kernel
 `zbook-n291260-5e39e91e9442`: all the drivers below load from its directory,
@@ -463,7 +463,7 @@ default route. Fixed on the laptop with a fixed name: a devd rule
 `ifconfig_dock0` instead of `ifconfig_ue0`; tested by resetting the
 adapter (`usbconfig reset`): it came back as `ue1`, was renamed `dock0`
 and got both addresses. Each
-document gives the deeper tests of its own branch. Steps 12 to 14 are outside the kernel source.
+document gives the deeper tests of its own branch. Steps 13 to 15 are outside the kernel source.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
@@ -477,12 +477,13 @@ document gives the deeper tests of its own branch. Steps 12 to 14 are outside th
 | 8 | freebsd-src [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 12 | | MT7925 firmware (port PR 300731); `if_mt7925` in `kld_list` | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
 | 9 | freebsd-src [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) | 1 | | interrupt remap entries are freed and aligned (only with `hw.amdiommu.enable=1`) | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
 | 10 | freebsd-src [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) | 2 | | opt-in: `hw.amdiommu.enable=1 hw.iommu.dma=1` (DMA remapping); with `hw.amdiommu.enable=1` alone also `hw.amdgpu.ip_block_mask=0xfffff7ff` (VPE off, SMU hang) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
-| 11 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-10 | | |
-| 12 | freebsd-ports [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo): `graphics/drm-latest-kmod` with four `DC_FP_START`/`DC_FP_END` patches | 1 | kernel source of step 11 | build the package with poudriere and install it (without it amdgpu panics when it loads) | [GPU features](#gpu-features) |
-| 13 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 11; replaces the `amdgpu.ko` of step 12 (same four patches, plus the camera glue) | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
-| 14 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 13 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
+| 11 | freebsd-src [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) | 1 | | `snd_acp` for the built-in microphones; load it or add it to `kld_list` (`pcm` record device) | [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md) |
+| 12 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-11 | | |
+| 13 | freebsd-ports [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo): `graphics/drm-latest-kmod` with four `DC_FP_START`/`DC_FP_END` patches | 1 | kernel source of step 12 | build the package with poudriere and install it (without it amdgpu panics when it loads) | [GPU features](#gpu-features) |
+| 14 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 12; replaces the `amdgpu.ko` of step 13 (same four patches, plus the camera glue) | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
+| 15 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 14 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
 
-The NPU work is not in `zbook` and was not tested on this laptop. On top of steps 1 to 11 (which include `olivier-amdiommu`
+The NPU work is not in `zbook` and was not tested on this laptop. On top of steps 1 to 12 (which include `olivier-amdiommu`
 and `olivier-amdiommu-irte`) it needs `olivier-lkpi-srcu` and `olivier-lkpi-pcim-iomap`, a boot with `hw.amdiommu.enable=1`, then drm-kmod `olivier-amdxdna` and the devel/xrt port:
 [docs/amdxdna_npu.md](docs/amdxdna_npu.md), section 2.
 
