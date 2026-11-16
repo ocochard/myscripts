@@ -9,6 +9,16 @@ Status as of 2026-11-16 evening. Sources, collected on 2026-11-16: `pciconf -lv`
 Device IDs checked against FreeBSD main 70cf7c62ee14 (2026-11-15) and Linux 3b5f4b83c4ab (2026-07-28).
 No Linux boot on this machine: the "Linux driver" columns come from the Linux source, not from a running system.
 
+Work of 2026-11-16, in short:
+
+- Bluetooth fixed by installing `iwmbt-firmware`; two patches make the missing package visible (`fwget`, `iwmbtfw` logging).
+- NVMe temperature events explained: default 83 C threshold, the drive heats under load.
+- AMD IOMMU: the stock kernel loops on USB attach with `hw.amdiommu.enable=1`; two patches fix it and lower the DMA cost.
+- Idle interrupts explained: Bluetooth SCO transfers (patch written) and `virtual_oss` (by design).
+- TPM no longer attaches: the installed kernel predates ACPI start method support.
+
+All patches and their order: [Applying the work, in order](#applying-the-work-in-order).
+
 ## What works
 
 | Function | Device | FreeBSD driver |
@@ -19,7 +29,7 @@ No Linux boot on this machine: the "Linux driver" columns come from the Linux so
 | NVMe | Kingston NV2 (2646:5017) | `nvme`/`nda` (see [NVMe event flood](#nvme-event-flood)) |
 | 2.5G Ethernet | Realtek RTL8125B (10ec:8125) | `rge` |
 | Wi-Fi | Intel AX200 (8086:2723) | `iwlwifi`, loaded by devmatch; `wlan0` associates with WPA and gets a DHCP lease (tested 2026-11-16, not enabled in `rc.conf`) |
-| Bluetooth | Intel AX200 (8087:0029 on USB) | `ng_ubt` after `iwmbtfw` loads the firmware; needs `iwmbt-firmware` (installed 2026-11-16), see [below](#usb-devices-without-a-working-driver) |
+| Bluetooth | Intel AX200 (8087:0029 on USB) | `ng_ubt` after `iwmbtfw` loads the firmware; needs `iwmbt-firmware` (installed 2026-11-16), see [below](#usb-devices-without-a-working-driver); costs about 1100 interrupts/s at idle, see [Interrupt rates at idle](#interrupt-rates-at-idle) |
 | USB 3 | five xHCI (1022:161d, 161e, 161f, 15d6, 15d7) | `xhci` |
 | I2C controllers | AMDI0010 DesignWare | `ig4iic0-1`, no child device on either `iicbus` |
 | SMBus | FCH 1022:790b | `intsmb` |
@@ -200,6 +210,9 @@ Tested 2026-11-16 ([docs/amdiommu_ser6.md](docs/amdiommu_ser6.md)):
 - stock kernel, plus `hw.iommu.dma=1`: works, but 128 KB NVMe reads lose about 45%;
 - with the two patches: both settings work; the read loss drops to about 25%, with 0 IOMMU events.
 
+The same loop and the same fix were confirmed on an HP ZBook Ultra G1a (Strix Halo) by a separate test,
+which also found an amdgpu display stall with interrupt remapping alone (see [docs/bugreport_amdiommu_ir_only_loop.md](docs/bugreport_amdiommu_ir_only_loop.md)).
+
 On this machine the protection buys little (no PCIe tunneling over USB4 on FreeBSD yet), so the IOMMU stays off.
 
 ### PSP/CCP (116:0:2)
@@ -296,12 +309,14 @@ Not measured: the power or C-state cost of these 2000 interrupts per second.
 ## Which drivers are worth the work
 
 Nothing important is missing on this machine.
-Four setup items give more than any new driver:
+Five setup items give more than any new driver:
 
 1. Bluetooth: install `iwmbt-firmware` (done 2026-11-16). `fwget` and `iwmbtfw` patches: see above.
 2. GPU: add `amdgpu` to `kld_list` if the machine runs a desktop. Today it is loaded by hand.
 3. NVMe: the threshold is the 83 C default; the drive heats under load, see [NVMe event flood](#nvme-event-flood). Fix the cooling, not the threshold.
 4. TPM: update the kernel to main of 2026-11-12 or later.
+5. Idle interrupts: apply patch 7 (`ng_ubt`), or set `net.bluetooth.usb_isoc_enable=0` in `/boot/loader.conf` if headset voice is not needed;
+   see [Interrupt rates at idle](#interrupt-rates-at-idle).
 
 Skip:
 

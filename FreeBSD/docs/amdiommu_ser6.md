@@ -97,6 +97,7 @@ An IOMMU trades I/O speed for safety. Turn it on when the protection is worth th
   The NVMe faults in section 4.2 are an example: blocked and logged, not written to random memory.
 - PCI passthrough to virtual machines. bhyve uses its own AMD-Vi code in `vmm.ko`, not `amdiommu`.
 - Interrupt remapping is required: safe passthrough, or x2APIC with more than 255 CPUs.
+- AMD XDNA NPU (Strix Halo): its firmware answers about 1000 times slower with the IOMMU unit off (section 5.1).
 
 The cost falls on high-rate small I/O, because every buffer is mapped, unmapped and invalidated.
 On this machine ([Tested](#tested)), 128 KB NVMe reads lost about 45% with the stock kernel and about 25% with patch 2
@@ -264,7 +265,7 @@ What the patches do NOT fix:
 
 ## 5. Other machines: Framework Desktop (Strix Halo)
 
-Read-only checks on 2026-11-16 (`pciconf`, `acpidump -t -T IVRS`, `kenv`); the IOMMU was not enabled there, and the patches are not tested there.
+Read-only checks on 2026-11-16 (`pciconf`, `acpidump -t -T IVRS`, `kenv`), then a boot test by the amdxdna (NPU) work the same day: see [5.1](#51-tested-npu-firmware-latency).
 Machine: Framework Desktop, AMD Ryzen AI Max+ 395, IOMMU 1022:1508 at 0:0:2 (`none0`, no driver),
 FreeBSD main n291187 (6871285f194d). See [../Framework-desktop.md](../Framework-desktop.md).
 
@@ -285,10 +286,37 @@ What differs:
 - amdgpu: with `hw.iommu.dma=1`, its LinuxKPI busdma traffic is translated. Linux gives AMD GPUs an identity mapping by default.
   Not tested on FreeBSD; exempt the GPU with `hw.busdma.pci0.B.S.F=bounce` for a first test.
 - amdxdna NPU port (in progress): on Linux it normally relies on the IOMMU (PASID, SVA).
-  FreeBSD's `amdiommu` has no PASID support, so turning it on does not help the NPU, and may change how its DMA behaves.
+  FreeBSD's `amdiommu` has no PASID support, so no SVA; but turning the unit on removes a 1000x firmware slowdown, see 5.1.
 
-Suggested test order there: patched kernel with `hw.amdiommu.enable=1` alone, then `hw.iommu.dma=1` with the GPU exempted,
-each as a one-shot `nextboot` boot with a remote console available.
+### 5.1 Tested: NPU firmware latency
+
+Tested on 2026-11-16 during the amdxdna NPU port (NPU 1022:17f0 at pci0:194:0:1, drm-kmod branch `olivier-amdxdna`, "carveout" mode:
+NPU buffers in one physically contiguous region, firmware DMA by physical address).
+Kernel: 6871285f194d plus both patches and a LinuxKPI SRCU patch, GENERIC-NODEBUG.
+Boot: `nextboot -k kernel.amdiommu -e hw.amdiommu.enable=1 -e hw.iommu.dma=1 -e hw.busdma.pci0.194.0.1=bounce -e hw.busdma.pci0.193.0.0=bounce`,
+so the NPU and the GPU get identity (pass-through) contexts and the other devices are translated.
+Second boot: `hw.amdiommu.enable=1` alone (interrupt remapping on, DMA remapping off), no busdma tunable:
+all contexts "id-mapped", for example `amdxdna0: amdiommu0 pci0:194:0:1 rid c201 domain 11 id-mapped`, none "re-mapped".
+
+| Measure | IOMMU off | `hw.iommu.dma=1`, NPU and GPU pass-through | `hw.amdiommu.enable=1` alone |
+|---|---|---|---|
+| NPU firmware CREATE_CONTEXT round trip | 476 us first, then about 141 ms | 160 and 224 us | 169 us |
+| MAP_HOST_BUFFER | 142 ms | 91 and 110 us | 73 us |
+| DESTROY_CONTEXT | 142 ms | 130 and 134 us | 119 us |
+| `xrt-smi validate` latency test | about 95 ms per job | 47.0 us, PASSED | 49.0 us, PASSED |
+| `xrt-smi validate` throughput test | about 10 jobs/s | 93807 ops/s, PASSED | 93777 ops/s, PASSED |
+| `xrt-smi validate` gemm | 51 TOPS, PASSED | 51.0 TOPS, PASSED | 51.0 TOPS, PASSED |
+| `amdiommu0: event` lines | n/a | 0, after boot, amdxdna load and a full validate | 0 |
+
+Other results: the machine boots; `rge0`, `nvme0`, `hdac0`, `xhci0`, `hdac1` and the bridges are "re-mapped" in their own domains; amdgpu loads.
+
+So the AIE2 firmware is slow when the IOMMU unit is off, and fast as soon as it is on, even with the NPU's own DTE in pass-through (mode 0).
+amdxdna therefore needs only `hw.amdiommu.enable=1`, with patch 1 so that this setting boots, and no DMA translation cost for the rest of the machine.
+amdgpu loads in both boots. The machine has no display, so the amdgpu display stall seen on the ZBook with interrupt remapping alone cannot show there.
+Upstream Linux refuses to run amdxdna without an IOMMU (a8878e19d2f5, "The AIE2 device firmware requires IOMMU on"); this measurement matches that.
+Why the firmware cares is not known.
+
+Not tested there: the NPU with a translated domain (no `bounce`; needs the driver's buffers to go through busdma), suspend and resume.
 
 ## Tested
 
