@@ -213,17 +213,28 @@ Ubuntu kernel 7.0.0-43, stock `amdxdna` 0.7.0.
 | `xrt-smi validate` latency | not run | 47 to 58 us, PASSED |
 | Same without the IOMMU unit | | gemm 51 TOPS; latency about 95 ms per job |
 | kldload / kldunload cycles | | 6 cycles, no leak message, NPU validates after them |
-| FastFlowLM 1.0.13 llama3.2:1b, short prompt | not run | prefill 108 tok/s, decode 65 tok/s |
-| FastFlowLM qwen3:8b, 24-token prompt | not run | prefill 19 tok/s, decode 11.4 tok/s |
-| FastFlowLM qwen3:8b, 1246-token prompt, 169 tokens out | not run | prefill 396 tok/s, decode 10.8 tok/s |
+| FastFlowLM 1.0.13 llama3.2:1b, 51-token prompt: prefill / decode tok/s | 140.7 / 64.2 | 129.7 / 63.9 |
+| llama3.2:1b, 1270-token prompt | 1803.1 / 60.8 | 1684.6 / 59.7 |
+| qwen3:8b, 29-token prompt | 25.6 / 11.4 | 23.3 / 11.4 |
+| qwen3:8b, 1251-token prompt | 393.0 / 10.7 | 396.0 / 10.7 |
 | amdgpu next to it (`vulkaninfo --summary`) | | RADV STRIX_HALO |
+
+FastFlowLM numbers are medians of 3 runs of
+[../npu/flm-bench.py](../npu/flm-bench.py) (each run starts with a
+different word to defeat the prefix cache), same FastFlowLM 1.0.13 and
+XRT 2.25.0 on both systems; frwk-linux needs `prlimit --memlock=unlimited`
+first (the 8 MB default fails with `mmap ... Resource temporarily
+unavailable`). Decode is the same on both systems; FreeBSD prefill is
+within 7%. So decode speed is set by the NPU and FastFlowLM, not by the
+port: each token reads the whole model (5.6 GB for qwen3:8b), so 10.7
+tok/s is about 60 GB/s of NPU memory reads. FastFlowLM's site gives
+66 tok/s for llama3.2:1b on a Ryzen AI 7 HX 350.
 
 FastFlowLM runs under linuxlator (Ubuntu 26.04 chroot). It logs
 `SVA bind device failed` and `PASID not available` at open, as expected
 in carveout mode, and works.
 
-Not done: FastFlowLM and XRT on frwk-linux for a same-machine
-comparison, a native FastFlowLM (its NPU engines are closed Linux
+Not done: `xrt-smi validate` on frwk-linux, a native FastFlowLM (its NPU engines are closed Linux
 libraries), models larger than 8B, userptr BOs (`amdxdna_ubuf.c` returns
 `EOPNOTSUPP`), the NPU with a translated IOMMU domain, suspend, the ZBook
 itself. Known leak: 240 bytes of debugfs memory per unload.
