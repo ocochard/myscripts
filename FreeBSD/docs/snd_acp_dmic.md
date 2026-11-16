@@ -22,7 +22,35 @@ microphones are not wired to the HDA codec (the Realtek ALC245 that
 drives the headphone jack) but to a separate block, the ACP, PCI device
 1022:15e2 (revision 0x70 on this laptop). The ACP contains a DSP, I2S
 and SoundWire links, and the PDM receiver. This driver uses only the
-PDM receiver and the ACP's DMA engine.
+PDM receiver and the ACP's DMA engine. The other three parts:
+
+- **DSP** (digital signal processor): a small programmable audio
+  processor, a Tensilica Xtensa core. Linux drives it with Sound Open
+  Firmware (SOF, modules `snd_sof_amd_acp70` and `snd_sof_xtensa_dsp`;
+  loaded on Ubuntu but unused on this laptop, which takes the plain
+  path). With its firmware it processes audio without waking the CPU:
+  noise suppression and echo cancellation on the microphones, and wake
+  on voice (listening for a keyword during sleep; that is what the ACPI
+  method `_WOV` describes). Without it the microphones deliver their raw
+  signal, and any processing runs on the CPU, in user space.
+- **I2S** (Inter-IC Sound): a simple serial bus that carries audio
+  samples between chips. The ACP has three I2S ports (Linux registers
+  them as `acp-i2s-sp`, `acp-i2s-bt` and `acp-i2s-hs`). On other designs
+  they connect an external codec, amplifiers, or the Bluetooth call
+  audio. This laptop's pin configuration (`0xa`) routes both I2S and
+  PDM, but Linux builds only the microphone card on top of it: the
+  speakers and the jack use the HDA codec and the CS35L54 amplifiers on
+  I2C.
+- **SoundWire**: a newer two-wire digital audio bus from the MIPI
+  Alliance, which carries audio and control together and replaces
+  I2S plus I2C on recent laptops with SoundWire codecs and amplifiers.
+  ACP 6.3 and 7.x have SoundWire controllers (Linux module
+  `soundwire_amd`, loaded on Ubuntu, nothing attached).
+
+On this laptop none of the three is needed for audio; the DSP's
+processing and wake on voice are the only features missing. A laptop
+whose speakers or headset codec sit on I2S or SoundWire would need the
+driver extended to those ports.
 
 **DMA through a page table.** The ACP does not write to system memory
 by physical address directly. It writes to its own address space; an
