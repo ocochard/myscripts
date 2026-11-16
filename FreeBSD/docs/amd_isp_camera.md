@@ -803,6 +803,22 @@ clock frequencies behind the SMU requests, or SoC power state set on Linux
 by `amd_pmf`, which FreeBSD lacks). A test with eight frame buffers got no
 frames and a test with two crashed the laptop; the driver stays at four.
 
+Later tests, all without effect on the frame rate:
+
+| Test | Result |
+|---|---|
+| clear the 100 MB firmware pool before handing it over (drm-kmod returned it with stale data in 21108 of its 25600 pages) | 23.86 fps; clearing kept as a fix |
+| ISP clock requests at power-up: skipped, `0x314` (Linux), 500, 1000, 1200 | 41.5-42.0 ms, 23.85-23.87 fps in every case |
+| Linux: platform profile `low-power`, `balanced`, `performance` | 29.8-30.0 fps in every case |
+| Linux: `amd_pmf` and `amdxdna` unloaded at run time | 29.83 fps |
+
+So the ISP clock requests do not limit the frame rate (even skipping them
+changes nothing), and on Linux neither the platform profile nor `amd_pmf`
+at run time brings it down to 24. Not tested: Linux booted with `amd_pmf`
+never loaded. The 24 fps on FreeBSD stays unexplained. One first stream
+start after a boot also timed out once (no answer to `SET_STREAM_CONFIG`);
+the next start worked.
+
 ### Seventh step: YUYV
 
 The driver now offers a second mode, YUYV 1920x1080 at 30 fps, next to
