@@ -1,0 +1,271 @@
+From 8ec3a2c818ebe0a258dc36197fa46480eaa3d0f8 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 16 Nov 2026 17:15:25 +0100
+Subject: [PATCH] ng_ubt: Run isochronous transfers only while a SCO link is
+ open
+
+ng_ubt started the four SCO isochronous transfers at attach and kept
+them running, so an idle Intel AX200 adapter caused about 1100 xHCI
+interrupts per second on a Ryzen 7 7735HS.
+
+Track SCO and eSCO links from the Connection Complete, Synchronous
+Connection Complete, Disconnection Complete and HCI_Reset events, and
+start the isochronous transfers only while a link is open.  Linux
+btusb likewise keeps isochronous traffic off until a SCO link exists.
+
+MFC after:	2 weeks
+---
+ sys/netgraph/bluetooth/drivers/ubt/ng_ubt.c   | 137 +++++++++++++++---
+ .../bluetooth/drivers/ubt/ng_ubt_var.h        |   5 +
+ sys/netgraph/bluetooth/include/ng_hci.h       |  13 ++
+ 3 files changed, 137 insertions(+), 18 deletions(-)
+
+diff --git a/sys/netgraph/bluetooth/drivers/ubt/ng_ubt.c b/sys/netgraph/bluetooth/drivers/ubt/ng_ubt.c
+index ee7c27948ab4..7a263e97763d 100644
+--- a/sys/netgraph/bluetooth/drivers/ubt/ng_ubt.c
++++ b/sys/netgraph/bluetooth/drivers/ubt/ng_ubt.c
+@@ -266,6 +266,7 @@ static usb_callback_t	ubt_isoc_write_callback;
+ 
+ static int		ubt_fwd_mbuf_up(ubt_softc_p, struct mbuf **);
+ static int		ubt_isoc_read_one_frame(struct usb_xfer *, int);
++static void		ubt_sco_track(ubt_softc_p, ng_hci_event_pkt_t *);
+ 
+ /*
+  * USB config
+@@ -1052,6 +1053,8 @@ ubt_intr_read_callback(struct usb_xfer *xfer, usb_error_t error)
+ 		UBT_INFO(sc, "got complete HCI event frame, pktlen=%d, " \
+ 			"length=%d\n", m->m_pkthdr.len, hdr->length);
+ 
++		ubt_sco_track(sc, hdr);
++
+ 		UBT_STAT_PCKTS_RECV(sc);
+ 		UBT_STAT_BYTES_RECV(sc, m->m_pkthdr.len);
+ 
+@@ -1081,6 +1084,101 @@ ubt_intr_read_callback(struct usb_xfer *xfer, usb_error_t error)
+ 	}
+ } /* ubt_intr_read_callback */
+ 
++/*
++ * Track open SCO and eSCO links from HCI events, so that isoc. transfers
++ * run only while a link uses them.  Idle isoc. transfers cost about one
++ * interrupt per USB frame.
++ * USB context.
++ */
++
++static void
++ubt_sco_track(ubt_softc_p sc, ng_hci_event_pkt_t *hdr)
++{
++	ng_hci_con_compl_ep		*cc;
++	ng_hci_sync_con_compl_ep	*scc;
++	ng_hci_discon_compl_ep		*dc;
++	ng_hci_command_compl_ep		*cmd;
++	uint16_t			h;
++	int				i, links;
++	bool				add;
++
++	add = false;
++	h = 0;
++	switch (hdr->event) {
++	case NG_HCI_EVENT_CON_COMPL:
++		if (hdr->length < sizeof(*cc))
++			return;
++		cc = (ng_hci_con_compl_ep *)(hdr + 1);
++		if (cc->status != 0 || cc->link_type != NG_HCI_LINK_SCO)
++			return;
++		h = NG_HCI_CON_HANDLE(le16toh(cc->con_handle));
++		add = true;
++		break;
++
++	case NG_HCI_EVENT_SYNC_CON_COMPL:
++		if (hdr->length < sizeof(*scc))
++			return;
++		scc = (ng_hci_sync_con_compl_ep *)(hdr + 1);
++		if (scc->status != 0)
++			return;
++		h = NG_HCI_CON_HANDLE(le16toh(scc->con_handle));
++		add = true;
++		break;
++
++	case NG_HCI_EVENT_DISCON_COMPL:
++		if (hdr->length < sizeof(*dc))
++			return;
++		dc = (ng_hci_discon_compl_ep *)(hdr + 1);
++		if (dc->status != 0)
++			return;
++		h = NG_HCI_CON_HANDLE(le16toh(dc->con_handle));
++		break;
++
++	case NG_HCI_EVENT_COMMAND_COMPL:
++		if (hdr->length < sizeof(*cmd))
++			return;
++		cmd = (ng_hci_command_compl_ep *)(hdr + 1);
++		if (le16toh(cmd->opcode) != NG_HCI_OPCODE(
++		    NG_HCI_OGF_HC_BASEBAND, NG_HCI_OCF_RESET))
++			return;
++		break;
++
++	default:
++		return;
++	}
++
++	UBT_NG_LOCK(sc);
++	if (sc->sc_hook == NULL) {
++		UBT_NG_UNLOCK(sc);
++		return;
++	}
++	links = sc->sc_sco_links + sc->sc_sco_untracked;
++
++	if (hdr->event == NG_HCI_EVENT_COMMAND_COMPL) {
++		/* HCI_Reset drops all links without Disconnection events */
++		sc->sc_sco_links = 0;
++		sc->sc_sco_untracked = 0;
++	} else if (add) {
++		if (sc->sc_sco_links < UBT_SCO_MAX)
++			sc->sc_sco_handle[sc->sc_sco_links++] = h;
++		else
++			sc->sc_sco_untracked++;
++	} else {
++		/* Disconnection Complete does not tell the link type */
++		for (i = 0; i < sc->sc_sco_links; i++) {
++			if (sc->sc_sco_handle[i] == h) {
++				sc->sc_sco_handle[i] =
++				    sc->sc_sco_handle[--sc->sc_sco_links];
++				break;
++			}
++		}
++	}
++
++	if ((links == 0) != (sc->sc_sco_links + sc->sc_sco_untracked == 0))
++		ubt_task_schedule(sc, UBT_FLAG_T_ISOC);
++	UBT_NG_UNLOCK(sc);
++} /* ubt_sco_track */
++
+ /*
+  * Called when incoming bulk transfer (ACL packet) has completed, i.e.
+  * ACL packet was received from the device.
+@@ -1573,10 +1671,12 @@ ubt_task(void *context, int pending)
+ {
+ 	ubt_softc_p	sc = context;
+ 	int		task_flags, i;
++	bool		sco;
+ 
+ 	UBT_NG_LOCK(sc);
+ 	task_flags = sc->sc_task_flags;
+ 	sc->sc_task_flags = 0;
++	sco = sc->sc_sco_links + sc->sc_sco_untracked > 0;
+ 	UBT_NG_UNLOCK(sc);
+ 
+ 	/*
+@@ -1589,29 +1689,28 @@ ubt_task(void *context, int pending)
+ 		for (i = 0; i < UBT_N_TRANSFER; i ++)
+ 			usbd_transfer_drain(sc->sc_xfer[i]);
+ 
+-	/* Start incoming interrupt and bulk, and all isoc. USB transfers */
++	/* Start incoming interrupt and bulk USB transfers */
+ 	if (task_flags & UBT_FLAG_T_START_ALL) {
+-		/*
+-		 * Interface #0
+-		 */
+-
+ 		mtx_lock(&sc->sc_if_mtx);
+-
+ 		ubt_xfer_start(sc, UBT_IF_0_INTR_DT_RD);
+ 		ubt_xfer_start(sc, UBT_IF_0_BULK_DT_RD);
++		mtx_unlock(&sc->sc_if_mtx);
++	}
+ 
+-		/*
+-		 * Interface #1
+-		 * Start both read and write isoc. transfers by default.
+-		 * Get them going all the time even if we have nothing
+-		 * to send to avoid any delays.
+-		 */
+-
+-		ubt_xfer_start(sc, UBT_IF_1_ISOC_DT_RD1);
+-		ubt_xfer_start(sc, UBT_IF_1_ISOC_DT_RD2);
+-		ubt_xfer_start(sc, UBT_IF_1_ISOC_DT_WR1);
+-		ubt_xfer_start(sc, UBT_IF_1_ISOC_DT_WR2);
+-
++	/*
++	 * Interface #1: run both read and write isoc. transfers while a
++	 * SCO link is open, even with nothing to send, to avoid delays.
++	 */
++	if (task_flags & (UBT_FLAG_T_START_ALL | UBT_FLAG_T_ISOC)) {
++		mtx_lock(&sc->sc_if_mtx);
++		for (i = UBT_IF_1_ISOC_DT_RD1; i <= UBT_IF_1_ISOC_DT_WR2; i++) {
++			if (sco)
++				ubt_xfer_start(sc, i);
++			else
++				usbd_transfer_stop(sc->sc_xfer[i]);
++		}
++		if (!sco)
++			NG_FREE_M(sc->sc_isoc_in_buffer);
+ 		mtx_unlock(&sc->sc_if_mtx);
+ 	}
+ 
+@@ -1732,6 +1831,8 @@ ng_ubt_disconnect(hook_p hook)
+ 	}
+ 
+ 	sc->sc_hook = NULL;
++	sc->sc_sco_links = 0;
++	sc->sc_sco_untracked = 0;
+ 
+ 	/* Kick off task to stop all USB xfers */
+ 	ubt_task_schedule(sc, UBT_FLAG_T_STOP_ALL);
+diff --git a/sys/netgraph/bluetooth/drivers/ubt/ng_ubt_var.h b/sys/netgraph/bluetooth/drivers/ubt/ng_ubt_var.h
+index a48a6732f5a8..64ee2e1b653a 100644
+--- a/sys/netgraph/bluetooth/drivers/ubt/ng_ubt_var.h
++++ b/sys/netgraph/bluetooth/drivers/ubt/ng_ubt_var.h
+@@ -55,6 +55,7 @@ do {								\
+ #define	UBT_HCI_REQUEST		0x20
+ #define	UBT_DEFAULT_QLEN	64
+ #define	UBT_ISOC_NFRAMES	32	/* should be factor of 8 */
++#define	UBT_SCO_MAX		4	/* BR/EDR allows 3 SCO */
+ 
+ /* Bluetooth USB defines */
+ enum {
+@@ -142,6 +143,9 @@ struct ubt_softc {
+ 	/* SCO data */
+ 	struct ng_bt_mbufq	sc_scoq;	/* SCO data queue */
+ 	struct mbuf		*sc_isoc_in_buffer; /* SCO reassembly buffer */
++	uint16_t		sc_sco_handle[UBT_SCO_MAX]; /* open SCO links */
++	int			sc_sco_links;	/* used sc_sco_handle */
++	int			sc_sco_untracked; /* beyond UBT_SCO_MAX */
+ 
+ 	/* Netgraph specific */
+ 	node_p			sc_node;	/* pointer back to node */
+@@ -155,6 +159,7 @@ struct ubt_softc {
+ 						   write xfers */
+ #define UBT_FLAG_T_START_CTRL	(1 << 3)	/* start control xfer (write) */
+ #define UBT_FLAG_T_START_BULK	(1 << 4)	/* start bulk xfer (write) */
++#define UBT_FLAG_T_ISOC		(1 << 5)	/* start/stop isoc xfers */
+ 
+ 	struct task		sc_task;
+ };
+diff --git a/sys/netgraph/bluetooth/include/ng_hci.h b/sys/netgraph/bluetooth/include/ng_hci.h
+index bbe9541c25c9..767146c81f54 100644
+--- a/sys/netgraph/bluetooth/include/ng_hci.h
++++ b/sys/netgraph/bluetooth/include/ng_hci.h
+@@ -2086,6 +2086,19 @@ typedef struct {
+ 	u_int8_t	page_scan_rep_mode; /* page scan repetition mode */
+ } __attribute__ ((packed)) ng_hci_page_scan_rep_mode_change_ep;
+ 
++#define NG_HCI_EVENT_SYNC_CON_COMPL		0x2c
++typedef struct {
++	u_int8_t	status;          /* 0x00 - success */
++	u_int16_t	con_handle;      /* connection handle */
++	bdaddr_t	bdaddr;          /* remote unit address */
++	u_int8_t	link_type;       /* 0x00 - SCO, 0x02 - eSCO */
++	u_int8_t	tx_interval;     /* transmission interval */
++	u_int8_t	retrans_window;  /* retransmission window */
++	u_int16_t	rx_pkt_len;      /* RX packet length */
++	u_int16_t	tx_pkt_len;      /* TX packet length */
++	u_int8_t	air_mode;        /* air mode */
++} __attribute__ ((packed)) ng_hci_sync_con_compl_ep;
++
+ #define	NG_HCI_EVENT_IO_CAPABILITY_REQUEST	0x31
+ typedef struct {
+ 	bdaddr_t	bdaddr;
+-- 
+2.56.0
+
