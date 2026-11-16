@@ -327,12 +327,14 @@ the document that explains each one.
 
 ### Applying the work, in order
 
-The eight freebsd-src branches apply in this order, without conflict, as
-32 cherry-picked commits on FreeBSD main 0bf5d86620d0 (2026-11-16). The
-whole combination is checked for applying only, not built or booted: the
-laptop's test kernel has `olivier-mt7925`, `olivier-s2idle-wake` and two
-of the four `olivier-amdsmu-strixhalo` commits; each document gives the
-tests of its own branch. Steps 10 and 11 are outside the kernel source.
+The eight freebsd-src branches apply in this order, without conflict.
+Branch [`zbook`](https://github.com/ocochard/freebsd-src/compare/main...zbook)
+of the fork has all 32 commits in this order on FreeBSD main 46ce9acd6d15
+(2026-11-16), for testing everything at once (steps 1 to 8). It builds
+(`buildkernel KERNCONF=GENERIC-NODEBUG`, plus the mt76 modules, which
+`sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
+`amdisp` modules of step 10 against it), but has not been booted yet;
+each document gives the tests of its own branch. Steps 10 and 11 are outside the kernel source.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
