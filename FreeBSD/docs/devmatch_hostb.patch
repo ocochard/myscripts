@@ -1,0 +1,94 @@
+diff --git sbin/devmatch/devmatch.c sbin/devmatch/devmatch.c
+index baf52c070b70..f6b2d86e301e 100644
+--- sbin/devmatch/devmatch.c
++++ sbin/devmatch/devmatch.c
+@@ -478,16 +478,26 @@ find_unmatched(struct devinfo_dev *dev, void *arg)
+ {
+ 	struct devinfo_dev *parent;
+ 	char *bus, *p;
++	bool busdrv;
+ 
++	/*
++	 * hostb(4) and vgapci(4) attach to host bridges and display
++	 * controllers only to be the bus of the drivers for their functions,
++	 * such as amdtemp(4) or acpi_video(4), which add their own child once
++	 * their module is loaded.  Match such a device as if it had no
++	 * driver, against the hints for that bus, so those modules load.
++	 */
++	busdrv = !unbound_flag && (strcmp(dev->dd_drivername, "hostb") == 0 ||
++	    strcmp(dev->dd_drivername, "vgapci") == 0);
+ 	do {
+-		if (!all_flag && dev->dd_name[0] != '\0')
++		if (!all_flag && !busdrv && dev->dd_name[0] != '\0')
+ 			break;
+ 		if (!(dev->dd_flags & DF_ENABLED))
+ 			break;
+-		if (!all_flag && dev->dd_flags & DF_ATTACHED_ONCE)
++		if (!all_flag && !busdrv && dev->dd_flags & DF_ATTACHED_ONCE)
+ 			break;
+ 		parent = devinfo_handle_to_device(dev->dd_parent);
+-		bus = strdup(parent->dd_name);
++		bus = strdup(busdrv ? dev->dd_drivername : parent->dd_name);
+ 		p = bus + strlen(bus) - 1;
+ 		while (p >= bus && isdigit(*p))
+ 			p--;
+diff --git sys/dev/acpica/acpi_video.c sys/dev/acpica/acpi_video.c
+index 07fbe54d832b..bf3b6a291a1c 100644
+--- sys/dev/acpica/acpi_video.c
++++ sys/dev/acpica/acpi_video.c
+@@ -195,6 +195,18 @@ static driver_t acpi_video_driver = {
+ };
+ 
+ DRIVER_MODULE(acpi_video, vgapci, acpi_video_driver, acpi_video_modevent, NULL);
++
++/*
++ * No device ID identifies ACPI video: let devmatch(8) load the module for
++ * any display controller, the probe then looks for the ACPI methods.
++ */
++static const struct {
++	const char	*desc;
++} acpi_video_pnp[] = {
++	{ "display controller" },
++};
++MODULE_PNP_INFO("D:#;T:class=0x03", vgapci, acpi_video, acpi_video_pnp,
++    nitems(acpi_video_pnp));
+ MODULE_DEPEND(acpi_video, acpi, 1, 1, 1);
+ #ifdef EVDEV_SUPPORT
+ MODULE_DEPEND(acpi_video, evdev, 1, 1, 1);
+diff --git sys/dev/amdsmn/amdsmn.c sys/dev/amdsmn/amdsmn.c
+index d19103738ec6..dd81269ba032 100644
+--- sys/dev/amdsmn/amdsmn.c
++++ sys/dev/amdsmn/amdsmn.c
+@@ -178,7 +178,7 @@ static driver_t amdsmn_driver = {
+ 
+ DRIVER_MODULE(amdsmn, hostb, amdsmn_driver, NULL, NULL);
+ MODULE_VERSION(amdsmn, 1);
+-MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdsmn, amdsmn_ids,
++MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdsmn, amdsmn_ids,
+     nitems(amdsmn_ids));
+ 
+ static bool
+diff --git sys/dev/amdsmu/amdsmu.c sys/dev/amdsmu/amdsmu.c
+index 4d833e90cf11..ecb3f495d8fe 100644
+--- sys/dev/amdsmu/amdsmu.c
++++ sys/dev/amdsmu/amdsmu.c
+@@ -592,5 +592,5 @@ static driver_t amdsmu_driver = {
+ DRIVER_MODULE(amdsmu, hostb, amdsmu_driver, NULL, NULL);
+ MODULE_VERSION(amdsmu, 1);
+ MODULE_DEPEND(amdsmu, amdsmn, 1, 1, 1);
+-MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdsmu, amdsmu_products,
++MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdsmu, amdsmu_products,
+     nitems(amdsmu_products));
+diff --git sys/dev/amdtemp/amdtemp.c sys/dev/amdtemp/amdtemp.c
+index b1ecb014a2b0..3b9938cdee5a 100644
+--- sys/dev/amdtemp/amdtemp.c
++++ sys/dev/amdtemp/amdtemp.c
+@@ -258,7 +258,7 @@ static driver_t amdtemp_driver = {
+ DRIVER_MODULE(amdtemp, hostb, amdtemp_driver, NULL, NULL);
+ MODULE_VERSION(amdtemp, 1);
+ MODULE_DEPEND(amdtemp, amdsmn, 1, 1, 1);
+-MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdtemp, amdtemp_products,
++MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdtemp, amdtemp_products,
+     nitems(amdtemp_products));
+ 
+ static bool
