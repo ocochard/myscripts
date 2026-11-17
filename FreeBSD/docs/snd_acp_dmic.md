@@ -261,11 +261,11 @@ analysed on another machine:
 | filter in the driver vs the same arithmetic in Python on a raw recording | same output shape; both settle to zero after the start |
 | `kldxref -d` | `pnp info for bus pci format U16:vendor;U16:device 1 entries` |
 | `devmatch -a` with the module unloaded | `unattached: snd_acp.ko` (plain `devmatch` skips a device that had a driver since boot) |
+| boot of kernel zbook-n291263-fcbccb606aad, `snd_acp` in neither `kld_list` nor `loader.conf` | loaded from `/boot/kernel.zbook/snd_acp.ko` by `devmatch`, `pcm6` attached, `dc_filter` 1; 5 s recording: DC -70.6 / -75.0 dBFS |
 
 Same laptop on Ubuntu (Linux 7.0.0-43) for comparison: quiet -42 to -48
 dBFS per window, clapping peak -2 dBFS. The quieter floor there may be
 the room; it was not compared in the same conditions.
 
-Not tested: loading by `devmatch` at an actual boot (no installed
-kernel carries the module yet), suspend and resume while recording,
+Not tested: suspend and resume while recording,
 desktop applications, ACP revisions 0x71 and 0x72, other laptops.
