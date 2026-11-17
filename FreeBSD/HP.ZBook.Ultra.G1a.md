@@ -328,6 +328,8 @@ The ISP firmware is already loaded on FreeBSD: `amdgpu_isp_4_1_1_bin.ko` comes w
 Impact: no webcam with stock FreeBSD. The `amdisp` driver (drm-kmod branch `olivier-amdisp`, see below) gives a working `/dev/video0`:
 NV12 and YUYV, 640x360 to 2888x1808, 30 fps, works in VLC; it needs the August 2025 ISP firmware, as the packaged one
 (February 2025) never finds the sensor. A USB webcam works with the native `uvideo(4)` driver (or `webcamd`).
+It also works in Chromium (2026-11-17, kernel `zbook-n291269-0d71515aee38` of the `zbook` branch, with the
+`amdgpu.ko` and `amdisp.ko` modules built for the previous `zbook` kernel).
 FreeBSD 16 has a kernel V4L2 capture framework, `video(4)` (9c9428825f4c, 2026-08): it provides
 `/dev/videoN`, buffers, `mmap` and the V4L2 ioctls, so an ISP driver would only implement the
 `video_if` hardware methods (formats, controls, start/stop stream), like `uvideo(4)` and `fwcam(4)`.
