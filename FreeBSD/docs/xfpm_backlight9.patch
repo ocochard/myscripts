@@ -1,0 +1,190 @@
+diff --git sysutils/xfce4-power-manager/Makefile sysutils/xfce4-power-manager/Makefile
+index a2a29099846e..9cc8e7da9b6d 100644
+--- sysutils/xfce4-power-manager/Makefile
++++ sysutils/xfce4-power-manager/Makefile
+@@ -1,5 +1,6 @@
+ PORTNAME=	xfce4-power-manager
+ PORTVERSION=	4.20.1
++PORTREVISION=	1
+ CATEGORIES=	sysutils xfce
+ MASTER_SITES=	XFCE
+ DIST_SUBDIR=	xfce4
+diff --git sysutils/xfce4-power-manager/files/patch-src_xfpm-backlight-helper.c sysutils/xfce4-power-manager/files/patch-src_xfpm-backlight-helper.c
+index 3fb76b17c097..00b03a5bc67f 100644
+--- sysutils/xfce4-power-manager/files/patch-src_xfpm-backlight-helper.c
++++ sysutils/xfce4-power-manager/files/patch-src_xfpm-backlight-helper.c
+@@ -1,6 +1,15 @@
+---- src/xfpm-backlight-helper.c.orig	2024-11-21 06:26:21 UTC
++--- src/xfpm-backlight-helper.c.orig	2026-07-29 16:51:49 UTC
+ +++ src/xfpm-backlight-helper.c
+-@@ -51,6 +51,8 @@
++@@ -42,6 +42,8 @@
++ #endif
++ 
++ #ifdef BACKEND_TYPE_FREEBSD
+++#include <sys/backlight.h>
+++#include <sys/ioctl.h>
++ #include <sys/sysctl.h>
++ #endif
++ 
++@@ -51,6 +53,8 @@
+  #define EXIT_CODE_INVALID_USER 4
+  #define EXIT_CODE_NO_BRIGHTNESS_SWITCH 5
+  
+@@ -9,7 +18,83 @@
+  #ifndef BACKEND_TYPE_FREEBSD
+  #define BACKLIGHT_SYSFS_LOCATION "/sys/class/backlight"
+  #define BRIGHTNESS_SWITCH_LOCATION "/sys/module/video/parameters/brightness_switch_enabled"
+-@@ -211,20 +213,24 @@ backlight_helper_get_device (void)
++@@ -58,6 +62,75 @@
++ 
++ 
++ #ifdef BACKEND_TYPE_FREEBSD
+++/*
+++ * backlight(9) devices are registered by the graphics drivers.  On panels
+++ * where the ACPI video methods change nothing (OLED panels driven by
+++ * amdgpu, for example), they are the only way to change the brightness, so
+++ * they are preferred to acpi_video(4).  Their brightness is a percentage.
+++ */
+++#define BACKLIGHT_DEVICE_FMT "/dev/backlight/backlight%d"
+++#define BACKLIGHT_MAX_BRIGHTNESS 100
+++
+++static gint
+++backlight_dev_open (gint flags)
+++{
+++  struct backlight_info info;
+++  gchar *path;
+++  gint fd, i;
+++
+++  for (i = 0; i < MAX_DEVICE_NUM; i++)
+++  {
+++    path = g_strdup_printf (BACKLIGHT_DEVICE_FMT, i);
+++    fd = open (path, flags);
+++    g_free (path);
+++    if (fd == -1)
+++      continue;
+++    if (ioctl (fd, BACKLIGHTGETINFO, &info) == 0
+++        && info.type == BACKLIGHT_TYPE_PANEL)
+++      return fd;
+++    close (fd);
+++  }
+++
+++  return -1;
+++}
+++
+++static gint
+++backlight_dev_get_brightness (void)
+++{
+++  struct backlight_props props;
+++  gint fd, res = -1;
+++
+++  fd = backlight_dev_open (O_RDONLY);
+++  if (fd == -1)
+++    return -1;
+++  if (ioctl (fd, BACKLIGHTGETSTATUS, &props) == 0)
+++    res = props.brightness;
+++  close (fd);
+++
+++  return res;
+++}
+++
+++static gboolean
+++backlight_dev_set_brightness (gint value)
+++{
+++  struct backlight_props props;
+++  gboolean result = FALSE;
+++  gint fd;
+++
+++  fd = backlight_dev_open (O_RDWR);
+++  if (fd == -1)
+++    return FALSE;
+++  if (ioctl (fd, BACKLIGHTGETSTATUS, &props) == 0)
+++  {
+++    props.brightness = CLAMP (value, 0, BACKLIGHT_MAX_BRIGHTNESS);
+++    if (ioctl (fd, BACKLIGHTUPDATESTATUS, &props) == 0)
+++      result = TRUE;
+++  }
+++  close (fd);
+++
+++  return result;
+++}
+++
++ gboolean
++ acpi_video_is_enabled (gchar *device)
++ {
++@@ -211,20 +284,24 @@ backlight_helper_get_device (void)
+    /* devices in priority order */
+    gchar *types[] = { "lcd", "crt", "out", "ext", "tv", NULL };
+    gchar *device = NULL;
+@@ -41,3 +126,71 @@
+  }
+  
+  /*
++@@ -245,6 +322,7 @@ main (gint argc, gchar *argv[])
++   gint set_brightness_switch = -1;
++   gboolean get_brightness_switch = FALSE;
++   gchar *device = NULL;
+++  gboolean use_dev = FALSE;
++   GList *list = NULL;
++ 
++   const GOptionEntry options[] = {
++@@ -283,13 +361,14 @@ main (gint argc, gchar *argv[])
++ 
++   /* find backlight device */
++   device = backlight_helper_get_device ();
+++  use_dev = backlight_dev_get_brightness () != -1;
++ 
++-  if (device != NULL)
+++  if (device != NULL || use_dev)
++   {
++     /* get the current setting of the ACPI video brightness switch handling */
++     if (get_brightness_switch)
++     {
++-      ret = backlight_helper_get_switch (device);
+++      ret = device != NULL ? backlight_helper_get_switch (device) : -1;
++       /* just print result to stdout */
++       if (ret == -1)
++       {
++@@ -307,7 +386,8 @@ main (gint argc, gchar *argv[])
++     /* get current brightness level */
++     if (get_brightness)
++     {
++-      ret = backlight_helper_get_brightness (device);
+++      ret = use_dev ? backlight_dev_get_brightness ()
+++                    : backlight_helper_get_brightness (device);
++       /* just print result to stdout */
++       if (ret == -1)
++       {
++@@ -325,6 +405,12 @@ main (gint argc, gchar *argv[])
++     /* get maximum brightness level */
++     if (get_max_brightness)
++     {
+++      if (use_dev)
+++      {
+++        g_print ("%d", BACKLIGHT_MAX_BRIGHTNESS);
+++        retval = EXIT_CODE_SUCCESS;
+++        goto out;
+++      }
++       list = backlight_helper_get_levels (device);
++       if (list != NULL)
++       {
++@@ -364,7 +450,8 @@ main (gint argc, gchar *argv[])
++     /* set the brightness level */
++     if (set_brightness != -1)
++     {
++-      if (backlight_helper_set_brightness (device, set_brightness))
+++      if (use_dev ? backlight_dev_set_brightness (set_brightness)
+++                  : backlight_helper_set_brightness (device, set_brightness))
++       {
++         retval = EXIT_CODE_SUCCESS;
++         goto out;
++@@ -380,7 +467,8 @@ main (gint argc, gchar *argv[])
++     /* enable or disable ACPI video brightness switch handling */
++     if (set_brightness_switch != -1)
++     {
++-      if (backlight_helper_set_switch (device, set_brightness_switch))
+++      if (device != NULL
+++          && backlight_helper_set_switch (device, set_brightness_switch))
++       {
++         retval = EXIT_CODE_SUCCESS;
++         goto out;
