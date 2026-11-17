@@ -416,8 +416,10 @@ Without that patch, bind `XF86MonBrightnessDown/Up` to `backlight decr 10` /
 `backlight incr 10` (users of group `video` can run it).
 
 Mic mute: XFCE acts on `XF86AudioMicMute` only with `xfce4-pulseaudio-plugin`
-(not tested); otherwise bind it to
-`pactl set-source-mute @DEFAULT_SOURCE@ toggle`.
+(0.5.1, tested 2026-11-17: the key toggles the mute and shows XFCE's popup),
+and only while the plugin is in a panel. It mutes PulseAudio's default
+source, which is the headset jack (`oss_input.dsp4`) unless
+`pactl set-default-source oss_input.dsp6` selects the built-in microphones.
 
 ## Touchpad and touchscreen interrupts
 
