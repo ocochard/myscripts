@@ -214,7 +214,7 @@ DSP for the internal digital microphones (DMIC) and audio offload.
 The built-in microphones are on the ACP's PDM (pulse density modulation) interface, not on the HDA codec:
 the ALC245 has no internal microphone pin (its only microphone pin, nid 25, is the headset jack).
 Impact with stock FreeBSD: no built-in microphone; the headset jack microphone goes through the ALC245 codec (`pcm4` record, not tested).
-Driver: `snd_acp`, branch [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) (commits 6ba38c3ca4a6, e4c888c47347, eac669d546ee; only the first is in `zbook`):
+Driver: `snd_acp`, branch [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) (commits 6ba38c3ca4a6, e4c888c47347, eac669d546ee; all three in `zbook`):
 a capture-only `pcm(4)` driver for ACP 7.x (rev 0x70-0x72). Tested 2026-11-16 on this laptop: `pcm6`, stereo 32-bit 48 kHz,
 quiet room -36 to -41 dBFS, clapping peaks at 0 dBFS, reload and restart work; no gain control.
 Since 2026-11-17 it mutes the full-scale burst of the first 100 ms, removes the DC offset (channel 0 from -22 to -75 dBFS over 5 s;
