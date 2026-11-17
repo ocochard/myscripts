@@ -387,6 +387,30 @@ hangs with no wake at all. Linux reaches S0i3 and wakes on a key on the
 same laptop. Patch, Linux reference data and analysis:
 [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md).
 
+### Power-off
+
+`shutdown -p now` powers the laptop off, but the power LED then blinks fast for about
+30 s before it goes dark; the next power-button press boots normally (no resume).
+Ubuntu (Linux 7.0.0-43, `shutdown -P now`) powers off with the LED going dark at once.
+Measured 2026-11-17, LED timed by eye:
+
+| Power-off | LED |
+|---|---|
+| Ubuntu | off at once |
+| FreeBSD, `zbook` kernel `zbook-n291269-0d71515aee38` | fast blink, then off |
+| FreeBSD, stock kernel `main-n290939-a7163bd76986` | fast blink, then off |
+| FreeBSD, dock and NanoKVM unplugged | fast blink, about 30 s |
+| FreeBSD, amdgpu and amdisp not loaded | fast blink, 27 s |
+
+So it is stock FreeBSD's power-off, not the `zbook` branches, the USB-C devices or the GPU
+driver. The kernel runs the normal sequence (`AcpiEnterSleepStatePrep(S5)` with `_PTS`,
+then `AcpiEnterSleepState(S5)`); a NanoKVM recording reached the USB detaches without an
+error, after which the KVM loses video. The fixed delay suggests the embedded controller
+waits for a notification Linux sends at power-off and then times out (not measured).
+Candidates: the S5 wake-device setup Linux does before `_PTS(5)`, a last EC transaction,
+or the shutdown hooks of drivers only Linux has here (USB4 host routers, UCSI, AMD PMF,
+amd-pmc). Not investigated further: the laptop ends fully off, 30 s late.
+
 ## Special keys
 
 Top row, without Fn (F1-F12 need Fn), measured 2026-11-17 with captures of
