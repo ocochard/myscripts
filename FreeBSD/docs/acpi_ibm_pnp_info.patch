@@ -1,0 +1,12 @@
+diff --git sys/dev/acpi_support/acpi_ibm.c sys/dev/acpi_support/acpi_ibm.c
+index 361f243e5a1f..597b3dc40fd8 100644
+--- sys/dev/acpi_support/acpi_ibm.c
++++ sys/dev/acpi_support/acpi_ibm.c
+@@ -377,6 +377,7 @@ MODULE_DEPEND(acpi_ibm, acpi, 1, 1, 1);
+ MODULE_DEPEND(acpi_ibm, evdev, 1, 1, 1);
+ #endif
+ static char    *ibm_ids[] = {"IBM0068", "LEN0068", "LEN0268", NULL};
++ACPI_PNP_INFO(ibm_ids);
+ 
+ static int
+ acpi_status_to_errno(ACPI_STATUS status)
