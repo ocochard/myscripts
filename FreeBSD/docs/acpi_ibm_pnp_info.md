@@ -187,6 +187,7 @@ first in `kern.module_path` for the test only.
 | `devmatch -a`, `/tmp/acpiibm` first in `kern.module_path` | `unattached: acpi_ibm.ko` |
 | `kldload acpi_ibm` with that path | loaded from `/tmp/acpiibm/acpi_ibm.ko`; `acpi_ibm0` attaches, `%pnpinfo` `_HID=LEN0268` |
 | `dev.acpi_ibm.0.mic_led=1` (earlier, stock module) | reads back 1; the LED itself was not looked at |
+| Real boot, kernel and modules from main 4fae50ea82e2 + this patch in `/boot/kernel.test` (`nextboot -k`), nothing in `kld_list` | `acpi_ibm.ko` loaded at boot, `acpi_ibm0: <ThinkPad ACPI Extras> on acpi0` |
 
 The plain `devmatch` run (as `/etc/rc.d/devmatch` does it) printed nothing
 during the test, because `acpi_ibm` had been loaded and unloaded earlier,
@@ -195,8 +196,6 @@ and reproduces the state after a fresh boot.
 
 Not tested:
 
-- a real boot with the patched module in `/boot/kernel` (the end-to-end
-  path through `/etc/rc.d/devmatch`);
 - older ThinkPads with `IBM0068` or `LEN0068`;
 - hotkey events through devd, and the evdev keys.
 

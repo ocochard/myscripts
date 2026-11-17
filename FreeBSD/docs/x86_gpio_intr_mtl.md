@@ -299,6 +299,7 @@ read with moused holding `/dev/input/event8` open.
 | Unload iichid and mtlgpio, reload mtlgpio then iichid | IRQ 2168 reused, IE bit = 1 |
 | devd stopped, mtlgpio absent, load iichid | "Interrupt setup failed", "Using sampling mode" (fallback works) |
 | Then load mtlgpio, reload iichid | interrupt mode again, IE bit = 1 |
+| Rebased on main 4fae50ea82e2 (2026-11-17), normal boot (`nextboot -k kernel.test`), with the [acpi_ibm patch](acpi_ibm_pnp_info.md) | devmatch loads `mtlgpio`; `irq2168: iichid0`, no "Interrupt setup failed"; about 10 s of use: 3142 interrupts on both `gpio0` and `iichid0`, counts identical; 10 s idle: 0 |
 
 Not tested:
 
