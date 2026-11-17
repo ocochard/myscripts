@@ -43,6 +43,22 @@ it in the background first, wait 3-4 s, then trigger the action:
 sleep 4; ssh host 'sudo shutdown -p now'
 ```
 
+## Tested
+
+2026-11-17, zbook (FreeBSD console at the `login:` prompt), firmware image
+v1.0.9, application 0.2.2:
+
+| Command | Result |
+|---|---|
+| `login` | `OK` |
+| `shot --secs 6` | readable console at 960 px wide |
+| `key k v m shift+x` | `kvmX` typed at the prompt |
+| `key backspace` (repeated) | characters erased |
+| `paste 'pastetest'` during `record --secs 12` | 12 frames; first frame empty prompt, last frame `pastetest` |
+
+Not tested: typing into an X session, keys with no HID usage listed in
+`KEYS`, other NanoKVM models or firmware versions.
+
 ## How it works (firmware application 0.2.x)
 
 - Login: `POST /api/auth/login` `{"username","password"}` over HTTPS
