@@ -22,15 +22,15 @@ Linux comparison: Ubuntu with Linux 7.0.0-43 on the same laptop, same day (`lspc
 | Built-in camera | OmniVision OV05C behind the ISP 4.1 | not in FreeBSD yet: `amdisp` from drm-kmod branch [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp) + the August 2025 ISP firmware; `/dev/video0`, 30 fps (see below) |
 | NVMe | Samsung PM9A1 2 TB (144d:a80a) | `nvme`/`nda` |
 | USB 3 | four xHCI (1022:1587, 1588, 1589, 158b) | `xhci` |
-| Touchpad | Synaptics SYNA3133 (I2C HID) | `iichid0`, polling mode (see below) |
-| Touchscreen | ELAN2513 (I2C HID) | `iichid1`, polling mode (see below) |
+| Touchpad | Synaptics SYNA3133 (I2C HID) | `iichid0`, polling mode; interrupt mode with branch [`olivier-amdgpio-intr`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-intr) (see below) |
+| Touchscreen | ELAN2513 (I2C HID) | `iichid1` attaches; no touch reports on this unit, a hardware fault (dead in Windows and in the HP UEFI diagnostics too, see below) |
 | I2C controllers | AMDI0010 DesignWare | `ig4iic0-3` |
 | SMBus | FCH 1022:790b | `intsmb` |
-| CPU temperature | Family 1Ah data fabric | `amdtemp`, `amdsmn` |
+| CPU temperature | Family 1Ah data fabric | `amdtemp`, `amdsmn` (`kld_list`; devmatch loads them with branch [`olivier-devmatch-hostb`](https://github.com/ocochard/freebsd-src/compare/main...olivier-devmatch-hostb)) |
 | TPM 2.0 | NTC0702 | `tpmtis` (FIFO) |
 | Battery, AC, lid, sleep button | ACPI | `battery`, `acpi_acad`, `acpi_lid`, `acpi_button` |
 | Low-power idle | AMDI000B | `acpi_spmc` |
-| Keyboard | HPQ8002 | `atkbdc` |
+| Keyboard | HPQ8002 | `atkbdc`; all top-row keys work with the `zbook` branch and the xfce4-power-manager patch (see [Special keys](#special-keys)) |
 | Ethernet | none built in; tested with a USB-C dock (RTL8153) | `ure` |
 
 Audio outputs attach, but I did not listen to the headphone or HDMI outputs.
@@ -221,6 +221,19 @@ Since 2026-11-17 it mutes the full-scale burst of the first 100 ms, removes the 
 `dev.pcm.6.dc_filter`) and declares its PCI ID for `devmatch(8)`.
 How it works, step by step: [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md).
 
+Test the microphones in a browser (Chromium records through PulseAudio):
+
+1. `cat /dev/sndstat` lists `pcm6: <AMD ACP 7.x digital microphones> (rec)`.
+2. `pactl list short sources` shows `oss_input.dsp6`: PulseAudio opens the device without extra configuration.
+3. The default source is `oss_input.dsp4` (the headset jack, because `hw.snd.default_unit` is 4).
+   Select the microphones with `pactl set-default-source oss_input.dsp6`,
+   or select them in `chrome://settings/content/microphone`.
+4. Open a microphone test page (for example https://webcammictest.com/check-mic.html), speak, and look at the level meter.
+
+Without a browser: `parecord -d oss_input.dsp6 --file-format=wav /tmp/mic.wav`, then
+`ffmpeg -i /tmp/mic.wav -af volumedetect -f null -`.
+Tested 2026-11-17 for 3 s in a quiet room: mean -40.7 dB, max -22.0 dB.
+
 On Ubuntu (Linux 7.0.0-43, 2026-11-16) they record. Linux uses the plain ACP stack, not SOF:
 `snd_acp_pci` on the PCI function creates the platform device `acp_asoc_acp70` (`snd_acp70`, with `snd_acp_pdm` and `snd_acp_pcm`),
 the machine driver `acp-pdm-mach` (`snd_acp_mach`) and the generic `dmic-codec`. ALSA card 2, `acp-pdm-mach`, device 0
@@ -372,6 +385,40 @@ hangs with no wake at all. Linux reaches S0i3 and wakes on a key on the
 same laptop. Patch, Linux reference data and analysis:
 [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md).
 
+## Special keys
+
+Top row, without Fn (F1-F12 need Fn), measured 2026-11-17 with captures of
+the raw scancodes (dtrace on `atkbd_read_char()`), of the ACPI notifications
+and of the evdev devices:
+
+| # | Key | What the laptop sends | Stock FreeBSD | With the `zbook` branch |
+|---|---|---|---|---|
+| 1 | external screen selection | Meta+P (AT keys) | works | works |
+| 2 | (no icon) | F2 | works | works |
+| 3, 4 | brightness down, up | ACPI notify 0x87, 0x86 on `\_SB.PCI0.GPPA.GFX0.LCD_` | nothing (acpi_video not loaded) | `KEY_BRIGHTNESSDOWN/UP` from `acpi_video`, autoloaded |
+| 5 | keyboard light | handled by the keyboard firmware | works | works |
+| 6, 7, 8 | mute, volume down, volume up | AT keys | work | work |
+| 9 | mic off | scancode `e0 01` | dropped | `KEY_MICMUTE` |
+| 10 | start/pause | AT key | works | works |
+| 11 | HP programmable key | scancode `68` | dropped | `KEY_PROG1` (`XF86Launch1` in X) |
+| 12 | home | AT key | works | works |
+
+No key raises an HP WMI event: `acpi_hp` attaches (`acpi_hp0 on acpi_wmi1`)
+but only acts on the wireless event, so it is not needed for the keys.
+
+Brightness: the panel is an OLED driven by amdgpu; the ACPI brightness
+(`hw.acpi.video.lcd0.brightness`, firmware `_BCM`) changes nothing, only
+`/dev/backlight/backlight0` does. XFCE's power manager only knew the ACPI
+interface on FreeBSD (its helper exits 255 here); with the
+xfce4-power-manager patch ([docs/xfpm_backlight9.md](docs/xfpm_backlight9.md))
+the brightness keys dim the panel and show XFCE's popup.
+Without that patch, bind `XF86MonBrightnessDown/Up` to `backlight decr 10` /
+`backlight incr 10` (users of group `video` can run it).
+
+Mic mute: XFCE acts on `XF86AudioMicMute` only with `xfce4-pulseaudio-plugin`
+(not tested); otherwise bind it to
+`pactl set-source-mute @DEFAULT_SOURCE@ toggle`.
+
 ## Touchpad and touchscreen interrupts
 
 `dmesg` on every boot:
@@ -390,7 +437,7 @@ Both interrupts are GpioInt resources on `\_SB.GPIO` (AMDI0030), from the tables
 | Device | I2C | Interrupt |
 |---|---|---|
 | Touchpad `\_SB_.I2CA.TPAD` (DSDT) | 0x2C on `\_SB.I2CA`, 400 kHz | GpioInt, `\_SB.GPIO` pin 8 |
-| Touchscreen `\_SB_.I2CC.TPL0` (SSDT) | 0x10 on `\_SB.I2CC` | GpioInt, `\_SB.GPIO` pin 0 (static buffer `SBFG`) |
+| Touchscreen `\_SB_.I2CC.TPL0` (SSDT) | 0x10 on `\_SB.I2CC` | GpioInt, `\_SB.GPIO` pin 9, level, active low (the static buffer `SBFG` says pin 0; `_INI` sets `INT1 = 0x09`) |
 
 FreeBSD `iasl` fails on the DSDT image written by `acpidump -o` (`Failure resolving symbol [\_SB._]`);
 the same `iasl` decompiles the DSDT extracted under Linux (`acpidump`, `acpixtract`) without error.
@@ -399,6 +446,24 @@ Test on 2026-11-11: `kldload amdgpio` attaches `gpio0` and an `_AEI` event handl
 After `kldunload iichid.ko; kldload iichid`, both devices still report `Interrupt setup failed`.
 Cause: `acpi_iicbus.c` ignores GpioInt resources (`/* Not supported by FreeBSD yet */`, `sys/dev/iicbus/acpi_iicbus.c:415`).
 The same gap on Meteor Lake is described in [docs/x86_gpio_intr_mtl.md](docs/x86_gpio_intr_mtl.md); that patch targets the Intel GPIO controller, so `amdgpio` would need the same interrupt support.
+
+Fix: branch [`olivier-amdgpio-intr`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-intr) (on `zbook`): the generic x86 part of that patch,
+plus trigger, mask and unmask operations and pin dispatch in `amdgpio`; patch and tutorial: [docs/amdgpio_intr.md](docs/amdgpio_intr.md).
+Tested 2026-11-17: no more `Using sampling mode`; `irq2104: iichid0` (pin 8) and `irq2105: iichid1` (pin 9) behind `irq7: gpio0`;
+the touchpad works, with 0 interrupts/s when idle and the same count on `gpio0` and `iichid0` in use; it still works after `zzz` and a key wake;
+`kldunload amdgpio` is refused (`Device busy`) while the touchpad uses it.
+
+The touchscreen does not work, with or without that branch: 105 interrupts at boot, then nothing while touched (pin 9 stays high,
+its register enabled and unmasked), and 0 bytes from `/dev/input/event7` in 2 minutes of touching in polling mode
+(`dev.iichid.1.sampling_rate_slow=10`), although `iichid1` is open, powered and reset.
+Ubuntu (Linux 7.0.0-43, 2026-11-17) behaves the same: `i2c_hid_acpi` and `hid-multitouch` bind it on `amd_gpio 9`,
+and an I2C trace of a driver rebind shows the same sequence as FreeBSD (HID descriptor, SET_POWER ON, RESET, report descriptor,
+feature reports 0x3a and 0x3e); then, over 2 minutes of touching: 0 interrupts (8 before and after), 0 bytes from `hidraw`,
+and no I2C traffic at all; the same at the GNOME login screen (0 interrupts while touched, touchpad counted as a control).
+The panel is the 2.8K (2880x1800) OLED, the only touch option in HP's QuickSpecs. Windows lists a working
+"HID-compliant touch screen" with 10 touch points, but touch does not respond there either (device enabled),
+nor in the HP PC Hardware Diagnostics UEFI tool: a hardware fault of this unit (touch sensor or its connection),
+not a FreeBSD or Linux driver problem.
 
 ## Driver work in progress
 
@@ -415,6 +480,10 @@ the document that explains each one.
 | Suspend-to-idle wake and C-states | [`olivier-s2idle-wake`](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) | 3 | key wake and clean resume; no S0i3 yet | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
 | PCI D3hot (GPU stayed in D0 over suspend) | [`olivier-pci-d3hot`](https://github.com/ocochard/freebsd-src/compare/main...olivier-pci-d3hot) | 1 | fix, tested | [docs/pci_d3hot.md](docs/pci_d3hot.md) |
 | I2C controller clock | [`olivier-ig4-amd-clock`](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock) | 1 | `ig4: Use the 150 MHz input clock of AMD AMDI0010 controllers` | |
+| Touchpad interrupts (GPIO pin interrupts) | [`olivier-amdgpio-intr`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-intr) | 2, in `zbook` | touchpad in interrupt mode, survives suspend-to-idle | [docs/amdgpio_intr.md](docs/amdgpio_intr.md) |
+| amdsmu, amdtemp, amdsmn and acpi_video autoload | [`olivier-devmatch-hostb`](https://github.com/ocochard/freebsd-src/compare/main...olivier-devmatch-hostb) | 3, in `zbook` | `devmatch(8)` matches devices owned by hostb and vgapci on their own bus, so these modules load at boot without `kld_list` (amdgpu does not), tested | [docs/devmatch_hostb.md](docs/devmatch_hostb.md) |
+| Mic mute and HP programmable keys | [`olivier-evdev-hp-keys`](https://github.com/ocochard/freebsd-src/compare/main...olivier-evdev-hp-keys) | 1, in `zbook` | scancodes `e0 01` and `68` reach evdev as `KEY_MICMUTE` and `KEY_PROG1`, tested | [docs/evdev_hp_keys.md](docs/evdev_hp_keys.md) |
+| Brightness keys in XFCE (OLED backlight) | ports patch to `sysutils/xfce4-power-manager` (not committed) | 1 | the backlight helper uses backlight(9), so xfpm dims the panel and shows its popup, tested | [docs/xfpm_backlight9.md](docs/xfpm_backlight9.md) |
 | GPIO driver autoload | [`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) | 1 | `amdgpio: Add PNP info for devmatch` | |
 | ACPI properties | [`olivier-acpi-prop-child`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acpi-prop-child) | 1 | `acpi: Refuse property requests for other buses children` | |
 | LinuxKPI SRCU (needed by the NPU) | [`olivier-lkpi-srcu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-srcu) | 1 | fix, tested (test module, stress, mutant) | [docs/linuxkpi_srcu_per_struct.md](docs/linuxkpi_srcu_per_struct.md) |
@@ -430,17 +499,17 @@ the document that explains each one.
 
 ### Applying the work, in order
 
-The eleven freebsd-src branches apply in this order, without conflict
+The fourteen freebsd-src branches apply in this order, without conflict
 (first checked with the first eight and 32 commits; mt7925's 12th, the suspend fix,
-the three AMD IOMMU commits and the ACP microphone driver were added later and apply on top).
+the three AMD IOMMU commits, the ACP microphone driver, the amdgpio interrupts, the devmatch fix and the evdev keys were added later and apply on top).
 Branch [`zbook`](https://github.com/ocochard/freebsd-src/compare/main...zbook)
-of the fork has all 37 commits in this order on FreeBSD main 46ce9acd6d15
-(2026-11-16), for testing everything at once (steps 1 to 11). The IOMMU
+of the fork has all 45 commits in this order on FreeBSD main 46ce9acd6d15
+(2026-11-16), for testing everything at once (steps 1 to 14). The IOMMU
 code runs only with `hw.amdiommu.enable=1`; its sources there are identical
 to the stack tested in the AMD IOMMU bug reports. The branch builds
 (`buildkernel KERNCONF=GENERIC-NODEBUG`, plus the mt76 modules, which
 `sys/modules/Makefile` does not list, and the drm-kmod `amdgpu` and
-`amdisp` modules of step 14 against it). Boot test on the laptop
+`amdisp` modules of step 17 against it). Boot test on the laptop
 (2026-11-16, kernel `zbook-n291256-f7d7c068c5b5` with those modules in
 the kernel directory; again with the 36-commit kernel
 `zbook-n291260-5e39e91e9442`: all the drivers below load from its directory,
@@ -468,7 +537,7 @@ default route. Fixed on the laptop with a fixed name: a devd rule
 `ifconfig_dock0` instead of `ifconfig_ue0`; tested by resetting the
 adapter (`usbconfig reset`): it came back as `ue1`, was renamed `dock0`
 and got both addresses. Each
-document gives the deeper tests of its own branch. Steps 13 to 15 are outside the kernel source.
+document gives the deeper tests of its own branch. Steps 16 to 18 are outside the kernel source.
 
 | # | Apply | Commits | Depends on | Then | Document |
 |---|---|---|---|---|---|
@@ -482,11 +551,14 @@ document gives the deeper tests of its own branch. Steps 13 to 15 are outside th
 | 8 | freebsd-src [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 12 | | MT7925 firmware (port PR 300731); `if_mt7925` in `kld_list` | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
 | 9 | freebsd-src [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) | 1 | | interrupt remap entries are freed and aligned (only with `hw.amdiommu.enable=1`) | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
 | 10 | freebsd-src [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) | 2 | | opt-in: `hw.amdiommu.enable=1 hw.iommu.dma=1` (DMA remapping); with `hw.amdiommu.enable=1` alone also `hw.amdgpu.ip_block_mask=0xfffff7ff` (VPE off, SMU hang) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |
-| 11 | freebsd-src [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) | 1 | | `snd_acp` for the built-in microphones; load it or add it to `kld_list` (`pcm` record device) | [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md) |
-| 12 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-11 | | |
-| 13 | freebsd-ports [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo): `graphics/drm-latest-kmod` with four `DC_FP_START`/`DC_FP_END` patches | 1 | kernel source of step 12 | build the package with poudriere and install it (without it amdgpu panics when it loads) | [GPU features](#gpu-features) |
-| 14 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 12; replaces the `amdgpu.ko` of step 13 (same four patches, plus the camera glue) | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
-| 15 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 14 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
+| 11 | freebsd-src [`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp) | 3 | | `snd_acp` for the built-in microphones (`pcm` record device); devmatch loads it, so remove `snd_acp` from `kld_list` if an earlier setup added it | [docs/snd_acp_dmic.md](docs/snd_acp_dmic.md) |
+| 12 | freebsd-src [`olivier-amdgpio-intr`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-intr) (on `olivier-s2idle-wake`) | 2 | 5 | touchpad interrupts instead of polling | [docs/amdgpio_intr.md](docs/amdgpio_intr.md) |
+| 13 | freebsd-src [`olivier-devmatch-hostb`](https://github.com/ocochard/freebsd-src/compare/main...olivier-devmatch-hostb) | 3 | | devmatch loads `amdsmu`, `amdtemp`, `amdsmn` and `acpi_video`; install `/sbin/devmatch` (world, not kernel) | [docs/devmatch_hostb.md](docs/devmatch_hostb.md) |
+| 14 | freebsd-src [`olivier-evdev-hp-keys`](https://github.com/ocochard/freebsd-src/compare/main...olivier-evdev-hp-keys) | 1 | | mic mute and HP programmable keys reach evdev | [docs/evdev_hp_keys.md](docs/evdev_hp_keys.md) |
+| 15 | build and install the kernel and modules (`buildkernel`, `installkernel`) | | 1-14 | | |
+| 16 | freebsd-ports [`strix-halo`](https://github.com/ocochard/freebsd-ports/compare/main...strix-halo): `graphics/drm-latest-kmod` with four `DC_FP_START`/`DC_FP_END` patches | 1 | kernel source of step 15 | build the package with poudriere and install it (without it amdgpu panics when it loads) | [GPU features](#gpu-features) |
+| 17 | drm-kmod [`olivier-amdisp`](https://github.com/ocochard/drm-kmod/compare/drm_v6.12.85_3...olivier-amdisp): tag `drm_v6.12.85_3`, the graphics/drm-latest-kmod port's Strix Halo DCN patches (first commit), then the camera | 1 + 18 | kernel source of step 15; replaces the `amdgpu.ko` of step 16 (same four patches, plus the camera glue) | build `amd/amdgpu` and `amd/amdisp` with `SYSDIR=<src>/sys`, install both in `/boot/modules` (keep the packaged `amdgpu.ko`); `amdgpu amdisp` in `kld_list` | [docs/amd_isp_camera.md](docs/amd_isp_camera.md) |
+| 18 | ISP firmware of August 2025: drm-kmod-firmware [`sync-linux-firmware-20260519`](https://github.com/ocochard/drm-kmod-firmware/commit/41e5783) for graphics/gpu-firmware-amd-kmod, or linux-firmware's `amdgpu/isp_4_1_1.bin` (md5 `c872d1ba`) copied to `/boot/firmware/amdgpu/` with `/boot/modules/amdgpu_isp_4_1_1_bin.ko` moved aside | | 17 | without it the ISP boots but finds no sensor | [docs/drm_kmod_firmware_isp_report.md](docs/drm_kmod_firmware_isp_report.md) |
 
 The NPU work is not in `zbook`. Its kernel changes are all in the fork branch
 [`olivier-npu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-npu) (main plus the NPU branches above), booted with `hw.amdiommu.enable=1`
