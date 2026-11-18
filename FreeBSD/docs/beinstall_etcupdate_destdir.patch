@@ -1,0 +1,13 @@
+diff --git tools/build/beinstall.sh tools/build/beinstall.sh
+index e4ae4a81617b..fc0de0213c86 100755
+--- tools/build/beinstall.sh
++++ tools/build/beinstall.sh
+@@ -125,7 +125,7 @@ update_etcupdate_pre() {
+ }
+ 
+ update_etcupdate() {
+-	${ETCUPDATE_CMD} -s ${srcdir} ${ETCUPDATE_FLAGS} || return $?
++	${ETCUPDATE_CMD} -s ${srcdir} -D ${BE_MNTPT} ${ETCUPDATE_FLAGS} || return $?
+ 	${ETCUPDATE_CMD} resolve -D ${BE_MNTPT}
+ }
+ 

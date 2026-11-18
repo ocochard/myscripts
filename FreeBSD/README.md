@@ -19,6 +19,8 @@ Install / system setup:
 - [update-fbsd.sh](update-fbsd.sh) — FreeBSD update helper
 - [upgrade-from-memstick.md](upgrade-from-memstick.md) — upgrade an installed root-on-ZFS system from a live memstick into a new boot environment, without a source tree
 - [knobs.sh](knobs.sh) — apply tuning knobs / sysctls
+- [packages.list](packages.list): ports list built by poudriere in update-fbsd.sh; [deforaos.pkg.list](deforaos.pkg.list): DeforaOS desktop ports
+- [rootfs/](rootfs/): reference config files (loader.conf, periodic.conf, fstab examples, bootmail rc.d, daily pkg upgrade)
 
 Test & benchmark orchestration:
 - [loop-kyua-test.sh](loop-kyua-test.sh) — repeat a kyua test run
@@ -29,6 +31,12 @@ Test & benchmark orchestration:
 - [freebsd-memory.sh](freebsd-memory.sh) — memory introspection
 - [bhyve-GPU.sh](bhyve-GPU.sh) — bhyve GPU passthrough helper
 - [pf-big-table.sh](pf-big-table.sh) — pf large-table benchmark
+- [loop_until_failure.sh](loop_until_failure.sh): run a command line in a loop until it fails
+
+Bug reproducers and patch tests:
+- [bhyve-efault-repro.c](bhyve-efault-repro.c): bhyve dies with "vm_run error -1, errno 14" when a guest writes to the read-only vmgenid page; bug report: [bhyve-efault.bug.txt](bhyve-efault.bug.txt)
+- [repro_tun_destroy_deadlock.sh](repro_tun_destroy_deadlock.sh): reproduce the tun_destroy(9) deadlock; [test_tun_destroy_patch.sh](test_tun_destroy_patch.sh): validate the EBUSY fix ([docs/tun_destroy_deadlock_case_study.md](docs/tun_destroy_deadlock_case_study.md))
+- [tcp_hostcache_mss_test.sh](tcp_hostcache_mss_test.sh): regression test, a stale TCP hostcache MTU clamps the advertised MSS
 
 UEFI network boot ([iPXE.md](iPXE.md) explains the whole subject; § numbers below are its sections):
 
@@ -43,12 +51,22 @@ The default loader URL, `people.freebsd.org/~olivier/iPXE/loader.x64.efi`, is a 
 
 - [ipxe-scripts/embed-chain-autoexec.ipxe](ipxe-scripts/embed-chain-autoexec.ipxe): `EMBED=` script that breaks the iPXE-loads-iPXE loop when DHCP cannot match option 77 (iPXE.md §5b)
 - [ipxe-scripts/chain-bios.ipxe](ipxe-scripts/chain-bios.ipxe) — BIOS-era reference script; cannot work under UEFI, kept to show what the above had to replace
+- [mkipxe-disk.sh](mkipxe-disk.sh): build the smallest bootable UEFI iPXE disk image (GPT, one ESP)
+- [memdisk-poc/](memdisk-poc/): in-tree `loader.efi memdisk=` vs `memdisk_uefi.elf` + `nvdimm.ko` test, and lsdev probe runs
 
 Ports / packaging helpers:
 - [generate_GH_TUPLES.sh](generate_GH_TUPLES.sh) — generate `GH_TUPLE` lines for a port
 - [poudrire-build-log.sh](poudrire-build-log.sh) — extract / summarize poudriere build logs
 - [pkg-real-size.sh](pkg-real-size.sh) — report actual installed size of pkgs
 - [check_missing_lib.sh](check_missing_lib.sh) — find binaries linked to missing libs
+- [check-outdated-ports.sh](check-outdated-ports.sh): list ports of a maintainer that are behind upstream (Repology API)
+
+Desktop and games:
+- [wine-game.sh](wine-game.sh): prepare a Wine prefix for Windows games (Electron/Chromium, Unreal Engine) and launch one
+- [scanmem.md](scanmem.md): editing a game value with scanmem (Wine game)
+- [record-xorg-demo.sh](record-xorg-demo.sh): record Xorg screen and game audio (virtual_oss loopback) into one demo.mkv
+- [hdaa2dot](hdaa2dot): graphviz view of the hdaa(4) audio topology, example output: [soundsetup.png](soundsetup.png)
+- [flac2mp3](flac2mp3): convert every .flac in a directory to .mp3
 
 Misc utilities:
 - [dmesg-nycbug.sh](dmesg-nycbug.sh) — submit dmesg to dmesgd.nycbug.org
@@ -59,10 +77,14 @@ Misc utilities:
 - [scpget.sh](scpget.sh) — scp-based fetch helper
 - [rspro.sh](rspro.sh) — rspro helper
 - [discovering-getsockname.c](discovering-getsockname.c) — small C demo
+- [queue](queue): queue commands (long copies) to run one after the other
+- [veos-bhyve.sh](veos-bhyve.sh): boot an Arista vEOS-lab qcow2 image under bhyve
+- [lua/hello-world.lua](lua/hello-world.lua): flua as a shell script replacement, first test
 
 Subdirectories:
 - [TP/](TP/) — practical-work prep scripts (preparation-master/server, tunnels)
 - [async-hid/](async-hid/README.md): FreeBSD hidraw(4) backend for the Rust async-hid crate (design note, skeleton, hardware checks)
+- [CI/](CI/): graphviz map of the FreeBSD CI (gv, png, svg)
 - [docs/](docs/README.md) — development notes and tutorials
 - [frr-topotest-vm/](frr-topotest-vm/README.md) — bhyve guest running the FRR topotests, capturing kernel panics
 - [jail/](jail/README.md) — jail management scripts (bridge/nullfs/FRR examples, jail_lib, tests), NETINT card in a jail
@@ -70,6 +92,8 @@ Subdirectories:
 - [ktls_sendfile/](ktls_sendfile/README.md) — KTLS + sendfile corruption reproducer (FreeBSD 15.0)
 - [mesa-dri-video-codecs/](mesa-dri-video-codecs/README.md) — graphics/mesa-dri: enable Vulkan Video encode codecs in RADV
 - [moonshine/](moonshine/README.md) — Moonshine on FreeBSD feasibility study
+- [monit/](monit/): monit check scripts (fans, temperature, SMART, inotify)
+- [npu/](npu/): FastFlowLM on the AMD XDNA NPU under linuxlator (setup, rc script, benchmarks, power and GPU metrics); driver port: [docs/amdxdna_npu.md](docs/amdxdna_npu.md)
 - [netint_demo/](netint_demo/README.md) — live NETINT Quadra web demo: hardware transcode with resolution, bitrate, rate control, codec and AI filters, card/CPU/RAM/network load (FreeBSD only)
 - [nfsbug/](nfsbug/README.md) — NFSv4.1 client fixes found with Amazon EFS, and their regression tests
 - [benches/tcp/](benches/tcp/README.md) — TCP stack and CCA benchmarks
@@ -80,6 +104,7 @@ Subdirectories:
 - [sendfile/](sendfile/README.md), [tcp_dscp/](tcp_dscp/README.md), [testrss/](testrss/README.md) — small C test programs
 - [ports-tests/](ports-tests/README.md) — port-related test scripts
 - [video/](video/README.md) — vtblank: paint the console framebuffer black
+- [zbook/](zbook/): devd hook that names the ZBook dock USB Ethernet `dock0`
 
 ## Building
 
