@@ -22,16 +22,20 @@
 #  - Started from ssh (no DISPLAY): the game runs on the machine's own X server.
 #  - -m: the mesa-devel package redirects libvulkan_radeon.so to its beta
 #    build through libmap.d for every program.  Some games hang the GPU or
-#    stall with it (e.g. Clair Obscur), so -m disables libmap for the game to
-#    use the release Mesa.  This disables every libmap redirection.
+#    stall with it (e.g. Clair Obscur, Wild Life), so -m disables libmap for
+#    the game to use the release Mesa.  This disables every libmap
+#    redirection.  Default for Unreal Engine games; -M keeps the beta Mesa
+#    (e.g. Wicked Island resets the GPU with the release one).
 
 set -eu
 
 usage() {
-	echo "Usage: $(basename "$0") [-d] [-k] [-m] [-s] /path/to/game.exe [game args...]"
+	echo "Usage: $(basename "$0") [-d] [-k] [-m|-M] [-s] /path/to/game.exe [game args...]"
 	echo "  -d  install DXVK + vkd3d-proton (automatic for Unreal Engine games)"
 	echo "  -k  keep the current keyboard layout (no switch to us)"
 	echo "  -m  use the release Mesa, not the mesa-devel one libmap redirects to"
+	echo "      (default for Unreal Engine games)"
+	echo "  -M  use the mesa-devel Mesa libmap redirects to (default for other games)"
 	echo "  -s  setup the prefix only, do not launch"
 	echo "Env: WINEPREFIX (default ~/.wine, ~/.wine-ue for -d), WINEDIR (default /usr/local/wine-proton), DISPLAY (default :0)"
 	exit 1
@@ -39,13 +43,14 @@ usage() {
 
 dxvk=false
 keep_layout=false
-release_mesa=false
+release_mesa=
 setup_only=false
-while getopts "dkmsh" opt; do
+while getopts "dkmMsh" opt; do
 	case ${opt} in
 	d) dxvk=true ;;
 	k) keep_layout=true ;;
 	m) release_mesa=true ;;
+	M) release_mesa=false ;;
 	s) setup_only=true ;;
 	*) usage ;;
 	esac
@@ -54,6 +59,7 @@ shift $((OPTIND - 1))
 
 # Unreal Engine packaged game: Engine/ directory next to the launcher
 [ $# -ge 1 ] && [ -d "$(dirname "$1")/Engine" ] && dxvk=true
+release_mesa=${release_mesa:-${dxvk}}
 
 WINEDIR=${WINEDIR:-/usr/local/wine-proton}
 if ${dxvk}; then
