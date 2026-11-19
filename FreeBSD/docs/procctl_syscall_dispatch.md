@@ -185,7 +185,7 @@ sequenceDiagram
     D->>W: selector = BLOCK, return the result
 ```
 
-## 4. Two FreeBSD-specific problems found on the way
+## 4. Three FreeBSD-specific problems found on the way
 
 ### 4.1 The registers were not where the handler looked
 
@@ -227,12 +227,12 @@ takes a lock and calls `__sys_sigprocmask()`.
 
 If a signal arrives while Windows code runs, the selector says BLOCK, and
 Wine's handler only sets ALLOW once it starts running. With libsys as the
-allowed range, the wrapper's `__sys_sigprocmask()` is allowed, but a
-contended lock makes libthr's `_umtx_op_err()` execute its own `syscall`
-instruction, outside the range, and any program using a different range
-would be hit harder. The test program, which allows no range at all, made
-this visible: with the selector at BLOCK, a timer signal's wrapper had its
-`sigprocmask` trapped and "emulated" instead of executed.
+allowed range, the wrapper's `__sys_sigprocmask()` comes from libsys and
+is allowed. But libthr makes one system call itself, outside libsys:
+`_umtx_op_err()`, used when the wrapper's lock is contended. That one
+would be trapped, and so would every system call of a program that uses
+a smaller allowed range than libsys. This comes from reading
+`thr_sig.c`: it is a rare case, and no test has triggered it.
 
 The fix, an idea taken from XaeroVincent's patch (section 7), is in
 `sendsig()`, the amd64 function that builds the signal frame: it sets the
@@ -250,15 +250,46 @@ would run as a FreeBSD call again.
 So `sendsig()` also saves the previous value in the signal frame (in
 `mc_spare[0]` of the saved machine context, tagged so that a random
 value is never mistaken for it), and `sigreturn(2)` writes it back,
-unless the handler changed the byte. That last condition matters: when
-a Wine handler redirects the thread into Windows code, it sets BLOCK
-itself, and the kernel must not undo that.
+unless the handler wrote the byte itself. That last condition matters:
+a Wine handler that redirects the thread into Windows code sets BLOCK
+itself, and a SIGSYS handler that emulates a call sets ALLOW to keep
+running native code; the kernel must not undo either.
+
+To tell "the handler wrote ALLOW" from "the handler did not touch the
+byte", the kernel does not write ALLOW (0) at signal delivery but a third
+value, `PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL` (2), which also allows system
+calls. A first version wrote 0 and restored the old value whenever it
+still read 0: the test program hung, because its SIGSYS handler's ALLOW
+was turned back into BLOCK and every later system call of the test,
+including `printf`'s `write`, was trapped and faked.
 
 | Selector before the signal | Byte when the handler returns | After `sigreturn(2)` |
 |---|---|---|
-| BLOCK | ALLOW (handler did not touch it) | BLOCK, restored |
-| BLOCK or ALLOW | BLOCK (handler set it) | BLOCK, the handler's choice |
+| BLOCK | ALLOW_SIGNAL (handler did not touch it) | BLOCK, restored |
+| BLOCK | ALLOW or BLOCK (handler wrote it) | the handler's choice |
 | ALLOW | ALLOW | ALLOW, nothing was saved |
+
+### 4.3 Signals deferred by rtld and libthr
+
+FreeBSD's run-time linker and thread library do not block signals with
+`sigprocmask(2)` around their critical sections. They use a cheaper
+mechanism, `sigfastblock(2)`: a word in user memory that the kernel reads
+before delivering a signal. While it is non-zero, signals wait.
+
+Both still make system calls while that word is set: rtld calls
+`mprotect` while loading libraries, libthr calls `_umtx_op` when a lock is
+contended. Wine never noticed, because it allows the whole of libsys and
+only traps while Windows code runs. A tool that traps everything outside
+its own small stub (see `FreeBSD/sudtrace`) hit it on the first
+instruction after turning the feature on: `trapsignal()` saw a deferred
+SIGSYS, could not deliver it, and killed the process with
+"Bad system call".
+
+The fix is one condition in `trapsignal()`: the fast-block word is ignored
+for a SIGSYS whose code is `SYS_USER_DISPATCH`. The handler belongs to the
+program that asked for the trap, and it has to be written to run anywhere
+anyway. A signal blocked with `sigprocmask(2)` still kills the process, as
+on Linux.
 
 ## 5. Keeping kernel modules working
 
@@ -311,7 +342,7 @@ so `0x340(%r13)` is the selector byte of the running thread.
 | `rax` seen by the handler | system call number | `ENOSYS`, number only in `si_syscall` | system call number |
 | Exemptions | vdso signal return | `sigreturn`, `sigfastblock` by number | signal trampoline by address |
 | Selector unreadable | `SIGSEGV` | system call runs | `SIGSEGV` |
-| Selector on signal delivery | unchanged | set to ALLOW, never restored | set to ALLOW, restored by `sigreturn` if unchanged (section 4.2) |
+| Selector on signal delivery | unchanged | set to ALLOW, never restored | set to ALLOW_SIGNAL, restored by `sigreturn` unless the handler wrote it (section 4.2) |
 | fork / new thread / exec | off / off / off | off / off / off | off / off / off |
 
 [XaeroVincent/FreeBSD-Gaming-Kernel](https://github.com/XaeroVincent/FreeBSD-Gaming-Kernel)
@@ -330,23 +361,53 @@ inline assembly, with a known value in `r10`:
 ```
 PASS: status reports ON with our selector
 PASS: blocked syscall is emulated by the SIGSYS handler
+PASS: the handler's ALLOW survives sigreturn
 PASS: si_code is SYS_USER_DISPATCH
 PASS: si_syscall and rax hold the syscall number
 PASS: r10 holds the fourth argument, rcx the return address
 PASS: selector ALLOW runs the real syscall
-PASS: signal delivery sets the selector to ALLOW
+PASS: signal delivery sets the selector to ALLOW_SIGNAL
+PASS: sigreturn restores BLOCK the handler left alone
 PASS: fork(2) child starts with the setting off
 PASS: OFF is accepted
 PASS: after OFF, BLOCK no longer traps
 ```
 
-That output is from the kernel before the review fixes. The fixed
-version also checks that a non-zero padding member is refused, and adds
-`PASS: sigreturn restores BLOCK the handler left alone`; it has not been
-run yet.
+Run on the final kernel (main `30e3fd1811e3` with the patch). Before the
+checks, the program also verifies that a non-zero padding member is
+refused with `EINVAL`.
 
 On a kernel without the patch it stops at the first `procctl` call with
 `Invalid argument`.
+
+### Kyua test for the FreeBSD tree
+
+For upstream, the same checks and a few more are an ATF test in the
+kernel test suite, `tests/sys/kern/procctl_syscall_dispatch.c`, built on
+amd64 only and linked with libthr so that signals go through its wrapper
+(it is part of [procctl_syscall_dispatch.patch](procctl_syscall_dispatch.patch)).
+Unlike the stand-alone program, it uses libsys as the allowed range, as
+Wine does, and makes its trapped calls from a small assembly function:
+
+| Test case | Checks |
+|---|---|
+| `ctl_invalid` | `EINVAL` for non-zero padding, a bad mode, OFF with fields, a wrapping range, another process |
+| `status` | `STATUS` reports OFF, then the ON settings, then OFF |
+| `trap` | SIGSYS, `si_code`, `si_syscall`, `si_addr`, `rax`, `r10`, `rcx`, emulated return value, the handler's ALLOW kept |
+| `selector_allow` | ALLOW runs the real system call |
+| `range_allow` | a call from libsys runs while the selector says BLOCK |
+| `null_selector` | no selector: every call from outside the range traps |
+| `selector_fault` | unreadable selector: SIGSEGV with its address, call not run |
+| `signal_selector` | ALLOW_SIGNAL inside a timer handler, BLOCK restored after it, no trap in libthr's wrapper |
+| `fastblock` | a trap while rtld/libthr defer signals with `sigfastblock(2)` is delivered, not fatal |
+| `fork_off` | a `fork(2)` child starts with the feature off |
+| `off` | after OFF, BLOCK no longer traps |
+
+```
+$ kyua test -k Kyuafile
+...
+11/11 passed (0 broken, 0 failed, 0 skipped)
+```
 
 ### Review
 
@@ -400,6 +461,23 @@ The feature is not specific to Denuvo, games or even Wine. It answers one
 question: "a process wants to handle some of its own system calls itself,
 chosen by where they come from, without a debugger and without paying
 for the others". Anything that needs that can use it.
+
+### Interposition tools that miss Go programs
+
+Tools such as torsocks, proxychains, fakeroot or libfaketime replace libc
+functions with `LD_PRELOAD`. A program that makes its own system calls
+never calls those functions, and the tool silently does nothing: Go
+programs do this even when they are linked against libc. The only
+alternative today is `ptrace(2)`, with a second process stopping on every
+call.
+
+With syscall dispatch, a preloaded library allows only its own small stub
+and traps everything else. `FreeBSD/sudtrace` is a demonstration: with the
+GitHub client `gh`, a classic `LD_PRELOAD` hook sees none of its file
+opens or network connections, while the dispatch version sees all of them
+and reports that 2375 of its 2829 system calls never go through libc. The
+research tool lazypoline (DSN 2024) builds the same kind of interposer on
+the Linux feature.
 
 ### Other Windows programs on Wine
 

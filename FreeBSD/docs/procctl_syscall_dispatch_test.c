@@ -32,6 +32,7 @@
 #define	PROC_SYSCALL_DISPATCH_ON	1
 #define	PROC_SYSCALL_DISPATCH_ALLOW	0
 #define	PROC_SYSCALL_DISPATCH_BLOCK	1
+#define	PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL 2
 struct procctl_syscall_dispatch {
 	int		sd_mode;
 	int		sd_pad0;
@@ -57,7 +58,7 @@ static void
 sigalrm_handler(int sig)
 {
 	(void)sig;
-	alrm_selector = selector;	/* the kernel must have set ALLOW */
+	alrm_selector = selector;	/* the kernel must have set ALLOW_SIGNAL */
 }
 
 static void
@@ -134,8 +135,11 @@ main(void)
 
 	selector = PROC_SYSCALL_DISPATCH_BLOCK;
 	ret = raw_getpid();
+	after = selector;
 	failed += check("blocked syscall is emulated by the SIGSYS handler",
 	    ret == FAKE_RET);
+	failed += check("the handler's ALLOW survives sigreturn",
+	    after == PROC_SYSCALL_DISPATCH_ALLOW);
 	failed += check("si_code is SYS_USER_DISPATCH",
 	    got_code == SYS_USER_DISPATCH);
 	failed += check("si_syscall and rax hold the syscall number",
@@ -166,8 +170,8 @@ main(void)
 		;
 	after = selector;
 	selector = PROC_SYSCALL_DISPATCH_ALLOW;
-	failed += check("signal delivery sets the selector to ALLOW",
-	    alrm_selector == PROC_SYSCALL_DISPATCH_ALLOW);
+	failed += check("signal delivery sets the selector to ALLOW_SIGNAL",
+	    alrm_selector == PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL);
 	failed += check("sigreturn restores BLOCK the handler left alone",
 	    after == PROC_SYSCALL_DISPATCH_BLOCK);
 

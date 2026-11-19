@@ -1,5 +1,5 @@
 diff --git lib/libsys/procctl.2 lib/libsys/procctl.2
-index a09c38c7c977..8f3fe5cd6492 100644
+index a09c38c7c977..f16f2c5da1ff 100644
 --- lib/libsys/procctl.2
 +++ lib/libsys/procctl.2
 @@ -27,7 +27,7 @@
@@ -11,7 +11,7 @@ index a09c38c7c977..8f3fe5cd6492 100644
  .Dt PROCCTL 2
  .Os
  .Sh NAME
-@@ -459,6 +459,109 @@ delivery failed, e.g., due to permission problems.
+@@ -459,6 +459,111 @@ delivery failed, e.g., due to permission problems.
  If no such process exists, the
  .Fa rk_fpid
  field is set to \-1.
@@ -67,7 +67,9 @@ index a09c38c7c977..8f3fe5cd6492 100644
 +is not
 +.Dv NULL
 +and the byte it points to holds
-+.Dv PROC_SYSCALL_DISPATCH_ALLOW .
++.Dv PROC_SYSCALL_DISPATCH_ALLOW
++or
++.Dv PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL .
 +Any other value, normally
 +.Dv PROC_SYSCALL_DISPATCH_BLOCK ,
 +traps the system call.
@@ -81,15 +83,15 @@ index a09c38c7c977..8f3fe5cd6492 100644
 +holds another value than
 +.Dv PROC_SYSCALL_DISPATCH_ALLOW ,
 +it is set to
-+.Dv PROC_SYSCALL_DISPATCH_ALLOW ,
++.Dv PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL ,
 +since signal handlers, and the
 +.Lb libthr
 +wrapper around them, are native code.
 +The previous value is saved in the signal frame, and
 +.Xr sigreturn 2
 +restores it if the byte still holds
-+.Dv PROC_SYSCALL_DISPATCH_ALLOW ;
-+a handler that redirects the thread sets the byte for the code it
++.Dv PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL .
++A handler that writes the byte chooses the state for the code it
 +returns to.
 +.Pp
 +The machine state is left as it was at the system call instruction,
@@ -121,7 +123,7 @@ index a09c38c7c977..8f3fe5cd6492 100644
  .It Dv PROC_TRACE_CTL
  Enable or disable tracing of the specified process(es), according to the
  value of the integer argument.
-@@ -854,6 +957,30 @@ argument specifies an unsupported command.
+@@ -854,6 +959,30 @@ argument specifies an unsupported command.
  The
  .Fa idtype
  argument specifies an unsupported identifier type.
@@ -152,7 +154,7 @@ index a09c38c7c977..8f3fe5cd6492 100644
  .It Bq Er EPERM
  The calling process does not have permission to perform the requested
  operation on any of the selected processes.
-@@ -969,3 +1096,9 @@ and first appeared in
+@@ -969,3 +1098,9 @@ and first appeared in
  .Pp
  ASLR support was added for checklist compliance in
  .Fx 13.0 .
@@ -197,7 +199,7 @@ index 7871ac9b86fa..8a73ea332519 100644
  		p->p_flag2 &= ~P2_NOTRACE;
  	if ((p->p_flag2 & P2_STKGAP_DISABLE_EXEC) == 0)
 diff --git sys/kern/kern_procctl.c sys/kern/kern_procctl.c
-index 581b24f21d3c..02c6e3718ba7 100644
+index 581b24f21d3c..b2e6ea8bce08 100644
 --- sys/kern/kern_procctl.c
 +++ sys/kern/kern_procctl.c
 @@ -41,8 +41,10 @@
@@ -223,7 +225,7 @@ index 581b24f21d3c..02c6e3718ba7 100644
  static int
  protect_setchild(struct thread *td, struct proc *p, int flags)
  {
-@@ -999,6 +1006,194 @@ logsigexit_status(struct thread *td, struct proc *p, void *data)
+@@ -999,6 +1006,197 @@ logsigexit_status(struct thread *td, struct proc *p, void *data)
  	return (0);
  }
  
@@ -343,7 +345,8 @@ index 581b24f21d3c..02c6e3718ba7 100644
 +	sel = PROC_SYSCALL_DISPATCH_BLOCK;
 +	if (td->td_sd_selector != NULL) {
 +		sel = fubyte(td->td_sd_selector);
-+		if (sel == PROC_SYSCALL_DISPATCH_ALLOW)
++		if (sel == PROC_SYSCALL_DISPATCH_ALLOW ||
++		    sel == PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL)
 +			return (false);
 +	}
 +
@@ -380,9 +383,10 @@ index 581b24f21d3c..02c6e3718ba7 100644
 +/*
 + * Called by sendsig() with no locks held, before the signal frame is
 + * copied out.  Signal handlers are native code, and libthr wraps them and
-+ * makes system calls before the program's handler runs, so set the
-+ * selector to allow, and save its previous value in the frame for
-+ * syscall_dispatch_sigreturn().
++ * makes system calls before the program's handler runs, so make the
++ * selector allow.  It gets PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL, not ALLOW,
++ * so that syscall_dispatch_sigreturn() can tell whether the handler wrote
++ * the byte; the previous value is saved in the frame.
 + */
 +void
 +syscall_dispatch_sendsig(struct thread *td, long *saved)
@@ -395,14 +399,15 @@ index 581b24f21d3c..02c6e3718ba7 100644
 +	sel = fubyte(td->td_sd_selector);
 +	if (sel == -1 || sel == PROC_SYSCALL_DISPATCH_ALLOW)
 +		return;
-+	if (subyte(td->td_sd_selector, PROC_SYSCALL_DISPATCH_ALLOW) == 0)
++	if (subyte(td->td_sd_selector,
++	    PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL) == 0)
 +		*saved = SYSCALL_DISPATCH_SAVED | sel;
 +}
 +
 +/*
-+ * Called by sigreturn(2).  Restore the selector saved at signal delivery,
-+ * unless the handler changed it: a handler that redirects the thread
-+ * elsewhere sets the selector for the code it returns to.
++ * Called by sigreturn(2).  Restore the selector saved at signal delivery
++ * if the byte still holds the value sendsig() wrote: a handler that wrote
++ * it chose the state for the code it returns to.
 + */
 +void
 +syscall_dispatch_sigreturn(struct thread *td, long saved)
@@ -411,14 +416,14 @@ index 581b24f21d3c..02c6e3718ba7 100644
 +	    td->td_sd_selector == NULL ||
 +	    (saved & ~0xffL) != SYSCALL_DISPATCH_SAVED)
 +		return;
-+	if (fubyte(td->td_sd_selector) == PROC_SYSCALL_DISPATCH_ALLOW)
++	if (fubyte(td->td_sd_selector) == PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL)
 +		(void)subyte(td->td_sd_selector, saved & 0xff);
 +}
 +
  enum {
  	PCTL_SLOCKED,
  	PCTL_XLOCKED,
-@@ -1166,6 +1361,20 @@ static const struct procctl_cmd_info procctl_cmds_info[] = {
+@@ -1166,6 +1364,20 @@ static const struct procctl_cmd_info procctl_cmds_info[] = {
  	      .need_candebug = false,
  	      .copyin_sz = 0, .copyout_sz = sizeof(int),
  	      .exec = logsigexit_status, .copyout_on_error = false, },
@@ -439,7 +444,7 @@ index 581b24f21d3c..02c6e3718ba7 100644
  };
  
  int
-@@ -1175,6 +1384,7 @@ sys_procctl(struct thread *td, struct procctl_args *uap)
+@@ -1175,6 +1387,7 @@ sys_procctl(struct thread *td, struct procctl_args *uap)
  		struct procctl_reaper_status rs;
  		struct procctl_reaper_pids rp;
  		struct procctl_reaper_kill rk;
@@ -447,6 +452,24 @@ index 581b24f21d3c..02c6e3718ba7 100644
  		int flags;
  	} x;
  	const struct procctl_cmd_info *cmd_info;
+diff --git sys/kern/kern_sig.c sys/kern/kern_sig.c
+index 10ddc61ea184..4e6022075f48 100644
+--- sys/kern/kern_sig.c
++++ sys/kern/kern_sig.c
+@@ -2192,7 +2192,12 @@ trapsignal(struct thread *td, ksiginfo_t *ksi)
+ 	ps = p->p_sigacts;
+ 	mtx_lock(&ps->ps_mtx);
+ 	sigmask = td->td_sigmask;
+-	if (td->td_sigblock_val != 0)
++	/*
++	 * rtld and libthr make system calls while they fast-block signals.
++	 * A syscall dispatch handler must run there, or the process dies.
++	 */
++	if (td->td_sigblock_val != 0 &&
++	    (sig != SIGSYS || ksi->ksi_code != SYS_USER_DISPATCH))
+ 		SIGSETOR(sigmask, fastblock_mask);
+ 	if ((p->p_flag & P_TRACED) == 0 && SIGISMEMBER(ps->ps_sigcatch, sig) &&
+ 	    !SIGISMEMBER(sigmask, sig)) {
 diff --git sys/kern/subr_syscall.c sys/kern/subr_syscall.c
 index 9997a6b638f7..bc1387c9d351 100644
 --- sys/kern/subr_syscall.c
@@ -491,7 +514,7 @@ index 729bdb531ff9..6e036e94435b 100644
  /*
   * Reasons that the current thread can not be run yet.
 diff --git sys/sys/procctl.h sys/sys/procctl.h
-index 11b831882f0a..c0f959c7ae3c 100644
+index 11b831882f0a..fa5b6ccf61b2 100644
 --- sys/sys/procctl.h
 +++ sys/sys/procctl.h
 @@ -67,6 +67,8 @@
@@ -503,7 +526,7 @@ index 11b831882f0a..c0f959c7ae3c 100644
  
  /* Operations for PROC_SPROTECT (passed in integer arg). */
  #define	PPROT_OP(x)	((x) & 0xf)
-@@ -123,6 +125,26 @@ struct procctl_reaper_kill {
+@@ -123,6 +125,27 @@ struct procctl_reaper_kill {
  	u_int	rk_pad0[15];
  };
  
@@ -526,6 +549,7 @@ index 11b831882f0a..c0f959c7ae3c 100644
 +/* Values of the selector byte. */
 +#define	PROC_SYSCALL_DISPATCH_ALLOW	0
 +#define	PROC_SYSCALL_DISPATCH_BLOCK	1
++#define	PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL 2	/* set by signal delivery */
 +
  #define	REAPER_KILL_CHILDREN	0x00000001
  #define	REAPER_KILL_SUBTREE	0x00000002
@@ -558,3 +582,416 @@ index b250ec1f7a70..2af87b1b4bf8 100644
  void	syscall_thread_exit(struct thread *td, struct sysent *se);
  
  int shared_page_alloc(int size, int align);
+diff --git tests/sys/kern/Makefile tests/sys/kern/Makefile
+index 0a8615fad24e..5cde37f420bf 100644
+--- tests/sys/kern/Makefile
++++ tests/sys/kern/Makefile
+@@ -38,6 +38,10 @@ ATF_TESTS_C+=	pdrfork
+ ATF_TESTS_C+=	pdwait
+ ATF_TESTS_C+=	prace
+ ATF_TESTS_C+=	procdesc
++.if ${MACHINE_ARCH} == "amd64"
++ATF_TESTS_C+=	procctl_syscall_dispatch
++LIBADD.procctl_syscall_dispatch+=	pthread
++.endif
+ ATF_TESTS_C+=	ptrace_test
+ TEST_METADATA.ptrace_test+=		timeout="15"
+ ATF_TESTS_C+=	reaper
+diff --git tests/sys/kern/procctl_syscall_dispatch.c tests/sys/kern/procctl_syscall_dispatch.c
+new file mode 100644
+index 000000000000..7fae3aa9537e
+--- /dev/null
++++ tests/sys/kern/procctl_syscall_dispatch.c
+@@ -0,0 +1,392 @@
++/*-
++ * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++/*
++ * Tests for procctl(PROC_SYSCALL_DISPATCH_CTL): system calls made from
++ * outside the allowed range while the selector byte says BLOCK must raise
++ * SIGSYS instead of running.  The allowed range is libsys, where libc and
++ * libthr make their system calls, as Wine uses it; the trapped calls come
++ * from sd_raw_getpid() below.  The program links libthr so that signal
++ * delivery goes through its handler wrapper.
++ */
++
++#include <sys/param.h>
++#include <sys/auxv.h>
++#include <sys/elf_common.h>
++#include <sys/mman.h>
++#include <sys/procctl.h>
++#include <sys/syscall.h>
++#include <sys/time.h>
++#include <sys/wait.h>
++#include <machine/psl.h>
++
++#include <atf-c.h>
++#include <errno.h>
++#include <link.h>
++#include <pthread_np.h>
++#include <signal.h>
++#include <stdatomic.h>
++#include <string.h>
++#include <ucontext.h>
++#include <unistd.h>
++
++#define	FAKE_RET	4242
++#define	ARG4		0x1234567890abcdefL
++
++/* getpid(2) with %r10 set to the argument, from outside libsys. */
++long	sd_raw_getpid(long r10);
++__asm__(
++"	.text\n"
++"	.globl	sd_raw_getpid\n"
++"	.type	sd_raw_getpid,@function\n"
++"sd_raw_getpid:\n"
++"	movq	%rdi,%r10\n"
++"	movl	$" __XSTRING(SYS_getpid) ",%eax\n"
++"	syscall\n"
++"	ret\n"
++"	.size	sd_raw_getpid, . - sd_raw_getpid\n");
++
++static volatile char selector;
++static volatile sig_atomic_t sigsys_cnt, sigsegv_cnt;
++static volatile int got_code, got_syscall, alrm_selector;
++static volatile long got_rax, got_r10, got_rcx, got_rip;
++static void * volatile got_addr;
++static uintptr_t libsys_start;
++static size_t libsys_len;
++
++static int
++libsys_cb(struct dl_phdr_info *info, size_t size __unused, void *arg __unused)
++{
++	const char *p;
++	size_t end;
++	int i;
++
++	p = strrchr(info->dlpi_name, '/');
++	p = p != NULL ? p + 1 : info->dlpi_name;
++	if (strcmp(p, "libsys.so.7") != 0)
++		return (0);
++	libsys_start = info->dlpi_addr;
++	for (i = 0, end = 0; i < info->dlpi_phnum; i++)
++		end = MAX(end, info->dlpi_phdr[i].p_vaddr +
++		    info->dlpi_phdr[i].p_memsz);
++	libsys_len = end;
++	return (1);
++}
++
++static int
++sd_ctl(int mode, uintptr_t start, size_t len, char *sel)
++{
++	struct procctl_syscall_dispatch sd;
++
++	memset(&sd, 0, sizeof(sd));
++	sd.sd_mode = mode;
++	sd.sd_start = start;
++	sd.sd_len = len;
++	sd.sd_selector = sel;
++	return (procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_CTL, &sd));
++}
++
++static void
++sigsys_handler(int sig __unused, siginfo_t *si, void *ctx)
++{
++	ucontext_t *uc = ctx;
++
++	/* Native code from here on. */
++	selector = PROC_SYSCALL_DISPATCH_ALLOW;
++	sigsys_cnt++;
++	got_code = si->si_code;
++	got_syscall = si->si_syscall;
++	got_addr = si->si_addr;
++	got_rax = uc->uc_mcontext.mc_rax;
++	got_r10 = uc->uc_mcontext.mc_r10;
++	got_rcx = uc->uc_mcontext.mc_rcx;
++	got_rip = uc->uc_mcontext.mc_rip;
++	/* Emulate the call. */
++	uc->uc_mcontext.mc_rax = FAKE_RET;
++	uc->uc_mcontext.mc_rflags &= ~PSL_C;
++}
++
++/* Install the SIGSYS handler and enable dispatch for libsys. */
++static void
++setup(char *sel)
++{
++	struct sigaction sa;
++
++	memset(&sa, 0, sizeof(sa));
++	sa.sa_sigaction = sigsys_handler;
++	sa.sa_flags = SA_SIGINFO;
++	ATF_REQUIRE(sigaction(SIGSYS, &sa, NULL) == 0);
++	ATF_REQUIRE_MSG(dl_iterate_phdr(libsys_cb, NULL) != 0,
++	    "libsys.so.7 not found");
++	selector = PROC_SYSCALL_DISPATCH_ALLOW;
++	ATF_REQUIRE(sd_ctl(PROC_SYSCALL_DISPATCH_ON, libsys_start,
++	    libsys_len, sel) == 0);
++}
++
++ATF_TC_WITHOUT_HEAD(ctl_invalid);
++ATF_TC_BODY(ctl_invalid, tc)
++{
++	struct procctl_syscall_dispatch sd;
++	pid_t child;
++	int status;
++
++	memset(&sd, 0, sizeof(sd));
++	sd.sd_mode = PROC_SYSCALL_DISPATCH_ON;
++	sd.sd_pad1[0] = 1;
++	ATF_CHECK_ERRNO(EINVAL,
++	    procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_CTL, &sd) == -1);
++
++	memset(&sd, 0, sizeof(sd));
++	sd.sd_mode = 42;
++	ATF_CHECK_ERRNO(EINVAL,
++	    procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_CTL, &sd) == -1);
++
++	ATF_CHECK_ERRNO(EINVAL,
++	    sd_ctl(PROC_SYSCALL_DISPATCH_OFF, 0, 1, NULL) == -1);
++	ATF_CHECK_ERRNO(EINVAL,
++	    sd_ctl(PROC_SYSCALL_DISPATCH_ON, ~(uintptr_t)0, 2, NULL) == -1);
++
++	/* Only the calling process. */
++	child = fork();
++	ATF_REQUIRE(child != -1);
++	if (child == 0) {
++		pause();
++		_exit(0);
++	}
++	memset(&sd, 0, sizeof(sd));
++	sd.sd_mode = PROC_SYSCALL_DISPATCH_ON;
++	ATF_CHECK_ERRNO(EINVAL,
++	    procctl(P_PID, child, PROC_SYSCALL_DISPATCH_CTL, &sd) == -1);
++	ATF_CHECK_ERRNO(EINVAL,
++	    procctl(P_PID, child, PROC_SYSCALL_DISPATCH_STATUS, &sd) == -1);
++	ATF_REQUIRE(kill(child, SIGKILL) == 0);
++	ATF_REQUIRE(waitpid(child, &status, 0) == child);
++}
++
++ATF_TC_WITHOUT_HEAD(status);
++ATF_TC_BODY(status, tc)
++{
++	struct procctl_syscall_dispatch st;
++
++	ATF_REQUIRE(procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_STATUS, &st) == 0);
++	ATF_CHECK_EQ(PROC_SYSCALL_DISPATCH_OFF, st.sd_mode);
++
++	ATF_REQUIRE(sd_ctl(PROC_SYSCALL_DISPATCH_ON, 0x1000, 0x2000,
++	    (char *)&selector) == 0);
++	ATF_REQUIRE(procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_STATUS, &st) == 0);
++	ATF_CHECK_EQ(PROC_SYSCALL_DISPATCH_ON, st.sd_mode);
++	ATF_CHECK_EQ(0x1000, st.sd_start);
++	ATF_CHECK_EQ(0x2000, st.sd_len);
++	ATF_CHECK(st.sd_selector == (char *)&selector);
++
++	ATF_REQUIRE(sd_ctl(PROC_SYSCALL_DISPATCH_OFF, 0, 0, NULL) == 0);
++	ATF_REQUIRE(procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_STATUS, &st) == 0);
++	ATF_CHECK_EQ(PROC_SYSCALL_DISPATCH_OFF, st.sd_mode);
++}
++
++ATF_TC_WITHOUT_HEAD(trap);
++ATF_TC_BODY(trap, tc)
++{
++	long ret;
++	char after;
++
++	setup((char *)&selector);
++	selector = PROC_SYSCALL_DISPATCH_BLOCK;
++	ret = sd_raw_getpid(ARG4);
++	after = selector;
++	atomic_signal_fence(memory_order_seq_cst);
++
++	ATF_CHECK_EQ(1, sigsys_cnt);
++	ATF_CHECK_EQ(FAKE_RET, ret);
++	ATF_CHECK_EQ(SYS_USER_DISPATCH, got_code);
++	ATF_CHECK_EQ(SYS_getpid, got_syscall);
++	ATF_CHECK_EQ(SYS_getpid, got_rax);
++	ATF_CHECK_EQ(ARG4, got_r10);
++	ATF_CHECK_EQ(got_rip, got_rcx);
++	ATF_CHECK(got_addr == (void *)got_rip);
++	/* The handler wrote ALLOW: sigreturn(2) must keep it. */
++	ATF_CHECK_EQ(PROC_SYSCALL_DISPATCH_ALLOW, after);
++}
++
++ATF_TC_WITHOUT_HEAD(selector_allow);
++ATF_TC_BODY(selector_allow, tc)
++{
++	setup((char *)&selector);
++	ATF_CHECK_EQ(getpid(), sd_raw_getpid(0));
++	ATF_CHECK_EQ(0, sigsys_cnt);
++}
++
++ATF_TC_WITHOUT_HEAD(range_allow);
++ATF_TC_BODY(range_allow, tc)
++{
++	pid_t pid;
++
++	setup((char *)&selector);
++	selector = PROC_SYSCALL_DISPATCH_BLOCK;
++	pid = getpid();			/* from libsys: allowed */
++	selector = PROC_SYSCALL_DISPATCH_ALLOW;
++	ATF_CHECK_EQ(0, sigsys_cnt);
++	ATF_CHECK_EQ(pid, sd_raw_getpid(0));
++}
++
++ATF_TC_WITHOUT_HEAD(null_selector);
++ATF_TC_BODY(null_selector, tc)
++{
++	setup(NULL);
++	ATF_CHECK_EQ(FAKE_RET, sd_raw_getpid(0));
++	ATF_CHECK_EQ(FAKE_RET, sd_raw_getpid(0));
++	ATF_CHECK_EQ(2, sigsys_cnt);
++	ATF_CHECK(getpid() > 0);	/* libsys still works */
++}
++
++static void
++sigsegv_handler(int sig __unused, siginfo_t *si, void *ctx __unused)
++{
++	sigsegv_cnt++;
++	got_code = si->si_code;
++	got_addr = si->si_addr;
++	/* From libsys, allowed: stop trapping. */
++	(void)sd_ctl(PROC_SYSCALL_DISPATCH_OFF, 0, 0, NULL);
++}
++
++ATF_TC_WITHOUT_HEAD(selector_fault);
++ATF_TC_BODY(selector_fault, tc)
++{
++	struct sigaction sa;
++	char *page;
++	long ret;
++
++	page = mmap(NULL, PAGE_SIZE, PROT_NONE, MAP_ANON, -1, 0);
++	ATF_REQUIRE(page != MAP_FAILED);
++	memset(&sa, 0, sizeof(sa));
++	sa.sa_sigaction = sigsegv_handler;
++	sa.sa_flags = SA_SIGINFO;
++	ATF_REQUIRE(sigaction(SIGSEGV, &sa, NULL) == 0);
++	setup(page);
++
++	ret = sd_raw_getpid(0);
++	atomic_signal_fence(memory_order_seq_cst);
++	ATF_CHECK_EQ(1, sigsegv_cnt);
++	ATF_CHECK_EQ(SEGV_MAPERR, got_code);
++	ATF_CHECK(got_addr == page);
++	ATF_CHECK_EQ(0, sigsys_cnt);
++	/* The call did not run and the registers were left alone. */
++	ATF_CHECK_EQ(SYS_getpid, ret);
++	ATF_CHECK_EQ(getpid(), sd_raw_getpid(0));
++}
++
++static void
++sigalrm_handler(int sig __unused)
++{
++	alrm_selector = selector;
++}
++
++ATF_TC_WITHOUT_HEAD(signal_selector);
++ATF_TC_BODY(signal_selector, tc)
++{
++	struct itimerval it;
++	struct sigaction sa;
++	char after;
++
++	setup((char *)&selector);
++	memset(&sa, 0, sizeof(sa));
++	sa.sa_handler = sigalrm_handler;
++	ATF_REQUIRE(sigaction(SIGALRM, &sa, NULL) == 0);
++	memset(&it, 0, sizeof(it));
++	it.it_value.tv_usec = 10000;
++	alrm_selector = -1;
++	ATF_REQUIRE(setitimer(ITIMER_REAL, &it, NULL) == 0);
++
++	/* No system call while the selector says BLOCK. */
++	selector = PROC_SYSCALL_DISPATCH_BLOCK;
++	while (alrm_selector == -1)
++		;
++	after = selector;
++	selector = PROC_SYSCALL_DISPATCH_ALLOW;
++
++	ATF_CHECK_EQ(PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL, alrm_selector);
++	ATF_CHECK_EQ(PROC_SYSCALL_DISPATCH_BLOCK, after);
++	/* libthr's wrapper made its system calls without being trapped. */
++	ATF_CHECK_EQ(0, sigsys_cnt);
++}
++
++/*
++ * rtld and libthr defer signals with sigfastblock(2) around their critical
++ * sections and make system calls there.  The trap must still be delivered,
++ * not kill the process.
++ */
++ATF_TC_WITHOUT_HEAD(fastblock);
++ATF_TC_BODY(fastblock, tc)
++{
++	pid_t child;
++	long ret;
++	int bsdflags, status;
++
++	if (elf_aux_info(AT_BSDFLAGS, &bsdflags, sizeof(bsdflags)) != 0 ||
++	    (bsdflags & ELF_BSDF_SIGFASTBLK) == 0)
++		atf_tc_skip("sigfastblock disabled (kern.elf64.sigfastblock)");
++	child = fork();
++	ATF_REQUIRE(child != -1);
++	if (child == 0) {
++		setup((char *)&selector);
++		pthread_signals_block_np();
++		selector = PROC_SYSCALL_DISPATCH_BLOCK;
++		ret = sd_raw_getpid(0);
++		pthread_signals_unblock_np();
++		_exit(ret == FAKE_RET && sigsys_cnt == 1 ? 0 : 1);
++	}
++	ATF_REQUIRE(waitpid(child, &status, 0) == child);
++	ATF_CHECK_MSG(!WIFSIGNALED(status), "killed by signal %d",
++	    WTERMSIG(status));
++	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
++}
++
++ATF_TC_WITHOUT_HEAD(fork_off);
++ATF_TC_BODY(fork_off, tc)
++{
++	struct procctl_syscall_dispatch st;
++	pid_t child;
++	int status;
++
++	setup((char *)&selector);
++	child = fork();
++	ATF_REQUIRE(child != -1);
++	if (child == 0) {
++		memset(&st, 0, sizeof(st));
++		_exit(procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_STATUS,
++		    &st) == 0 && st.sd_mode == PROC_SYSCALL_DISPATCH_OFF ?
++		    0 : 1);
++	}
++	ATF_REQUIRE(waitpid(child, &status, 0) == child);
++	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
++}
++
++ATF_TC_WITHOUT_HEAD(off);
++ATF_TC_BODY(off, tc)
++{
++	setup((char *)&selector);
++	ATF_REQUIRE(sd_ctl(PROC_SYSCALL_DISPATCH_OFF, 0, 0, NULL) == 0);
++	selector = PROC_SYSCALL_DISPATCH_BLOCK;
++	ATF_CHECK_EQ(getpid(), sd_raw_getpid(0));
++	selector = PROC_SYSCALL_DISPATCH_ALLOW;
++	ATF_CHECK_EQ(0, sigsys_cnt);
++}
++
++ATF_TP_ADD_TCS(tp)
++{
++	ATF_TP_ADD_TC(tp, ctl_invalid);
++	ATF_TP_ADD_TC(tp, status);
++	ATF_TP_ADD_TC(tp, trap);
++	ATF_TP_ADD_TC(tp, selector_allow);
++	ATF_TP_ADD_TC(tp, range_allow);
++	ATF_TP_ADD_TC(tp, null_selector);
++	ATF_TP_ADD_TC(tp, selector_fault);
++	ATF_TP_ADD_TC(tp, signal_selector);
++	ATF_TP_ADD_TC(tp, fastblock);
++	ATF_TP_ADD_TC(tp, fork_off);
++	ATF_TP_ADD_TC(tp, off);
++	return (atf_no_error());
++}
