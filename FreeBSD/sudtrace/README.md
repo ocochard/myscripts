@@ -88,4 +88,5 @@ SYS_USER_DISPATCH` in `trapsignal()`).  A real `sigprocmask` block still
 kills the process, as on Linux; the handler is the dispatcher's own code
 and must be safe to run inside rtld's and libthr's critical sections, which
 this one is.  With that kernel the demo runs with the default sysctl, and
-the Kyua tests pass (11/11, including a new `fastblock` case).
+the Kyua tests pass (14/14, including a `fastblock` case and two
+`stub_*` cases that trap the whole process the way this library does).

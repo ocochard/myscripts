@@ -435,8 +435,10 @@ For upstream, the same checks and a few more are an ATF test in the
 kernel test suite, `tests/sys/kern/procctl_syscall_dispatch.c`, built on
 amd64 only and linked with libthr so that signals go through its wrapper
 (it is part of [procctl_syscall_dispatch.patch](procctl_syscall_dispatch.patch)).
-Unlike the stand-alone program, it uses libsys as the allowed range and
-makes its trapped calls from a small assembly function:
+Most cases use libsys as the allowed range and make their trapped calls
+from a small assembly function. The `stub_*` cases trap the whole
+process, as `sudtrace` does: only a small assembly stub may make system
+calls, and the SIGSYS handler runs every trapped call through it.
 
 | Test case | Checks |
 |---|---|
@@ -449,13 +451,16 @@ makes its trapped calls from a small assembly function:
 | `selector_fault` | unreadable selector: SIGSEGV with its address, call not run |
 | `signal_selector` | ALLOW_SIGNAL inside a timer handler, BLOCK restored after it, no trap in libthr's wrapper |
 | `fastblock` | a trap while rtld/libthr defer signals with `sigfastblock(2)` is delivered, not fatal |
+| `stub_libc` | libc's own calls are trapped, `si_addr` is in libsys, and the results are right |
+| `stub_dlopen` | `dlopen(3)` works while every call traps, including rtld's own `open`, `mmap` and `mprotect` |
 | `fork_off` | a `fork(2)` child starts with the feature off |
+| `thread_off` | a new thread starts with the feature off |
 | `off` | after OFF, BLOCK no longer traps |
 
 ```
 $ kyua test -k Kyuafile
 ...
-11/11 passed (0 broken, 0 failed, 0 skipped)
+14/14 passed (0 broken, 0 failed, 0 skipped)
 ```
 
 ## 8. Performance

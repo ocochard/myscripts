@@ -613,10 +613,10 @@ index 0a8615fad24e..5cde37f420bf 100644
  ATF_TESTS_C+=	reaper
 diff --git tests/sys/kern/procctl_syscall_dispatch.c tests/sys/kern/procctl_syscall_dispatch.c
 new file mode 100644
-index 000000000000..7e99a7e39b1d
+index 000000000000..9b981ef000c2
 --- /dev/null
 +++ tests/sys/kern/procctl_syscall_dispatch.c
-@@ -0,0 +1,402 @@
+@@ -0,0 +1,571 @@
 +/*-
 + * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 + *
@@ -626,10 +626,14 @@ index 000000000000..7e99a7e39b1d
 +/*
 + * Tests for procctl(PROC_SYSCALL_DISPATCH_CTL): system calls made from
 + * outside the allowed range while the selector byte says BLOCK must raise
-+ * SIGSYS instead of running.  The allowed range is libsys, where libc and
-+ * libthr make their system calls, as Wine uses it; the trapped calls come
-+ * from sd_raw_getpid() below.  The program links libthr so that signal
-+ * delivery goes through its handler wrapper.
++ * SIGSYS instead of running.  Most cases use libsys, where libc and
++ * libthr make their system calls, as the allowed range, as Wine does; the
++ * trapped calls come from sd_raw_getpid() below.  The program links libthr
++ * so that signal delivery goes through its handler wrapper.
++ *
++ * The stub_* cases trap the whole process instead, as an interposer that
++ * must see every system call does: only sd_stub() may make system calls,
++ * and the SIGSYS handler runs every trapped call through it.
 + */
 +
 +#include <sys/param.h>
@@ -643,8 +647,10 @@ index 000000000000..7e99a7e39b1d
 +#include <machine/psl.h>
 +
 +#include <atf-c.h>
++#include <dlfcn.h>
 +#include <errno.h>
 +#include <link.h>
++#include <pthread.h>
 +#include <pthread_np.h>
 +#include <signal.h>
 +#include <stdatomic.h>
@@ -667,6 +673,40 @@ index 000000000000..7e99a7e39b1d
 +"	syscall\n"
 +"	ret\n"
 +"	.size	sd_raw_getpid, . - sd_raw_getpid\n");
++
++/*
++ * Run the system call described by *r, alone in its own section so that
++ * its range can be the allowed one.
++ */
++struct sd_regs {
++	long	rax, rdi, rsi, rdx, r10, r8, r9;
++	long	err;			/* out: -1 if the carry flag was set */
++};
++void	sd_stub(struct sd_regs *);
++extern char __start_sd_stub_text[], __stop_sd_stub_text[];
++__asm__(
++"	.pushsection sd_stub_text,\"ax\",@progbits\n"
++"	.globl	sd_stub\n"
++"	.type	sd_stub,@function\n"
++"sd_stub:\n"
++"	pushq	%rbx\n"
++"	movq	%rdi,%rbx\n"
++"	movq	0(%rbx),%rax\n"
++"	movq	8(%rbx),%rdi\n"
++"	movq	16(%rbx),%rsi\n"
++"	movq	24(%rbx),%rdx\n"
++"	movq	32(%rbx),%r10\n"
++"	movq	40(%rbx),%r8\n"
++"	movq	48(%rbx),%r9\n"
++"	syscall\n"
++"	movq	%rax,0(%rbx)\n"
++"	movq	%rdx,24(%rbx)\n"
++"	sbbq	%rcx,%rcx\n"
++"	movq	%rcx,56(%rbx)\n"
++"	popq	%rbx\n"
++"	ret\n"
++"	.size	sd_stub, . - sd_stub\n"
++"	.popsection\n");
 +
 +static volatile char selector;
 +static volatile sig_atomic_t sigsys_cnt, sigsegv_cnt;
@@ -973,6 +1013,106 @@ index 000000000000..7e99a7e39b1d
 +	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 +}
 +
++/* Run the trapped call through sd_stub() and return its result. */
++static void
++sigsys_stub_handler(int sig __unused, siginfo_t *si, void *ctx)
++{
++	mcontext_t *mc = &((ucontext_t *)ctx)->uc_mcontext;
++	struct sd_regs r = { mc->mc_rax, mc->mc_rdi, mc->mc_rsi, mc->mc_rdx,
++	    mc->mc_r10, mc->mc_r8, mc->mc_r9, 0 };
++
++	sigsys_cnt++;
++	got_addr = si->si_addr;
++	sd_stub(&r);
++	mc->mc_rax = r.rax;
++	mc->mc_rdx = r.rdx;
++	if (r.err != 0)
++		mc->mc_rflags |= PSL_C;
++	else
++		mc->mc_rflags &= ~PSL_C;
++}
++
++/*
++ * Trap every system call of the thread but sd_stub()'s.  The handler is
++ * installed with the raw system call: libthr's sigaction() and signal
++ * wrapper take locks that a trapped call made by rtld or libthr may hold.
++ */
++static int
++stub_setup(void)
++{
++	struct sigaction sa;
++
++	memset(&sa, 0, sizeof(sa));
++	sa.sa_sigaction = sigsys_stub_handler;
++	sa.sa_flags = SA_SIGINFO;
++	if (syscall(SYS_sigaction, SIGSYS, &sa, NULL) != 0)
++		return (-1);
++	selector = PROC_SYSCALL_DISPATCH_BLOCK;
++	return (sd_ctl(PROC_SYSCALL_DISPATCH_ON,
++	    (uintptr_t)__start_sd_stub_text,
++	    __stop_sd_stub_text - __start_sd_stub_text, (char *)&selector));
++}
++
++/* libc's own system calls are trapped and still give the right results. */
++ATF_TC_WITHOUT_HEAD(stub_libc);
++ATF_TC_BODY(stub_libc, tc)
++{
++	pid_t pid, ppid, tpid, tppid;
++	void *addr;
++	int cnt;
++
++	pid = getpid();
++	ppid = getppid();
++	ATF_REQUIRE(dl_iterate_phdr(libsys_cb, NULL) != 0);
++	ATF_REQUIRE(stub_setup() == 0);
++	tpid = getpid();
++	addr = got_addr;
++	tppid = getppid();
++	cnt = sigsys_cnt;
++	/* Runs through the handler too. */
++	ATF_REQUIRE(sd_ctl(PROC_SYSCALL_DISPATCH_OFF, 0, 0, NULL) == 0);
++	selector = PROC_SYSCALL_DISPATCH_ALLOW;
++
++	ATF_CHECK_EQ(pid, tpid);
++	ATF_CHECK_EQ(ppid, tppid);
++	ATF_CHECK_EQ(2, cnt);
++	ATF_CHECK_MSG((uintptr_t)addr >= libsys_start &&
++	    (uintptr_t)addr < libsys_start + libsys_len,
++	    "si_addr %p is not in libsys", addr);
++	ATF_CHECK_EQ(3, sigsys_cnt);	/* and the procctl(2) above */
++}
++
++/*
++ * dlopen(3) while every system call is trapped: rtld makes them while it
++ * holds its lock with signals deferred by sigfastblock(2), and libthr's
++ * rtld lock callbacks make some too.
++ */
++ATF_TC_WITHOUT_HEAD(stub_dlopen);
++ATF_TC_BODY(stub_dlopen, tc)
++{
++	pid_t child;
++	int status;
++
++	if (dlopen("libm.so.5", RTLD_LAZY | RTLD_NOLOAD) != NULL)
++		atf_tc_skip("libm.so.5 is already loaded");
++	child = fork();
++	ATF_REQUIRE(child != -1);
++	if (child == 0) {
++		void *h;
++
++		/* No ATF calls in the child: report through the exit status. */
++		if (stub_setup() != 0)
++			_exit(2);
++		h = dlopen("libm.so.5", RTLD_NOW);
++		_exit(h != NULL && dlsym(h, "cos") != NULL && sigsys_cnt > 0 ?
++		    0 : 1);
++	}
++	ATF_REQUIRE(waitpid(child, &status, 0) == child);
++	ATF_CHECK_MSG(!WIFSIGNALED(status), "killed by signal %d",
++	    WTERMSIG(status));
++	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
++}
++
 +ATF_TC_WITHOUT_HEAD(fork_off);
 +ATF_TC_BODY(fork_off, tc)
 +{
@@ -991,6 +1131,32 @@ index 000000000000..7e99a7e39b1d
 +	}
 +	ATF_REQUIRE(waitpid(child, &status, 0) == child);
 +	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
++}
++
++static void *
++thread_status(void *arg)
++{
++	struct procctl_syscall_dispatch *st = arg;
++
++	memset(st, 0, sizeof(*st));
++	if (procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_STATUS, st) != 0)
++		st->sd_mode = -1;
++	return (NULL);
++}
++
++/* The setting is per thread: a new thread starts with it off. */
++ATF_TC_WITHOUT_HEAD(thread_off);
++ATF_TC_BODY(thread_off, tc)
++{
++	struct procctl_syscall_dispatch st;
++	pthread_t thr;
++
++	setup((char *)&selector);
++	ATF_REQUIRE(pthread_create(&thr, NULL, thread_status, &st) == 0);
++	ATF_REQUIRE(pthread_join(thr, NULL) == 0);
++	ATF_CHECK_EQ(PROC_SYSCALL_DISPATCH_OFF, st.sd_mode);
++	ATF_REQUIRE(procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_STATUS, &st) == 0);
++	ATF_CHECK_EQ(PROC_SYSCALL_DISPATCH_ON, st.sd_mode);
 +}
 +
 +ATF_TC_WITHOUT_HEAD(off);
@@ -1015,7 +1181,10 @@ index 000000000000..7e99a7e39b1d
 +	ATF_TP_ADD_TC(tp, selector_fault);
 +	ATF_TP_ADD_TC(tp, signal_selector);
 +	ATF_TP_ADD_TC(tp, fastblock);
++	ATF_TP_ADD_TC(tp, stub_libc);
++	ATF_TP_ADD_TC(tp, stub_dlopen);
 +	ATF_TP_ADD_TC(tp, fork_off);
++	ATF_TP_ADD_TC(tp, thread_off);
 +	ATF_TP_ADD_TC(tp, off);
 +	return (atf_no_error());
 +}
