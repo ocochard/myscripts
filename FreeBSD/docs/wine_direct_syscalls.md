@@ -19,8 +19,9 @@ nothing more.
   system call number in the `rax` register.
 - That instruction goes straight to the kernel of the machine actually
   running, here FreeBSD. Wine is not involved, so it cannot translate it.
-- On Linux, Proton asks the kernel (with seccomp) to turn every `syscall`
-  coming from Windows code into a signal that Wine handles. On macOS 14 the
+- On Linux, Wine asks the kernel (Proton with seccomp, upstream Wine 11.5
+  and later with Syscall User Dispatch) to turn every `syscall` coming
+  from Windows code into a signal that Wine handles. On macOS 14 the
   Windows numbers are invalid macOS syscalls, so the kernel raises a signal
   by itself. FreeBSD has no such filter, and the Windows numbers happen to
   be valid FreeBSD syscalls, so FreeBSD silently runs the wrong one.
@@ -30,7 +31,8 @@ nothing more.
   buffer, then asks for a 68 GB block of memory or crashes.
 - Fixing it needs a new FreeBSD kernel feature (a way for a process to say
   "send me a signal for syscalls made from this address range") plus a few
-  lines in Wine to use it.
+  lines in Wine to use it. Linux's Syscall User Dispatch is the model, and
+  no FreeBSD work in progress was found (November 2026).
 
 ## 1. What a system call is
 
@@ -156,6 +158,20 @@ filter tells the kernel not to run anything and to send the process a
 own version of the Windows call, exactly as if the game had gone through
 `ntdll.dll`.
 
+A seccomp filter runs for every system call, and comparing 64-bit
+addresses in classic BPF is clumsy, so Linux 5.11 added a feature made
+for this case: **Syscall User Dispatch**
+(`prctl(PR_SET_SYSCALL_USER_DISPATCH)`). The process gives the kernel one
+address range whose system calls always run normally (Wine's own code),
+plus the address of a one-byte "selector" in its memory. When the
+selector says "block", any `syscall` from outside the range raises
+`SIGSYS`. Wine flips the byte itself when it enters and leaves its own
+code, without any system call. Upstream Wine uses it since version 11.5
+(commit `cbb9906d`, "ntdll: Implement syscall emulation on Linux using
+Syscall User Dispatch", March 2026), with the same `SIGSYS` handler as on
+macOS. FreeBSD's `emulators/wine-proton` is based on Proton 11.0, which
+still uses the seccomp version.
+
 ### macOS 14 and later
 
 macOS system call numbers start at `0x2000000`, so a small Windows number
@@ -231,9 +247,16 @@ the kernel and back. The options Wine has without kernel help are poor:
   that nobody changed it. Patching it is both unreliable and exactly what
   the protection is designed to detect.
 - **Run the game under a debugger (`ptrace`) and stop on every system
-  call.** This works in principle, but every system call of the game,
-  including the tens of thousands per second that go through Wine
-  normally, would cost two extra context switches.
+  call.** FreeBSD head has the pieces since July 2026: `PT_TO_SCE` stops a
+  thread at each system call entry, `PT_GETREGS` shows the caller's
+  address, and the new `PT_SET_SC_RET` request skips the kernel handler
+  ("The current system call handler is not executed"), so a helper
+  process could redirect the thread into Wine's dispatcher the way the
+  `SIGSYS` handler does. But `PT_TO_SCE` has no filter: every system call
+  of the game, including the tens of thousands per second that go
+  through Wine normally, would cost extra context switches through the
+  helper, and a process under `ptrace` cannot be debugged by anything
+  else. Good enough for a proof of concept, not for playing.
 
 The clean fix is the one Linux and macOS provide: the kernel itself must
 recognise these calls and hand them to Wine.
@@ -242,21 +265,35 @@ recognise these calls and hand them to Wine.
 
 Two pieces:
 
-1. **Kernel:** a per-process setting, for example a new `procctl(2)`
-   command, meaning "if a `syscall` instruction executes at an address
-   inside this range (or outside that range), do not run any system call,
-   deliver `SIGSYS` instead". Linux has two versions of the idea: seccomp
-   filters on the instruction address (used by Proton), and
-   `prctl(PR_SET_SYSCALL_USER_DISPATCH)`, which exists for exactly this
-   case. FreeBSD has neither yet.
-2. **Wine:** a FreeBSD branch in `install_bpf()` that enables the setting
-   for addresses below `0x700000000000`, and lets the existing
-   `sigsys_handler()` (already shared by the Linux and macOS code) do the
-   translation.
+1. **Kernel:** a per-thread setting with the semantics of Linux's Syscall
+   User Dispatch, for example a new `procctl(2)` command: one address
+   range whose system calls always run, the address of a selector byte,
+   and `SIGSYS` (with the caller's address in `si_addr`) for any other
+   `syscall` while the selector says "block". The amd64 system call entry
+   path already has the caller's `rip` at hand, so the check costs one
+   comparison when the feature is off.
+2. **Wine:** upstream's Syscall User Dispatch code (Wine 11.5 and later)
+   already has the selector handling and the `SIGSYS` handler. FreeBSD
+   support would mostly be a `procctl()` call where Linux calls `prctl()`,
+   plus `__FreeBSD__` in the guard that today reads "Apple or Linux".
+   `emulators/wine-proton` would need that commit backported, or a base
+   newer than Proton 11.0.
 
-A FreeBSD bug report with the trace above is the natural first step. The
-benefit is not limited to one game: any Windows program that makes direct
-system calls (several anti-cheat systems do) hits the same wall.
+As of November 2026 no FreeBSD work in progress on this was found: no
+Phabricator review, bug report or mailing list thread, and nothing in the
+head tree (`7806832f23fb`). The closest existing mechanisms do not fit:
+`kern.signosys` raises `SIGSYS` only for invalid numbers, Capsicum's
+`PROC_TRAPCAP_CTL` needs the whole process in capability mode, and the
+Linux ABI's `seccomp()` is a stub. A FreeBSD bug report with the trace
+above is the natural first step. The benefit is not limited to one game:
+any Windows program that makes direct system calls (several anti-cheat
+systems do) hits the same wall.
+
+References:
+
+- Linux documentation: [Syscall User Dispatch](https://docs.kernel.org/admin-guide/syscall-user-dispatch.html)
+- Why seccomp was not enough for Wine: [LWN, "Emulating Windows system calls in Linux"](https://lwn.net/Articles/824525/)
+- Wine commit `cbb9906d`: [wine-commits](https://list.winehq.org/archives/list/wine-commits@list.winehq.org/thread/PUTSTL3ZM3XUWLV2N2ZR4EA67BGBEDAB)
 
 ## 7. Things that were ruled out on the way
 
