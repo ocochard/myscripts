@@ -12,10 +12,11 @@
 #  - US keyboard layout while the game runs: Wine cannot map exotic layouts
 #    (e.g. bepo) to scancodes, so games reading KeyboardEvent.code (WASD) get
 #    wrong keys. The previous layout is restored on exit.
-#  - Unreal Engine games: DXVK + vkd3d-proton (winetricks dxvk vkd3d). Wine's
-#    builtin wined3d/vkd3d fail to build UE5 pipelines => "LowLevelFatalError
-#    PipelineStateCache.cpp: Shader compilation failures are Fatal". Installed
-#    in a separate prefix (~/.wine-ue) to leave the Electron prefix untouched.
+#  - DXVK + vkd3d-proton (winetricks dxvk vkd3d), for Unreal Engine games:
+#    Wine's builtin wined3d/vkd3d fail to build UE5 pipelines =>
+#    "LowLevelFatalError PipelineStateCache.cpp: Shader compilation failures
+#    are Fatal".  Chromium-based programs run fine with it too (The Nun, Epic
+#    Games Launcher), so every game shares one prefix.
 #  - Sound output: wineoss picks its own default device (e.g. /dev/dsp0, HDMI)
 #    rather than FreeBSD's hw.snd.default_unit, so games are silent. Wine's
 #    DefaultOutput is pointed at /dev/dsp<default_unit>.
@@ -30,24 +31,22 @@
 set -eu
 
 usage() {
-	echo "Usage: $(basename "$0") [-d] [-k] [-m|-M] [-s] /path/to/game.exe [game args...]"
-	echo "  -d  install DXVK + vkd3d-proton (automatic for Unreal Engine games)"
+	echo "Usage: $(basename "$0") [-k] [-m|-M] [-s] /path/to/game.exe [game args...]"
 	echo "  -k  keep the current keyboard layout (no switch to us)"
 	echo "  -m  use the release Mesa, not the mesa-devel one libmap redirects to"
 	echo "      (default for Unreal Engine games)"
 	echo "  -M  use the mesa-devel Mesa libmap redirects to (default for other games)"
 	echo "  -s  setup the prefix only, do not launch"
-	echo "Env: WINEPREFIX (default ~/.wine, ~/.wine-ue for -d), WINEDIR (default /usr/local/wine-proton), DISPLAY (default :0)"
+	echo "Env: WINEPREFIX (default ~/.wine), WINEDIR (default /usr/local/wine-proton), DISPLAY (default :0)"
 	exit 1
 }
 
-dxvk=false
+unreal=false
 keep_layout=false
 release_mesa=
 setup_only=false
-while getopts "dkmMsh" opt; do
+while getopts "kmMsh" opt; do
 	case ${opt} in
-	d) dxvk=true ;;
 	k) keep_layout=true ;;
 	m) release_mesa=true ;;
 	M) release_mesa=false ;;
@@ -58,15 +57,11 @@ done
 shift $((OPTIND - 1))
 
 # Unreal Engine packaged game: Engine/ directory next to the launcher
-[ $# -ge 1 ] && [ -d "$(dirname "$1")/Engine" ] && dxvk=true
-release_mesa=${release_mesa:-${dxvk}}
+[ $# -ge 1 ] && [ -d "$(dirname "$1")/Engine" ] && unreal=true
+release_mesa=${release_mesa:-${unreal}}
 
 WINEDIR=${WINEDIR:-/usr/local/wine-proton}
-if ${dxvk}; then
-	export WINEPREFIX=${WINEPREFIX:-${HOME}/.wine-ue}
-else
-	export WINEPREFIX=${WINEPREFIX:-${HOME}/.wine}
-fi
+export WINEPREFIX=${WINEPREFIX:-${HOME}/.wine}
 export PATH=${WINEDIR}/bin:${PATH}
 export WINEDEBUG=${WINEDEBUG:--all}
 export DISPLAY=${DISPLAY:-:0}
@@ -88,7 +83,7 @@ setup_prefix() {
 		echo "Installing MS core fonts into ${WINEPREFIX}"
 		winetricks --optout -q corefonts
 	fi
-	if ${dxvk} && ! grep -q '^"\*d3d12"="native"' "${WINEPREFIX}/user.reg"; then
+	if ! grep -q '^"\*d3d12"="native"' "${WINEPREFIX}/user.reg"; then
 		echo "Installing DXVK + vkd3d-proton into ${WINEPREFIX}"
 		winetricks --optout -q dxvk vkd3d
 	fi
