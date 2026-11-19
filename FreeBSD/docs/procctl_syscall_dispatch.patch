@@ -613,10 +613,10 @@ index 0a8615fad24e..5cde37f420bf 100644
  ATF_TESTS_C+=	reaper
 diff --git tests/sys/kern/procctl_syscall_dispatch.c tests/sys/kern/procctl_syscall_dispatch.c
 new file mode 100644
-index 000000000000..9b981ef000c2
+index 000000000000..eb7be8299623
 --- /dev/null
 +++ tests/sys/kern/procctl_syscall_dispatch.c
-@@ -0,0 +1,571 @@
+@@ -0,0 +1,584 @@
 +/*-
 + * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 + *
@@ -676,7 +676,9 @@ index 000000000000..9b981ef000c2
 +
 +/*
 + * Run the system call described by *r, alone in its own section so that
-+ * its range can be the allowed one.
++ * its range can be the allowed one.  Only the six register arguments are
++ * passed: a call with a seventh argument on the stack, such as syscall(2)
++ * with six arguments of its own, would get garbage.
 + */
 +struct sd_regs {
 +	long	rax, rdi, rsi, rdx, r10, r8, r9;
@@ -977,16 +979,24 @@ index 000000000000..9b981ef000c2
 + * sections and make system calls there.  The trap must still be delivered,
 + * not kill the process.
 + */
++static void
++require_fastblock(void)
++{
++	int bsdflags;
++
++	if (elf_aux_info(AT_BSDFLAGS, &bsdflags, sizeof(bsdflags)) != 0 ||
++	    (bsdflags & ELF_BSDF_SIGFASTBLK) == 0)
++		atf_tc_skip("sigfastblock disabled (kern.elf64.sigfastblock)");
++}
++
 +ATF_TC_WITHOUT_HEAD(fastblock);
 +ATF_TC_BODY(fastblock, tc)
 +{
 +	pid_t child;
 +	long ret;
-+	int bsdflags, status;
++	int status;
 +
-+	if (elf_aux_info(AT_BSDFLAGS, &bsdflags, sizeof(bsdflags)) != 0 ||
-+	    (bsdflags & ELF_BSDF_SIGFASTBLK) == 0)
-+		atf_tc_skip("sigfastblock disabled (kern.elf64.sigfastblock)");
++	require_fastblock();
 +	child = fork();
 +	ATF_REQUIRE(child != -1);
 +	if (child == 0) {
@@ -1075,17 +1085,19 @@ index 000000000000..9b981ef000c2
 +
 +	ATF_CHECK_EQ(pid, tpid);
 +	ATF_CHECK_EQ(ppid, tppid);
-+	ATF_CHECK_EQ(2, cnt);
++	ATF_CHECK(cnt > 0);
 +	ATF_CHECK_MSG((uintptr_t)addr >= libsys_start &&
 +	    (uintptr_t)addr < libsys_start + libsys_len,
 +	    "si_addr %p is not in libsys", addr);
-+	ATF_CHECK_EQ(3, sigsys_cnt);	/* and the procctl(2) above */
++	ATF_CHECK_EQ(cnt + 1, sigsys_cnt);	/* and the procctl(2) above */
 +}
 +
 +/*
 + * dlopen(3) while every system call is trapped: rtld makes them while it
 + * holds its lock with signals deferred by sigfastblock(2), and libthr's
-+ * rtld lock callbacks make some too.
++ * rtld lock callbacks make some too.  Without sigfastblock(2) they block
++ * signals with sigprocmask(2) instead, and the case would not test
++ * trapsignal()'s handling of sigfastblock(2).
 + */
 +ATF_TC_WITHOUT_HEAD(stub_dlopen);
 +ATF_TC_BODY(stub_dlopen, tc)
@@ -1093,6 +1105,7 @@ index 000000000000..9b981ef000c2
 +	pid_t child;
 +	int status;
 +
++	require_fastblock();
 +	if (dlopen("libm.so.5", RTLD_LAZY | RTLD_NOLOAD) != NULL)
 +		atf_tc_skip("libm.so.5 is already loaded");
 +	child = fork();
