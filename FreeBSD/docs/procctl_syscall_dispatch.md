@@ -31,6 +31,8 @@ Files:
   (FreeBSD main `30e3fd1811e3`)
 - Stand-alone test program: [procctl_syscall_dispatch_test.c](procctl_syscall_dispatch_test.c)
 - Interposer demo: [../sudtrace/](../sudtrace/)
+- syzkaller descriptions: [syzkaller_procctl_syscall_dispatch.patch](syzkaller_procctl_syscall_dispatch.patch)
+  (syzkaller `69566a15`)
 - Wine side: [wine-proton_syscall_dispatch.patch](wine-proton_syscall_dispatch.patch)
   (wine-proton 11.0-2 sources); in the `emulators/wine-proton` port it is
   part of `patch-dlls_ntdll_unix_signal__x86__64.c`,
@@ -567,13 +569,20 @@ Next steps:
 - Boot a kernel without the `sigfastblock` rule and check that the
   `fastblock` Kyua test fails there; so far that is shown by reading
   `trapsignal()`, not by a run.
-- Upstream FreeBSD: review on Phabricator, a merge with XaeroVincent's
-  work (the `procctl` numbers clash), and syzkaller descriptions for the
-  new `procctl` commands. The patch does not bump `__FreeBSD_version`:
+- Upstream FreeBSD: review on Phabricator and a merge with XaeroVincent's
+  work (the `procctl` numbers clash). The patch does not bump `__FreeBSD_version`:
   earlier `procctl` additions did not either, and programs detect the
   feature with `#ifdef PROC_SYSCALL_DISPATCH_CTL` and `EINVAL` at run
   time. A bump, made in its own commit at commit time, would only help if
   the Wine ports want to apply their patch based on `OSVERSION`.
+- syzkaller: the descriptions follow the Linux ones for
+  `PR_SET_SYSCALL_USER_DISPATCH` (an OFF and an ON variant, the ON one
+  marked `breaks_returns` and `ignore_return`, since it makes the
+  fuzzer's own later calls trap). They compile with `syz-sysgen` for
+  the four FreeBSD targets, `syz-fmt` leaves them unchanged, and
+  syzkaller's `pkg/compiler`, `sys/...` and `prog` tests pass. The
+  constants were added by hand; `syz-extract` regenerates them once the
+  kernel side is in FreeBSD. To submit upstream once FreeBSD has it.
 - FreeBSD ports: once the kernel side is in, submit the wine-proton
   changes to the port (they are in a local ports tree today), and port
   them to `emulators/wine` and `emulators/wine-devel`.

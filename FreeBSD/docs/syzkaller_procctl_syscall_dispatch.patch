@@ -1,0 +1,60 @@
+diff --git a/sys/freebsd/procctl.txt b/sys/freebsd/procctl.txt
+index 64474a6..9a40fde 100644
+--- a/sys/freebsd/procctl.txt
++++ b/sys/freebsd/procctl.txt
+@@ -68,4 +68,37 @@ procctl$PROC_NO_NEW_PRIVS_STATUS(idtype flags[idtype], id pid, cmd const[PROC_NO
+ procctl$PROC_WXMAP_CTL(idtype flags[idtype], id pid, cmd const[PROC_WXMAP_CTL], data ptr[in, int32])
+ procctl$PROC_WXMAP_STATUS(idtype flags[idtype], id pid, cmd const[PROC_WXMAP_STATUS], data ptr[out, int32])
+ 
++procctl$PROC_SYSCALL_DISPATCH_CTL_OFF(idtype flags[idtype], id pid, cmd const[PROC_SYSCALL_DISPATCH_CTL], data ptr[in, procctl_syscall_dispatch_off])
++procctl$PROC_SYSCALL_DISPATCH_CTL_ON(idtype flags[idtype], id pid, cmd const[PROC_SYSCALL_DISPATCH_CTL], data ptr[in, procctl_syscall_dispatch_on]) (breaks_returns, ignore_return)
++procctl$PROC_SYSCALL_DISPATCH_STATUS(idtype flags[idtype], id pid, cmd const[PROC_SYSCALL_DISPATCH_STATUS], data ptr[out, procctl_syscall_dispatch_status])
++
++procctl_syscall_dispatch_off {
++	mode		const[PROC_SYSCALL_DISPATCH_OFF, int32]
++	pad0		const[0, int32]
++	start		const[0, intptr]
++	len		const[0, intptr]
++	selector	const[0, intptr]
++	pad1		array[const[0, int32], 8]
++}
++
++procctl_syscall_dispatch_on {
++	mode		const[PROC_SYSCALL_DISPATCH_ON, int32]
++	pad0		const[0, int32]
++	start		intptr
++	len		intptr
++	selector	ptr[in, flags[syscall_dispatch_selector, int8], opt]
++	pad1		array[const[0, int32], 8]
++}
++
++procctl_syscall_dispatch_status {
++	mode		int32
++	pad0		int32
++	start		intptr
++	len		intptr
++	selector	intptr
++	pad1		array[int32, 8]
++}
++
++syscall_dispatch_selector = PROC_SYSCALL_DISPATCH_ALLOW, PROC_SYSCALL_DISPATCH_BLOCK, PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL
++
+ idtype = P_PID, P_PGID
+diff --git a/sys/freebsd/procctl.txt.const b/sys/freebsd/procctl.txt.const
+index 41b375e..d62b77f 100644
+--- a/sys/freebsd/procctl.txt.const
++++ b/sys/freebsd/procctl.txt.const
+@@ -16,6 +16,13 @@ PROC_REAP_STATUS = 4
+ PROC_SPROTECT = 1
+ PROC_STACKGAP_CTL = 17
+ PROC_STACKGAP_STATUS = 18
++PROC_SYSCALL_DISPATCH_ALLOW = 0
++PROC_SYSCALL_DISPATCH_ALLOW_SIGNAL = 2
++PROC_SYSCALL_DISPATCH_BLOCK = 1
++PROC_SYSCALL_DISPATCH_CTL = 25
++PROC_SYSCALL_DISPATCH_OFF = 0
++PROC_SYSCALL_DISPATCH_ON = 1
++PROC_SYSCALL_DISPATCH_STATUS = 26
+ PROC_TRACE_CTL = 7
+ PROC_TRACE_STATUS = 8
+ PROC_TRAPCAP_CTL = 9
