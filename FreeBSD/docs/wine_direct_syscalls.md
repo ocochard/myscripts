@@ -9,6 +9,12 @@ directly, skipping Wine, and FreeBSD offers Wine no way to notice.
 It assumes you know what a program, a process and a CPU register are, and
 nothing more.
 
+> **Update (November 2026): fixed.** A new kernel feature,
+> `procctl(PROC_SYSCALL_DISPATCH_CTL)`, and a port of upstream Wine's
+> Syscall User Dispatch code to wine-proton now let Wine catch these
+> system calls; the benchmark runs. See
+> [procctl_syscall_dispatch.md](procctl_syscall_dispatch.md).
+
 ## TL;DR
 
 - Wine does not emulate a Windows computer. It runs the Windows program's

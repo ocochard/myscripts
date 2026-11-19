@@ -11,6 +11,7 @@
  */
 #include <sys/types.h>
 #include <sys/procctl.h>
+#include <sys/time.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <machine/psl.h>
@@ -49,6 +50,14 @@ struct procctl_syscall_dispatch {
 static volatile char selector = PROC_SYSCALL_DISPATCH_ALLOW;
 static volatile int got_code, got_syscall;
 static volatile long got_rax, got_r10, got_rcx, got_rip;
+static volatile int alrm_selector = -1;
+
+static void
+sigalrm_handler(int sig)
+{
+	(void)sig;
+	alrm_selector = selector;	/* the kernel must have set ALLOW */
+}
 
 static void
 sigsys_handler(int sig, siginfo_t *si, void *ctx)
@@ -131,6 +140,27 @@ main(void)
 	ret = raw_getpid();
 	failed += check("selector ALLOW runs the real syscall",
 	    ret == getpid());
+
+	/*
+	 * A signal arriving while the selector says BLOCK: the busy loop
+	 * makes no system call, and libthr's wrapper runs before our handler.
+	 */
+	sa.sa_handler = sigalrm_handler;
+	sa.sa_flags = 0;
+	if (sigaction(SIGALRM, &sa, NULL) != 0)
+		err(1, "sigaction");
+	{
+		struct itimerval it = { .it_value = { .tv_usec = 10000 } };
+
+		if (setitimer(ITIMER_REAL, &it, NULL) != 0)
+			err(1, "setitimer");
+	}
+	selector = PROC_SYSCALL_DISPATCH_BLOCK;
+	while (alrm_selector == -1)
+		;
+	selector = PROC_SYSCALL_DISPATCH_ALLOW;
+	failed += check("signal delivery sets the selector to ALLOW",
+	    alrm_selector == PROC_SYSCALL_DISPATCH_ALLOW);
 
 	child = fork();
 	if (child == 0) {

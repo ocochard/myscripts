@@ -1,5 +1,5 @@
 diff --git lib/libsys/procctl.2 lib/libsys/procctl.2
-index a09c38c7c977..0072b85a25cf 100644
+index a09c38c7c977..15f96065866b 100644
 --- lib/libsys/procctl.2
 +++ lib/libsys/procctl.2
 @@ -27,7 +27,7 @@
@@ -11,7 +11,7 @@ index a09c38c7c977..0072b85a25cf 100644
  .Dt PROCCTL 2
  .Os
  .Sh NAME
-@@ -459,6 +459,91 @@ delivery failed, e.g., due to permission problems.
+@@ -459,6 +459,99 @@ delivery failed, e.g., due to permission problems.
  If no such process exists, the
  .Fa rk_fpid
  field is set to \-1.
@@ -75,6 +75,14 @@ index a09c38c7c977..0072b85a25cf 100644
 +.Dv SIGSEGV .
 +.El
 +.Pp
++When a signal is delivered to the thread, the byte pointed to by
++.Va sd_selector
++is set to
++.Dv PROC_SYSCALL_DISPATCH_ALLOW ,
++since signal handlers are native code; a handler that returns to code
++whose system calls must be trapped sets it back.
++This is currently only done on amd64.
++.Pp
 +The machine state is left as it was at the system call instruction,
 +except that the program counter points after it, so the handler finds
 +the system call number and arguments in their registers.
@@ -103,7 +111,7 @@ index a09c38c7c977..0072b85a25cf 100644
  .It Dv PROC_TRACE_CTL
  Enable or disable tracing of the specified process(es), according to the
  value of the integer argument.
-@@ -969,3 +1054,9 @@ and first appeared in
+@@ -969,3 +1062,9 @@ and first appeared in
  .Pp
  ASLR support was added for checklist compliance in
  .Fx 13.0 .
@@ -113,6 +121,19 @@ index a09c38c7c977..0072b85a25cf 100644
 +facility is based on the
 +.Ql prctl(PR_SET_SYSCALL_USER_DISPATCH, ...)
 +feature in Linux.
+diff --git sys/amd64/amd64/exec_machdep.c sys/amd64/amd64/exec_machdep.c
+index 19b087c783d3..2d6aad2c743c 100644
+--- sys/amd64/amd64/exec_machdep.c
++++ sys/amd64/amd64/exec_machdep.c
+@@ -234,6 +234,8 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
+ 
+ 	fpstate_drop(td);
+ 	regs->tf_rsp = (long)sfp;
++	syscall_dispatch_sendsig(td);
++
+ 	regs->tf_rip = PROC_SIGCODE(p);
+ 	regs->tf_rflags &= ~(PSL_T | PSL_D);
+ 	regs->tf_cs = _ucodesel;
 diff --git sys/kern/kern_exec.c sys/kern/kern_exec.c
 index 7871ac9b86fa..8a73ea332519 100644
 --- sys/kern/kern_exec.c
@@ -127,7 +148,7 @@ index 7871ac9b86fa..8a73ea332519 100644
  		p->p_flag2 &= ~P2_NOTRACE;
  	if ((p->p_flag2 & P2_STKGAP_DISABLE_EXEC) == 0)
 diff --git sys/kern/kern_procctl.c sys/kern/kern_procctl.c
-index 581b24f21d3c..70092104122b 100644
+index 581b24f21d3c..a4c0f9ea4460 100644
 --- sys/kern/kern_procctl.c
 +++ sys/kern/kern_procctl.c
 @@ -41,8 +41,10 @@
@@ -153,7 +174,7 @@ index 581b24f21d3c..70092104122b 100644
  static int
  protect_setchild(struct thread *td, struct proc *p, int flags)
  {
-@@ -999,6 +1006,121 @@ logsigexit_status(struct thread *td, struct proc *p, void *data)
+@@ -999,6 +1006,135 @@ logsigexit_status(struct thread *td, struct proc *p, void *data)
  	return (0);
  }
  
@@ -272,10 +293,24 @@ index 581b24f21d3c..70092104122b 100644
 +	return (true);
 +}
 +
++/*
++ * Called by sendsig() with no locks held.  Signal handlers are native
++ * code, and libthr wraps them and makes system calls before the
++ * program's handler runs, so set the selector to allow.  The handler sets
++ * it back to block before returning to code whose system calls it traps.
++ */
++void
++syscall_dispatch_sendsig(struct thread *td)
++{
++	if ((td->td_pflags2 & TDP2_SYSCALL_DISPATCH) != 0 &&
++	    td->td_sd_selector != NULL)
++		(void)subyte(td->td_sd_selector, PROC_SYSCALL_DISPATCH_ALLOW);
++}
++
  enum {
  	PCTL_SLOCKED,
  	PCTL_XLOCKED,
-@@ -1166,6 +1288,20 @@ static const struct procctl_cmd_info procctl_cmds_info[] = {
+@@ -1166,6 +1302,20 @@ static const struct procctl_cmd_info procctl_cmds_info[] = {
  	      .need_candebug = false,
  	      .copyin_sz = 0, .copyout_sz = sizeof(int),
  	      .exec = logsigexit_status, .copyout_on_error = false, },
@@ -296,7 +331,7 @@ index 581b24f21d3c..70092104122b 100644
  };
  
  int
-@@ -1175,6 +1311,7 @@ sys_procctl(struct thread *td, struct procctl_args *uap)
+@@ -1175,6 +1325,7 @@ sys_procctl(struct thread *td, struct procctl_args *uap)
  		struct procctl_reaper_status rs;
  		struct procctl_reaper_pids rp;
  		struct procctl_reaper_kill rk;
@@ -402,14 +437,15 @@ index 7f987969a847..6d7e5375457e 100644
  #define CLD_EXITED	1	/* Child has exited			*/
  #define CLD_KILLED	2	/* Child has terminated abnormally but	*/
 diff --git sys/sys/sysent.h sys/sys/sysent.h
-index b250ec1f7a70..5e4fb48b443e 100644
+index b250ec1f7a70..96df30c07f99 100644
 --- sys/sys/sysent.h
 +++ sys/sys/sysent.h
-@@ -336,6 +336,7 @@ int	lkmnosys(struct thread *, struct nosys_args *);
+@@ -336,6 +336,8 @@ int	lkmnosys(struct thread *, struct nosys_args *);
  int	lkmressys(struct thread *, struct nosys_args *);
  
  void	syscall_thread_enter(struct thread *td, struct sysent **se);
 +bool	syscall_dispatch_trap(struct thread *td);
++void	syscall_dispatch_sendsig(struct thread *td);
  void	syscall_thread_exit(struct thread *td, struct sysent *se);
  
  int shared_page_alloc(int size, int align);
