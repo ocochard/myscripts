@@ -19,7 +19,8 @@
 #    Games Launcher), so every game shares one prefix.
 #  - Sound output: wineoss picks its own default device (e.g. /dev/dsp0, HDMI)
 #    rather than FreeBSD's hw.snd.default_unit, so games are silent. Wine's
-#    DefaultOutput is pointed at /dev/dsp<default_unit>.
+#    DefaultOutput is pointed at /dev/dsp<default_unit>, or at virtual_oss's
+#    /dev/dsp when a streaming server (Moonshine) sets AUDIODEV.
 #  - Started from ssh (no DISPLAY): the game runs on the machine's own X server.
 #  - -m: the mesa-devel package redirects libvulkan_radeon.so to its beta
 #    build through libmap.d for every program.  Some games hang the GPU or
@@ -91,11 +92,17 @@ setup_prefix() {
 
 # Point Wine's default audio output at FreeBSD's default sound unit.  The
 # endpoint ID is built from the GUID wineoss stored for that device, which
-# only exists once something in the prefix has used audio.
+# only exists once something in the prefix has used audio.  Under a game
+# streaming server that sets AUDIODEV (Moonshine: /dev/dsp.loop), use
+# /dev/dsp instead: virtual_oss's main device, whose output the streaming
+# server reads back from the loopback device.  wineoss lists only kernel
+# devices and /dev/dsp, never the loopback device itself.
 setup_audio() {
 	unit=$(sysctl -n hw.snd.default_unit 2>/dev/null) || return 0
+	dev=/dev/dsp${unit}
+	[ -n "${AUDIODEV:-}" ] && dev=/dev/dsp
 	reg=${WINEPREFIX}/user.reg
-	guid=$(awk -v dev="0,/dev/dsp${unit}]" '
+	guid=$(awk -v dev="0,${dev}]" '
 	    index($0, "wineoss.drv\\\\devices\\\\" dev) { found = 1; next }
 	    found && /^"guid"=hex:/ {
 		split(substr($0, 12), b, ",")
@@ -106,13 +113,13 @@ setup_audio() {
 	    }
 	    /^\[/ { found = 0 }' "${reg}" 2>/dev/null | tr a-f A-F)
 	if [ -z "${guid}" ]; then
-		echo "WARNING: Wine does not know /dev/dsp${unit} yet (run a game" \
+		echo "WARNING: Wine does not know ${dev} yet (run a game" \
 		    "with sound once, then rerun $(basename "$0") -s)"
 		return 0
 	fi
 	id="{0.0.0.00000000}.{${guid}}"
 	grep -qF "\"DefaultOutput\"=\"${id}\"" "${reg}" && return 0
-	echo "Setting Wine's sound output to /dev/dsp${unit} (hw.snd.default_unit)"
+	echo "Setting Wine's sound output to ${dev}"
 	wine reg add 'HKCU\Software\Wine\Drivers\wineoss.drv' \
 	    /v DefaultOutput /t REG_SZ /d "${id}" /f >/dev/null
 }
