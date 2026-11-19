@@ -17,6 +17,7 @@
 #include <machine/psl.h>
 
 #include <err.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -104,7 +105,7 @@ main(void)
 	struct sigaction sa;
 	long ret;
 	pid_t child;
-	int failed, status;
+	int after, failed, status;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_sigaction = sigsys_handler;
@@ -115,6 +116,11 @@ main(void)
 	memset(&sd, 0, sizeof(sd));
 	sd.sd_mode = PROC_SYSCALL_DISPATCH_ON;
 	sd.sd_selector = (char *)&selector;
+	sd.sd_pad1[0] = 1;
+	if (procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_CTL, &sd) == 0 ||
+	    errno != EINVAL)
+		errx(1, "non-zero padding was accepted");
+	sd.sd_pad1[0] = 0;
 	if (procctl(P_PID, 0, PROC_SYSCALL_DISPATCH_CTL, &sd) != 0)
 		err(1, "procctl(PROC_SYSCALL_DISPATCH_CTL): kernel without "
 		    "the patch?");
@@ -158,9 +164,12 @@ main(void)
 	selector = PROC_SYSCALL_DISPATCH_BLOCK;
 	while (alrm_selector == -1)
 		;
+	after = selector;
 	selector = PROC_SYSCALL_DISPATCH_ALLOW;
 	failed += check("signal delivery sets the selector to ALLOW",
 	    alrm_selector == PROC_SYSCALL_DISPATCH_ALLOW);
+	failed += check("sigreturn restores BLOCK the handler left alone",
+	    after == PROC_SYSCALL_DISPATCH_BLOCK);
 
 	child = fork();
 	if (child == 0) {

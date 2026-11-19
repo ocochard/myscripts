@@ -140,12 +140,15 @@ created by `fork(2)` starts without it, and `execve(2)` clears it.
 ## 3. The kernel path
 
 All FreeBSD system calls go through one function, `syscallenter()` in
-`sys/kern/subr_syscall.c`. It fetches the system call number and
+`sys/kern/subr_syscall.c`. It decodes the system call number and
 arguments, lets a debugger stop the thread if one is attached, checks
-Capsicum, then calls the handler. The patch adds one test after the
-debugger step:
+Capsicum, then calls the handler. The patch adds one test before the
+arguments are decoded, because a trapped call follows Windows
+conventions, not FreeBSD's (decoding a FreeBSD call with more than six
+arguments reads the user stack and could fail before the trap):
 
 ```c
+	/* Before decoding the arguments: they are not FreeBSD's. */
 	if (__predict_false((td->td_pflags2 & TDP2_SYSCALL_DISPATCH) != 0) &&
 	    syscall_dispatch_trap(td)) {
 		td->td_errno = error = EJUSTRETURN;
@@ -235,8 +238,27 @@ The fix, an idea taken from XaeroVincent's patch (section 7), is in
 `sendsig()`, the amd64 function that builds the signal frame: it sets the
 selector to ALLOW when it delivers a signal to a thread that uses the
 feature. Signal handlers are native code, so that is the right state.
-Wine already sets the selector back to BLOCK in `leave_handler()` when a
-handler returns to Windows code, so nothing is lost.
+
+Setting the byte is only half of it: the first version never put the
+old value back, and the FreeBSD review checklist (section 8) caught it.
+Wine's own handlers set BLOCK again in `leave_handler()` when they return
+to Windows code, but handlers Wine does not own (libthr's internal
+signal, a handler installed by a native library) would return to Windows
+code with the selector stuck at ALLOW, and its next direct system call
+would run as a FreeBSD call again.
+
+So `sendsig()` also saves the previous value in the signal frame (in
+`mc_spare[0]` of the saved machine context, tagged so that a random
+value is never mistaken for it), and `sigreturn(2)` writes it back,
+unless the handler changed the byte. That last condition matters: when
+a Wine handler redirects the thread into Windows code, it sets BLOCK
+itself, and the kernel must not undo that.
+
+| Selector before the signal | Byte when the handler returns | After `sigreturn(2)` |
+|---|---|---|
+| BLOCK | ALLOW (handler did not touch it) | BLOCK, restored |
+| BLOCK or ALLOW | BLOCK (handler set it) | BLOCK, the handler's choice |
+| ALLOW | ALLOW | ALLOW, nothing was saved |
 
 ## 5. Keeping kernel modules working
 
@@ -289,7 +311,7 @@ so `0x340(%r13)` is the selector byte of the running thread.
 | `rax` seen by the handler | system call number | `ENOSYS`, number only in `si_syscall` | system call number |
 | Exemptions | vdso signal return | `sigreturn`, `sigfastblock` by number | signal trampoline by address |
 | Selector unreadable | `SIGSEGV` | system call runs | `SIGSEGV` |
-| Selector on signal delivery | unchanged | set to ALLOW | set to ALLOW (section 4.2) |
+| Selector on signal delivery | unchanged | set to ALLOW, never restored | set to ALLOW, restored by `sigreturn` if unchanged (section 4.2) |
 | fork / new thread / exec | off / off / off | off / off / off | off / off / off |
 
 [XaeroVincent/FreeBSD-Gaming-Kernel](https://github.com/XaeroVincent/FreeBSD-Gaming-Kernel)
@@ -318,8 +340,32 @@ PASS: OFF is accepted
 PASS: after OFF, BLOCK no longer traps
 ```
 
+That output is from the kernel before the review fixes. The fixed
+version also checks that a non-zero padding member is refused, and adds
+`PASS: sigreturn restores BLOCK the handler left alone`; it has not been
+run yet.
+
 On a kernel without the patch it stops at the first `procctl` call with
 `Invalid argument`.
+
+### Review
+
+The patch went through the FreeBSD commit-review checklist
+(`.agents/skills/freebsd-src/review.md`), by a reviewer that saw only the
+checklist and the patch. It found three bugs, all fixed:
+
+1. The selector reset at signal delivery was never undone, so a handler
+   Wine does not own left direct system calls untrapped (section 4.2).
+2. When the selector byte could not be read, `SIGSEGV` was posted before
+   the register fix-up, so that handler saw the wrong `rcx`, `r10` and
+   `r11`. The fix-up now happens before either signal.
+3. The check ran after the arguments were decoded; for a Windows call
+   whose number matches a FreeBSD call with more than six arguments, the
+   decoding could fail with `EFAULT` before the trap (section 3).
+
+It also asked for: the `EINVAL` cases in the man page's ERRORS section,
+zero padding enforced so the padding can be given a meaning later, and
+syzkaller descriptions for the new interface.
 
 With the real game, `ktrace -t cs -p <pid>` on the benchmark showed:
 
@@ -348,16 +394,83 @@ for example to count trapped and allowed calls per program:
 dtrace -n 'fbt::syscall_dispatch_trap:return { @[execname, arg1 ? "trapped" : "allowed"] = count(); }'
 ```
 
-## 10. Limitations and next steps
+## 10. Other uses
 
-- amd64 only: the register fix-up and the signal-delivery reset are amd64
-  code, and 32-bit (freebsd32) processes cannot enable the feature.
+The feature is not specific to Denuvo, games or even Wine. It answers one
+question: "a process wants to handle some of its own system calls itself,
+chosen by where they come from, without a debugger and without paying
+for the others". Anything that needs that can use it.
+
+### Other Windows programs on Wine
+
+Any Windows program that executes `syscall` itself hits the same wall as
+the benchmark, and the same Wine code handles it:
+
+- other copy protection systems and user-mode anti-cheat components;
+- launchers and applications that call `ntdll` system calls directly to
+  avoid hooks;
+- tools and samples studied under Wine in malware analysis, which often
+  make direct system calls precisely to avoid monitoring.
+
+### Other compatibility layers in user space
+
+Wine's model, running foreign machine code natively and translating only
+its requests to the operating system, works for other systems too. A
+layer that runs, say, another Unix-like system's binaries can catch their
+system calls with this feature and translate them in a library, instead
+of adding a new system call personality to the kernel the way FreeBSD's
+Linux compatibility layer does. A library is easier to write, debug and
+update than kernel code, at the price of a signal per trapped call.
+
+Binary translators, which rewrite machine code before running it (to run
+amd64 code on arm64, for example), see every system call during
+translation and need this less, but can use it for code they leave
+untranslated.
+
+### Selective interception without a debugger
+
+`ptrace(2)` and `ktrace(1)` see every system call of a process. Syscall
+dispatch traps only the calls made from outside a chosen range, so a
+program can watch one part of itself and leave the rest at full speed:
+
+- tracing or profiling the system calls of a single library, plugin or
+  JIT-compiled region inside a large program;
+- record and replay tools, which need to intercept the application's own
+  system calls but not those of the tool itself;
+- fault injection in tests: make the system calls of one module fail on
+  purpose (return `ENOSPC`, `EINTR`, ...) to test its error handling,
+  without touching the rest of the process.
+
+### User-space kernels
+
+Projects in the style of gVisor run a program on top of a kernel written
+in user space, which must receive every system call the program makes.
+On Linux, gVisor's newest backend traps them with seccomp signals, the
+same mechanism Proton uses. Syscall dispatch, with an allowed range
+covering the user-space kernel itself, gives FreeBSD the equivalent
+building block.
+
+### What it is not: a security boundary
+
+The selector byte lives in the process's own memory, so the trapped code
+can write ALLOW into it and make its system calls directly; it can also
+jump into the allowed range. Syscall dispatch only helps cooperating
+code. Linux's documentation says the same of Syscall User Dispatch. To
+confine untrusted code on FreeBSD, use Capsicum (`cap_enter(2)`), jails
+or a MAC policy instead.
+
+## 11. Limitations and next steps
+
+- amd64 only: the register fix-up and the signal-frame save and restore
+  are amd64 code, so other architectures return `EOPNOTSUPP`, and 32-bit
+  (freebsd32) processes cannot enable the feature.
 - A system call made from native code outside libsys while the selector
   is BLOCK would be trapped. In practice the selector is ALLOW whenever
   Wine's native code runs, and Wine has upstream's fallback: loading an
   old-style `.so` builtin DLL turns the feature off for the process.
-- Upstream FreeBSD: needs review, a merge with XaeroVincent's work (the
-  `procctl` numbers clash), and an ATF version of the test.
+- Upstream FreeBSD: needs review on Phabricator, a merge with
+  XaeroVincent's work (the `procctl` numbers clash), an ATF version of the
+  test, and syzkaller descriptions for the new `procctl` commands.
 - Upstream Wine: the FreeBSD branch is a few lines on top of the Linux
   code, but WineHQ asks contributors not to submit code written with an
   LLM, which this is.
