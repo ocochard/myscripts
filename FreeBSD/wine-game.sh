@@ -119,8 +119,18 @@ setup_audio() {
 	    /v DefaultOutput /t REG_SZ /d "${id}" /f >/dev/null
 }
 
+# Wine falls back silently to slower wineserver synchronization when
+# /dev/ntsync is missing, and devfs cannot autoload the module on open.
+check_ntsync() {
+	[ -e /dev/ntsync ] && return 0
+	[ -f /boot/kernel/ntsync.ko ] || return 0
+	echo "WARNING: ntsync(4) is not loaded, Wine falls back to slower" \
+	    "wineserver sync (kldload ntsync; sysrc kld_list+=ntsync)"
+}
+
 setup_prefix
 setup_audio
+check_ntsync
 ${setup_only} && exit 0
 
 [ $# -ge 1 ] || usage
