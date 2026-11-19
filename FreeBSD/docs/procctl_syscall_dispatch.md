@@ -289,7 +289,15 @@ The fix is one condition in `trapsignal()`: the fast-block word is ignored
 for a SIGSYS whose code is `SYS_USER_DISPATCH`. The handler belongs to the
 program that asked for the trap, and it has to be written to run anywhere
 anyway. A signal blocked with `sigprocmask(2)` still kills the process, as
-on Linux.
+on Linux. The man page now says both.
+
+One trap remains for such a tool: it must install its SIGSYS handler with
+the raw system call (`__sys_sigaction`), not with libthr's `sigaction()`.
+libthr's version holds a lock on the SIGSYS slot while it makes the system
+call; if that call is trapped, libthr's signal wrapper waits for the same
+lock and the thread hangs. Wine allows the whole of libsys, so its
+`sigaction()` call is never trapped, and `FreeBSD/sudtrace` installs its
+handler directly.
 
 ## 5. Keeping kernel modules working
 
@@ -547,8 +555,13 @@ or a MAC policy instead.
   Wine's native code runs, and Wine has upstream's fallback: loading an
   old-style `.so` builtin DLL turns the feature off for the process.
 - Upstream FreeBSD: needs review on Phabricator, a merge with
-  XaeroVincent's work (the `procctl` numbers clash), an ATF version of the
-  test, and syzkaller descriptions for the new `procctl` commands.
+  XaeroVincent's work (the `procctl` numbers clash), and syzkaller
+  descriptions for the new `procctl` commands. The patch does not bump
+  `__FreeBSD_version`: earlier `procctl` additions did not either, and
+  programs detect the feature with `#ifdef PROC_SYSCALL_DISPATCH_CTL` and
+  `EINVAL` at run time. A bump, made in its own commit at commit time,
+  would only help if the Wine ports want to apply their patch based on
+  `OSVERSION`.
 - Upstream Wine: the FreeBSD branch is a few lines on top of the Linux
   code, but WineHQ asks contributors not to submit code written with an
   LLM, which this is.
