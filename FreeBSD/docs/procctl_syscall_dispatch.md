@@ -332,6 +332,12 @@ With the Denuvo benchmark, `ktrace -t cs -p <pid>` showed:
   without the feature; the benchmark compiled its shaders and ran to the
   end.
 
+A second run on the current kernel, with ALLOW_SIGNAL (section 4.2) and the
+`sigfastblock` rule (section 4.3), and no change to Wine, gave the same
+result: 174 `procctl` calls, memory between 4.0 and 4.5 GB from startup
+to the end of the benchmark, which ran to completion. The number of
+trapped calls was not recounted on that run.
+
 The same code covers any Windows program that executes `syscall` itself:
 other copy protection systems and user-mode anti-cheat components,
 applications that call `ntdll` system calls directly to avoid hooks, and
@@ -553,9 +559,6 @@ Next steps:
 
 - Measure the cost per trapped call and per untrapped call with a
   micro-benchmark, to replace the estimates of section 8.
-- Run the Denuvo benchmark again on the current kernel: the results of
-  section 5.1 were obtained before ALLOW_SIGNAL and the `sigfastblock`
-  rule existed. Wine itself needs no change for them.
 - Boot a kernel without the `sigfastblock` rule and check that the
   `fastblock` Kyua test fails there; so far that is shown by reading
   `trapsignal()`, not by a run.
