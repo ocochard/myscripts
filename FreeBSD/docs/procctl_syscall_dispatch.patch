@@ -1,0 +1,415 @@
+diff --git lib/libsys/procctl.2 lib/libsys/procctl.2
+index a09c38c7c977..0072b85a25cf 100644
+--- lib/libsys/procctl.2
++++ lib/libsys/procctl.2
+@@ -27,7 +27,7 @@
+ .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ .\" SUCH DAMAGE.
+ .\"
+-.Dd April 21, 2025
++.Dd November 19, 2026
+ .Dt PROCCTL 2
+ .Os
+ .Sh NAME
+@@ -459,6 +459,91 @@ delivery failed, e.g., due to permission problems.
+ If no such process exists, the
+ .Fa rk_fpid
+ field is set to \-1.
++.It Dv PROC_SYSCALL_DISPATCH_CTL
++Traps the system calls made by the calling thread, so that a program
++running foreign machine code, such as an emulator of another operating
++system, can emulate them in a
++.Dv SIGSYS
++handler.
++.Fa idtype
++must be
++.Dv P_PID
++and
++.Fa id
++must be the caller's pid or zero.
++.Fa data
++must point to a
++.Vt "struct procctl_syscall_dispatch" :
++.Bd -literal
++struct procctl_syscall_dispatch {
++	int		sd_mode;
++	int		sd_pad0;
++	uintptr_t	sd_start;
++	size_t		sd_len;
++	char		*sd_selector;
++	u_int		sd_pad1[8];
++};
++.Ed
++.Pp
++If
++.Va sd_mode
++is
++.Dv PROC_SYSCALL_DISPATCH_ON ,
++then a system call is not executed, and the thread instead receives
++.Dv SIGSYS
++with
++.Va si_code
++set to
++.Dv SYS_USER_DISPATCH ,
++.Va si_addr
++set to the address following the system call instruction and
++.Va si_syscall
++set to the system call number, unless one of the following is true:
++.Bl -bullet
++.It
++The address following the system call instruction is inside
++.Bq Va sd_start , Va sd_start No + Va sd_len .
++.It
++The system call is made by the signal trampoline in the shared page.
++.It
++.Va sd_selector
++is not
++.Dv NULL
++and the byte it points to holds
++.Dv PROC_SYSCALL_DISPATCH_ALLOW .
++Any other value, normally
++.Dv PROC_SYSCALL_DISPATCH_BLOCK ,
++traps the system call.
++The thread can flip the byte without entering the kernel.
++If the byte cannot be read, the thread receives
++.Dv SIGSEGV .
++.El
++.Pp
++The machine state is left as it was at the system call instruction,
++except that the program counter points after it, so the handler finds
++the system call number and arguments in their registers.
++If
++.Va sd_mode
++is
++.Dv PROC_SYSCALL_DISPATCH_OFF ,
++system calls are no longer trapped, and the other members must be zero.
++.Pp
++The setting is not inherited by a child created by
++.Xr fork 2
++or by new threads, and is cleared by
++.Xr execve 2 .
++It is only available to 64-bit processes.
++.It Dv PROC_SYSCALL_DISPATCH_STATUS
++Returns the syscall dispatch setting of the calling thread in the
++.Vt "struct procctl_syscall_dispatch"
++pointed to by
++.Fa data .
++.Fa idtype
++must be
++.Dv P_PID
++and
++.Fa id
++must be the caller's pid or zero.
+ .It Dv PROC_TRACE_CTL
+ Enable or disable tracing of the specified process(es), according to the
+ value of the integer argument.
+@@ -969,3 +1054,9 @@ and first appeared in
+ .Pp
+ ASLR support was added for checklist compliance in
+ .Fx 13.0 .
++.Pp
++The
++.Dv PROC_SYSCALL_DISPATCH_CTL
++facility is based on the
++.Ql prctl(PR_SET_SYSCALL_USER_DISPATCH, ...)
++feature in Linux.
+diff --git sys/kern/kern_exec.c sys/kern/kern_exec.c
+index 7871ac9b86fa..8a73ea332519 100644
+--- sys/kern/kern_exec.c
++++ sys/kern/kern_exec.c
+@@ -916,7 +916,7 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p,
+ 	 * it that it now has its own resources back
+ 	 */
+ 	p->p_flag |= P_EXEC;
+-	td->td_pflags2 &= ~TDP2_UEXTERR;
++	td->td_pflags2 &= ~(TDP2_UEXTERR | TDP2_SYSCALL_DISPATCH);
+ 	if ((p->p_flag2 & P2_NOTRACE_EXEC) == 0)
+ 		p->p_flag2 &= ~P2_NOTRACE;
+ 	if ((p->p_flag2 & P2_STKGAP_DISABLE_EXEC) == 0)
+diff --git sys/kern/kern_procctl.c sys/kern/kern_procctl.c
+index 581b24f21d3c..70092104122b 100644
+--- sys/kern/kern_procctl.c
++++ sys/kern/kern_procctl.c
+@@ -41,8 +41,10 @@
+ #include <sys/proc.h>
+ #include <sys/procctl.h>
+ #include <sys/ptrace.h>
++#include <sys/signalvar.h>
+ #include <sys/sx.h>
+ #include <sys/syscallsubr.h>
++#include <sys/sysent.h>
+ #include <sys/sysproto.h>
+ #include <sys/wait.h>
+ 
+@@ -52,6 +54,11 @@
+ #include <vm/vm_extern.h>
+ #include <vm/uma.h>
+ 
++#include <machine/cpu.h>
++#ifdef __amd64__
++#include <machine/pcb.h>
++#endif
++
+ static int
+ protect_setchild(struct thread *td, struct proc *p, int flags)
+ {
+@@ -999,6 +1006,121 @@ logsigexit_status(struct thread *td, struct proc *p, void *data)
+ 	return (0);
+ }
+ 
++/*
++ * Syscall dispatch lets a process that runs foreign machine code, such as
++ * Wine running Windows programs, trap the system calls that this code
++ * makes itself with the syscall instruction, and emulate them in a SIGSYS
++ * handler.  The semantics follow Linux's PR_SET_SYSCALL_USER_DISPATCH.
++ * The state is per thread, not inherited by fork(2) or new threads, and
++ * cleared by execve(2), as on Linux.
++ */
++static int
++syscall_dispatch_ctl(struct thread *td, struct proc *p, void *data)
++{
++	struct procctl_syscall_dispatch *sd;
++
++	PROC_LOCK_ASSERT(p, MA_OWNED);
++	if (p != td->td_proc)
++		return (EINVAL);
++	sd = data;
++	switch (sd->sd_mode) {
++	case PROC_SYSCALL_DISPATCH_OFF:
++		if (sd->sd_start != 0 || sd->sd_len != 0 ||
++		    sd->sd_selector != NULL)
++			return (EINVAL);
++		td->td_pflags2 &= ~TDP2_SYSCALL_DISPATCH;
++		break;
++	case PROC_SYSCALL_DISPATCH_ON:
++		if (sd->sd_start + sd->sd_len < sd->sd_start)
++			return (EINVAL);
++		td->td_sd_start = sd->sd_start;
++		td->td_sd_len = sd->sd_len;
++		td->td_sd_selector = sd->sd_selector;
++		td->td_pflags2 |= TDP2_SYSCALL_DISPATCH;
++		break;
++	default:
++		return (EINVAL);
++	}
++	return (0);
++}
++
++static int
++syscall_dispatch_status(struct thread *td, struct proc *p, void *data)
++{
++	struct procctl_syscall_dispatch *sd;
++
++	if (p != td->td_proc)
++		return (EINVAL);
++	sd = data;
++	if ((td->td_pflags2 & TDP2_SYSCALL_DISPATCH) != 0) {
++		sd->sd_mode = PROC_SYSCALL_DISPATCH_ON;
++		sd->sd_start = td->td_sd_start;
++		sd->sd_len = td->td_sd_len;
++		sd->sd_selector = td->td_sd_selector;
++	} else {
++		sd->sd_mode = PROC_SYSCALL_DISPATCH_OFF;
++	}
++	return (0);
++}
++
++/*
++ * Called by syscallenter() for threads with TDP2_SYSCALL_DISPATCH, after
++ * the syscall arguments are fetched.  Returns true if the syscall must not
++ * run: a signal was posted, and the thread returns to usermode with its
++ * registers unchanged, so the SIGSYS handler finds the syscall number and
++ * arguments where the caller put them.
++ */
++bool
++syscall_dispatch_trap(struct thread *td)
++{
++	struct proc *p;
++	ksiginfo_t ksi;
++	uintptr_t pc;
++	int sel;
++
++	p = td->td_proc;
++	pc = TRAPF_PC(td->td_frame);	/* after the syscall instruction */
++	if (pc - td->td_sd_start < td->td_sd_len)
++		return (false);
++	/* Let the signal trampoline call sigreturn(2). */
++	if (p->p_sysent->sv_shared_page_obj != NULL &&
++	    pc - p->p_vmspace->vm_shp_base < p->p_sysent->sv_shared_page_len)
++		return (false);
++	if (td->td_sd_selector != NULL) {
++		sel = fubyte(td->td_sd_selector);
++		if (sel == PROC_SYSCALL_DISPATCH_ALLOW)
++			return (false);
++		if (sel == -1) {
++			ksiginfo_init_trap(&ksi);
++			ksi.ksi_signo = SIGSEGV;
++			ksi.ksi_code = SEGV_MAPERR;
++			ksi.ksi_addr = td->td_sd_selector;
++			trapsignal(td, &ksi);
++			return (true);
++		}
++	}
++#ifdef __amd64__
++	/*
++	 * fast_syscall saved %r10, the fourth argument, in tf_rcx and saved
++	 * neither %r10 nor %r11.  Give the handler the registers as the
++	 * syscall instruction left them.
++	 */
++	if (SV_PROC_ABI(p) == SV_ABI_FREEBSD && SV_PROC_FLAG(p, SV_LP64)) {
++		td->td_frame->tf_r10 = td->td_frame->tf_rcx;
++		td->td_frame->tf_rcx = td->td_frame->tf_rip;
++		td->td_frame->tf_r11 = td->td_frame->tf_rflags;
++		set_pcb_flags(td->td_pcb, PCB_FULL_IRET);
++	}
++#endif
++	ksiginfo_init_trap(&ksi);
++	ksi.ksi_signo = SIGSYS;
++	ksi.ksi_code = SYS_USER_DISPATCH;
++	ksi.ksi_addr = (void *)pc;
++	ksi.ksi_info.si_syscall = td->td_sa.original_code;
++	trapsignal(td, &ksi);
++	return (true);
++}
++
+ enum {
+ 	PCTL_SLOCKED,
+ 	PCTL_XLOCKED,
+@@ -1166,6 +1288,20 @@ static const struct procctl_cmd_info procctl_cmds_info[] = {
+ 	      .need_candebug = false,
+ 	      .copyin_sz = 0, .copyout_sz = sizeof(int),
+ 	      .exec = logsigexit_status, .copyout_on_error = false, },
++	[PROC_SYSCALL_DISPATCH_CTL] =
++	    { .lock_tree = PCTL_UNLOCKED, .one_proc = true,
++	      .esrch_is_einval = false, .no_nonnull_data = false,
++	      .need_candebug = false,
++	      .copyin_sz = sizeof(struct procctl_syscall_dispatch),
++	      .copyout_sz = 0,
++	      .exec = syscall_dispatch_ctl, .copyout_on_error = false, },
++	[PROC_SYSCALL_DISPATCH_STATUS] =
++	    { .lock_tree = PCTL_UNLOCKED, .one_proc = true,
++	      .esrch_is_einval = false, .no_nonnull_data = false,
++	      .need_candebug = false,
++	      .copyin_sz = 0,
++	      .copyout_sz = sizeof(struct procctl_syscall_dispatch),
++	      .exec = syscall_dispatch_status, .copyout_on_error = false, },
+ };
+ 
+ int
+@@ -1175,6 +1311,7 @@ sys_procctl(struct thread *td, struct procctl_args *uap)
+ 		struct procctl_reaper_status rs;
+ 		struct procctl_reaper_pids rp;
+ 		struct procctl_reaper_kill rk;
++		struct procctl_syscall_dispatch sd;
+ 		int flags;
+ 	} x;
+ 	const struct procctl_cmd_info *cmd_info;
+diff --git sys/kern/subr_syscall.c sys/kern/subr_syscall.c
+index 9997a6b638f7..01f5bb955017 100644
+--- sys/kern/subr_syscall.c
++++ sys/kern/subr_syscall.c
+@@ -119,6 +119,12 @@ syscallenter(struct thread *td)
+ 		}
+ 	}
+ 
++	if (__predict_false((td->td_pflags2 & TDP2_SYSCALL_DISPATCH) != 0) &&
++	    syscall_dispatch_trap(td)) {
++		td->td_errno = error = EJUSTRETURN;
++		goto retval;
++	}
++
+ #ifdef CAPABILITY_MODE
+ 	/*
+ 	 * In capability mode, we only allow access to system calls
+diff --git sys/sys/proc.h sys/sys/proc.h
+index 729bdb531ff9..6e036e94435b 100644
+--- sys/sys/proc.h
++++ sys/sys/proc.h
+@@ -392,6 +392,13 @@ struct thread {
+ #ifdef EPOCH_TRACE
+ 	SLIST_HEAD(, epoch_tracker) td_epochs;
+ #endif
++	/*
++	 * Syscall dispatch, valid with TDP2_SYSCALL_DISPATCH.  At the end
++	 * so that the offsets of other fields, used by modules, are kept.
++	 */
++	char		*td_sd_selector; /* (k) selector byte */
++	uintptr_t	td_sd_start;	/* (k) allowed syscall return */
++	size_t		td_sd_len;	/*     addresses */
+ };
+ 
+ struct thread0_storage {
+@@ -576,6 +583,7 @@ enum {
+ #define	TDP2_SAN_QUIET	0x00000008 /* Disable warnings from K(A|M)SAN */
+ #define	TDP2_EXTERR	0x00000010 /* Kernel reported ext error */
+ #define	TDP2_UEXTERR	0x00000020 /* User set ext error reporting ptr */
++#define	TDP2_SYSCALL_DISPATCH 0x00000040 /* Trap syscalls, procctl(2) */
+ 
+ /*
+  * Reasons that the current thread can not be run yet.
+diff --git sys/sys/procctl.h sys/sys/procctl.h
+index 11b831882f0a..c0f959c7ae3c 100644
+--- sys/sys/procctl.h
++++ sys/sys/procctl.h
+@@ -67,6 +67,8 @@
+ #define	PROC_WXMAP_STATUS	22	/* query W^X */
+ #define	PROC_LOGSIGEXIT_CTL	23	/* en/dis logging on sigexit */
+ #define	PROC_LOGSIGEXIT_STATUS	24	/* query logging on sigexit */
++#define	PROC_SYSCALL_DISPATCH_CTL 25	/* trap syscalls of this thread */
++#define	PROC_SYSCALL_DISPATCH_STATUS 26	/* query syscall dispatch */
+ 
+ /* Operations for PROC_SPROTECT (passed in integer arg). */
+ #define	PPROT_OP(x)	((x) & 0xf)
+@@ -123,6 +125,26 @@ struct procctl_reaper_kill {
+ 	u_int	rk_pad0[15];
+ };
+ 
++/*
++ * Argument of PROC_SYSCALL_DISPATCH_CTL and result of
++ * PROC_SYSCALL_DISPATCH_STATUS.  Both apply to the calling thread.
++ */
++struct procctl_syscall_dispatch {
++	int		sd_mode;	/* PROC_SYSCALL_DISPATCH_ON/OFF */
++	int		sd_pad0;
++	uintptr_t	sd_start;	/* syscalls returning into */
++	size_t		sd_len;		/*   [start, start + len) run */
++	char		*sd_selector;	/* NULL or byte, see below */
++	u_int		sd_pad1[8];
++};
++
++#define	PROC_SYSCALL_DISPATCH_OFF	0
++#define	PROC_SYSCALL_DISPATCH_ON	1
++
++/* Values of the selector byte. */
++#define	PROC_SYSCALL_DISPATCH_ALLOW	0
++#define	PROC_SYSCALL_DISPATCH_BLOCK	1
++
+ #define	REAPER_KILL_CHILDREN	0x00000001
+ #define	REAPER_KILL_SUBTREE	0x00000002
+ 
+diff --git sys/sys/signal.h sys/sys/signal.h
+index 7f987969a847..6d7e5375457e 100644
+--- sys/sys/signal.h
++++ sys/sys/signal.h
+@@ -331,6 +331,9 @@ struct __siginfo32 {
+ #define	TRAP_DTRACE	3	/* DTrace induced trap.			*/
+ #define	TRAP_CAP	4	/* Capabilities protective trap.	*/
+ 
++/* codes for SIGSYS */
++#define	SYS_USER_DISPATCH 2	/* Syscall trapped by syscall dispatch	*/
++
+ /* codes for SIGCHLD */
+ #define CLD_EXITED	1	/* Child has exited			*/
+ #define CLD_KILLED	2	/* Child has terminated abnormally but	*/
+diff --git sys/sys/sysent.h sys/sys/sysent.h
+index b250ec1f7a70..5e4fb48b443e 100644
+--- sys/sys/sysent.h
++++ sys/sys/sysent.h
+@@ -336,6 +336,7 @@ int	lkmnosys(struct thread *, struct nosys_args *);
+ int	lkmressys(struct thread *, struct nosys_args *);
+ 
+ void	syscall_thread_enter(struct thread *td, struct sysent **se);
++bool	syscall_dispatch_trap(struct thread *td);
+ void	syscall_thread_exit(struct thread *td, struct sysent *se);
+ 
+ int shared_page_alloc(int size, int align);
