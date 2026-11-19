@@ -94,7 +94,7 @@ The six loader/md(4) memdisk fixes are summarized in a table in
 - [debug.openblas.md](debug.openblas.md): debugging a port build crash (`math/openblas` SIGBUS)
 - [ACPI_AMW0_firmware_error.md](ACPI_AMW0_firmware_error.md): reading an ACPI firmware error with acpica-tools (`AMW0` / `EC0._REG`)
 - [TPM_IRQ.md](TPM_IRQ.md): TPM TIS "Failed to switch to ready state" on ST33 chips
-- [wine_direct_syscalls.md](wine_direct_syscalls.md): why Wine on FreeBSD cannot catch the Windows system calls a game makes itself (no seccomp equivalent), found with ktrace on a Denuvo game. The fix: [procctl_syscall_dispatch.md](procctl_syscall_dispatch.md), `PROC_SYSCALL_DISPATCH_CTL` modelled on Linux's Syscall User Dispatch, plus the wine-proton side; the Denuvo benchmark now runs. Patch: [procctl_syscall_dispatch.patch](procctl_syscall_dispatch.patch), test: [procctl_syscall_dispatch_test.c](procctl_syscall_dispatch_test.c)
+- [wine_direct_syscalls.md](wine_direct_syscalls.md): why Wine on FreeBSD cannot catch the Windows system calls a game makes itself (no seccomp equivalent), found with ktrace on a Denuvo game. The fix: [procctl_syscall_dispatch.md](procctl_syscall_dispatch.md), `PROC_SYSCALL_DISPATCH_CTL` modelled on Linux's Syscall User Dispatch, plus the wine-proton side; the Denuvo benchmark now runs. Kernel patch: [procctl_syscall_dispatch.patch](procctl_syscall_dispatch.patch), Wine patch: [wine-proton_syscall_dispatch.patch](wine-proton_syscall_dispatch.patch), test: [procctl_syscall_dispatch_test.c](procctl_syscall_dispatch_test.c)
 - `vnet_jail_deadlock_*.txt`: raw evidence (dmesg, kgdb session, procstat, netstat, vmstat) for a VNET jail deadlock, no write-up yet
 
 ## Hardware bring-up and ports

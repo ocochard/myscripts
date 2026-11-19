@@ -20,9 +20,11 @@ Files:
 - Kernel patch: [procctl_syscall_dispatch.patch](procctl_syscall_dispatch.patch)
   (FreeBSD main `30e3fd1811e3`)
 - Test program: [procctl_syscall_dispatch_test.c](procctl_syscall_dispatch_test.c)
-- Wine side: the `emulators/wine-proton` port, files
-  `patch-dlls_ntdll_unix_signal__x86__64.c`, `patch-dlls_ntdll_unix_loader.c`
-  and `patch-dlls_ntdll_unix_unix__private.h` (wine-proton 11.0.2_5)
+- Wine side: [wine-proton_syscall_dispatch.patch](wine-proton_syscall_dispatch.patch)
+  (wine-proton 11.0-2 sources); in the `emulators/wine-proton` port it is
+  part of `patch-dlls_ntdll_unix_signal__x86__64.c`,
+  `patch-dlls_ntdll_unix_loader.c` and `patch-dlls_ntdll_unix_unix__private.h`
+  (wine-proton 11.0.2_5)
 
 ## TL;DR
 
