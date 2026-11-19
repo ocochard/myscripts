@@ -15,7 +15,15 @@ vim_cfg() {
 	fetch -o ~/.vim/autoload/plug.vim https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
 }
 
+# Replace .shrc only while it is still the stock skel copy
+shrc_cfg() {
+	if [ ! -e $1 ] || cmp -s $1 /usr/share/skel/dot.shrc; then
+		cp shrc $1
+	fi
+}
+
 cshrc_cfg ${HOME}/.cshrc
+shrc_cfg ${HOME}/.shrc
 cp -n exrc ${HOME}/.exrc || true
 cp -n gitconfig ${HOME}/.gitconfig || true
 mkdir -p ${HOME}/.ssh || true
