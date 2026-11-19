@@ -103,6 +103,7 @@ Subdirectories:
 - [benches/http_bench.sh](benches/http_bench.sh) — HTTP benchmark
 - [sendfile/](sendfile/README.md), [tcp_dscp/](tcp_dscp/README.md), [testrss/](testrss/README.md) — small C test programs
 - [ports-tests/](ports-tests/README.md) — port-related test scripts
+- [sudtrace/](sudtrace/README.md) — LD_PRELOAD system call tracer built on syscall dispatch that also sees Go programs ([docs/procctl_syscall_dispatch.md](docs/procctl_syscall_dispatch.md))
 - [video/](video/README.md) — vtblank: paint the console framebuffer black
 - [zbook/](zbook/): devd hook that names the ZBook dock USB Ethernet `dock0`
 
