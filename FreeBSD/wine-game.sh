@@ -98,7 +98,8 @@ setup_prefix() {
 # server reads back from the loopback device.  wineoss lists only kernel
 # devices and /dev/dsp, never the loopback device itself.
 setup_audio() {
-	unit=$(sysctl -n hw.snd.default_unit 2>/dev/null) || return 0
+	# Full path: Moonshine starts apps with a PATH without /sbin.
+	unit=$(/sbin/sysctl -n hw.snd.default_unit 2>/dev/null) || return 0
 	dev=/dev/dsp${unit}
 	[ -n "${AUDIODEV:-}" ] && dev=/dev/dsp
 	reg=${WINEPREFIX}/user.reg
