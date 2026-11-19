@@ -74,7 +74,10 @@ fonts=${WINEPREFIX}/drive_c/windows/Fonts
 
 setup_prefix() {
 	[ -d "${fonts}" ] || wineboot -i
-	if [ ! -f "${fonts}/tahoma.ttf" ]; then
+	# Check the registry too: a setup interrupted after the copy leaves the
+	# file unregistered, which still crashes Chromium (Epic Games Launcher).
+	if [ ! -f "${fonts}/tahoma.ttf" ] ||
+	    ! grep -q '^"Tahoma (TrueType)"=' "${WINEPREFIX}/system.reg"; then
 		echo "Installing Tahoma into ${WINEPREFIX}"
 		cp "${WINEDIR}"/share/wine/fonts/tahoma*.ttf "${fonts}/"
 		key='HKLM\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
