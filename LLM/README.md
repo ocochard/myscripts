@@ -57,7 +57,8 @@ build/bin/llama-server --host 0.0.0.0 \
 ```
 
 On the Strix Halo hosts, `llmsrv.sh` wraps the tuned recipes; pick a slot with
-`MODEL=flashnext`, `MODEL=qwen38-mtp` (default) or `MODEL=qwen38-q8`:
+`MODEL=flashnext` (default), `MODEL=flashnext-abl`, `MODEL=qwen38-mtp` or
+`MODEL=qwen38-q8`:
 ```
 MODEL=qwen38-q8 HOST=0.0.0.0 ./llmsrv.sh
 ```
@@ -150,6 +151,15 @@ For the Qwen3.8 models the head ships as a separate GGUF passed with
   `GGML_ASSERT(buffer) failed`. Stay on IQ3_XXS: with IQ4_XS the draft head
   cannot load at any context size. On v1.0.0 (frwk-bsd, 2026-11-14) this gave
   40.3 t/s decode vs 31.3 t/s spec-off, acceptance 0.65.
+- **Uncensored Flash-Next (`flashnext-abl` slot)**: the `flashnext` files plus
+  `abliteration-lora.gguf` (2.3 MB) from
+  `mrfakename/Qwen3.8-Flash-Next-abliterated-GGUF`, loaded with `--lora`. It is
+  a rank-1 refusal-direction ablation, so no second 82 GB download. On v1.0.0
+  (framework, 2026-11-19), A/B on the same server via the per-request `lora`
+  scale, thinking off: two refusal prompts refused at scale 0 and answered at
+  scale 1; decode and MTP acceptance unchanged (38.5-40.1 vs 39.5-40.2 t/s,
+  0.64-0.68 vs 0.65-0.68 on prose; 45.0 vs 46.4 t/s, 0.84 vs 0.86 on a C
+  coding prompt). One sample per cell, so quality is not measured.
 
 Example for the dense model (download the head first; `-hf` does not fetch it):
 

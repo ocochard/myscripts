@@ -15,6 +15,7 @@
 #   USAGE=coding ./llmsrv.sh     # alias for MODEL=flashnext
 #   MODEL=qwen38-mtp ./llmsrv.sh # Qwen3.8-27B dense Q8_0 + Q8 MTP head
 #   USAGE=doc    ./llmsrv.sh     # alias for MODEL=qwen38-q8 (spec-off fallback)
+#   MODEL=flashnext-abl ./llmsrv.sh  # flashnext + rank-1 abliteration LoRA
 #   MODEL=qwen38-q8 ./llmsrv.sh  # Qwen3.8-27B dense Q8, no MTP (DaemonDocs
 #                                #   production recipe; see
 #                                #   benches.DaemonDocs-model-quality.md)
@@ -50,6 +51,10 @@ Environment variables:
                 131072 CTX. Do not substitute a bigger quant: IQ4_XS
                 (93.7 GB) cannot load the draft head at all. MTP is flaky on
                 FreeBSD (Mesa 26 RADV).
+  MODEL=flashnext-abl
+                flashnext with mrfakename's rank-1 abliteration LoRA
+                (abliteration-lora.gguf, 2.3 MB) applied at load: refusals
+                removed, same weights and MTP head on disk.
   HOST=addr     Listen address (default: 127.0.0.1)
   PORT=port     Listen port (default: 8080)
   CTX=N         --ctx-size (default: 131072 — practical sweet spot on Strix
@@ -217,7 +222,7 @@ case "${MODEL}" in
     # this slot. Needs llama.cpp with #27694 (v1.0.0 has it).
     model_extra="--jinja --model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 4 --spec-draft-sampling probabilistic"
     ;;
-  flashnext)
+  flashnext|flashnext-abl)
     # DEFAULT. Qwen3.8-Flash-Next, 125B/6B-active `qwen4exp` MoE, UD-IQ3_XXS (82 GB) +
     # the self-contained Q8_0 sidecar MTP head. v1.0.0: 38-40 t/s decode with
     # N=2, acceptance 0.61-0.70.
@@ -285,6 +290,28 @@ case "${MODEL}" in
     # N=2 was the measured peak on both hosts in the last N sweep (pre-v1.0.0;
     # not re-swept on v1.0.0).
     model_extra="--model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 2"
+    if [ "${MODEL}" = "flashnext-abl" ]; then
+      # Uncensored variant: mrfakename's abliteration as a rank-1 LoRA, so the
+      # cached IQ3_XXS and MTP head are reused (no second 82 GB download). It
+      # projects one refusal direction (strength 1.6) out of o_proj,
+      # linear_attn.out_proj and shared_expert.down_proj in all 48 layers;
+      # routed experts, embeddings and the MTP layer are untouched. Author
+      # measured on Q8_0: refusals 99 -> 7 /100, harmless KL 0.068.
+      # v1.0.0 on framework (2026-11-19): loads on IQ3_XXS + Vulkan with MTP
+      # on; decode and draft acceptance match flashnext (see README.md).
+      # The per-request `"lora":[{"id":0,"scale":0}]` field turns it off for
+      # an A/B on the same server.
+      lora_dir="${HF_HUB}/models--mrfakename--Qwen3.8-Flash-Next-abliterated-GGUF"
+      lora=$(hf_resolve "${lora_dir}" "abliteration-lora.gguf")
+      if [ -z "${lora}" ]; then
+        echo "abliteration-lora.gguf not cached under ${lora_dir}; fetch it:" >&2
+        echo "  mkdir -p ${lora_dir}/snapshots/main && curl -fL -o ${lora_dir}/snapshots/main/abliteration-lora.gguf \\" >&2
+        echo "    https://huggingface.co/mrfakename/Qwen3.8-Flash-Next-abliterated-GGUF/resolve/main/abliteration-lora.gguf" >&2
+        exit 1
+      fi
+      alias="Qwen3.8-Flash-Next-${q}-abliterated-MTP"
+      model_extra="${model_extra} --lora ${lora}"
+    fi
     ;;
   qwen38-q8)
     # Spec-off fallback for the default, and the DaemonDocs production recipe.
@@ -299,7 +326,7 @@ case "${MODEL}" in
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use qwen38-mtp|qwen38-q8|flashnext)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use qwen38-mtp|qwen38-q8|flashnext|flashnext-abl)" >&2; exit 1 ;;
 esac
 
 # If the file isn't in the HF cache, hand off to llama-server's -hf/-hff so it
