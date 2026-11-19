@@ -613,7 +613,7 @@ index 0a8615fad24e..5cde37f420bf 100644
  ATF_TESTS_C+=	reaper
 diff --git tests/sys/kern/procctl_syscall_dispatch.c tests/sys/kern/procctl_syscall_dispatch.c
 new file mode 100644
-index 000000000000..eb7be8299623
+index 000000000000..c311b287d746
 --- /dev/null
 +++ tests/sys/kern/procctl_syscall_dispatch.c
 @@ -0,0 +1,584 @@
@@ -1076,8 +1076,8 @@ index 000000000000..eb7be8299623
 +	ATF_REQUIRE(dl_iterate_phdr(libsys_cb, NULL) != 0);
 +	ATF_REQUIRE(stub_setup() == 0);
 +	tpid = getpid();
-+	addr = got_addr;
 +	tppid = getppid();
++	addr = got_addr;		/* from the last trapped call */
 +	cnt = sigsys_cnt;
 +	/* Runs through the handler too. */
 +	ATF_REQUIRE(sd_ctl(PROC_SYSCALL_DISPATCH_OFF, 0, 0, NULL) == 0);
