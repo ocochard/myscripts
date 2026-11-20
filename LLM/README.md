@@ -94,27 +94,35 @@ staying in interactive chat.
 ### Coding with vim, vs-code, etc.
 
 Example using a [llama.vim](https://github.com/ggml-org/llama.vim/tree/master) or a [vs-code](https://marketplace.visualstudio.com/items?itemName=ggml-org.llama-vscode):
-First download the model and start the llama server with the sampling settings from the model card:
+First download the model and start the llama server with the sampling settings from the model card.
+Recommended model is Qwen3.8-Flash-Next `UD-IQ3_XXS` (82 GB) with its
+self-contained Q8_0 MTP head (see [MTP](#speculative-decoding-with-multi-token-prediction-mtp)):
 ```
+hub=~/.cache/huggingface/hub/models--unsloth--Qwen3.8-Flash-Next-GGUF/snapshots/*
 build/bin/llama-server \
-  -hf unsloth/Qwen3.8-27B-GGUF -hff Qwen3.8-27B-UD-Q8_K_XL.gguf \
+  --model $hub/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+  --model-draft $hub/MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf \
+  --spec-type draft-mtp --spec-draft-n-max 2 \
+  --no-mmproj \
   --alias qwen38-coder \
   --device Vulkan0 \
-  --temp 0.6 \
+  --temperature 0.6 \
   --top-p 0.95 \
   --top-k 20 \
   --min-p 0.00 \
   --flash-attn on \
-  --kv-unified \
-  --batch-size 4096 \
-  --ubatch-size 1024 \
-  --ctx-size 131072
+  --jinja \
+  --batch-size 2048 \
+  --ubatch-size 512 \
+  --ctx-size 131072 --parallel 1
 ```
 
-On the Strix Halo hosts, `USAGE=coding ./llmsrv.sh` (the default) starts the
-`flashnext` slot with the same sampling plus MTP speculative decoding (see
-below); `MODEL=qwen38-mtp` starts the dense 27B equivalent. Do not
-add `--no-host` for the dense 27B on FreeBSD: it crashes there.
+On the Strix Halo hosts, `USAGE=coding ./llmsrv.sh` (the default) starts this
+`flashnext` recipe (alias `Qwen3.8-Flash-Next-UD-IQ3_XXS-MTP`);
+`MODEL=qwen38-mtp` starts the dense 27B equivalent. Do not add `--no-host` for
+the dense 27B on FreeBSD: it crashes there. `--batch-size 4096 --ubatch-size
+1024` is ~3% slower than 2048/512, and `--kv-unified` does nothing with one
+client.
 
 Then run a [qwen-code](https://qwen.ai/qwencode) as example:
 

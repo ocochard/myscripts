@@ -104,75 +104,128 @@ $ cmake --build build --config Release -- -j $(nproc)
 
 ## Run llama-server (coding setup)
 
-Default model: **Qwen3.6-35B-A3B** (MoE, Q4_K_XL). Coder mode (full thinking, best quality):
+Use [../LLM/llmsrv.sh](../LLM/llmsrv.sh): it holds the tuned recipe per model
+and OS. Default slot is `flashnext`:
 
 ```sh
-RADV_DEBUG=zerovram build/bin/llama-server \
-  -m ~/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-GGUF/blobs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+./LLM/llmsrv.sh                  # default: flashnext (= USAGE=coding)
+MODEL=qwen38-mtp ./LLM/llmsrv.sh # Qwen3.8-27B dense Q8_0 + Q8_0 MTP head
+MODEL=qwen38-q8 ./LLM/llmsrv.sh  # Qwen3.8-27B dense Q8_K_XL, spec-off fallback (= USAGE=doc)
+MODEL=flashnext-abl ./LLM/llmsrv.sh  # flashnext + abliteration LoRA (uncensored)
+```
+
+Default model: **Qwen3.8-Flash-Next** (125B/6B-active MoE, `UD-IQ3_XXS`, 82 GB)
+plus the self-contained Q8_0 MTP draft head at N=2. On llama.cpp v1.0.0:
+38-40 t/s decode, draft acceptance 0.61-0.70. Equivalent command on FreeBSD:
+
+```sh
+hub=~/.cache/huggingface/hub/models--unsloth--Qwen3.8-Flash-Next-GGUF/snapshots/*
+build/bin/llama-server \
+  --model $hub/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
+  --model-draft $hub/MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf \
+  --spec-type draft-mtp --spec-draft-n-max 2 \
   --no-mmproj \
-  --no-warmup \
-  --alias qwen36-coder \
+  --alias Qwen3.8-Flash-Next-UD-IQ3_XXS-MTP \
   --device Vulkan0 \
-  --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.00 \
+  --metrics \
   --flash-attn on \
-  --no-host \
+  --temperature 0.6 --top-p 0.95 --top-k 20 --min-p 0.0 \
+  --jinja \
   --batch-size 2048 --ubatch-size 512 \
   --ctx-size 131072 --parallel 1 \
   --host 127.0.0.1 --port 8080
 ```
 
-For `fast` mode add:
+Hard requirements for this slot (all fail at load time if unmet):
+
+- Use the **self-contained** MTP head re-uploaded 2026-10-05, not the `shared-`
+  one. Mainline cannot borrow the main model's embedding
+  (`tensor 'token_embd.weight' not found`). The pre-2026-10-05 upload aborts
+  with `GGML_ASSERT(buffer) failed`.
+- Stay on **UD-IQ3_XXS**. With UD-IQ4_XS (93.7 GB) the draft head cannot load
+  at any `--ctx-size` (`radv/amdgpu: Not enough memory for command submission`).
+  On Linux, the bigger GTT aperture IQ4_XS needs panicked the kernel.
+- The full 131072 context fits with MTP on. The model declares 262144 natively.
+
+MTP is flaky on FreeBSD (Mesa 26 RADV), not unusable. Some cold starts hit a
+GPUVM fault (`[gfxhub] page fault`, client ID CPC (0x5),
+`ring comp_1.1.0 timeout`). Check the server log for
+`draft acceptance = 0.xxxxx` on each cold start. If it reads `0.00000`, the
+head is dead: restart, or fall back to `MODEL=qwen38-q8`.
+
+### Uncensored variant (`flashnext-abl`)
+
+`MODEL=flashnext-abl` is the same recipe plus mrfakename's rank-1
+abliteration LoRA (`abliteration-lora.gguf`, 2.3 MB), applied at load with
+`--lora`. It reuses the cached IQ3_XXS shards and MTP head, so no second 82 GB
+download. The LoRA projects one refusal direction out of `o_proj`,
+`linear_attn.out_proj` and `shared_expert.down_proj` in all 48 layers. Routed
+experts, embeddings and the MTP layer are untouched. Author's measurement on
+Q8_0: refusals 99 to 7 per 100, harmless KL 0.068. On llama.cpp v1.0.0
+(framework, 2026-11-19, A/B via the per-request LoRA scale, thinking off) it
+loads on IQ3_XXS + Vulkan with MTP on. Two refusal prompts were refused at
+scale 0 and answered at scale 1. Decode and draft acceptance did not change:
+38.5-40.1 vs 39.5-40.2 t/s and 0.64-0.68 vs 0.65-0.68 on prose, 45.0 vs
+46.4 t/s and 0.84 vs 0.86 on a C coding prompt. One sample per cell, so
+quality is not measured. Alias:
+`Qwen3.8-Flash-Next-UD-IQ3_XXS-abliterated-MTP`.
+
+Fetch the LoRA once (`llmsrv.sh` prints this command when it is missing):
 
 ```sh
-  --temp 0.7 --top-p 0.80 --top-k 20 --min-p 0.0 --presence-penalty 1.5 \
-  --reasoning-budget 0
+d=~/.cache/huggingface/hub/models--mrfakename--Qwen3.8-Flash-Next-abliterated-GGUF/snapshots/main
+mkdir -p $d && curl -fL -o $d/abliteration-lora.gguf \
+  https://huggingface.co/mrfakename/Qwen3.8-Flash-Next-abliterated-GGUF/resolve/main/abliteration-lora.gguf
 ```
+
+For an A/B on one server, send `"lora":[{"id":0,"scale":0}]` in a request to
+turn the LoRA off for that request.
 
 ### Parameters
 
 | Option | What it does |
 | --- | --- |
-| `RADV_DEBUG=zerovram` | Forces RADV to zero-init VRAM buffers. Required workaround for a GFX1151 bug that otherwise crashes with `vk::DeviceLostError`. ~1.5% PP cost. |
-| `-m <path>` | Path to local GGUF. (`-hf` shorthand currently 404s on the MoE filename, so download manually with curl.) |
+| `--model <shard 00001>` | Sharded GGUF: pass shard 00001 (tensor-free header); llama.cpp opens 2/3. |
+| `--model-draft` / `--spec-type draft-mtp` | MTP speculative decoding with the sidecar head. |
+| `--spec-draft-n-max 2` | Tokens drafted per verify step. N=2 was the measured peak (not re-swept on v1.0.0). |
 | `--no-mmproj` | Skip the vision projector shipped in the repo (text-only coding). |
-| `--no-warmup` | **Required for the MoE on this stack** — the warmup empty-batch decode crashes Vulkan. First real request acts as warmup. Dense 27B doesn't need it. |
 | `--alias <name>` | Name advertised in the OpenAI-compatible API. |
 | `--device Vulkan0` | Restrict offload to the named ggml device (the iGPU). |
-| `--temp / --top-p / --top-k / --min-p` | Sampling. Values match Qwen3's recommended preset (thinking vs non-thinking). |
+| `--temperature / --top-p / --top-k / --min-p` | Sampling. Qwen3 thinking-coder preset. |
+| `--jinja` | Use the GGUF's embedded chat template: `<think>` goes to `reasoning_content`, correct tool-call boundaries for agents. |
 | `--flash-attn on` | Force fused Flash-Attention kernel. +2.8% PP, free. |
-| `--no-host` | Don't keep a CPU-side mirror of weights. UMA iGPU = wasted copy. +0.8% PP, less RAM pressure. |
 | `--batch-size 2048` | Logical batch (`n_batch`): max prompt tokens grouped per decode call. |
 | `--ubatch-size 512` | Physical microbatch (`n_ubatch`): tokens per kernel launch. Must divide `--batch-size`. |
-| `--ctx-size 131072` | Max context window. Qwen3.6's native max RoPE length. KV memory grows linearly. |
+| `--ctx-size 131072` | Practical sweet spot, not a ceiling. Cost is cold prefill: ~40 s at 32k, ~5 min at 128k. |
 | `--parallel 1` | Single decoding slot (interactive single-client use). |
-| `--reasoning-budget 0` *(fast)* | Hard cap on `<think>...</think>` tokens. `0` disables thinking. |
-| `--presence-penalty 1.5` *(fast)* | Per Qwen3's non-thinking preset; avoids repetition in brief answers. |
+
+`RADV_DEBUG=zerovram` is only for Mesa 24 (required there); on Mesa 25+ it
+crashes runs. `llmsrv.sh` picks it from the installed `mesa-libs` version.
 
 ### Flags deliberately omitted
 
 | Option | Why it's off |
 | --- | --- |
+| `--no-host` | Not A/B'd for flashnext on FreeBSD; crashes the dense 27B on FreeBSD. `llmsrv.sh` sets it only on Linux. |
 | `--no-mmap` / `-mmp 0` | Wedges the GPU on this stack; needs a reboot. |
 | `--direct-io` | Same GPU wedge as `--no-mmap`. |
 | `--kv-unified` | No effect for single-client coding (only relevant with `--parallel N>1`). |
 | `--cache-reuse N` | Qwen3 uses M-RoPE; unsupported (`llama_memory_can_shift()` returns false). |
 | `--ctk q8_0` / `--ctv q8_0` | Quantized KV cache crashes Vulkan on this driver/build. |
-| `--ctx-size > 131072` | Beyond model's native max — needs RoPE scaling, degrades quality. |
+| `--batch-size 4096 --ubatch-size 1024` | ~3% slower than 2048/512 on this build. |
+| `--ctx-size > 262144` | Beyond the model's native context; needs RoPE scaling, untested. |
 
 ## Benchmark commands
 
 ```sh
-# MoE: only -d 0 works (deeper depths crash the empty-batch path).
-RADV_DEBUG=zerovram build/bin/llama-bench \
-  -m ~/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-GGUF/blobs/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+# llama-bench has no MTP: this measures the spec-off target only.
+build/bin/llama-bench \
+  -m ~/.cache/huggingface/hub/models--unsloth--Qwen3.8-Flash-Next-GGUF/snapshots/*/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf \
   --device Vulkan0 \
-  -p 4096 -n 128 -d 0 -fa 1 --no-host 1 -r 2
+  -p 4096 -n 128 -d 0 -fa 1 -r 2
 
-# Dense 27B (supports -d N>0):
-RADV_DEBUG=zerovram build/bin/llama-bench \
-  -m ~/.cache/huggingface/hub/models--unsloth--Qwen3.6-27B-GGUF/snapshots/82d411acf4a06cfb8d9b073a5211bf410bfc29bf/Qwen3.6-27B-UD-Q4_K_XL.gguf \
-  --device Vulkan0 \
-  -p 4096 -n 128 -d 0 -fa 1 --no-host 1 -r 2
+# All llmsrv.sh slots, end to end with MTP:
+./LLM/bench-all.sh
 
 # End-to-end OpenAI-style streaming bench (requires running llama-server):
 python3 LLM/bench_model.py -u http://127.0.0.1:8080 \
@@ -195,7 +248,7 @@ Point it at local `llama-server` via the standard `OPENAI_*` env vars
 ```sh
 OPENAI_BASE_URL="http://127.0.0.1:8080/v1"; export OPENAI_BASE_URL
 OPENAI_API_KEY="not-needed";                export OPENAI_API_KEY
-OPENAI_MODEL="qwen36-coder";                export OPENAI_MODEL
+OPENAI_MODEL="Qwen3.8-Flash-Next-UD-IQ3_XXS-MTP"; export OPENAI_MODEL
 ```
 
 `OPENAI_API_KEY` must be set (SDK requires it) but the value is ignored.
