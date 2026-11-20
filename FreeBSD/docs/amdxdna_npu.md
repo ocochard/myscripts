@@ -482,7 +482,8 @@ had 10 times the DRAM reads (740 against 69 MB/s), a higher fabric clock
 
 1. **virtual_oss** (`virtual_oss_enable="YES"`) streams `/dev/dsp4` in
    8 ms blocks all the time, even when nothing plays: 935 HDA interrupts
-   a second keep the package out of deep idle.
+   a second keep the package out of deep idle. Most of them come from
+   the permanent microphone recording: see [virtual_oss.md](virtual_oss.md).
 2. **CPPC at maximum performance.** hwpstate_amd(4) sets EPP 0 and the
    highest requested performance at attach, on purpose (80d32a6b1d73,
    "Switch the default to maximum performance"); powerd cannot change it

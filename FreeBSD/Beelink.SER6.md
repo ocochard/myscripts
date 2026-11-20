@@ -14,7 +14,7 @@ Work of 2026-11-16, in short:
 - Bluetooth fixed by installing `iwmbt-firmware`; two patches make the missing package visible (`fwget`, `iwmbtfw` logging).
 - NVMe temperature events explained: default 83 C threshold, the drive heats under load.
 - AMD IOMMU: the stock kernel loops on USB attach with `hw.amdiommu.enable=1`; two patches fix it and lower the DMA cost.
-- Idle interrupts explained: Bluetooth SCO transfers (patch written) and `virtual_oss` (by design).
+- Idle interrupts explained: Bluetooth SCO transfers (patch written) and `virtual_oss` (its default configuration records the microphone all the time).
 - TPM no longer attaches: the installed kernel predates ACPI start method support.
 
 All patches and their order: [Applying the work, in order](#applying-the-work-in-order).
@@ -307,8 +307,9 @@ see [docs/ng_ubt_sco_on_demand.md](docs/ng_ubt_sco_on_demand.md). Tested at idle
 
 `virtual_oss` (`virtual_oss_enable="YES"`) holds `/dev/dsp3` (`hdac1`, Conexant codec) open all the time,
 with an 8 ms buffer (`-s 8ms`), playback and recording, so the codec never idles.
-This is how `virtual_oss` works, not a bug. To lower the rate: a larger buffer (`-s 20ms` or more, at the cost of latency),
-or stop the service when the machine needs no audio.
+The recording is what costs: about 750 of the 937 interrupts a second; a larger buffer (`-s`) does not lower the rate.
+To lower it: play only (`-R /dev/null -P /dev/dsp3` instead of `-f /dev/dsp3`), or stop the service when the machine needs no audio.
+Details and measurements: [docs/virtual_oss.md](docs/virtual_oss.md).
 
 Not measured: the power or C-state cost of these 2000 interrupts per second.
 
