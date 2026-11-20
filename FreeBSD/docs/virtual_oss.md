@@ -70,19 +70,23 @@ instead of `-f /dev/dspN`. Programs then cannot record from `/dev/dsp`.
 A machine that needs the microphone only sometimes can run a second
 instance for recording when needed, or stop the service.
 
-## Problem 2: the buffer is too small for Wine (crackling sound)
+## Problem 2: the default buffer is too small (crackling sound under Wine)
 
 A program that does not ask for a buffer size gets two fragments of the
-`-s` size (`SNDCTL_DSP_GETOSPACE` on `/dev/dsp`, 48 kHz, 16-bit stereo):
+`-s` size from virtual_oss, much less than a kernel sound device gives
+(`SNDCTL_DSP_GETOSPACE`, 48 kHz, 16-bit stereo, `hw.snd.latency=2`):
 
-| `-s` | fragments | fragment size | buffer |
+| device | fragments | fragment size | buffer |
 |---|---|---|---|
-| 8ms (default) | 2 | 1536 bytes | 16 ms |
-| 20ms | 2 | 3840 bytes | 40 ms |
+| kernel `/dev/dsp3` (ser6) | 8 | 1024 bytes | 42.7 ms |
+| virtual_oss `/dev/dsp`, `-s 8ms` (default) | 2 | 1536 bytes | 16 ms |
+| virtual_oss `/dev/dsp`, `-s 20ms` | 2 | 3840 bytes | 40 ms |
 
 Wine's OSS driver (`dlls/wineoss.drv/oss.c`, `oss_write_data()`) writes
 every 10 ms and tries to keep three periods (30 ms) queued; it never
-sends `SNDCTL_DSP_SETFRAGMENT`, so it gets 16 ms.
+sends `SNDCTL_DSP_SETFRAGMENT` and relies on the device's default. That
+works on a kernel device (42.7 ms) but not on virtual_oss with its
+default arguments (16 ms).
 
 Symptom: Cyberpunk 2077 under wine-proton, streamed by Moonshine, crackled.
 Six seconds recorded from `/dev/dsp.loop` on the framework had no clipping,
@@ -133,8 +137,18 @@ Fixes:
   does not matter for streaming or games. Verified on the framework with
   the same game: 6 s from `/dev/dsp.loop` had no silent run of 1 ms or
   more (150 before), peak 16383, no clipping.
-- Wine side, not written: wineoss could request a buffer of at least
-  three periods with `SNDCTL_DSP_SETFRAGMENT` when it opens the device.
+- FreeBSD base: a larger `-s` in the default arguments of
+  `/etc/rc.d/virtual_oss`, so every user gets a buffer close to the
+  kernel's.
+- virtual_oss itself: `-s` sets both the mixing block and the buffer a
+  client gets by default (two blocks). Giving clients more blocks by
+  default, about 40 ms like the kernel, would keep a short mixing block
+  without starving programs that do not ask for a size. Not checked in
+  the virtual_oss source yet.
+
+Not chosen: making Wine request its buffer with `SNDCTL_DSP_SETFRAGMENT`.
+Wine's assumption holds on kernel devices; the problem is virtual_oss's
+small default, which any program that relies on the default would hit.
 
 ## Problem 3: Wine does not find virtual_oss's /dev/dsp
 
@@ -176,7 +190,9 @@ virtual_oss can run with `-f /dev/null` and a loopback master device
 ## Not done
 
 - Measure the power of the playback-only configuration.
-- The Wine `SNDCTL_DSP_SETFRAGMENT` patch.
-- The default arguments in `/etc/rc.d/virtual_oss` could be discussed
-  upstream: recording permanently costs about 750 interrupts a second on
-  every machine that enables the service.
+- A FreeBSD bug report on the default arguments in
+  `/etc/rc.d/virtual_oss`: recording permanently costs about 750
+  interrupts a second on every machine that enables the service, and the
+  16 ms default buffer is a third of what a kernel device gives.
+- Read the virtual_oss source to see how the client's default buffer is
+  derived from `-s`.
