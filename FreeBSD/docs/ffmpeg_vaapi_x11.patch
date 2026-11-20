@@ -1,0 +1,19 @@
+--- multimedia/ffmpeg/Makefile
++++ multimedia/ffmpeg/Makefile
+@@ -1,6 +1,6 @@
+ PORTNAME=	ffmpeg
+ DISTVERSION=	9.0.2
+-PORTREVISION=	3
++PORTREVISION=	4
+ PORTEPOCH=	1
+ CATEGORIES=	multimedia audio net
+ MASTER_SITES=	https://ffmpeg.org/releases/
+@@ -651,8 +651,4 @@ LICENSE_TEXT_NONFREE=	enabling OpenSSL or fdk-aac restricts redistribution
+ LICENSE_PERMS_NONFREE=	auto-accept
+ .endif
+ 
+-.if !${PORT_OPTIONS:MVDPAU} || !${PORT_OPTIONS:MXCB} || !${PORT_OPTIONS:MXVIDEO}
+-CONFIGURE_ARGS+=	--disable-xlib
+-.endif
+-
+ .include <bsd.port.mk>
