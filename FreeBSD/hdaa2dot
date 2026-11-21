@@ -31,22 +31,37 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 			conn=$(echo $line | cut -d '=' -f 5 | cut -d ' ' -f 1)
 			ctype=$(echo $line | cut -d '=' -f 6 | cut -d ' ' -f 1)
 			loc=$(echo $line | cut -d '=' -f 7 | cut -d ' ' -f 1)
-			if ! echo "${as_group_list}" | grep -wq ${as}; then
-				as_group_list="${as_group_list} $as"
+			# nid and association numbers are per codec: key them by hdaa id
+			ag="${hdaa_id}_${as}"
+			if ! echo "${as_group_list}" | grep -wq ${ag}; then
+				as_group_list="${as_group_list} $ag"
 			fi
 			eval "
-				[ -z \${as_group_${as}+x} ] && as_group_${as}=\"\"
-				as_group_${as}=\"\${as_group_${as}} \${i}\"
-				nid_${i}_desc=\"\$device,\$conn,\$ctype,\$loc\"
-				printf '  \"hdaa%s\" -> \"nid%s <%s>\";\n' \${hdaa_id} \${i} \${nid_${i}_desc}
-				printf '  \"nid%s <%s>\" -> \"pcm%s <%s>\";\n' \${i} \${nid_${i}_desc} \${pcmid} \"\${pcm_desc}\"
+				[ -z \${as_group_${ag}+x} ] && as_group_${ag}=\"\"
+				as_group_${ag}=\"\${as_group_${ag}} \${i}\"
+				nid_${hdaa_id}_${i}_desc=\"\$device,\$conn,\$ctype,\$loc\"
+				printf '  \"hdaa%s\" -> \"hdaa%s:nid%s <%s>\";\n' \${hdaa_id} \${hdaa_id} \${i} \${nid_${hdaa_id}_${i}_desc}
+				printf '  \"hdaa%s:nid%s <%s>\" -> \"pcm%s <%s>\";\n' \${hdaa_id} \${i} \${nid_${hdaa_id}_${i}_desc} \${pcmid} \"\${pcm_desc}\"
 			"
 		done
 	else
-		parent=$(sysctl -n dev.pcm.${pcmid}.%parent | tr -dc 'a-z')
-		parent_id=$(sysctl -n dev.pcm.${pcmid}.%parent | tr -dc '0-9')
-		parent_desc=$(sysctl -n dev.${parent}.${parent_id}.%desc | cut -d ',' -f 1)
-		printf '  "%s <%s>" -> "pcm%s <%s>";\n' $(sysctl -n dev.pcm.${pcmid}.%parent) "${parent_desc}" ${pcmid} "${pcm_desc}"
+		pcm_location=$(sysctl -n dev.pcm.${pcmid}.%location)
+		case "${pcm_location}" in
+		*dbsf=*)
+			# pcm attached directly to a PCI bus (e.g. AMD ACP): the bus
+			# description is useless, show the PCI function instead
+			parent_node=${pcm_location##*dbsf=}
+			parent_node=${parent_node%% *}
+			parent_desc=$(pciconf -lv ${parent_node} | sed -n "s/^ *device *= '\(.*\)'$/\1/p")
+			;;
+		*)
+			parent_node=$(sysctl -n dev.pcm.${pcmid}.%parent)
+			parent=$(echo ${parent_node} | tr -dc 'a-z')
+			parent_id=$(echo ${parent_node} | tr -dc '0-9')
+			parent_desc=$(sysctl -n dev.${parent}.${parent_id}.%desc | cut -d ',' -f 1)
+			;;
+		esac
+		printf '  "%s <%s>" -> "pcm%s <%s>";\n' ${parent_node} "${parent_desc}" ${pcmid} "${pcm_desc}"
 	fi
 	# Put all pcm nodes in the same bottom rank
 	if ! echo "${rank}" | grep -wq "pcm${pcmid}"; then
@@ -55,13 +70,15 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 done
 printf '  { rank = same;%s}\n' "${rank}"
 # graph cluster containing as group
-for as in ${as_group_list}; do
-	printf '  subgraph cluster_%s {\n' $as
-	printf '    label = "Association group %s";\n'  $as
+for ag in ${as_group_list}; do
+	hdaa_id=${ag%%_*}
+	as=${ag#*_}
+	printf '  subgraph cluster_%s {\n' $ag
+	printf '    label = "hdaa%s association group %s";\n' $hdaa_id $as
 	# Can't call a for loop into eval "" (because inside variable is not updated)
-	eval "as_group=\${as_group_${as}}"
+	eval "as_group=\${as_group_${ag}}"
 	for i in ${as_group}; do
-		eval "printf '    \"nid%s <%s>\";\n' \${i} \${nid_${i}_desc}"
+		eval "printf '    \"hdaa%s:nid%s <%s>\";\n' \${hdaa_id} \${i} \${nid_${hdaa_id}_${i}_desc}"
 	done
 	printf '  }\n'
 done
