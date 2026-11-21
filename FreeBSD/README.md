@@ -65,7 +65,7 @@ Desktop and games:
 - [wine-game.sh](wine-game.sh): prepare a Wine prefix for Windows games (Electron/Chromium, Unreal Engine) and launch one
 - [scanmem.md](scanmem.md): editing a game value with scanmem (Wine game)
 - [record-xorg-demo.sh](record-xorg-demo.sh): record Xorg screen and game audio (virtual_oss loopback) into one demo.mkv
-- [hdaa2dot](hdaa2dot): graphviz view of the hdaa(4) audio topology, example output: [soundsetup.png](soundsetup.png)
+- [hdaa2dot](hdaa2dot): graphviz (default) or mermaid (`-m`) view of the hdaa(4) audio topology, example output: [soundsetup.png](soundsetup.png), [soundsetup.md](soundsetup.md)
 - [flac2mp3](flac2mp3): convert every .flac in a directory to .mp3
 
 Misc utilities:
