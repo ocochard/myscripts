@@ -117,3 +117,7 @@ real pin range and skip 63.
   commits.
 
 VERDICT: fix needed (filter must walk all pin registers: gap pins lost by 0ea5d0d335ab and armed but unserviced in dae130e2e358; 0ea5d0d335ab message off by one and Fixes/MFC on a latent bug; say the level mask is untested; tutorial out of date)
+
+Update 2026-11-22: bugs 1 and 2 fixed by walking every pin register (0-183, skipping 63, WAKE_INT_MASTER_REG) in the filter and bounding _AEI pins the same way; the separate first commit is folded into the arm commit (no Fixes:); a fired level wake pin is fully disarmed (enable, mask, S0i3/S3 wake bits); duplicate _AEI pins skipped; attach wrap fixed; message says the disarm path is untested. Now 25130b5ab6c7 a09c6bc7d982; amdgpio.ko builds.
+
+VERDICT: ready

@@ -1,0 +1,334 @@
+From 25130b5ab6c797fafcd1093945fe2f5025c9133e Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Thu, 12 Nov 2026 23:23:36 +0000
+Subject: [PATCH 1/2] acpi: Let drivers add wake interrupts for s2idle
+
+do_idle() leaves only the SCI unmasked, so a device with its own wake
+interrupt, such as the AMD GPIO controller, cannot end the idle.
+---
+ sys/dev/acpica/acpi.c    | 33 +++++++++++++++++++++++++++++++++
+ sys/dev/acpica/acpivar.h |  4 ++++
+ 2 files changed, 37 insertions(+)
+
+diff --git a/sys/dev/acpica/acpi.c b/sys/dev/acpica/acpi.c
+index b283856ffe52..ed86201dbbf7 100644
+--- a/sys/dev/acpica/acpi.c
++++ b/sys/dev/acpica/acpi.c
+@@ -3636,6 +3636,37 @@ do_sleep(struct acpi_softc *sc, enum acpi_sleep_state *slp_state,
+ }
+ 
+ #if defined(__i386__) || defined(__amd64__)
++/*
++ * Interrupts besides the SCI that may wake the system from suspend-to-idle,
++ * e.g. a GPIO controller with wake pins.  Changed and used with the bus
++ * topology lock held.
++ */
++static u_int acpi_s2idle_wake_irqs[4];
++static u_int acpi_s2idle_wake_nirqs;
++
++int
++acpi_s2idle_wake_irq_register(u_int irq)
++{
++
++    if (acpi_s2idle_wake_nirqs == nitems(acpi_s2idle_wake_irqs))
++	return (ENOSPC);
++    acpi_s2idle_wake_irqs[acpi_s2idle_wake_nirqs++] = irq;
++    return (0);
++}
++
++void
++acpi_s2idle_wake_irq_unregister(u_int irq)
++{
++
++    for (u_int i = 0; i < acpi_s2idle_wake_nirqs; i++) {
++	if (acpi_s2idle_wake_irqs[i] != irq)
++	    continue;
++	acpi_s2idle_wake_irqs[i] =
++	    acpi_s2idle_wake_irqs[--acpi_s2idle_wake_nirqs];
++	return;
++    }
++}
++
+ static void
+ do_idle(struct acpi_softc *sc, enum acpi_sleep_state *slp_state,
+     register_t rflags)
+@@ -3662,6 +3693,8 @@ do_idle(struct acpi_softc *sc, enum acpi_sleep_state *slp_state,
+      * proper wake event.
+      */
+     intr_enable_src(AcpiGbl_FADT.SciInterrupt);
++    for (u_int i = 0; i < acpi_s2idle_wake_nirqs; i++)
++	intr_enable_src(acpi_s2idle_wake_irqs[i]);
+ 
+     cpu_idle(0);
+ 
+diff --git a/sys/dev/acpica/acpivar.h b/sys/dev/acpica/acpivar.h
+index 66050662853c..fbf2dc40fc8d 100644
+--- a/sys/dev/acpica/acpivar.h
++++ b/sys/dev/acpica/acpivar.h
+@@ -381,6 +381,10 @@ ACPI_STATUS	acpi_SetIntrModel(int model);
+ int		acpi_ReqSleepState(struct acpi_softc *sc, enum power_stype stype);
+ ACPI_STATUS	acpi_SetSleepState(struct acpi_softc *sc, int state);
+ int		acpi_wake_set_enable(device_t dev, int enable);
++#if defined(__i386__) || defined(__amd64__)
++int		acpi_s2idle_wake_irq_register(u_int irq);
++void		acpi_s2idle_wake_irq_unregister(u_int irq);
++#endif
+ int		acpi_parse_prw(ACPI_HANDLE h, struct acpi_prw_data *prw);
+ ACPI_STATUS	acpi_Startup(void);
+ void		acpi_UserNotify(const char *subsystem, ACPI_HANDLE h,
+-- 
+2.56.0
+
+
+From a09c6bc7d9827d3e99477671d311f26c58d7f0fc Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sun, 22 Nov 2026 00:38:07 +0100
+Subject: [PATCH 2/2] amdgpio: Arm the _AEI wake pins for s2idle
+
+Suspend disabled every pin and nothing set the wake bits, so no GPIO
+could wake the system from suspend-to-idle.  Keep the wake capable
+_AEI interrupts enabled, with the S0i3 and S3 wake bits set.  The
+interrupt filter now services every pin register, not only the pins in
+the table, and disarms a level-triggered wake pin once it fires, as
+nothing runs its _EVT before resume.
+
+On an HP ZBook Ultra G1a an earlier version armed and restored the
+pins, but no GPIO wake was seen (the power button, pin 54, still does
+not wake it), so the filter's disarm path is untested.
+---
+ sys/dev/amdgpio/amdgpio.c | 119 +++++++++++++++++++++++++++++++++++++-
+ sys/dev/amdgpio/amdgpio.h |  18 ++++++
+ 2 files changed, 135 insertions(+), 2 deletions(-)
+
+diff --git a/sys/dev/amdgpio/amdgpio.c b/sys/dev/amdgpio/amdgpio.c
+index 5cfddfaa338e..d6b4c25da41d 100644
+--- a/sys/dev/amdgpio/amdgpio.c
++++ b/sys/dev/amdgpio/amdgpio.c
+@@ -387,6 +387,49 @@ amdgpio_eoi(struct amdgpio_softc *sc)
+ 	AMDGPIO_UNLOCK(sc);
+ }
+ 
++static bool
++amdgpio_is_wake_pin(struct amdgpio_softc *sc, int pin)
++{
++	for (int i = 0; i < sc->sc_nwake; i++)
++		if (sc->sc_wake[i].pin == pin)
++			return (true);
++	return (false);
++}
++
++static ACPI_STATUS
++amdgpio_find_wake_pins(ACPI_RESOURCE *res, void *arg)
++{
++	struct amdgpio_softc *sc = arg;
++	ACPI_RESOURCE_GPIO *gpio = &res->Data.Gpio;
++	struct amdgpio_wake_pin *wp;
++
++	if (res->Type != ACPI_RESOURCE_TYPE_GPIO ||
++	    gpio->ConnectionType != ACPI_RESOURCE_GPIO_TYPE_INT ||
++	    gpio->WakeCapable != ACPI_WAKE_CAPABLE)
++		return (AE_OK);
++	for (int i = 0; i < gpio->PinTableLength; i++) {
++		if (sc->sc_nwake == nitems(sc->sc_wake))
++			break;
++		if (!AMDGPIO_PIN_IS_REG(gpio->PinTable[i]) ||
++		    amdgpio_is_wake_pin(sc, gpio->PinTable[i]))
++			continue;
++		wp = &sc->sc_wake[sc->sc_nwake++];
++		wp->pin = gpio->PinTable[i];
++		wp->triggering = gpio->Triggering;
++		wp->polarity = gpio->Polarity;
++	}
++	return (AE_OK);
++}
++
++static bool
++amdgpio_is_armed_wake_pin(struct amdgpio_softc *sc, int pin)
++{
++	for (int i = 0; i < sc->sc_nwake; i++)
++		if (sc->sc_wake[i].pin == pin)
++			return (sc->sc_wake[i].armed);
++	return (false);
++}
++
+ static int
+ amdgpio_intr_filter(void *arg)
+ {
+@@ -405,11 +448,23 @@ amdgpio_intr_filter(void *arg)
+ 	 *
+ 	 * See GPIO_Interrupt_Status_Index_0 in BKDG.
+ 	 */
+-	for (size_t pin = 0; pin < AMD_GPIO_PINS_EXPOSED; pin++) {
++	for (int pin = 0; pin < AMDGPIO_PIN_REGS; pin++) {
++		if (!AMDGPIO_PIN_IS_REG(pin))
++			continue;
+ 		off = AMDGPIO_PIN_REGISTER(pin);
+ 		reg = amdgpio_read_4(sc, off);
+ 		if ((reg & UNSERVICED_INTERRUPT_MASK) == 0)
+ 			continue;
++		/*
++		 * An armed level wake pin stays asserted until resume runs
++		 * its _EVT: disarm it, amdgpio_resume() restores it.
++		 */
++		if ((reg & (1 << LEVEL_TRIG_OFF)) != 0 &&
++		    amdgpio_is_armed_wake_pin(sc, pin))
++			reg &= ~((1 << INTERRUPT_ENABLE_OFF) |
++			    (1 << INTERRUPT_MASK_OFF) |
++			    (1 << WAKE_CNTRL_OFF_S0I3) |
++			    (1 << WAKE_CNTRL_OFF_S3));
+ 		/*
+ 		 * Must write 1's to wake/interrupt status bits to clear them.
+ 		 * We can do this simply by writing back to the register.
+@@ -500,6 +555,12 @@ amdgpio_attach(device_t dev)
+ 	}
+ 	amdgpio_eoi(sc);
+ 
++	/* Wake capable _AEI interrupts must stay armed in suspend-to-idle. */
++	AcpiWalkResources(sc->sc_handle, "_AEI", amdgpio_find_wake_pins, sc);
++	if (sc->sc_nwake > 0 &&
++	    acpi_s2idle_wake_irq_register(rman_get_start(sc->sc_res[1])) == 0)
++		sc->sc_wake_irq = true;
++
+ 	sc->sc_busdev = gpiobus_add_bus(dev);
+ 	if (sc->sc_busdev == NULL) {
+ 		device_printf(dev, "could not attach gpiobus\n");
+@@ -510,6 +571,8 @@ amdgpio_attach(device_t dev)
+ 	return (0);
+ 
+ err_bus:
++	if (sc->sc_wake_irq)
++		acpi_s2idle_wake_irq_unregister(rman_get_start(sc->sc_res[1]));
+ 	bus_teardown_intr(dev, sc->sc_res[1], sc->sc_intr_handle);
+ err_intr:
+ 	bus_release_resources(dev, amdgpio_spec, sc->sc_res);
+@@ -527,6 +590,8 @@ amdgpio_detach(device_t dev)
+ 
+ 	if (sc->sc_busdev)
+ 		gpiobus_detach_bus(dev);
++	if (sc->sc_wake_irq)
++		acpi_s2idle_wake_irq_unregister(rman_get_start(sc->sc_res[1]));
+ 	if (sc->sc_intr_handle)
+ 		bus_teardown_intr(dev, sc->sc_res[1], sc->sc_intr_handle);
+ 	bus_release_resources(dev, amdgpio_spec, sc->sc_res);
+@@ -548,6 +613,8 @@ amdgpio_suspend(device_t dev)
+ 
+ 	for (i = 0; i < AMD_GPIO_PINS_EXPOSED; i++) {
+ 		pin = kernzp_pins[i].pin_num;
++		if (amdgpio_is_wake_pin(sc, pin))
++			continue;
+ 		off = AMDGPIO_PIN_REGISTER(pin);
+ 
+ 		reg = amdgpio_read_4(sc, off);
+@@ -566,6 +633,39 @@ amdgpio_suspend(device_t dev)
+ 		amdgpio_write_4(sc, off, reg);
+ 	}
+ 
++	/*
++	 * Arm the wake pins: interrupt enabled and unmasked, S0i3 and S3 wake,
++	 * no debounce.  Skip an asserted level pin, it would
++	 * interrupt continuously as nothing runs _EVT to clear its source yet.
++	 */
++	for (i = 0; i < sc->sc_nwake; i++) {
++		struct amdgpio_wake_pin *wp = &sc->sc_wake[i];
++		bool high;
++
++		off = AMDGPIO_PIN_REGISTER(wp->pin);
++		reg = amdgpio_read_4(sc, off);
++		wp->saved = reg & ~UNSERVICED_INTERRUPT_MASK;
++		wp->armed = false;
++		high = (reg & (1 << PIN_STS_OFF)) != 0;
++		if (wp->triggering == ACPI_LEVEL_SENSITIVE &&
++		    high == (wp->polarity == ACPI_ACTIVE_HIGH)) {
++			device_printf(dev, "wake pin %d asserted, not armed\n",
++			    wp->pin);
++			continue;
++		}
++		reg &= ~(DB_CNTRL_MASK << DB_CNTRL_OFF);
++		reg &= ~((1 << LEVEL_TRIG_OFF) |
++		    (ACTIVE_LEVEL_MASK << ACTIVE_LEVEL_OFF));
++		if (wp->triggering == ACPI_LEVEL_SENSITIVE)
++			reg |= LEVEL_TRIGGER << LEVEL_TRIG_OFF;
++		/* ACPI and the controller encode the polarity the same way. */
++		reg |= (uint32_t)wp->polarity << ACTIVE_LEVEL_OFF;
++		reg |= (1 << INTERRUPT_ENABLE_OFF) | (1 << INTERRUPT_MASK_OFF) |
++		    (1 << WAKE_CNTRL_OFF_S0I3) | (1 << WAKE_CNTRL_OFF_S3);
++		amdgpio_write_4(sc, off, reg);
++		wp->armed = true;
++	}
++
+ 	amdgpio_eoi_locked(sc);
+ 	AMDGPIO_UNLOCK(sc);
+ 
+@@ -575,10 +675,25 @@ amdgpio_suspend(device_t dev)
+ static int
+ amdgpio_resume(device_t dev)
+ {
++	struct amdgpio_softc *sc = device_get_softc(dev);
++
+ 	/*
+ 	 * XXX Will have to resume properly once we're actually able to use
+-	 * amdgpio for interrupts.
++	 * amdgpio for interrupts.  For now, disarm the wake pins.
+ 	 */
++	AMDGPIO_LOCK(sc);
++	for (int i = 0; i < sc->sc_nwake; i++) {
++		struct amdgpio_wake_pin *wp = &sc->sc_wake[i];
++
++		if (!wp->armed)
++			continue;
++		amdgpio_write_4(sc, AMDGPIO_PIN_REGISTER(wp->pin),
++		    wp->saved | UNSERVICED_INTERRUPT_MASK);
++		wp->armed = false;
++	}
++	amdgpio_eoi_locked(sc);
++	AMDGPIO_UNLOCK(sc);
++
+ 	return (0);
+ }
+ 
+diff --git a/sys/dev/amdgpio/amdgpio.h b/sys/dev/amdgpio/amdgpio.h
+index 3743eba23e17..aacc8267ad95 100644
+--- a/sys/dev/amdgpio/amdgpio.h
++++ b/sys/dev/amdgpio/amdgpio.h
+@@ -57,6 +57,10 @@
+ #define	AMDGPIO_PIN_REGISTER(pin)	(pin * 4)
+ 
+ #define	WAKE_INT_MASTER_REG		0xfc
++/* Pin registers 0-183; register 63 is WAKE_INT_MASTER_REG. */
++#define	AMDGPIO_PIN_REGS		184
++#define	AMDGPIO_PIN_IS_REG(pin)		\
++	((pin) < AMDGPIO_PIN_REGS && (pin) != WAKE_INT_MASTER_REG / 4)
+ #define	EOI_MASK			(1 << 29)
+ #define	WAKE_INT_STATUS_REG0		0x2f8
+ #define	WAKE_INT_STATUS_REG1		0x2fc
+@@ -311,6 +315,17 @@ static const struct amd_pingroup kernzp_groups[] = {
+ #define	AMDGPIO_ASSERT_LOCKED(_sc)	mtx_assert(&(_sc)->sc_mtx, MA_OWNED)
+ #define	AMDGPIO_ASSERT_UNLOCKED(_sc)	mtx_assert(&(_sc)->sc_mtx, MA_NOTOWNED)
+ 
++/* A wake capable GPIO interrupt from _AEI. */
++struct amdgpio_wake_pin {
++	int		pin;
++	uint8_t		triggering;	/* ACPI level or edge */
++	uint8_t		polarity;	/* ACPI_ACTIVE_HIGH/LOW/BOTH */
++	bool		armed;
++	uint32_t	saved;		/* Pin register before suspend. */
++};
++
++#define	AMDGPIO_WAKE_PINS_MAX	16
++
+ struct amdgpio_softc {
+ 	ACPI_HANDLE		sc_handle;
+ 	device_t		sc_dev;
+@@ -327,6 +342,9 @@ struct amdgpio_softc {
+ 	const struct pin_info	*sc_pin_info;
+ 	const struct amd_pingroup *sc_groups;
+ 	void			*sc_intr_handle;
++	struct amdgpio_wake_pin	sc_wake[AMDGPIO_WAKE_PINS_MAX];
++	int			sc_nwake;
++	bool			sc_wake_irq;
+ };
+ 
+ struct amdgpio_sysctl {
+-- 
+2.56.0
+

@@ -50,4 +50,6 @@ POSTCR-5aef90fcee695705144f28284bf0abf0ea7e56fe-1: CSC3554 maps to package sound
   a repository)"), which matches the code but confirms POSTCR-...-1. Missing
   a standalone tutorial for this split-out commit.
 
-VERDICT: fix needed (land after audio/sound-firmware-cirrus-kmod and snd_cs35l54, or drop the CSC3554 mapping; add a dedicated tutorial)
+VERDICT: ready
+
+Resolved 2026-11-22: kept the CSC3554 mapping and land it last (after the audio/sound-firmware-cirrus-kmod port and snd_cs35l54; the tracker makes it wait for cs35l54); tutorial docs/fwget_acpi.md with dry runs on the zbook. Code unchanged.

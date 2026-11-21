@@ -1,0 +1,161 @@
+From 5aef90fcee695705144f28284bf0abf0ea7e56fe Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Wed, 11 Nov 2026 16:49:49 +0000
+Subject: [PATCH] fwget: Add ACPI device support
+
+Some devices that need firmware have neither a PCI nor a USB id, like
+the Cirrus Logic CS35L54 speaker amplifiers (ACPI CSC3554) of the HP
+ZBook Ultra G1a.  Add an acpi subsystem that matches ACPI hardware ids
+from devinfo(8) against per-vendor scripts, search it by default, and
+map CSC3554 to its firmware package.
+---
+ usr.sbin/fwget/Makefile         |  2 +-
+ usr.sbin/fwget/acpi/Makefile    | 10 ++++++++++
+ usr.sbin/fwget/acpi/acpi        | 30 ++++++++++++++++++++++++++++++
+ usr.sbin/fwget/acpi/acpi_cirrus | 12 ++++++++++++
+ usr.sbin/fwget/fwget.8          |  4 +++-
+ usr.sbin/fwget/fwget.sh         |  6 +++---
+ 6 files changed, 59 insertions(+), 5 deletions(-)
+ create mode 100644 usr.sbin/fwget/acpi/Makefile
+ create mode 100644 usr.sbin/fwget/acpi/acpi
+ create mode 100644 usr.sbin/fwget/acpi/acpi_cirrus
+
+diff --git a/usr.sbin/fwget/Makefile b/usr.sbin/fwget/Makefile
+index 4c934aee3413..84bc1b87276d 100644
+--- a/usr.sbin/fwget/Makefile
++++ b/usr.sbin/fwget/Makefile
+@@ -2,6 +2,6 @@ PACKAGE=	fwget
+ 
+ SCRIPTS=	fwget
+ MAN=		fwget.8
+-SUBDIR=		pci usb
++SUBDIR=		acpi pci usb
+ 
+ .include <bsd.prog.mk>
+diff --git a/usr.sbin/fwget/acpi/Makefile b/usr.sbin/fwget/acpi/Makefile
+new file mode 100644
+index 000000000000..ab57620fb000
+--- /dev/null
++++ b/usr.sbin/fwget/acpi/Makefile
+@@ -0,0 +1,10 @@
++PACKAGE=	fwget
++
++SCRIPTS=acpi \
++	acpi_cirrus
++
++BINDIR= ${LIBEXECDIR}/fwget
++
++MAN=
++
++.include <bsd.prog.mk>
+diff --git a/usr.sbin/fwget/acpi/acpi b/usr.sbin/fwget/acpi/acpi
+new file mode 100644
+index 000000000000..e5476835fc86
+--- /dev/null
++++ b/usr.sbin/fwget/acpi/acpi
+@@ -0,0 +1,30 @@
++#
++# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++#
++# SPDX-License-Identifier: BSD-2-Clause
++
++# Map the vendor prefix of an ACPI hardware id to a vendor script.
++acpi_get_vendor()
++{
++	case "$1" in
++		CSC*)	echo "cirrus" ;;	# Cirrus Logic
++	esac
++}
++
++acpi_search_packages()
++{
++	local hid vendor
++
++	# Hardware ids of all ACPI devices, with or without a driver.
++	for hid in $(devinfo -v | sed -n 's/.*_HID=\([^ ]*\).*/\1/p' | sort -u); do
++		vendor=$(acpi_get_vendor "${hid}")
++		if [ -z "${vendor}" ]; then
++			continue
++		fi
++		log_verbose "Trying to match device ${hid} with acpi_${vendor}"
++		if [ -f "${LIBEXEC_PATH}/acpi_${vendor}" ]; then
++			. "${LIBEXEC_PATH}/acpi_${vendor}"
++			acpi_${vendor} "${hid}"
++		fi
++	done
++}
+diff --git a/usr.sbin/fwget/acpi/acpi_cirrus b/usr.sbin/fwget/acpi/acpi_cirrus
+new file mode 100644
+index 000000000000..970dad2c116e
+--- /dev/null
++++ b/usr.sbin/fwget/acpi/acpi_cirrus
+@@ -0,0 +1,12 @@
++#
++# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++#
++# SPDX-License-Identifier: BSD-2-Clause
++
++acpi_cirrus()
++{
++
++	case "$1" in
++	CSC3554)	addpkg "sound-firmware-cirrus-kmod-cs35l54"; return 1 ;;
++	esac
++}
+diff --git a/usr.sbin/fwget/fwget.8 b/usr.sbin/fwget/fwget.8
+index 86e304775e2d..ece4fd466a7a 100644
+--- a/usr.sbin/fwget/fwget.8
++++ b/usr.sbin/fwget/fwget.8
+@@ -23,7 +23,7 @@
+ .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ .\"
+-.Dd July 7, 2025
++.Dd November 11, 2026
+ .Dt FWGET 8
+ .Os
+ .Sh NAME
+@@ -49,6 +49,7 @@ Be more verbose
+ .It Ar subsystem
+ Hardware subsystem(s), default is all supported subsystems.
+ Space separated hardware subsystems, accepts
++.Cm acpi ,
+ .Cm pci
+ and
+ .Cm usb
+@@ -69,6 +70,7 @@ utility and this manual page were written by
+ for Beckhoff Automation GmbH & Co\. KG.
+ .Sh CAVEATS
+ This utility currently only supports the
++.Xr acpi 4 ,
+ .Xr pci 4
+ and
+ .Xr usb 4
+diff --git a/usr.sbin/fwget/fwget.sh b/usr.sbin/fwget/fwget.sh
+index de1e6fa51f0f..ef49e1b32b6a 100755
+--- a/usr.sbin/fwget/fwget.sh
++++ b/usr.sbin/fwget/fwget.sh
+@@ -35,7 +35,7 @@ usage()
+ Usage: $(basename "$0") [options] [subsystem]
+ 
+ Supported subsystems
+-  pci, usb
++  acpi, pci, usb
+ 
+ Options:
+   -n		-- Do not install packages, only print the results
+@@ -100,9 +100,9 @@ done
+ shift $(($OPTIND - 1))
+ subsystems="$@"
+ 
+-# Default searching PCI and USB subsystem
++# Default searching ACPI, PCI and USB subsystem
+ if [ -z "${subsystems}" ]; then
+-	subsystems="pci usb"
++	subsystems="acpi pci usb"
+ fi
+ 
+ # Fail early on unsupported subsystem
+-- 
+2.56.0
+

@@ -21,6 +21,18 @@ cf58c8667cfd. Branches:
 | 6 | pci: power down driverless USB4 hosts on suspend | not exported, 8e3084da1773 (local, not pushed) | `pci.c` | tested: NHI0/NHI1 reach D3cold, blockers unchanged; not proposed | nothing |
 | 7 | pci: Accept D3hot in pci_set_powerstate_method() | [pci_d3hot.patch](pci_d3hot.patch) [dd75503aa8cf](https://github.com/ocochard/freebsd-src/commit/dd75503aa8cf), tutorial [pci_d3hot.md](pci_d3hot.md) | `pci.c` | done, tested (same code in the test kernel): GPU reaches D3hot, resume fine; S0i3 blockers unchanged; bug on its own since 84bbfc32a3f4 | nothing |
 
+Rows 3 to 5 were split for review (2026-11-21): row 5 went alone as
+`acpi_cpu: Idle in the deepest Cx state for s2idle` (ron-dev #115; it is
+the one that makes the key wake work, tested alone on 2026-11-21), and
+rows 3 and 4 are held as two reworked commits until a GPIO wake is seen:
+[amdgpio_wake.patch](amdgpio_wake.patch). After review the amdgpio commit
+services every pin register in the interrupt filter (0 to 183, skipping
+`WAKE_INT_MASTER_REG`), not only the pins of the table, bounds `_AEI` pins
+the same way and skips duplicates, and fully disarms a level-triggered wake
+pin when it fires (enable, mask and wake bits; resume restores it), which
+would otherwise keep IRQ 7 asserted. That disarm path never ran: no GPIO
+interrupt fired during a suspend.
+
 Linux reference data:
 [amdsmu/linux_s2idle_reference.txt](amdsmu/linux_s2idle_reference.txt),
 [amdsmu/linux_gpio_debug.txt](amdsmu/linux_gpio_debug.txt).

@@ -90,6 +90,7 @@ grep -v '^#' "$tsv" | while IFS='	' read -r topic round deps pr note; do
 	fi
 	rv=$(review_state "$topic")
 	if is_landed "$topic"; then next="done"
+	elif [ "$round" = hold ]; then next="on hold: $note"
 	elif [ -n "$waiting" ]; then next="wait for$waiting"
 	elif [ "$rb" = CONFLICT ]; then next="rebase, git pr -f"
 	elif [ "$rv" = "not reviewed" ] || [ "$rb" = - ]; then next="create branch / review"
