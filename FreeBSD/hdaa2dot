@@ -51,17 +51,25 @@ add_edge() {
 "
 }
 
-# Start by pcm device (bottom value of the graph)
+# The graph follows the audio: playback pcm -> codec pin -> (amplifiers),
+# and codec pin -> recording pcm. A pcm doing both gets a play and a rec node.
 as_group_list=""
-pcm_list=""
+hdaa_list=""
+play_pcms=""
+rec_pcms=""
 for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
-	# For each pcm, need to check if parent is hdaa type
 	pcm_desc=$(sysctl -n dev.pcm.${pcmid}.%desc)
-	pcm_list="${pcm_list} ${pcmid}"
 	eval "pcm_${pcmid}_desc=\${pcm_desc}"
+	# pcm4: <Realtek ALC245 (Analog)> (play/rec) default
+	pcm_dir=$(sed -n "s/^pcm${pcmid}: .*(\([a-z/]*\)).*/\1/p" /dev/sndstat)
+	case "${pcm_dir}" in *play*) play_pcms="${play_pcms} ${pcmid}" ;; esac
+	case "${pcm_dir}" in *rec*) rec_pcms="${rec_pcms} ${pcmid}" ;; esac
 	if sysctl -n dev.pcm.${pcmid}.%parent | grep -q hdaa; then
 		hdaa_id=$(sysctl -n dev.pcm.${pcmid}.%parent)
 		hdaa_id=${hdaa_id#hdaa}
+		if ! echo "${hdaa_list}" | grep -wq ${hdaa_id}; then
+			hdaa_list="${hdaa_list} ${hdaa_id}"
+		fi
 		# Extracting nid attached to the hdaa pcm
 		#% sysctl -n dev.pcm.0.%location
 		#nid=31,25,35,27
@@ -85,8 +93,24 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 				as_group_${ag}=\"\${as_group_${ag}:-} \${i}\"
 				nid_${hdaa_id}_${i}_desc=\${nid_desc}
 			"
-			add_edge "hdaa${hdaa_id}" "" "hdaa${hdaa_id}:nid${i}" "${nid_desc}"
-			add_edge "hdaa${hdaa_id}:nid${i}" "${nid_desc}" "pcm${pcmid}" "${pcm_desc}"
+			# Direction as the driver set the pin ("Pin control: 0x40 OUT",
+			# "0x25 IN VREFs"), else from the default device
+			pinctl=$(sysctl -n dev.hdaa.${hdaa_id}.nid${i} | sed -n 's/^ *Pin control: 0x[0-9a-f]* //p')
+			case " ${pinctl} " in
+			*" OUT "*) dir=out ;;
+			*" IN "*) dir=in ;;
+			*)
+				case "${device}" in
+				Line-out|Speaker|Headphones|SPDIF-out|Digital-out) dir=out ;;
+				*) dir=in ;;
+				esac
+				;;
+			esac
+			if [ ${dir} = out ]; then
+				add_edge "pcm${pcmid} play" "${pcm_desc}" "hdaa${hdaa_id}:nid${i}" "${nid_desc}"
+			else
+				add_edge "hdaa${hdaa_id}:nid${i}" "${nid_desc}" "pcm${pcmid} rec" "${pcm_desc}"
+			fi
 		done
 	else
 		pcm_location=$(sysctl -n dev.pcm.${pcmid}.%location)
@@ -105,7 +129,12 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 			parent_desc=$(sysctl -n dev.${parent}.${parent_id}.%desc | cut -d ',' -f 1)
 			;;
 		esac
-		add_edge "${parent_node}" "${parent_desc}" "pcm${pcmid}" "${pcm_desc}"
+		case "${pcm_dir}" in *play*)
+			add_edge "pcm${pcmid} play" "${pcm_desc}" "${parent_node}" "${parent_desc}" ;;
+		esac
+		case "${pcm_dir}" in *rec*)
+			add_edge "${parent_node}" "${parent_desc}" "pcm${pcmid} rec" "${pcm_desc}" ;;
+		esac
 	fi
 done
 
@@ -129,49 +158,68 @@ for ampid in $(sysctl -N dev.cs35l54 2>/dev/null | grep %desc | cut -d '.' -f 3)
 	done
 done
 
+# Print the nodes of the codec clusters, $1 = format, $2 = indentation
+print_clusters() {
+	for hdaa_id in ${hdaa_list}; do
+		hdaa_desc=$(sysctl -n dev.hdaa.${hdaa_id}.%desc)
+		if [ $1 = dot ]; then
+			printf '%ssubgraph cluster_hdaa%s {\n' "$2" ${hdaa_id}
+			printf '%s  label = "hdaa%s <%s>";\n' "$2" ${hdaa_id} "${hdaa_desc}"
+		else
+			printf '%ssubgraph hdaa%s ["hdaa%s<br/>%s"]\n' "$2" ${hdaa_id} ${hdaa_id} "${hdaa_desc}"
+		fi
+		for ag in ${as_group_list}; do
+			[ ${ag%%_*} = ${hdaa_id} ] || continue
+			as=${ag#*_}
+			if [ $1 = dot ]; then
+				printf '%s  subgraph cluster_%s {\n' "$2" $ag
+				printf '%s    label = "association group %s";\n' "$2" $as
+			else
+				printf '%s  subgraph as_%s ["association group %s"]\n' "$2" $ag $as
+			fi
+			eval "as_group=\${as_group_${ag}}"
+			for i in ${as_group}; do
+				eval "nid_desc=\${nid_${hdaa_id}_${i}_desc}"
+				if [ $1 = dot ]; then
+					printf '%s    "hdaa%s:nid%s <%s>";\n' "$2" ${hdaa_id} ${i} "${nid_desc}"
+				else
+					printf '%s    %s\n' "$2" "$(mermaid_node "hdaa${hdaa_id}:nid${i}" "${nid_desc}")"
+				fi
+			done
+			[ $1 = dot ] && printf '%s  }\n' "$2" || printf '%s  end\n' "$2"
+		done
+		[ $1 = dot ] && printf '%s}\n' "$2" || printf '%send\n' "$2"
+	done
+}
+
+# dot rank line for the pcm nodes, $1 = rank, $2 = play or rec, $3 = pcm ids
+dot_rank() {
+	[ -n "$3" ] || return 0
+	rank=""
+	for pcmid in $3; do
+		eval "pcm_desc=\${pcm_${pcmid}_desc}"
+		rank="${rank} \"pcm${pcmid} $2 <${pcm_desc}>\";"
+	done
+	printf '  { rank = %s;%s }\n' "$1" "${rank}"
+}
+
 print_dot() {
 	printf "digraph G {\n  rankdir = LR;\n"
+	print_clusters dot "  "
 	printf '%s' "${edges}" | while IFS='|' read -r from from_desc to to_desc; do
 		printf '  "%s" -> "%s";\n' "$(dot_label "${from}" "${from_desc}")" \
 		    "$(dot_label "${to}" "${to_desc}")"
 	done
-	# Put all pcm nodes in the same bottom rank
-	rank=""
-	for pcmid in ${pcm_list}; do
-		eval "pcm_desc=\${pcm_${pcmid}_desc}"
-		rank="${rank} \"pcm${pcmid} <${pcm_desc}>\";"
-	done
-	printf '  { rank = same;%s}\n' "${rank}"
-	# graph cluster containing as group
-	for ag in ${as_group_list}; do
-		hdaa_id=${ag%%_*}
-		as=${ag#*_}
-		printf '  subgraph cluster_%s {\n' $ag
-		printf '    label = "hdaa%s association group %s";\n' $hdaa_id $as
-		eval "as_group=\${as_group_${ag}}"
-		for i in ${as_group}; do
-			eval "nid_desc=\${nid_${hdaa_id}_${i}_desc}"
-			printf '    "hdaa%s:nid%s <%s>";\n' ${hdaa_id} ${i} "${nid_desc}"
-		done
-		printf '  }\n'
-	done
+	# Playback pcm on the left, recording pcm on the right
+	dot_rank min play "${play_pcms}"
+	dot_rank max rec "${rec_pcms}"
 	printf "}\n"
 }
 
 print_mermaid() {
 	printf '```mermaid\nflowchart LR\n'
 	# Subgraphs first: a node belongs to the subgraph it is declared in
-	for ag in ${as_group_list}; do
-		hdaa_id=${ag%%_*}
-		as=${ag#*_}
-		printf '  subgraph as_%s ["hdaa%s association group %s"]\n' $ag $hdaa_id $as
-		eval "as_group=\${as_group_${ag}}"
-		for i in ${as_group}; do
-			eval "nid_desc=\${nid_${hdaa_id}_${i}_desc}"
-			printf '    %s\n' "$(mermaid_node "hdaa${hdaa_id}:nid${i}" "${nid_desc}")"
-		done
-		printf '  end\n'
-	done
+	print_clusters mermaid "  "
 	printf '%s' "${edges}" | while IFS='|' read -r from from_desc to to_desc; do
 		printf '  %s --> %s\n' "$(mermaid_node "${from}" "${from_desc}")" \
 		    "$(mermaid_node "${to}" "${to_desc}")"
