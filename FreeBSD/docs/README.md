@@ -62,6 +62,7 @@ document that explains them.
 - [RSS_kernel_option.md](RSS_kernel_option.md): what `options RSS` does, how it differs from NIC RSS, who uses it
 - [iflib_tunables.md](iflib_tunables.md): reference for the `dev.<driver>.<unit>.iflib.*` and `net.iflib.*` sysctls
 - [sensors.md](sensors.md): how hardware telemetry is exposed on FreeBSD compared to Linux
+- [gpu_boot_console_selection.md](gpu_boot_console_selection.md): which GPU gets the boot screen and the vt(4) console with two GPUs, what the tunables really change; measured on bigone (ASPEED BMC plus NVIDIA) and carbon (Intel iGPU)
 
 ## Boot loader and build tools
 
