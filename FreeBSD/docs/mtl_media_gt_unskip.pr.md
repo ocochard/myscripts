@@ -7,9 +7,11 @@ uses for the media GT (Wa_22016122933, the media GT does not snoop the
 CPU caches) were cached, and the GuC BootROM read a stale firmware
 signature (BootROM = 0x50, RSA_FAILED).
 
-FreeBSD fixes vmap() in <review link> (__FreeBSD_version 1600032). This
-keeps the skip only for older kernels. Without MEI, i915 already gives up
-cleanly on the GSC proxy, and HDCP stays disabled by is_hdcp2_supported().
+FreeBSD fixes vmap() in
+https://ron-dev.freebsd.org/FreeBSD/src/pulls/119
+(__FreeBSD_version 1600032). This keeps the skip only for older kernels.
+Without MEI, i915 already gives up cleanly on the GSC proxy, and HDCP
+stays disabled by is_hdcp2_supported().
 
 Tested on a ThinkPad X1 Carbon Gen 12 (8086:7d45), hw.i915kms.enable_guc=3:
 

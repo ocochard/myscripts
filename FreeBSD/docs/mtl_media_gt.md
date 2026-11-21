@@ -545,8 +545,9 @@ sudo kldload /boot/modules.gt1only/i915kms.ko
 
 ## 6. Next steps
 
-1. LinuxKPI: propose [linuxkpi_vmap_prot.patch](linuxkpi_vmap_prot.patch)
-   on reviews.freebsd.org. AMD (Strix Halo) shows no regression and never
+1. LinuxKPI: [linuxkpi_vmap_prot.patch](linuxkpi_vmap_prot.patch) is under
+   review at https://ron-dev.freebsd.org/FreeBSD/src/pulls/119. AMD
+   (Strix Halo) shows no regression and never
    takes the new path (section 4.3); TTM can still pass a WC `prot` to
    `vmap()` (`drivers/gpu/drm/ttm/ttm_bo_util.c`) on other setups.
 2. drm-kmod: once the LinuxKPI fix is in, send
