@@ -1,19 +1,64 @@
 #!/bin/sh
-# Generate a graphviz dot file from the FreeBSD audio system (hdaa mainly)
+# Generate a graphviz dot file (or a mermaid markdown block) from the FreeBSD
+# audio system (hdaa mainly)
 # This tool is an helper to found output pcm to use or to troubleshoot problem
 # Work in progress, need to add an option to display ALL the existing nid
 # Usage:
 # hdaa2dot | dot -Tpng -o soundsetup.png
+# hdaa2dot -m >> README.md
 
 set -eu
 
+usage() {
+	echo "Usage: $0 [-m]"
+	echo "  -m  mermaid markdown output (default: graphviz dot)"
+	exit 1
+}
+
+format=dot
+while getopts "mh" opt; do
+	case ${opt} in
+	m) format=mermaid ;;
+	*) usage ;;
+	esac
+done
+shift $((OPTIND - 1))
+[ $# -eq 0 ] || usage
+
+# Node label: "name <desc>", or "name" when there is no desc
+dot_label() {
+	if [ -n "$2" ]; then
+		printf '%s <%s>' "$1" "$2"
+	else
+		printf '%s' "$1"
+	fi
+}
+
+# Mermaid node: id["name<br/>desc"], id restricted to [a-zA-Z0-9_]
+mermaid_node() {
+	id=$(printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_')
+	if [ -n "$2" ]; then
+		printf '%s["%s<br/>%s"]' "${id}" "$1" "$2"
+	else
+		printf '%s["%s"]' "${id}" "$1"
+	fi
+}
+
+# Edges collected as "from|from_desc|to|to_desc" lines, rendered at the end
+edges=""
+add_edge() {
+	edges="${edges}$1|$2|$3|$4
+"
+}
+
 # Start by pcm device (bottom value of the graph)
 as_group_list=""
-rank=""
-printf "digraph G {\n"
+pcm_list=""
 for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 	# For each pcm, need to check if parent is hdaa type
 	pcm_desc=$(sysctl -n dev.pcm.${pcmid}.%desc)
+	pcm_list="${pcm_list} ${pcmid}"
+	eval "pcm_${pcmid}_desc=\${pcm_desc}"
 	if sysctl -n dev.pcm.${pcmid}.%parent | grep -q hdaa; then
 		hdaa_id=$(sysctl -n dev.pcm.${pcmid}.%parent)
 		hdaa_id=${hdaa_id#hdaa}
@@ -26,7 +71,6 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 			line=$(sysctl -n dev.hdaa.${hdaa_id}.nid${i}_config)
 			# 0x90a60120 as=2 seq=0 device=Mic conn=Fixed ctype=Digital loc=Internal color=Unknown misc=1
 			as=$(echo $line | cut -d '=' -f 2 | cut -d ' ' -f 1)
-			seq=$(echo $line | cut -d '=' -f 3 | cut -d ' ' -f 1)
 			device=$(echo $line | cut -d '=' -f 4 | cut -d ' ' -f 1)
 			conn=$(echo $line | cut -d '=' -f 5 | cut -d ' ' -f 1)
 			ctype=$(echo $line | cut -d '=' -f 6 | cut -d ' ' -f 1)
@@ -36,13 +80,13 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 			if ! echo "${as_group_list}" | grep -wq ${ag}; then
 				as_group_list="${as_group_list} $ag"
 			fi
+			nid_desc="${device},${conn},${ctype},${loc}"
 			eval "
-				[ -z \${as_group_${ag}+x} ] && as_group_${ag}=\"\"
-				as_group_${ag}=\"\${as_group_${ag}} \${i}\"
-				nid_${hdaa_id}_${i}_desc=\"\$device,\$conn,\$ctype,\$loc\"
-				printf '  \"hdaa%s\" -> \"hdaa%s:nid%s <%s>\";\n' \${hdaa_id} \${hdaa_id} \${i} \${nid_${hdaa_id}_${i}_desc}
-				printf '  \"hdaa%s:nid%s <%s>\" -> \"pcm%s <%s>\";\n' \${hdaa_id} \${i} \${nid_${hdaa_id}_${i}_desc} \${pcmid} \"\${pcm_desc}\"
+				as_group_${ag}=\"\${as_group_${ag}:-} \${i}\"
+				nid_${hdaa_id}_${i}_desc=\${nid_desc}
 			"
+			add_edge "hdaa${hdaa_id}" "" "hdaa${hdaa_id}:nid${i}" "${nid_desc}"
+			add_edge "hdaa${hdaa_id}:nid${i}" "${nid_desc}" "pcm${pcmid}" "${pcm_desc}"
 		done
 	else
 		pcm_location=$(sysctl -n dev.pcm.${pcmid}.%location)
@@ -61,25 +105,58 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 			parent_desc=$(sysctl -n dev.${parent}.${parent_id}.%desc | cut -d ',' -f 1)
 			;;
 		esac
-		printf '  "%s <%s>" -> "pcm%s <%s>";\n' ${parent_node} "${parent_desc}" ${pcmid} "${pcm_desc}"
-	fi
-	# Put all pcm nodes in the same bottom rank
-	if ! echo "${rank}" | grep -wq "pcm${pcmid}"; then
-		rank="${rank} \"pcm${pcmid} <${pcm_desc}>\";"
+		add_edge "${parent_node}" "${parent_desc}" "pcm${pcmid}" "${pcm_desc}"
 	fi
 done
-printf '  { rank = same;%s}\n' "${rank}"
-# graph cluster containing as group
-for ag in ${as_group_list}; do
-	hdaa_id=${ag%%_*}
-	as=${ag#*_}
-	printf '  subgraph cluster_%s {\n' $ag
-	printf '    label = "hdaa%s association group %s";\n' $hdaa_id $as
-	# Can't call a for loop into eval "" (because inside variable is not updated)
-	eval "as_group=\${as_group_${ag}}"
-	for i in ${as_group}; do
-		eval "printf '    \"hdaa%s:nid%s <%s>\";\n' \${hdaa_id} \${i} \${nid_${hdaa_id}_${i}_desc}"
+
+print_dot() {
+	printf "digraph G {\n  rankdir = LR;\n"
+	printf '%s' "${edges}" | while IFS='|' read -r from from_desc to to_desc; do
+		printf '  "%s" -> "%s";\n' "$(dot_label "${from}" "${from_desc}")" \
+		    "$(dot_label "${to}" "${to_desc}")"
 	done
-	printf '  }\n'
-done
-printf "}\n"
+	# Put all pcm nodes in the same bottom rank
+	rank=""
+	for pcmid in ${pcm_list}; do
+		eval "pcm_desc=\${pcm_${pcmid}_desc}"
+		rank="${rank} \"pcm${pcmid} <${pcm_desc}>\";"
+	done
+	printf '  { rank = same;%s}\n' "${rank}"
+	# graph cluster containing as group
+	for ag in ${as_group_list}; do
+		hdaa_id=${ag%%_*}
+		as=${ag#*_}
+		printf '  subgraph cluster_%s {\n' $ag
+		printf '    label = "hdaa%s association group %s";\n' $hdaa_id $as
+		eval "as_group=\${as_group_${ag}}"
+		for i in ${as_group}; do
+			eval "nid_desc=\${nid_${hdaa_id}_${i}_desc}"
+			printf '    "hdaa%s:nid%s <%s>";\n' ${hdaa_id} ${i} "${nid_desc}"
+		done
+		printf '  }\n'
+	done
+	printf "}\n"
+}
+
+print_mermaid() {
+	printf '```mermaid\nflowchart LR\n'
+	# Subgraphs first: a node belongs to the subgraph it is declared in
+	for ag in ${as_group_list}; do
+		hdaa_id=${ag%%_*}
+		as=${ag#*_}
+		printf '  subgraph as_%s ["hdaa%s association group %s"]\n' $ag $hdaa_id $as
+		eval "as_group=\${as_group_${ag}}"
+		for i in ${as_group}; do
+			eval "nid_desc=\${nid_${hdaa_id}_${i}_desc}"
+			printf '    %s\n' "$(mermaid_node "hdaa${hdaa_id}:nid${i}" "${nid_desc}")"
+		done
+		printf '  end\n'
+	done
+	printf '%s' "${edges}" | while IFS='|' read -r from from_desc to to_desc; do
+		printf '  %s --> %s\n' "$(mermaid_node "${from}" "${from_desc}")" \
+		    "$(mermaid_node "${to}" "${to_desc}")"
+	done
+	printf '```\n'
+}
+
+print_${format}
