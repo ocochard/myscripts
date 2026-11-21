@@ -109,6 +109,26 @@ for pcmid in $(sysctl dev.pcm. | grep %desc | cut -d '.' -f 3); do
 	fi
 done
 
+# Smart speaker amplifiers behind the codec speaker pin (cs35l54(4)): they
+# serve the codec whose subsystem id matches their ACPI _SUB
+for ampid in $(sysctl -N dev.cs35l54 2>/dev/null | grep %desc | cut -d '.' -f 3); do
+	sub=$(sysctl -n dev.cs35l54.${ampid}.subsystem 2>/dev/null) || continue
+	amp_desc="$(sysctl -n dev.cs35l54.${ampid}.%desc), $(sysctl -n dev.cs35l54.${ampid}.%parent) $(sysctl -n dev.cs35l54.${ampid}.%location | sed 's/^addr=\([^ ]*\).*/\1/')"
+	for ag in ${as_group_list}; do
+		hdaa_id=${ag%%_*}
+		sysctl -n dev.hdaa.${hdaa_id}.%pnpinfo | grep -qw "subsystem=0x${sub}" || continue
+		eval "as_group=\${as_group_${ag}}"
+		for i in ${as_group}; do
+			eval "nid_desc=\${nid_${hdaa_id}_${i}_desc}"
+			case "${nid_desc}" in
+			Speaker,Fixed,*)
+				add_edge "hdaa${hdaa_id}:nid${i}" "${nid_desc}" "cs35l54.${ampid}" "${amp_desc}"
+				;;
+			esac
+		done
+	done
+done
+
 print_dot() {
 	printf "digraph G {\n  rankdir = LR;\n"
 	printf '%s' "${edges}" | while IFS='|' read -r from from_desc to to_desc; do

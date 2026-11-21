@@ -1,6 +1,6 @@
 # hdaa2dot example: HP ZBook audio topology
 
-Output of `hdaa2dot -m`: two HDA codecs (ATI HDMI, Realtek ALC245) and the AMD ACP digital microphones attached directly to PCI.
+Output of `hdaa2dot -m`: two HDA codecs (ATI HDMI, Realtek ALC245), the CS35L54 smart amplifiers behind the speaker pin, and the AMD ACP digital microphones attached directly to PCI.
 
 ```mermaid
 flowchart LR
@@ -34,4 +34,5 @@ flowchart LR
   hdaa0_nid5["hdaa0:nid5<br/>Digital-out,Jack,Digital,0x18"] --> pcm1["pcm1<br/>ATI R6xx (HDMI)"]
   hdaa0["hdaa0"] --> hdaa0_nid3["hdaa0:nid3<br/>Digital-out,Jack,Digital,0x18"]
   hdaa0_nid3["hdaa0:nid3<br/>Digital-out,Jack,Digital,0x18"] --> pcm0["pcm0<br/>ATI R6xx (HDMI)"]
+  hdaa1_nid23["hdaa1:nid23<br/>Speaker,Fixed,Analog,Internal"] --> cs35l54_0["cs35l54.0<br/>Cirrus Logic CS35L54 speaker amplifiers, iicbus18 0x30"]
 ```
