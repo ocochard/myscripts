@@ -1,6 +1,6 @@
 # Intel MTL (Meteor Lake) — ANV rejects GPU on FreeBSD (drm-latest-kmod-6.12)
 
-Status: root cause identified in kernel (i915) UAPI. Userspace works, kernel needs fix.
+Status: resolved. On 2026-11-21, with drm-latest-kmod 6.12.85 and Mesa 26.2.2, `ENGINE_INFO` returns 3 engines (render, copy, compute) and `vulkaninfo` lists `Intel(R) Graphics (MTL)`. Video engines are a separate problem: [mtl_media_gt.md](mtl_media_gt.md). The original investigation follows.
 
 ## Symptom
 

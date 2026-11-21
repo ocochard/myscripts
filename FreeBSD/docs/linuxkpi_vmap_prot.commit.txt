@@ -1,0 +1,10 @@
+linuxkpi: Honor the pgprot argument of vmap()
+
+vmap() ignored prot, so pgprot_writecombine() callers got a cached
+mapping.  On Meteor Lake the i915 media GT does not snoop the CPU
+caches and its GuC rejects the firmware read through such a mapping.
+
+Apply a non-default cache mode with pmap_change_attr(), and restore
+each page's own attribute in vunmap().
+
+Tested on Meteor Lake (i915 media GT, VA-API) and Strix Halo (amdgpu).

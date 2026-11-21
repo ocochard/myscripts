@@ -1,0 +1,119 @@
+diff --git sys/compat/linuxkpi/common/src/linux_page.c sys/compat/linuxkpi/common/src/linux_page.c
+index a95d86753985..5f6ff1eab6f5 100644
+--- sys/compat/linuxkpi/common/src/linux_page.c
++++ sys/compat/linuxkpi/common/src/linux_page.c
+@@ -336,6 +336,7 @@ struct vmmap {
+ 	LIST_ENTRY(vmmap)	vm_next;
+ 	void			*vm_addr;
+ 	unsigned long		vm_size;
++	vm_memattr_t		vm_attr;
+ };
+ 
+ struct vmmaphd {
+@@ -363,7 +364,7 @@ is_vmalloc_addr(const void *addr)
+ 	return (vtoslab((vm_offset_t)addr & ~UMA_SLAB_MASK) != NULL);
+ }
+ 
+-static void
++static struct vmmap *
+ vmmap_add(void *addr, unsigned long size)
+ {
+ 	struct vmmap *vmmap;
+@@ -372,8 +373,11 @@ vmmap_add(void *addr, unsigned long size)
+ 	mtx_lock(&vmmaplock);
+ 	vmmap->vm_size = size;
+ 	vmmap->vm_addr = addr;
++	vmmap->vm_attr = VM_MEMATTR_DEFAULT;
+ 	LIST_INSERT_HEAD(&vmmaphead[VM_HASH(addr)], vmmap, vm_next);
+ 	mtx_unlock(&vmmaplock);
++
++	return (vmmap);
+ }
+ 
+ static struct vmmap *
+@@ -450,19 +454,73 @@ linuxkpi_devm_memremap(struct device *dev, resource_size_t offset, size_t size,
+ 	return (addr);
+ }
+ 
++#if defined(__i386__) || defined(__amd64__) || defined(__powerpc__) || defined(__aarch64__) || defined(__riscv)
++/*
++ * Give the pages of a vmap() mapping back their own memory attribute, one
++ * pmap_change_attr() call per run of pages that share it.
++ */
++static void
++vunmap_restore_attr(void *addr, size_t size)
++{
++	vm_page_t m;
++	vm_memattr_t attr, run_attr;
++	char *end, *run, *va;
++
++	end = (char *)addr + size;
++	run = addr;
++	attr = run_attr = VM_MEMATTR_DEFAULT;
++	for (va = addr; va <= end; va += PAGE_SIZE) {
++		if (va < end) {
++			m = PHYS_TO_VM_PAGE(pmap_kextract((vm_offset_t)va));
++			attr = m != NULL ? pmap_page_get_memattr(m) :
++			    VM_MEMATTR_DEFAULT;
++			if (va == addr)
++				run_attr = attr;
++			if (attr == run_attr)
++				continue;
++		}
++		if (pmap_change_attr(run, va - run, run_attr) != 0)
++			printf("linuxkpi: vunmap: cannot restore memory "
++			    "attribute of %p-%p\n", run, va);
++		run = va;
++		run_attr = attr;
++	}
++}
++#endif
++
+ void *
+ vmap(struct page **pages, unsigned int count, unsigned long flags, int prot)
+ {
++	struct vmmap *vmmap;
+ 	void *off;
+ 	size_t size;
++	vm_memattr_t attr __unused;
+ 
+ 	size = count * PAGE_SIZE;
+ 	off = kva_alloc(size);
+ 	if (off == NULL)
+ 		return (NULL);
+-	vmmap_add(off, size);
++	vmmap = vmmap_add(off, size);
+ 	pmap_qenter(off, pages, count);
+ 
++#if defined(__i386__) || defined(__amd64__) || defined(__powerpc__) || defined(__aarch64__) || defined(__riscv)
++	/*
++	 * pmap_qenter() maps each page with its own memory attribute.  Apply
++	 * the one the caller asked for, e.g. with pgprot_writecombine().
++	 * Unlike Linux, pmap_change_attr() also changes the direct map alias
++	 * of the pages, until vunmap().  Record the attribute first, so that
++	 * vunmap() also undoes a partial change.
++	 */
++	attr = pgprot2cachemode(prot);
++	if (attr != VM_MEMATTR_DEFAULT) {
++		vmmap->vm_attr = attr;
++		if (pmap_change_attr(off, size, attr) != 0) {
++			vunmap(off);
++			return (NULL);
++		}
++	}
++#endif
++
+ 	return (off);
+ }
+ 
+@@ -530,6 +588,10 @@ vunmap(void *addr)
+ 	vmmap = vmmap_remove(addr);
+ 	if (vmmap == NULL)
+ 		return;
++#if defined(__i386__) || defined(__amd64__) || defined(__powerpc__) || defined(__aarch64__) || defined(__riscv)
++	if (vmmap->vm_attr != VM_MEMATTR_DEFAULT)
++		vunmap_restore_attr(addr, vmmap->vm_size);
++#endif
+ 	pmap_qremove(addr, vmmap->vm_size / PAGE_SIZE);
+ 	kva_free(addr, vmmap->vm_size);
+ 	kfree(vmmap);

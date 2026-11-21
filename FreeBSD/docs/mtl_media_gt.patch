@@ -1,0 +1,74 @@
+--- drivers/gpu/drm/i915/gt/intel_gt.c.orig	2026-11-21 16:22:37.205539000 +0100
++++ drivers/gpu/drm/i915/gt/intel_gt.c	2026-11-21 16:22:37.214800000 +0100
+@@ -961,19 +961,6 @@
+ 			break;
+ 
+ 		case GT_MEDIA:
+-#ifdef __FreeBSD__
+-			/*
+-			 * Skip standalone media GT on Meteor Lake.
+-			 * FreeBSD lacks MEI driver support needed for GSC proxy,
+-			 * which causes GuC authentication to fail on GT1.
+-			 */
+-			if (!IS_ENABLED(CONFIG_INTEL_MEI_HDCP)) {
+-				drm_info(&i915->drm,
+-						"Skipping GT1 (Standalone Media GT) - MEI driver not available on FreeBSD\n");
+-				ret = 0;
+-				continue;
+-			}
+-#endif
+ 
+ 			ret = intel_sa_mediagt_setup(gt, phys_addr + gtdef->mapping_base,
+ 						     gtdef->gsi_offset);
+--- drivers/gpu/drm/i915/gem/i915_gem_pages.c.orig	2026-11-21 16:34:31.166654000 +0100
++++ drivers/gpu/drm/i915/gem/i915_gem_pages.c	2026-11-21 16:34:40.236090000 +0100
+@@ -5,6 +5,9 @@
+  */
+ 
+ #include <drm/drm_cache.h>
++#ifdef __FreeBSD__
++#include <asm/set_memory.h>
++#endif
+ #include <linux/vmalloc.h>
+ 
+ #include "gt/intel_gt.h"
+@@ -187,8 +190,19 @@
+ 
+ static void unmap_object(struct drm_i915_gem_object *obj, void *ptr)
+ {
+-	if (is_vmalloc_addr(ptr))
++	if (is_vmalloc_addr(ptr)) {
++#ifdef __FreeBSD__
++		/*
++		 * i915_gem_object_map_page() may have switched the pages to
++		 * write-combining: give them back to write-back before they
++		 * can be reused.
++		 */
++		if (i915_gem_object_has_struct_page(obj))
++			set_memory_wb((unsigned long)ptr,
++			    obj->base.size >> PAGE_SHIFT);
++#endif
+ 		vunmap(ptr);
++	}
+ }
+ 
+ static void flush_tlb_invalidate(struct drm_i915_gem_object *obj)
+@@ -319,6 +333,18 @@
+ 	for_each_sgt_page(page, iter, obj->mm.pages)
+ 		pages[i++] = page;
+ 	vaddr = vmap(pages, n_pages, 0, pgprot);
++#ifdef __FreeBSD__
++	/*
++	 * LinuxKPI vmap() ignores pgprot and maps the pages write-back.
++	 * Callers ask for WC when the GPU does not snoop the CPU caches,
++	 * e.g. the MTL media GT (Wa_22016122933): set the attribute here.
++	 */
++	if (vaddr && type == I915_MAP_WC &&
++	    set_memory_wc((unsigned long)vaddr, n_pages) != 0) {
++		vunmap(vaddr);
++		vaddr = NULL;
++	}
++#endif
+ 	if (pages != stack)
+ 		kvfree(pages);
+ 
