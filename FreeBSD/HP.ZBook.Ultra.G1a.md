@@ -109,7 +109,7 @@ Source: `pciconf -lv | grep -A4 '^none'`.
 |---|---|---|---|---|---|---|
 | none0 | 0:0:2 | 1022:1508 | IOMMU | DMA protection, PCI passthrough | nothing: `amdiommu` exists, off by default; usable with three fixes (see below) | IOMMU core (no `lspci` driver line) |
 | none1 | 193:0:0 | 14c3:7925 | MediaTek MT7925 (Filogic 360) | Wi-Fi 7 | Wi-Fi (works with branch `olivier-mt7925`, see below) | `mt7925e` |
-| none2 | 195:0:2 | 1022:17e0 | CCP/ASP | security processor (PSP) and crypto offload | crypto offload, nothing visible | `ccp` |
+| none2 | 195:0:2 | 1022:17e0 | PSP/ASP | security processor (no crypto engine exposed, see below) | nothing visible | `ccp` module, PSP part only (`sp-pci.c`: `dev_vdata[7]`, `pspv5`) |
 | none3 | 195:0:5 | 1022:15e2 | Audio Coprocessor (ACP) | DSP for the internal digital microphones | internal microphone (probably) | `snd_acp_pci` |
 | none4 | 195:0:7 | 1022:164a | Sensor Fusion Hub / MP2 | sensor microcontroller; Linux uses it as an I2C controller | see below | `pcie_mp2_amd` (not `amd_sfh`) |
 | none5 | 196:0:0 | 1022:150d | PCIe dummy function | placeholder that carries the NPU function | nothing | none |
@@ -200,13 +200,17 @@ Reports: [docs/bugreport_amdiommu_ir_only_loop.md](docs/bugreport_amdiommu_ir_on
 [docs/bugreport_amdiommu_map_invalidation.md](docs/bugreport_amdiommu_map_invalidation.md),
 [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md).
 
-### CCP/ASP (195:0:2)
+### PSP/ASP (195:0:2)
 
-AMD Secure Processor (PSP) plus the Cryptographic Coprocessor.
-The PSP boots the SoC and runs firmware TPM, memory encryption and HSTI security checks.
-Linux driver: `ccp` (with `psp`).
-FreeBSD `ccp(4)` knows 1022:1456, 1468 and 15df only.
-Impact: no crypto offload; nothing visible for laptop use.
+AMD Secure Processor (PSP): boots the SoC, runs the firmware TPM and memory encryption.
+On this ID it exposes no Cryptographic Coprocessor: Linux `sp-pci.c` (master, read 2026-11-21) maps 0x17E0 to `dev_vdata[7]`,
+which has only `psp_vdata = &pspv5` and no `ccp_vdata`.
+So Linux does no crypto offload or hardware RNG here either; earlier text in this document said "crypto offload": wrong.
+`pspv5` gives Linux a TEE interface (`teev2`, AMD trusted applications) and the platform access mailbox (`pa_v2`);
+unlike the Rembrandt `pspv3`, it sets no DBC or HSTI platform feature.
+FreeBSD `ccp(4)` (`sys/crypto/ccp/ccp.c`) knows 1022:1456, 1468 and 15df only, and covers the other part:
+AES/SHA offload and a TRNG `random(4)` source. Adding 0x17E0 to its table would give nothing, since that hardware is absent.
+Impact: none for laptop use.
 
 ### Audio Coprocessor (195:0:5)
 
@@ -621,7 +625,7 @@ Still worth the work:
 
 Skip for laptop use:
 
-- CCP/PSP, UCSI: no user-visible gain.
+- PSP, UCSI: no user-visible gain. This PSP has no crypto engine; Linux uses it only for its TEE.
 - Sensor Fusion Hub / MP2: Linux uses it only as an I2C controller here, with no visible function.
 - USB4 routers: only for PCIe tunneling devices.
 - IR camera (HM1092): no driver on Linux either.

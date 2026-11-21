@@ -4,6 +4,7 @@ Machine: Beelink SER6 mini PC (SMBIOS maker "AZW", product "SER", AMI BIOS 113 o
 AMD Ryzen 7 7735HS (Rembrandt-R, Zen 3+, 8 cores / 16 threads), Radeon 680M.
 Memory: 64 GB (`hw.physmem` 64102391808), minus the BIOS VRAM carve-out (amdgpu: `4096M of VRAM`).
 Tested: FreeBSD 16.0-CURRENT main-n290674-7806832f23fb (2026-11-05, with local changes), GENERIC-NODEBUG.
+Running since 2026-11-19: main-n291400-30e3fd1811e3 (with local changes), GENERIC-NODEBUG.
 
 Status as of 2026-11-16 evening. Sources, collected on 2026-11-16: `pciconf -lv`, `devinfo -v`, `usbconfig`, `/var/run/dmesg.boot`, `kldstat`, `/var/log/messages*`.
 Device IDs checked against FreeBSD main 70cf7c62ee14 (2026-11-15) and Linux 3b5f4b83c4ab (2026-07-28).
@@ -16,6 +17,10 @@ Work of 2026-11-16, in short:
 - AMD IOMMU: the stock kernel loops on USB attach with `hw.amdiommu.enable=1`; two patches fix it and lower the DMA cost.
 - Idle interrupts explained: Bluetooth SCO transfers (patch written) and `virtual_oss` (its default configuration records the microphone all the time).
 - TPM no longer attaches: the installed kernel predates ACPI start method support.
+
+Update of 2026-11-21 (kernel main-n291400): TPM works (`tpmcrb0`, `/dev/tpm0`);
+the IOMMU shows as `amdviiommu0` because `vmm.ko` is loaded;
+the ACP driver written for the HP ZBook (`snd_acp`) does not cover this ACP, see [Audio Coprocessor](#audio-coprocessor-11605).
 
 All patches and their order: [Applying the work, in order](#applying-the-work-in-order).
 
@@ -36,7 +41,7 @@ All patches and their order: [Applying the work, in order](#applying-the-work-in
 | CPU frequency | CPPC | `hwpstate_amd` |
 | CPU temperature | Family 19h data fabric | `amdtemp`, `amdsmn` |
 | CPU idle | ACPI C-states | `cx_lowest` C8, 97.7% of time in C3 on CPU 0 |
-| TPM 2.0 | MSFT0101, firmware TPM | `tpmcrb` (CRB, ACPI start method 2), only with a kernel from main of 2026-11-12 or later, see below |
+| TPM 2.0 | MSFT0101, firmware TPM | `tpmcrb` (CRB, ACPI start method 2), needs a kernel from main of 2026-11-12 or later; attached since the 2026-11-19 kernel |
 | Power button, EC | ACPI | `acpi_button`, `acpi_ec` |
 | WMI | PNP0C14 | `acpi_wmi` |
 | Sleep | S3 (`hw.acpi.supported_sleep_state: S3 S4 S5`) | one resume logged on 2026-11-04 by `acpi[3149]: resumed`; not tested again |
@@ -50,19 +55,20 @@ The cause of these resets is not checked.
 
 TPM: this firmware TPM uses the ACPI start method (TPM2 table StartMethod 2).
 `tpm_crb` supports it since 6af18560a124 ("tpm: crb: Support the ACPI start method", main of 2026-11-12).
-The installed kernel (main-n290674, 2026-11-05) is older: `\_SB_.TPM_` stays `unknown` in `devinfo` and there is no `/dev/tpm0`.
+The kernel installed until 2026-11-19 (main-n290674, 2026-11-05) was older: `\_SB_.TPM_` stayed `unknown` in `devinfo` and there was no `/dev/tpm0`.
 Earlier on 2026-11-16, a boot with a preloaded test `tpm.ko` attached `tpmcrb0: <Trusted Platform Module 2.0, CRB mode (ACPI start)>`,
 with `Module acpi/tpmcrb failed to register: 17` (and the same for `tpm`, `tpmtis`, `isa/tpm`) because GENERIC also has `device tpm`.
-That test kernel is removed. Fix: a kernel from current main.
+That test kernel is removed.
+Fixed by the kernel of 2026-11-19 (main-n291400): `devinfo` shows `tpmcrb0`, and `/dev/tpm0` exists.
 
 ## PCI devices without driver
 
-Source: `pciconf -l | grep ^none`.
+Source: `pciconf -l | grep ^none` (2026-11-16; rechecked 2026-11-21: same list, except the IOMMU, now held by `amdviiommu` from `vmm.ko`).
 
 | pciconf | Address | ID | Device | Purpose | Missing on FreeBSD | Linux driver |
 |---|---|---|---|---|---|---|
 | none0 | 0:0:2 | 1022:14b6 | IOMMU | DMA protection, PCI passthrough | nothing: `amdiommu` exists, off by default; with two patches it works, see [docs/amdiommu_ser6.md](docs/amdiommu_ser6.md) | IOMMU core |
-| none1 | 116:0:2 | 1022:1649 | PSP/CCP | security processor and crypto offload | crypto offload, nothing visible | `ccp` (`sp-pci.c` lists 0x1649) |
+| none1 | 116:0:2 | 1022:1649 | PSP | security processor (no crypto engine exposed, see below) | nothing visible | `ccp` module, PSP part only (`sp-pci.c`: `dev_vdata[6]`, `pspv3`) |
 | none2 | 116:0:5 | 1022:15e2 rev 0x60 | Audio Coprocessor (ACP 6.x) | DSP for digital microphones | nothing seen on this machine | `snd_pci_acp6x` (Yellow Carp, rev 0x60) |
 | none3 | 117:0:5 | 1022:162e | USB4/Thunderbolt NHI | USB4 fabric, PCIe tunneling | eGPU, PCIe docks | `thunderbolt` |
 
@@ -101,7 +107,6 @@ Source: `devinfo -v | grep 'unknown pnpinfo'`, without the `PWRS` power resource
 | AMDI0030 | `\_SB_.GPIO` | GPIO controller | `pinctrl-amd`; FreeBSD `amdgpio(4)` exists, not loaded by default |
 | AMDI0052 | `\_SB_.PPKG` | DSDT: `_HID` and `_STA` (always 0x0F) only | none bound; Linux uses the ID only as an ASoC machine match (`acp63-acp`) |
 | ACPI000E | `\_SB_.ACDC` | Time and Alarm Device: wake timer, RTC | `acpi_tad` |
-| MSFT0101 | `\_SB_.TPM_` | TPM 2.0 | installed kernel too old for its ACPI start method, see [What works](#what-works) |
 | PNP0800, PNP0000 | `SBRG.SPKR`, `SBRG.PIC_` | legacy PC speaker and 8259 PIC: nothing to do | n/a |
 
 `amdgpio` loads and attaches (2026-11-16):
@@ -215,12 +220,24 @@ which also found an amdgpu display stall with interrupt remapping alone (see [do
 
 On this machine the protection buys little (no PCIe tunneling over USB4 on FreeBSD yet), so the IOMMU stays off.
 
-### PSP/CCP (116:0:2)
+### PSP (116:0:2)
 
-AMD Secure Processor: firmware TPM, platform security, crypto offload.
-FreeBSD `ccp(4)` lists only 1456, 1468 and 15df.
-The firmware TPM works through `tpmcrb` without this driver.
-Impact: no crypto offload; AES-NI on the CPU is faster for most loads anyway.
+AMD Secure Processor: boots the SoC, runs the firmware TPM and platform security.
+On this ID it exposes no crypto engine: Linux `sp-pci.c` (master, read 2026-11-21) maps 0x1649 to `dev_vdata[6]`,
+which has only `psp_vdata = &pspv3` and no `ccp_vdata`.
+So Linux does no crypto offload or hardware RNG here either; earlier text in this document said "crypto offload": wrong.
+
+What `pspv3` gives Linux:
+
+- TEE interface (`teev1`): loads trusted applications into the PSP; used by `amdtee` for AMD-specific TAs, nothing a FreeBSD desktop uses.
+- Platform access (`pa_v1`): firmware mailbox for the other PSP features below.
+- DBC (Dynamic Boost Control): lets a privileged tool change the SoC power limits at run time (`/dev/dbc`); OEM tuning tools use it.
+- HSTI: reads the security state (fused firmware signing, debug lock, rollback protection) for `fwupd` host security reports.
+
+FreeBSD `ccp(4)` (`sys/crypto/ccp/ccp.c`) lists only 1456, 1468 and 15df, and covers the other part:
+AES/SHA offload through `crypto(9)` and a TRNG `random(4)` source. Adding 0x1649 to its table would give nothing, since that hardware is absent.
+The firmware TPM works through `tpmcrb` without this driver, and the kernel already has a hardware seed (`kern.random.random_sources`: `Intel Secure Key Seed`, RDSEED).
+Impact: none. A new driver would add only DBC power tuning and an HSTI security report.
 
 ### Audio Coprocessor (116:0:5)
 
@@ -233,6 +250,12 @@ Linux `acp6x-mach.c` registers a card only when `AcpDmicConnected` is 1 or the D
 and the table has no entry for this machine (DMI `AZW` / `SER`).
 So Linux also binds no ACP card here, and a FreeBSD driver would have no microphone to drive.
 Not confirmed on hardware: no Linux boot checked `arecord -l`.
+
+The `snd_acp` driver written for the HP ZBook (branch `olivier-acp`, [HP.ZBook.Ultra.G1a.md](HP.ZBook.Ultra.G1a.md#audio-coprocessor-19505))
+does not apply: it probes only revisions 0x70 to 0x72 (ACP 7.x), and this ACP is revision 0x60 (ACP 6.x, Rembrandt).
+Porting it would gain nothing here: the ACP only adds the PDM digital microphone input, and no microphone is wired to it.
+The one possible effect of an unbound ACP is power: with `hw.pci.do_power_nodriver=0` (the default) FreeBSD leaves it in D0.
+Not measured; the ACP also has its own power gating (`ACP_PGFSM_CONTROL`), and its state at boot is not known.
 Impact: none expected.
 
 ### USB4 NHI (117:0:5)
@@ -321,13 +344,13 @@ Five setup items give more than any new driver:
 1. Bluetooth: install `iwmbt-firmware` (done 2026-11-16). `fwget` and `iwmbtfw` patches: see above.
 2. GPU: add `amdgpu` to `kld_list` if the machine runs a desktop. Today it is loaded by hand.
 3. NVMe: the threshold is the 83 C default; the drive heats under load, see [NVMe event flood](#nvme-event-flood). Fix the cooling, not the threshold.
-4. TPM: update the kernel to main of 2026-11-12 or later.
+4. TPM: update the kernel to main of 2026-11-12 or later (done 2026-11-19).
 5. Idle interrupts: apply patch 7 (`ng_ubt`), or set `net.bluetooth.usb_isoc_enable=0` in `/boot/loader.conf` if headset voice is not needed;
    see [Interrupt rates at idle](#interrupt-rates-at-idle).
 
 Skip:
 
-- PSP/CCP, IOMMU, ACP: no user-visible gain.
+- PSP, IOMMU, ACP: no user-visible gain. This PSP has no crypto engine; a driver would add only DBC and HSTI. The ZBook `snd_acp` driver is ACP 7.x only, and this ACP has no microphone wired.
 - USB4 NHI: only for PCIe tunneling devices.
 - GPIO: `amdgpio` works, but no device needs it.
 - ACPI000E: wake timers only; `atrtc` and `efirtc` already provide the clock.
