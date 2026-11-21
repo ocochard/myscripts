@@ -1,6 +1,6 @@
 # Silent laptop speakers: a driver for the Cirrus Logic CS35L54 amplifiers
 
-Patch: [cs35l54_speaker_amp.patch](cs35l54_speaker_amp.patch), the 10 commits of branch
+Patch: [cs35l54_speaker_amp.patch](cs35l54_speaker_amp.patch), the 11 commits of branch
 [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) on top of FreeBSD main 29b24020f6fa (rebased 2026-11-12).
 Related fixes found on the way, one commit each:
 [`olivier-amdgpio-pnp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdgpio-pnp) (devmatch loads amdgpio),
@@ -153,6 +153,9 @@ whose offsets come from the `.wmfw` metadata (`cs_find_ctl()`, `:566`).
 
 **Play and pause** (`cs_play()`, `:816`, `cs_stop()`, `:844`): mailbox `AUDIO_PLAY`, wait for power state PS0, enable the audio port inputs; and the reverse.
 
+**Sysctls** (`dev.cs35l54.0.*`): `loaded`, `play` and `volume`, and `subsystem`, the `_SUB` it matches against the codec,
+so that a tool such as [hdaa2dot](../hdaa2dot) can draw the amplifiers behind the codec's speaker pin ([example](../soundsetup.md)).
+
 **Suspend and resume**: pause on suspend; on resume (`cs_resume_task()`, `:913`) download again if the amplifiers lost their program, otherwise restart a running stream.
 
 ### 3.2 Following the speaker stream: `hdaa.c` and `hdaa_speaker.h`
@@ -226,6 +229,7 @@ and the rebased driver passed the rows marked "rebased" below:
 | Firmware from the `audio/sound-firmware-cirrus-kmod` package (poudriere testport and bulk, then `pkg add`) | download and calibration complete |
 | `devctl suspend` / `devctl resume` during playback | `play` 1 -> 0 -> 1 |
 | `devctl resume` after resetting the amplifiers | firmware and calibration downloaded again |
+| `kldunload`, then `kldload` of the module with the `subsystem` sysctl (2026-11-21) | firmware and calibration downloaded again in 4 s; `subsystem: 103c8d01`, equal to `dev.hdaa.1.%pnpinfo` |
 | `fwget -n` with the acpi subsystem | prints `sound-firmware-cirrus-kmod-cs35l54` |
 | Real suspend-to-idle | untested |
 | Attach at boot (`kld_list`) | untested |

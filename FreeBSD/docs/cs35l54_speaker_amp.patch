@@ -20,10 +20,10 @@ index 4a39645fcba3..1444ef02c9f7 100644
  _superio.4=	superio.4
 diff --git share/man/man4/snd_cs35l54.4 share/man/man4/snd_cs35l54.4
 new file mode 100644
-index 000000000000..ca1e357086e5
+index 000000000000..a979769a7af9
 --- /dev/null
 +++ share/man/man4/snd_cs35l54.4
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,156 @@
 +.\"
 +.\" SPDX-License-Identifier: BSD-2-Clause
 +.\"
@@ -50,7 +50,7 @@ index 000000000000..ca1e357086e5
 +.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 +.\" SUCH DAMAGE.
 +.\"
-+.Dd November 11, 2026
++.Dd November 21, 2026
 +.Dt SND_CS35L54 4
 +.Os
 +.Sh NAME
@@ -135,6 +135,10 @@ index 000000000000..ca1e357086e5
 +.It Va dev.cs35l54.%d.play
 +1 while the amplifiers play.
 +Writing 1 or 0 starts or pauses them by hand, for tests.
++.It Va dev.cs35l54.%d.subsystem
++Read-only, the platform subsystem id from ACPI, in lower case:
++the amplifiers follow the speaker stream of the HDA codec with this
++subsystem id.
 +.It Va dev.cs35l54.%d.volume
 +Amplifier volume in dB, from -100 to 12.
 +The default is -30.
@@ -178,10 +182,10 @@ index 000000000000..ca1e357086e5
 +attachment are not supported.
 diff --git sys/dev/sound/pci/hda/cs35l54.c sys/dev/sound/pci/hda/cs35l54.c
 new file mode 100644
-index 000000000000..a3ac1bb1c88c
+index 000000000000..0474711b9621
 --- /dev/null
 +++ sys/dev/sound/pci/hda/cs35l54.c
-@@ -0,0 +1,1222 @@
+@@ -0,0 +1,1224 @@
 +/*-
 + * SPDX-License-Identifier: BSD-2-Clause
 + *
@@ -1322,6 +1326,8 @@ index 000000000000..a3ac1bb1c88c
 +	    "I", "Amplifier volume in dB (-100 to 12)");
 +	SYSCTL_ADD_BOOL(ctx, tree, OID_AUTO, "loaded", CTLFLAG_RD,
 +	    &sc->loaded, 0, "DSP firmware downloaded");
++	SYSCTL_ADD_STRING(ctx, tree, OID_AUTO, "subsystem", CTLFLAG_RD,
++	    sc->sub, 0, "Subsystem id of the HDA codec served (ACPI _SUB)");
 +
 +	/*
 +	 * The download takes seconds, and raw firmware files and on-demand
