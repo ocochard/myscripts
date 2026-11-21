@@ -48,12 +48,14 @@ binary data does not have.
 ## 3. The fix
 
 ```c
-		} else if (len > 0 && memchr(buf, '\0', MIN(len, PAGE_SIZE))) {
+		} else if (len > 0 &&
+		    memchr(buf, '\0', MIN(len, PAGE_SIZE)) != NULL) {
 			/* Binary attribute, such as amdgpu gpu_metrics. */
 			if (req->newptr != NULL)
 				error = EPERM;
 			else
-				error = SYSCTL_OUT(req, buf, MIN(len, PAGE_SIZE));
+				error = SYSCTL_OUT(req, buf,
+				    MIN(len, PAGE_SIZE));
 			goto out;
 		} else if (len) {
 ```

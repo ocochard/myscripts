@@ -1,8 +1,9 @@
 # LinuxKPI: one grace period per `srcu_struct`
 
-Patch: [linuxkpi_srcu_per_struct.patch](linuxkpi_srcu_per_struct.patch),
+Patch: [linuxkpi_srcu_per_struct.patch](linuxkpi_srcu_per_struct.patch)
+(one commit on main 6dc19a71f70c, the version sent for review). The fork
 branch [`olivier-lkpi-srcu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-lkpi-srcu)
-of the FreeBSD fork (one commit on main 46ce9acd6d15).
+still holds the first version, without the fences of "Memory ordering".
 Found while porting the AMD XDNA NPU driver
 ([amdxdna_npu.md](amdxdna_npu.md)).
 
@@ -147,11 +148,13 @@ struct srcu_struct {
 - `synchronize_srcu()`:
   1. flips the phase: readers that start from now on count in the other
      counter, so they cannot keep the writer waiting forever;
-  2. calls `quiesce_all_critical()` (`sys/kern/subr_smp.c`), which returns
+  2. calls `cpus_fence_seq_cst()`, which makes every CPU, the calling one
+     included, run a full memory fence (see "Memory ordering" below);
+  3. calls `quiesce_all_critical()` (`sys/kern/subr_smp.c`), which returns
      once every CPU has left the critical section it was in. A reader that
      read the old phase but had not incremented yet was in such a section, so
      after this its increment is visible;
-  3. waits (sleeping one tick at a time) until the old counter is zero.
+  4. waits (sleeping one tick at a time) until the old counter is zero.
 
 ```mermaid
 sequenceDiagram
@@ -159,6 +162,7 @@ sequenceDiagram
   participant W as synchronize_srcu()
   R->>R: critical_enter, idx = phase (0), readers[0]++, critical_exit
   W->>W: phase = 1
+  W->>W: cpus_fence_seq_cst()
   W->>W: quiesce_all_critical()
   Note over W: readers[0] == 1, wait
   R->>R: readers[0]-- (srcu_read_unlock)
@@ -171,6 +175,37 @@ A zeroed `srcu_struct` is a valid one (phase 0, no reader, no writer), so
 reader's phase load is an acquire load and the writer flips after a full
 fence, so a reader that sees the new phase also sees what the writer
 published before calling `synchronize_srcu()`.
+
+### Memory ordering
+
+The first version of this patch had a hole, found in review. The reader
+writes `td_critnest` (`critical_enter()`) and then reads the phase; the
+writer writes the phase and then reads the reader's `td_critnest`
+(`quiesce_all_critical()`). Each side stores, then loads the other side's
+variable: even amd64 lets a load pass an earlier store still in the
+store buffer. Both sides can then miss each other: the reader takes the
+old phase, the writer sees no critical section and an old counter of
+zero, and the grace period ends while the reader is about to count
+itself in the old phase. The next `synchronize_srcu()` waits on the other
+counter only, and frees data that reader still uses.
+
+Three fences close it (`lock_prof_reset()` in `sys/kern/subr_lock.c` uses
+the first one before its own `quiesce_all_critical()`):
+
+- the writer calls `cpus_fence_seq_cst()` between the flip and
+  `quiesce_all_critical()`. Every CPU runs a full fence: a reader that read
+  the phase before it has its `td_critnest` store visible, so
+  `quiesce_all_critical()` waits for it, unless the reader already left
+  its critical section, in which case its increment is visible (next
+  point); a reader that reads the phase after it sees the new phase;
+- the reader issues a release fence between its counter increment and
+  `critical_exit()`, so on weakly ordered CPUs the writer cannot see
+  `td_critnest` drop to zero before the increment;
+- the writer issues an acquire fence after `quiesce_all_critical()`, so
+  it reads the counters after the `td_critnest` values.
+
+The window is a few instructions wide; no test here can hit it, so the
+argument above is the proof, not a measurement.
 
 ### Why here, and the alternatives
 
@@ -190,14 +225,14 @@ published before calling `synchronize_srcu()`.
 
 - `srcu_barrier()` still waits for the global sleepable epoch's callbacks.
   LinuxKPI has no `call_srcu()`, so there are none; it is left alone.
-- `struct srcu_struct` grows from 0 to 12 bytes. Modules that embed one or
+- `struct srcu_struct` grows from 0 to 16 bytes. Modules that embed one or
   declare one with `DEFINE_STATIC_SRCU()` (drm-kmod's `drm.ko`, i915,
-  mlx5ib, ibcore) must be rebuilt against the new header; an old `drm.ko`
-  would overrun its zero-sized static. A `__FreeBSD_version` bump should go
-  with the commit.
+  ib_uverbs) must be rebuilt against the new header; an old `drm.ko`
+  would overrun its zero-sized static. The commit bumps
+  `__FreeBSD_version` to 1600032 (re-bump at commit time if main moved).
 - `synchronize_srcu()` polls with `pause()` every tick instead of being
-  woken by the last reader. Grace periods last a few milliseconds more
-  than needed; nothing in LinuxKPI calls it on a fast path.
+  woken by the last reader, and sends an IPI to every CPU. Nothing in
+  LinuxKPI calls it on a fast path.
 
 ## 4. Tested
 
@@ -214,5 +249,27 @@ GENERIC-NODEBUG, on frwk-bsd (32 CPUs).
 | amdxdna hardware context create + destroy, 5 runs, then module unload | destroy spins forever (procstat above) | PASS |
 | amdgpu (uses `drm_dev_enter()` on every ioctl): `vulkaninfo --summary` | works | works (RADV STRIX_HALO) |
 
+The rows above are the first version (no fences). The final version, with
+the three fences and the `__FreeBSD_version` bump, ran on 2026-11-21 in a
+bhyve guest on the build host (8 vCPUs, main 6dc19a71f70c plus the patch, the
+same image booted with the first version as a control; each test module
+built against its own kernel):
+
+| Test (3 runs each, then the mutant) | First version | Final version |
+|---|---|---|
+| 1. sync `&b` inside a read of `&a` | PASS, 0 us | PASS, 0 us |
+| 2. sync `&a` waits for a 500 ms reader | PASS, 530-560 ms | PASS, 500-540 ms |
+| 3. stress, 7 readers, 5 s | PASS: 508-514 grace periods, 0 bad | PASS: 69396-71102 grace periods, 0 bad |
+| 3, mutant without `synchronize_srcu()` | FAIL as expected, 2028617 bad | FAIL as expected, 2230170 bad |
+
+The stress test now starts `min(8, ncpu - 1)` readers: with 8 readers on
+8 vCPUs, test 3 never finished on either version, as the readers never
+sleep and left the writer no CPU (not traced further). The final
+version completes far more grace periods, probably because the IPI round of
+`cpus_fence_seq_cst()` usually leaves the old counter at zero by the first
+check, so the writer rarely sleeps a tick. The store-load race itself
+cannot be provoked by this test (see "Memory ordering").
+
 Untested: i386 and the weakly ordered architectures (arm64, riscv, powerpc)
-on real hardware; mlx5ib and ibcore; a kernel with INVARIANTS and WITNESS.
+on real hardware; mlx5ib and ibcore; a kernel with INVARIANTS and WITNESS;
+the final version on frwk-bsd with amdxdna and amdgpu.

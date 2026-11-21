@@ -60,10 +60,12 @@ holds whatever the register there contains. Consequences:
 2. A second `pcim_iomap()` of the same BAR returned `res_table[bar]`. In
    the default mode that slot holds the bus handle, so the value was right
    by accident.
-3. With `want_iomap_res` the table is filled correctly, but the release
-   passed `mmio_table[bar]` (a bus handle) where `pci_iounmap()` compares
-   resources, so the BAR leaked too. Found by reading; iwlwifi is the only
-   in-tree driver in that case; not measured.
+3. iwlwifi, the only in-tree driver with `want_iomap_res`, did not leak:
+   it calls `pcim_request_all_regions()` before `pcim_iomap()`
+   (`sys/contrib/dev/iwlwifi/pcie/drv.c`), so `_lkpi_pci_iomap()` returns
+   the region's own resource, the mismatched `pci_iounmap()` was a no-op,
+   and the region's release freed the BAR. (The first version of this
+   document claimed a leak there; review showed it wrong.)
 
 Measured with amdxdna, which maps 5 BARs with `pcim_iomap()`, on a
 Strix Halo with the AMD IOMMU in interrupt-remapping mode:
@@ -98,7 +100,12 @@ IOMMU driver: [amdiommu_irte_free.md](amdiommu_irte_free.md).
 and in the release:
 
 ```c
+	pdr = lkpi_devres_find(dev, lkpi_pci_devres_release, NULL, NULL);
+	...
 		if (dr->res_table[bar] == NULL)
+			continue;
+		/* A requested region owns its BAR: its release frees it. */
+		if (pdr != NULL && pdr->region_table[bar] == dr->res_table[bar])
 			continue;
 
 		/* pci_iounmap() takes what pcim_iomap() returned. */
@@ -113,6 +120,13 @@ The return value follows the same rule as `linuxkpi_pcim_iomap_table()`
 (line 887): resource with `want_iomap_res`, bus handle without. The
 release passes `pci_iounmap()` the same kind of value the driver got.
 
+The region check matters once the release works: with iwlwifi's
+`pcim_request_all_regions()` then `pcim_iomap()`, both devres entries
+hold the same resource. Releasing it from `pcim_iomap()`'s entry too would
+release the BAR twice (`pci_release_region()` releases it again, and
+under `vgapci` that can drop a reference another child holds). So a BAR
+that a requested region owns is left to that region's release.
+
 Alternatives:
 
 - Convert the handle back to a resource in `lkpi_set_pcim_iomap_devres()`.
@@ -122,7 +136,12 @@ Alternatives:
   pointer from a bus handle, both are kernel addresses.
 
 Not fixed: a driver that sets `want_iomap_res` after mapping (the flag
-changes meaning of values already handed out). No in-tree driver does.
+changes meaning of values already handed out; no in-tree driver does), and
+a region requested with `pci_request_region()` on an unmanaged device and
+then mapped with `pcim_iomap()` (the region is not in `region_table`).
+Also older and left alone: `pci_release_region()` compares `rle->res`
+with a bus handle (since d4a4960c6559), so it never removes its entry
+from `pdev->mmio`.
 
 ## 4. Tested
 
@@ -135,5 +154,22 @@ drm-kmod `olivier-amdxdna`.
 | amdxdna kldunload | `leaking mmio resources`, `Device leaked memory resources` | no message |
 | 4 load/unload cycles (with the IRTE fix) | second load fails | 4/4 attach, `/dev/accel/accel0` each time |
 | `xrt-smi validate` after the cycles | | gemm 51.0 TOPS, latency 56 us, PASSED |
-| iwlwifi (want_iomap_res) | untested | untested |
-| drivers using `pcim_iomap_regions()` only | unchanged path | untested |
+| iwlwifi (want_iomap_res, region requested first) | untested | untested (no hardware; covered by reading) |
+
+The rows above are the first version of the patch (no region check). The
+final version was built into a test kernel for the HP ZBook Ultra G1a
+(its `zbook` source, 0d71515aee38, plus this commit) to exercise the
+changed release function with mt7925, which maps its BAR with
+`pcim_iomap_regions()`, by reloading `if_mt7925`:
+
+| Kernel | `kldunload`/`kldload if_mt7925` cycles | Result |
+|---|---|---|
+| the laptop's installed kernel | 3 + 3 + 8 | all reassociate and pass traffic |
+| test kernel with this commit | 2 runs | BAR released and allocated again cleanly each cycle, then the whole system hangs in cycle 2, after `lkpi_ic_addba_request` |
+| control: same build, same source, without this commit | 1 run | same hang, in cycle 1 |
+
+The control hangs the same way, so the hang belongs to how those test
+kernels were built (rebuilt kernel plus four modules copied from the
+installed kernel), not to this commit; it is an mt7925/LinuxKPI 802.11
+problem to chase separately. A clean mt7925 reload run with this commit
+is therefore still missing.

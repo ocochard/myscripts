@@ -1,4 +1,4 @@
-From d2656d7394c90562035bf47cd815562937b53f27 Mon Sep 17 00:00:00 2001
+From 0226cef548793670703de4a410d5a864d21865ef Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 16 Nov 2026 20:55:36 +0100
 Subject: [PATCH] LinuxKPI: sysfs: Return binary attributes whole
@@ -10,26 +10,30 @@ activity table) were truncated to their 4-byte header.
 
 Text attributes never contain a NUL, so return the bytes show()
 produced as they are when the buffer has one, and refuse writes there.
+A text show() that counted its terminating NUL would now be returned
+raw; none of the in-tree consumers does.
 
 MFC after:	1 week
 ---
- sys/compat/linuxkpi/common/include/linux/sysfs.h | 7 +++++++
- 1 file changed, 7 insertions(+)
+ sys/compat/linuxkpi/common/include/linux/sysfs.h | 9 +++++++++
+ 1 file changed, 9 insertions(+)
 
 diff --git a/sys/compat/linuxkpi/common/include/linux/sysfs.h b/sys/compat/linuxkpi/common/include/linux/sysfs.h
-index e21498c41617..416525d23568 100644
+index e21498c41617..df264c5480c2 100644
 --- a/sys/compat/linuxkpi/common/include/linux/sysfs.h
 +++ b/sys/compat/linuxkpi/common/include/linux/sysfs.h
-@@ -154,6 +154,13 @@ sysctl_handle_attr(SYSCTL_HANDLER_ARGS)
+@@ -154,6 +154,15 @@ sysctl_handle_attr(SYSCTL_HANDLER_ARGS)
  			if (error != EIO)
  				goto out;
  			buf[0] = '\0';
-+		} else if (len > 0 && memchr(buf, '\0', MIN(len, PAGE_SIZE))) {
++		} else if (len > 0 &&
++		    memchr(buf, '\0', MIN(len, PAGE_SIZE)) != NULL) {
 +			/* Binary attribute, such as amdgpu gpu_metrics. */
 +			if (req->newptr != NULL)
 +				error = EPERM;
 +			else
-+				error = SYSCTL_OUT(req, buf, MIN(len, PAGE_SIZE));
++				error = SYSCTL_OUT(req, buf,
++				    MIN(len, PAGE_SIZE));
 +			goto out;
  		} else if (len) {
  			len--;

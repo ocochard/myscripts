@@ -1,4 +1,4 @@
-From 4ecb924619b207c9c0a8d76d95c8de9bdf5d9c5d Mon Sep 17 00:00:00 2001
+From 0351a39452389ae2dd34bd199d0502aa7dfb2021 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 16 Nov 2026 19:48:03 +0100
 Subject: [PATCH] LinuxKPI: pci: Fix pcim_iomap() BAR release
@@ -6,25 +6,26 @@ Subject: [PATCH] LinuxKPI: pci: Fix pcim_iomap() BAR release
 pcim_iomap() passed the bus handle returned by pci_iomap() to
 lkpi_set_pcim_iomap_devres(), which expects a struct resource, so the
 devres table held a bogus handle and pci_iounmap() never matched the
-BAR on release.  Every pcim_iomap() BAR leaked and the driver could
-not attach again after a reload.  With want_iomap_res (iwlwifi) the
-release passed a bus handle where pci_iounmap() expects the resource,
-so that BAR leaked too.
+BAR on release.  A BAR that only pcim_iomap() had allocated leaked, and
+the driver could not attach again after a reload.
 
 Store the resource and return the handle type the caller asked for,
-both on first and cached calls.  Release with that same handle type.
+both on first and cached calls.  Release with that same handle type,
+but leave a BAR shared with a requested region, as iwlwifi does with
+pcim_request_all_regions(), to that region's release so it is not
+released twice.
 
 Fixes:		2f9064a5d2b5 ("LinuxKPI: pci: implement pcim_iomap()")
 MFC after:	1 week
 ---
- sys/compat/linuxkpi/common/src/linux_pci.c | 32 ++++++++++++----------
- 1 file changed, 18 insertions(+), 14 deletions(-)
+ sys/compat/linuxkpi/common/src/linux_pci.c | 37 ++++++++++++++--------
+ 1 file changed, 23 insertions(+), 14 deletions(-)
 
 diff --git a/sys/compat/linuxkpi/common/src/linux_pci.c b/sys/compat/linuxkpi/common/src/linux_pci.c
-index 8270f3bed54a..34d039e84309 100644
+index d095b5be8ba9..97861bda6831 100644
 --- a/sys/compat/linuxkpi/common/src/linux_pci.c
 +++ b/sys/compat/linuxkpi/common/src/linux_pci.c
-@@ -1004,20 +1004,22 @@ linuxkpi_pcim_iomap(struct pci_dev *pdev, int bar, unsigned long maxlen)
+@@ -1029,20 +1029,22 @@ linuxkpi_pcim_iomap(struct pci_dev *pdev, int bar, unsigned long maxlen)
  	if (dr == NULL)
  		return (NULL);
  
@@ -59,12 +60,24 @@ index 8270f3bed54a..34d039e84309 100644
  }
  
  void
-@@ -1101,10 +1103,12 @@ lkpi_pcim_iomap_table_release(struct device *dev, void *p)
+@@ -1119,17 +1121,24 @@ static void
+ lkpi_pcim_iomap_table_release(struct device *dev, void *p)
+ {
+ 	struct pcim_iomap_devres *dr;
++	struct pci_devres *pdr;
+ 	struct pci_dev *pdev;
+ 	int bar;
+ 
+ 	dr = p;
  	pdev = to_pci_dev(dev);
++	pdr = lkpi_devres_find(dev, lkpi_pci_devres_release, NULL, NULL);
  	for (bar = PCIR_MAX_BAR_0; bar >= 0; bar--) {
  
 -		if (dr->mmio_table[bar] == NULL)
 +		if (dr->res_table[bar] == NULL)
++			continue;
++		/* A requested region owns its BAR: its release frees it. */
++		if (pdr != NULL && pdr->region_table[bar] == dr->res_table[bar])
  			continue;
  
 -		pci_iounmap(pdev, dr->mmio_table[bar]);

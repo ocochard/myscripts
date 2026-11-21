@@ -1,8 +1,45 @@
-diff --git sbin/devmatch/devmatch.c sbin/devmatch/devmatch.c
-index baf52c070b70..f6b2d86e301e 100644
---- sbin/devmatch/devmatch.c
-+++ sbin/devmatch/devmatch.c
-@@ -478,16 +478,26 @@ find_unmatched(struct devinfo_dev *dev, void *arg)
+From e96cd28f5336e5ce943bfa9f4172ff952a713f7a Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sat, 21 Nov 2026 23:39:23 +0100
+Subject: [PATCH 1/2] devmatch: Match hostb(4) and vgapci(4) devices
+
+amdtemp(4), amdsmn(4) and amdsmu(4) attach below hostb(4), which owns
+the host bridge, and acpi_video(4) below vgapci(4), which owns the
+display controller.  devmatch skipped these attached devices, so the
+modules never autoloaded.  Matching them against the pci hints instead
+would also autoload drm drivers for the display controller.
+
+Match a device owned by hostb(4) or vgapci(4) against the hints for
+that driver as a bus, and move the tables of amdtemp(4), amdsmn(4) and
+amdsmu(4) there.  devmatch -a still reports the matches on the parent
+bus.  amdsmu(4) now loads at boot on the AMD laptops it supports, where
+it sends the SMU sleep hint on suspend-to-idle.
+---
+ sbin/devmatch/devmatch.c  | 32 ++++++++++++++++++++++++++------
+ sys/dev/amdsmn/amdsmn.c   |  2 +-
+ sys/dev/amdsmu/amdsmu.c   |  2 +-
+ sys/dev/amdtemp/amdtemp.c |  2 +-
+ 4 files changed, 29 insertions(+), 9 deletions(-)
+
+diff --git a/sbin/devmatch/devmatch.c b/sbin/devmatch/devmatch.c
+index baf52c070b70..f6d0db459433 100644
+--- a/sbin/devmatch/devmatch.c
++++ b/sbin/devmatch/devmatch.c
+@@ -473,18 +473,37 @@ search_hints(const char *bus, const char *dev, const char *pnpinfo)
+ 	free(lastmod);
+ }
+ 
++static void
++search_bus(struct devinfo_dev *dev, const char *bus)
++{
++	if (verbose_flag)
++		printf("Searching %s %s bus at %s for pnpinfo %s\n",
++		    dev->dd_name, bus, dev->dd_location, dev->dd_pnpinfo);
++	search_hints(bus, dev->dd_name, dev->dd_pnpinfo);
++}
++
+ static int
+ find_unmatched(struct devinfo_dev *dev, void *arg)
  {
  	struct devinfo_dev *parent;
  	char *bus, *p;
@@ -27,15 +64,81 @@ index baf52c070b70..f6b2d86e301e 100644
 +		if (!all_flag && !busdrv && dev->dd_flags & DF_ATTACHED_ONCE)
  			break;
  		parent = devinfo_handle_to_device(dev->dd_parent);
--		bus = strdup(parent->dd_name);
-+		bus = strdup(busdrv ? dev->dd_drivername : parent->dd_name);
- 		p = bus + strlen(bus) - 1;
+ 		bus = strdup(parent->dd_name);
+@@ -492,10 +511,11 @@ find_unmatched(struct devinfo_dev *dev, void *arg)
  		while (p >= bus && isdigit(*p))
  			p--;
-diff --git sys/dev/acpica/acpi_video.c sys/dev/acpica/acpi_video.c
+ 		*++p = '\0';
+-		if (verbose_flag)
+-			printf("Searching %s %s bus at %s for pnpinfo %s\n",
+-			    dev->dd_name, bus, dev->dd_location, dev->dd_pnpinfo);
+-		search_hints(bus, dev->dd_name, dev->dd_pnpinfo);
++		/* -a still reports the matches on the parent bus. */
++		if (!busdrv || all_flag)
++			search_bus(dev, bus);
++		if (busdrv)
++			search_bus(dev, dev->dd_drivername);
+ 		free(bus);
+ 	} while (0);
+ 
+diff --git a/sys/dev/amdsmn/amdsmn.c b/sys/dev/amdsmn/amdsmn.c
+index d19103738ec6..dd81269ba032 100644
+--- a/sys/dev/amdsmn/amdsmn.c
++++ b/sys/dev/amdsmn/amdsmn.c
+@@ -178,7 +178,7 @@ static driver_t amdsmn_driver = {
+ 
+ DRIVER_MODULE(amdsmn, hostb, amdsmn_driver, NULL, NULL);
+ MODULE_VERSION(amdsmn, 1);
+-MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdsmn, amdsmn_ids,
++MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdsmn, amdsmn_ids,
+     nitems(amdsmn_ids));
+ 
+ static bool
+diff --git a/sys/dev/amdsmu/amdsmu.c b/sys/dev/amdsmu/amdsmu.c
+index 4d833e90cf11..ecb3f495d8fe 100644
+--- a/sys/dev/amdsmu/amdsmu.c
++++ b/sys/dev/amdsmu/amdsmu.c
+@@ -592,5 +592,5 @@ static driver_t amdsmu_driver = {
+ DRIVER_MODULE(amdsmu, hostb, amdsmu_driver, NULL, NULL);
+ MODULE_VERSION(amdsmu, 1);
+ MODULE_DEPEND(amdsmu, amdsmn, 1, 1, 1);
+-MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdsmu, amdsmu_products,
++MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdsmu, amdsmu_products,
+     nitems(amdsmu_products));
+diff --git a/sys/dev/amdtemp/amdtemp.c b/sys/dev/amdtemp/amdtemp.c
+index b1ecb014a2b0..3b9938cdee5a 100644
+--- a/sys/dev/amdtemp/amdtemp.c
++++ b/sys/dev/amdtemp/amdtemp.c
+@@ -258,7 +258,7 @@ static driver_t amdtemp_driver = {
+ DRIVER_MODULE(amdtemp, hostb, amdtemp_driver, NULL, NULL);
+ MODULE_VERSION(amdtemp, 1);
+ MODULE_DEPEND(amdtemp, amdsmn, 1, 1, 1);
+-MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdtemp, amdtemp_products,
++MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdtemp, amdtemp_products,
+     nitems(amdtemp_products));
+ 
+ static bool
+-- 
+2.56.0
+
+
+From 8a651c2184de02ada8cebc07a4854b2cd2833dc6 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Tue, 17 Nov 2026 14:35:24 +0100
+Subject: [PATCH 2/2] acpi_video: Let devmatch load the module
+
+acpi_video(4) only probes the ACPI methods of a display controller and
+has no device ID, so nothing loaded it and the brightness keys sent no
+event unless it was loaded by hand.  It now loads on any machine with a
+display controller and attaches only where ACPI provides _DOD and _DOS.
+---
+ sys/dev/acpica/acpi_video.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/sys/dev/acpica/acpi_video.c b/sys/dev/acpica/acpi_video.c
 index 07fbe54d832b..bf3b6a291a1c 100644
---- sys/dev/acpica/acpi_video.c
-+++ sys/dev/acpica/acpi_video.c
+--- a/sys/dev/acpica/acpi_video.c
++++ b/sys/dev/acpica/acpi_video.c
 @@ -195,6 +195,18 @@ static driver_t acpi_video_driver = {
  };
  
@@ -55,40 +158,6 @@ index 07fbe54d832b..bf3b6a291a1c 100644
  MODULE_DEPEND(acpi_video, acpi, 1, 1, 1);
  #ifdef EVDEV_SUPPORT
  MODULE_DEPEND(acpi_video, evdev, 1, 1, 1);
-diff --git sys/dev/amdsmn/amdsmn.c sys/dev/amdsmn/amdsmn.c
-index d19103738ec6..dd81269ba032 100644
---- sys/dev/amdsmn/amdsmn.c
-+++ sys/dev/amdsmn/amdsmn.c
-@@ -178,7 +178,7 @@ static driver_t amdsmn_driver = {
- 
- DRIVER_MODULE(amdsmn, hostb, amdsmn_driver, NULL, NULL);
- MODULE_VERSION(amdsmn, 1);
--MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdsmn, amdsmn_ids,
-+MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdsmn, amdsmn_ids,
-     nitems(amdsmn_ids));
- 
- static bool
-diff --git sys/dev/amdsmu/amdsmu.c sys/dev/amdsmu/amdsmu.c
-index 4d833e90cf11..ecb3f495d8fe 100644
---- sys/dev/amdsmu/amdsmu.c
-+++ sys/dev/amdsmu/amdsmu.c
-@@ -592,5 +592,5 @@ static driver_t amdsmu_driver = {
- DRIVER_MODULE(amdsmu, hostb, amdsmu_driver, NULL, NULL);
- MODULE_VERSION(amdsmu, 1);
- MODULE_DEPEND(amdsmu, amdsmn, 1, 1, 1);
--MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdsmu, amdsmu_products,
-+MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdsmu, amdsmu_products,
-     nitems(amdsmu_products));
-diff --git sys/dev/amdtemp/amdtemp.c sys/dev/amdtemp/amdtemp.c
-index b1ecb014a2b0..3b9938cdee5a 100644
---- sys/dev/amdtemp/amdtemp.c
-+++ sys/dev/amdtemp/amdtemp.c
-@@ -258,7 +258,7 @@ static driver_t amdtemp_driver = {
- DRIVER_MODULE(amdtemp, hostb, amdtemp_driver, NULL, NULL);
- MODULE_VERSION(amdtemp, 1);
- MODULE_DEPEND(amdtemp, amdsmn, 1, 1, 1);
--MODULE_PNP_INFO("U16:vendor;U16:device", pci, amdtemp, amdtemp_products,
-+MODULE_PNP_INFO("U16:vendor;U16:device", hostb, amdtemp, amdtemp_products,
-     nitems(amdtemp_products));
- 
- static bool
+-- 
+2.56.0
+

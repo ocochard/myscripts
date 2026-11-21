@@ -1,13 +1,32 @@
-diff --git sys/dev/evdev/evdev_utils.c sys/dev/evdev/evdev_utils.c
-index bd3039c3b825..f534f3746ded 100644
---- sys/dev/evdev/evdev_utils.c
-+++ sys/dev/evdev/evdev_utils.c
-@@ -148,14 +148,14 @@ static uint16_t evdev_at_set1_scancodes[] = {
+From 0c54fd8da608dcbcd10c5fc63f5fa6727926cfbe Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Tue, 17 Nov 2026 14:35:24 +0100
+Subject: [PATCH] evdev: Map the HP mic mute and programmable keys
+
+HP laptops send these keys as AT scancodes 0xE0 0x01 and 0x68, which
+evdev dropped.  Map 0xE0 0x01 to KEY_MICMUTE, as systemd's hwdb does
+for the HP business laptops (EliteBook, ProBook, ZBook, Elite
+Dragonfly), and 0x68 to KEY_PROG1, as it does for the Elite
+Dragonfly G2.
+
+hwdb maps 0xE0 0x01 to Fn+Esc on the other HP models.  The AT table is
+not per machine, so Fn+Esc there now sends KEY_MICMUTE instead of
+nothing.
+---
+ sys/dev/evdev/evdev_utils.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/sys/dev/evdev/evdev_utils.c b/sys/dev/evdev/evdev_utils.c
+index bd3039c3b825..07ea01f31432 100644
+--- a/sys/dev/evdev/evdev_utils.c
++++ b/sys/dev/evdev/evdev_utils.c
+@@ -148,14 +148,16 @@ static uint16_t evdev_at_set1_scancodes[] = {
  	/* 0x60 - 0x7f */
  	NONE,		NONE,		NONE,		NONE,
  	NONE,		NONE,		NONE,		NONE,
 -	NONE,		NONE,		NONE,		NONE,
-+	KEY_PROG1,	NONE,		NONE,		NONE,		/* 0x68: HP */
++	/* 0x68: HP programmable key */
++	KEY_PROG1,	NONE,		NONE,		NONE,
  	NONE,		NONE,		NONE,		NONE,
  	KEY_KATAKANAHIRAGANA,	KEY_HANJA,	KEY_HANGEUL,	KEY_RO,
  	NONE,		NONE,	KEY_ZENKAKUHANKAKU,	KEY_HIRAGANA,
@@ -15,7 +34,11 @@ index bd3039c3b825..f534f3746ded 100644
  	NONE,		KEY_YEN,	KEY_KPCOMMA,	NONE,
  	/* 0x00 - 0x1f. 0xE0 prefixed */
 -	NONE,		NONE,		NONE,		NONE,
-+	NONE,		KEY_MICMUTE,	NONE,		NONE,		/* 0x01: HP */
++	/* 0xE0 0x01: HP mic mute (Fn+Esc on other HP models) */
++	NONE,		KEY_MICMUTE,	NONE,		NONE,
  	NONE,		NONE,		NONE,		NONE,
  	NONE,		NONE,		NONE,		NONE,
  	NONE,		NONE,		NONE,		NONE,
+-- 
+2.56.0
+

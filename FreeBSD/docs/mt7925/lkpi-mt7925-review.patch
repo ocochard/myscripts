@@ -1,0 +1,689 @@
+From 4cb94968d89b2a4d2d0a9115267761b6b3dd7fe8 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 1/7] LinuxKPI: idr: allow lookups after idr_destroy()
+
+On Linux idr_destroy() leaves an empty, usable idr; ours also destroys
+the lock, so mt76 cleaning a station twice panicked in idr_remove().
+---
+ sys/compat/linuxkpi/common/src/linux_idr.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_idr.c b/sys/compat/linuxkpi/common/src/linux_idr.c
+index 7e5f0d28867e..c8852cf7ef05 100644
+--- a/sys/compat/linuxkpi/common/src/linux_idr.c
++++ b/sys/compat/linuxkpi/common/src/linux_idr.c
+@@ -273,6 +273,9 @@ idr_remove(struct idr *idr, int id)
+ {
+ 	void *res;
+ 
++	/* Linux allows lookups on an idr after idr_destroy(): it is empty. */
++	if (IDR_LOCK_INITALIZED(idr) == 0)
++		return (NULL);
+ 	IDR_LOCK(idr);
+ 	res = idr_remove_locked(idr, id);
+ 	IDR_UNLOCK(idr);
+@@ -340,6 +343,8 @@ idr_find(struct idr *idr, int id)
+ {
+ 	void *res;
+ 
++	if (IDR_LOCK_INITALIZED(idr) == 0)
++		return (NULL);
+ 	IDR_LOCK(idr);
+ 	res = idr_find_locked(idr, id);
+ 	IDR_UNLOCK(idr);
+@@ -352,6 +357,8 @@ idr_get_next(struct idr *idr, int *nextidp)
+ 	void *res = NULL;
+ 	int id = *nextidp;
+ 
++	if (IDR_LOCK_INITALIZED(idr) == 0)
++		return (NULL);
+ 	IDR_LOCK(idr);
+ 	for (; id <= idr_max(idr); id++) {
+ 		res = idr_find_locked(idr, id);
+-- 
+2.56.0
+
+
+From 7d97d1e1410793bac4515b4e61285795cbb427f0 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 2/7] lindebugfs: export debugfs_create_devm_seqfile()
+
+Added in 3521cce445d4 but missing from EXPORT_SYMS, so modules using it
+fail to load with an undefined symbol.
+---
+ sys/modules/lindebugfs/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sys/modules/lindebugfs/Makefile b/sys/modules/lindebugfs/Makefile
+index 44041011b407..34acaf875ec8 100644
+--- a/sys/modules/lindebugfs/Makefile
++++ b/sys/modules/lindebugfs/Makefile
+@@ -9,6 +9,7 @@ CFLAGS+= ${LINUXKPI_INCLUDES}
+ EXPORT_SYMS=	debugfs_create_atomic_t
+ EXPORT_SYMS+=	debugfs_create_blob
+ EXPORT_SYMS+=	debugfs_create_bool
++EXPORT_SYMS+=	debugfs_create_devm_seqfile
+ EXPORT_SYMS+=	debugfs_create_dir
+ EXPORT_SYMS+=	debugfs_create_file
+ EXPORT_SYMS+=	debugfs_create_file_size
+-- 
+2.56.0
+
+
+From 56b268ffc1abf1a3ec6e8971287b77bc0d91c486 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 3/7] LinuxKPI: skbuff: make napi_consume_skb() free the skb
+
+It was an empty stub, so every completed TX skb that mt7921 and mt7925
+free through it leaked.
+---
+ sys/compat/linuxkpi/common/include/linux/skbuff.h | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/sys/compat/linuxkpi/common/include/linux/skbuff.h b/sys/compat/linuxkpi/common/include/linux/skbuff.h
+index 77ef47064fa5..c3a4897d5b34 100644
+--- a/sys/compat/linuxkpi/common/include/linux/skbuff.h
++++ b/sys/compat/linuxkpi/common/include/linux/skbuff.h
+@@ -1141,7 +1141,10 @@ napi_consume_skb(struct sk_buff *skb, int budget)
+ {
+ 
+ 	SKB_TRACE(skb);
+-	SKB_TODO();
++	if (skb == NULL)
++		return;
++	/* No NAPI skb cache; budget only selects it on Linux. */
++	consume_skb(skb);
+ }
+ 
+ static inline struct sk_buff *
+-- 
+2.56.0
+
+
+From db5cce1b6ad3136b0ce758ef82bb8a4e757ab505 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 4/7] LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE
+
+Track pool pages and their DMA mapping in a side table until struct page
+can hold them, and return recycled skb frags and heads to the pool.
+Without it mt76 gets no RX buffers and every MCU command times out.
+---
+ sys/compat/linuxkpi/common/src/linux_skbuff.c |  56 ++++++---
+ .../linuxkpi/common/src/linuxkpi_page_pool.c  | 117 +++++++++++++++++-
+ 2 files changed, 148 insertions(+), 25 deletions(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_skbuff.c b/sys/compat/linuxkpi/common/src/linux_skbuff.c
+index 6908101f25af..38a10d576e78 100644
+--- a/sys/compat/linuxkpi/common/src/linux_skbuff.c
++++ b/sys/compat/linuxkpi/common/src/linux_skbuff.c
+@@ -232,6 +232,36 @@ linuxkpi_skb_copy(const struct sk_buff *skb, gfp_t gfp)
+ 	return (new);
+ }
+ 
++/* Free a frag page, back to its page pool for a recycled skb. */
++static void
++lkpi_skb_free_page(struct sk_buff *skb, struct page *p)
++{
++	if ((skb->_flags & _SKB_PP_RECYCLE) != 0)
++#ifdef PAGE_IS_LKPI_PAGE
++		page_pool_put_full_page(p->pp, p, false);
++#else
++		page_pool_put_full_page(NULL, p, false);
++#endif
++	else
++		__free_page(p);
++}
++
++/* Free an external head, back to its page pool for a recycled skb. */
++static void
++lkpi_skb_free_extfrag(struct sk_buff *skb)
++{
++	void *p;
++
++	p = skb->head;
++#ifndef PAGE_IS_LKPI_PAGE
++	if ((skb->_flags & _SKB_PP_RECYCLE) != 0)
++		page_pool_put_full_page(NULL, virt_to_head_page(p), false);
++	else
++#endif
++		skb_free_frag(p);
++	skb->head = NULL;
++}
++
+ int
+ lkpi___skb_linearize(struct sk_buff *skb)
+ {
+@@ -258,19 +288,17 @@ lkpi___skb_linearize(struct sk_buff *skb)
+ 			shinfo->frags[fragno].size = 0;
+ 			shinfo->frags[fragno].offset = 0;
+ 			shinfo->frags[fragno].page = NULL;
+-			__free_page(p);
++			lkpi_skb_free_page(skb, p);
+ 			count++;
+ 		}
+ 	}
+ 
+ 	if ((skb->_flags & _SKB_FLAGS_SKBEXTFRAG) != 0) {
+-		void *p;
+-
+-		p = skb->head;
+-		skb_free_frag(p);
+-		skb->head = NULL;
++		lkpi_skb_free_extfrag(skb);
+ 		skb->_flags &= ~_SKB_FLAGS_SKBEXTFRAG;
+ 	}
++	/* The head and data from skb_copy() are not pool pages. */
++	skb->_flags &= ~_SKB_PP_RECYCLE;
+ 
+ #ifdef	SKB_DMA32_MALLOC
+ 	if (__predict_false(linuxkpi_skb_memlimit != 0))
+@@ -351,23 +379,13 @@ linuxkpi_kfree_skb(struct sk_buff *skb)
+ 			shinfo->frags[fragno].size = 0;
+ 			shinfo->frags[fragno].offset = 0;
+ 			shinfo->frags[fragno].page = NULL;
+-#ifdef PAGE_IS_LKPI_PAGE
+-			if ((skb->_flags & _SKB_PP_RECYCLE) != 0)
+-				page_pool_put_full_page(p->pp, p, false);
+-			else
+-#endif
+-				__free_page(p);
++			lkpi_skb_free_page(skb, p);
+ 			count++;
+ 		}
+ 	}
+ 
+-	if ((skb->_flags & _SKB_FLAGS_SKBEXTFRAG) != 0) {
+-		void *p;
+-
+-		p = skb->head;
+-		skb_free_frag(p);
+-		skb->head = NULL;
+-	}
++	if ((skb->_flags & _SKB_FLAGS_SKBEXTFRAG) != 0)
++		lkpi_skb_free_extfrag(skb);
+ 
+ #ifdef	SKB_DMA32_MALLOC
+ 	if (__predict_false(linuxkpi_skb_memlimit != 0))
+diff --git a/sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c b/sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c
+index 93e649faafd7..bfdad95992d4 100644
+--- a/sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c
++++ b/sys/compat/linuxkpi/common/src/linuxkpi_page_pool.c
+@@ -11,16 +11,56 @@
+ #include <linux/dma-mapping.h>
+ #include <net/page_pool/helpers.h>
+ 
++#ifndef PAGE_IS_LKPI_PAGE
++#include <sys/lock.h>
++#include <sys/mutex.h>
++
++/*
++ * Without a LinuxKPI struct page there is nowhere to keep the pool and the
++ * DMA address on the page, so track the pages we hand out in a hash table.
++ */
++struct lkpi_pp_page {
++	struct lkpi_pp_page		*next;
++	struct page			*page;
++	struct device			*dev;
++	dma_addr_t			dma;
++	enum dma_data_direction		dir;
++	bool				mapped;
++};
++
++#define	LKPI_PP_HASH_SIZE	1024
++static struct lkpi_pp_page *lkpi_pp_hash[LKPI_PP_HASH_SIZE];
++static struct mtx lkpi_pp_mtx;
++MTX_SYSINIT(lkpi_pp_mtx, &lkpi_pp_mtx, "lkpi page pool", MTX_DEF);
++
++static inline u_int
++lkpi_pp_hash_idx(const struct page *p)
++{
++
++	return (((uintptr_t)p / sizeof(*p)) % LKPI_PP_HASH_SIZE);
++}
++
++/* Returns the link pointing at the entry for p, or at the chain's NULL end. */
++static struct lkpi_pp_page **
++lkpi_pp_lookup(const struct page *p)
++{
++	struct lkpi_pp_page **pppp;
++
++	mtx_assert(&lkpi_pp_mtx, MA_OWNED);
++	for (pppp = &lkpi_pp_hash[lkpi_pp_hash_idx(p)]; *pppp != NULL;
++	    pppp = &(*pppp)->next)
++		if ((*pppp)->page == p)
++			break;
++	return (pppp);
++}
++#endif
++
+ struct page_pool *
+ linuxkpi_page_pool_create(const struct page_pool_params *ppparams)
+ {
+ 	struct page_pool *pp;
+ 	int error;
+ 
+-#ifndef PAGE_IS_LKPI_PAGE
+-	WARN_ONCE(1, "\n!!! LinuxKPI page pool not supported yet!!!\n\n");
+-#endif
+-
+ 	pp = kzalloc_node(sizeof(*pp), GFP_KERNEL, ppparams->nid);
+ 	if (pp == NULL)
+ 		return (ERR_PTR(-ENOMEM));
+@@ -116,7 +156,49 @@ linuxkpi_page_pool_alloc_frag(struct page_pool *pp, uint32_t *offset,
+ 
+ 	return (p);
+ #else
+-	return (NULL);
++	struct lkpi_pp_page *ppp;
++	struct page *p;
++
++	if (size > PAGE_SIZE) {
++		pr_warn_once("%s: size %zu > PAGE_SIZE\n", __func__, size);
++		return (NULL);
++	}
++
++	ppp = kzalloc(sizeof(*ppp), gfp);
++	if (ppp == NULL)
++		return (NULL);
++	p = alloc_page(gfp);
++	if (p == NULL) {
++		kfree(ppp);
++		return (NULL);
++	}
++	ppp->page = p;
++	ppp->dev = pp->params.dev;
++	ppp->dir = pp->params.dma_dir;
++
++	if ((pp->params.flags & PP_FLAG_DMA_MAP) != 0) {
++		ppp->dma = dma_map_page_attrs(ppp->dev, p, 0, PAGE_SIZE,
++		    ppp->dir, DMA_ATTR_SKIP_CPU_SYNC);
++		if (dma_mapping_error(ppp->dev, ppp->dma)) {
++			put_page(p);
++			kfree(ppp);
++			return (NULL);
++		}
++		ppp->mapped = true;
++		if ((pp->params.flags & PP_FLAG_DMA_SYNC_DEV) != 0)
++			dma_sync_single_for_device(ppp->dev, ppp->dma,
++			    PAGE_SIZE, ppp->dir);
++	}
++
++	if (offset != NULL)
++		*offset = 0;
++
++	mtx_lock(&lkpi_pp_mtx);
++	ppp->next = lkpi_pp_hash[lkpi_pp_hash_idx(p)];
++	lkpi_pp_hash[lkpi_pp_hash_idx(p)] = ppp;
++	mtx_unlock(&lkpi_pp_mtx);
++
++	return (p);
+ #endif /* PAGE_IS_LKPI_PAGE */
+ }
+ 
+@@ -138,6 +220,22 @@ linuxkpi_page_pool_put_full_page(struct page_pool *pp, struct page *page,
+ #ifdef PAGE_IS_LKPI_PAGE
+ 	page->pp = NULL;
+ 	page->dma_addr = 0;
++#else
++	struct lkpi_pp_page **pppp, *ppp;
++
++	/* pp may be garbage here: callers derive it from the page. */
++	mtx_lock(&lkpi_pp_mtx);
++	pppp = lkpi_pp_lookup(page);
++	ppp = *pppp;
++	if (ppp != NULL)
++		*pppp = ppp->next;
++	mtx_unlock(&lkpi_pp_mtx);
++	if (ppp != NULL) {
++		if (ppp->mapped)
++			dma_unmap_page_attrs(ppp->dev, ppp->dma, PAGE_SIZE,
++			    ppp->dir, DMA_ATTR_SKIP_CPU_SYNC);
++		kfree(ppp);
++	}
+ #endif
+ 	put_page(page);
+ }
+@@ -151,6 +249,13 @@ linuxkpi_page_pool_get_dma_addr(const struct page *page)
+ #ifdef PAGE_IS_LKPI_PAGE
+ 	return (page->dma_addr);
+ #else
+-	return (0);
++	struct lkpi_pp_page *ppp;
++	dma_addr_t dma;
++
++	mtx_lock(&lkpi_pp_mtx);
++	ppp = *lkpi_pp_lookup(page);
++	dma = (ppp != NULL) ? ppp->dma : 0;
++	mtx_unlock(&lkpi_pp_mtx);
++	return (dma);
+ #endif
+ }
+-- 
+2.56.0
+
+
+From 179c2a7bddef3c2bd8e373994420ecd8f30329d1 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Thu, 12 Nov 2026 17:30:31 +0000
+Subject: [PATCH 5/7] LinuxKPI: skbuff: cache skb data allocations below
+ mem_limit
+
+One contigmalloc() per skb takes milliseconds once low memory fragments
+and stalled TX; use size-aligned UMA zones for sizes up to a page.
+---
+ sys/compat/linuxkpi/common/src/linux_skbuff.c | 134 ++++++++++++++----
+ 1 file changed, 108 insertions(+), 26 deletions(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_skbuff.c b/sys/compat/linuxkpi/common/src/linux_skbuff.c
+index 38a10d576e78..3b7a966f6f75 100644
+--- a/sys/compat/linuxkpi/common/src/linux_skbuff.c
++++ b/sys/compat/linuxkpi/common/src/linux_skbuff.c
+@@ -38,10 +38,14 @@
+ 
+ #include <sys/param.h>
+ #include <sys/types.h>
++#include <sys/domainset.h>
+ #include <sys/kernel.h>
+ #include <sys/malloc.h>
+ #include <sys/sysctl.h>
+ 
++#include <vm/vm.h>
++#include <vm/vm_extern.h>
++#include <vm/vm_kern.h>
+ #include <vm/uma.h>
+ 
+ #ifdef DDB
+@@ -88,8 +92,65 @@ SYSCTL_INT(_compat_linuxkpi_skb, OID_AUTO, mem_limit, CTLFLAG_RDTUN,
+     "1=32bit, 2=36bit, other=undef (currently 32bit)");
+ 
+ static MALLOC_DEFINE(M_LKPISKB, "lkpiskb", "Linux KPI skbuff compat");
++
++/*
++ * contigmalloc(9) for every skb gets slow once low memory fragments; serve
++ * sizes up to a page from per-size UMA zones backed by memory below the
++ * limit instead.  Items are aligned to their size so never cross a page.
++ */
++#define	LKPI_SKB_ZONE_MINSIZE	256
++static uma_zone_t lkpi_skb_zone[8];
++static char lkpi_skb_zone_name[8][16];
++static u_int lkpi_skb_nzones;
++static vm_paddr_t lkpi_skb_high;
++
++static void *
++lkpi_skb_slab_alloc(uma_zone_t zone, vm_size_t size, int domain,
++    uint8_t *pflag, int wait)
++{
++
++	*pflag = UMA_SLAB_KERNEL;
++	return ((void *)kmem_alloc_contig_domainset(DOMAINSET_FIXED(domain),
++	    size, wait, 0, lkpi_skb_high, PAGE_SIZE, 0, VM_MEMATTR_DEFAULT));
++}
++
++static void
++lkpi_skb_slab_free(void *item, vm_size_t size, uint8_t pflag)
++{
++
++	kmem_free(item, size);
++}
++
++static uma_zone_t
++lkpi_skb_zone_find(size_t len)
++{
++	u_int i;
++
++	for (i = 0; i < lkpi_skb_nzones; i++)
++		if (len <= (LKPI_SKB_ZONE_MINSIZE << i))
++			return (lkpi_skb_zone[i]);
++	return (NULL);
++}
+ #endif
+ 
++static void
++lkpi_skb_free_head(struct sk_buff *skb)
++{
++#ifdef	SKB_DMA32_MALLOC
++	uma_zone_t zone;
++
++	if (__predict_false(linuxkpi_skb_memlimit != 0)) {
++		zone = lkpi_skb_zone_find(skb->end - skb->head);
++		if (zone != NULL)
++			uma_zfree(zone, skb->head);
++		else
++			free(skb->head, M_LKPISKB);
++		return;
++	}
++#endif
++	kfree(skb->head);
++}
++
+ struct sk_buff *
+ linuxkpi_alloc_skb(size_t size, gfp_t gfp)
+ {
+@@ -115,22 +176,17 @@ linuxkpi_alloc_skb(size_t size, gfp_t gfp)
+ 	 * We assume no one calls kfree directly on the skb.
+ 	 */
+ 	if (__predict_false(linuxkpi_skb_memlimit != 0)) {
+-		vm_paddr_t high;
++		uma_zone_t zone;
+ 
+-		switch (linuxkpi_skb_memlimit) {
+-#ifdef __LP64__
+-		case 2:
+-			high = (0xfffffffff);	/* 1<<36 really. */
+-			break;
+-#endif
+-		case 1:
+-		default:
+-			high = (0xffffffff);	/* 1<<32 really. */
+-			break;
++		zone = lkpi_skb_zone_find(len);
++		if (zone != NULL) {
++			p = uma_zalloc(zone, linux_check_m_flags(gfp) | M_ZERO);
++		} else {
++			len = roundup_pow_of_two(len);
++			p = contigmalloc(len, M_LKPISKB,
++			    linux_check_m_flags(gfp) | M_ZERO, 0, lkpi_skb_high,
++			    PAGE_SIZE, 0);
+ 		}
+-		len = roundup_pow_of_two(len);
+-		p = contigmalloc(len, M_LKPISKB,
+-		    linux_check_m_flags(gfp) | M_ZERO, 0, high, PAGE_SIZE, 0);
+ 	} else
+ #endif
+ 	p = __kmalloc(len, linux_check_m_flags(gfp) | M_ZERO);
+@@ -300,12 +356,7 @@ lkpi___skb_linearize(struct sk_buff *skb)
+ 	/* The head and data from skb_copy() are not pool pages. */
+ 	skb->_flags &= ~_SKB_PP_RECYCLE;
+ 
+-#ifdef	SKB_DMA32_MALLOC
+-	if (__predict_false(linuxkpi_skb_memlimit != 0))
+-		free(skb->head, M_LKPISKB);
+-	else
+-#endif
+-	kfree(skb->head);
++	lkpi_skb_free_head(skb);
+ 
+ 	skb->head = new->head;
+ 	skb->data = new->data;
+@@ -387,12 +438,7 @@ linuxkpi_kfree_skb(struct sk_buff *skb)
+ 	if ((skb->_flags & _SKB_FLAGS_SKBEXTFRAG) != 0)
+ 		lkpi_skb_free_extfrag(skb);
+ 
+-#ifdef	SKB_DMA32_MALLOC
+-	if (__predict_false(linuxkpi_skb_memlimit != 0))
+-		free(skb->head, M_LKPISKB);
+-	else
+-#endif
+-	kfree(skb->head);
++	lkpi_skb_free_head(skb);
+ 	uma_zfree(skbzone, skb);
+ }
+ 
+@@ -403,6 +449,38 @@ lkpi_skbuff_init(void *arg __unused)
+ 	    sizeof(struct sk_buff) + sizeof(struct skb_shared_info),
+ 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
+ 	/* Do we need to apply limits? */
++
++#ifdef	SKB_DMA32_MALLOC
++	if (linuxkpi_skb_memlimit != 0) {
++		char *name;
++		size_t size;
++
++		switch (linuxkpi_skb_memlimit) {
++#ifdef __LP64__
++		case 2:
++			lkpi_skb_high = (0xfffffffff);	/* 1<<36 really. */
++			break;
++#endif
++		case 1:
++		default:
++			lkpi_skb_high = (0xffffffff);	/* 1<<32 really. */
++			break;
++		}
++		for (size = LKPI_SKB_ZONE_MINSIZE; size <= PAGE_SIZE &&
++		    lkpi_skb_nzones < nitems(lkpi_skb_zone); size <<= 1) {
++			name = lkpi_skb_zone_name[lkpi_skb_nzones];
++			snprintf(name, sizeof(lkpi_skb_zone_name[0]),
++			    "lkpiskb %zu", size);
++			lkpi_skb_zone[lkpi_skb_nzones] = uma_zcreate(name, size,
++			    NULL, NULL, NULL, NULL, size - 1, 0);
++			uma_zone_set_allocf(lkpi_skb_zone[lkpi_skb_nzones],
++			    lkpi_skb_slab_alloc);
++			uma_zone_set_freef(lkpi_skb_zone[lkpi_skb_nzones],
++			    lkpi_skb_slab_free);
++			lkpi_skb_nzones++;
++		}
++	}
++#endif
+ }
+ SYSINIT(linuxkpi_skbuff, SI_SUB_DRIVERS, SI_ORDER_FIRST, lkpi_skbuff_init, NULL);
+ 
+@@ -410,6 +488,10 @@ static void
+ lkpi_skbuff_destroy(void *arg __unused)
+ {
+ 	uma_zdestroy(skbzone);
++#ifdef	SKB_DMA32_MALLOC
++	while (lkpi_skb_nzones > 0)
++		uma_zdestroy(lkpi_skb_zone[--lkpi_skb_nzones]);
++#endif
+ }
+ SYSUNINIT(linuxkpi_skbuff, SI_SUB_DRIVERS, SI_ORDER_SECOND, lkpi_skbuff_destroy, NULL);
+ 
+-- 
+2.56.0
+
+
+From acff15d41e97388997730fd3622184b4a6fcee5d Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Thu, 12 Nov 2026 17:30:32 +0000
+Subject: [PATCH 6/7] LinuxKPI: 802.11: set an airtime estimate on dequeued
+ frames
+
+mac80211 sets tx_time_est for AQL; mt76 limits frames without one to 16
+in flight per station.
+---
+ sys/compat/linuxkpi/common/src/linux_80211.c | 29 ++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_80211.c b/sys/compat/linuxkpi/common/src/linux_80211.c
+index cde4b820b4dd..a4eed95513e1 100644
+--- a/sys/compat/linuxkpi/common/src/linux_80211.c
++++ b/sys/compat/linuxkpi/common/src/linux_80211.c
+@@ -9079,6 +9079,33 @@ linuxkpi_ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
+ 	return (sta);
+ }
+ 
++/*
++ * mac80211 gives every frame it dequeues an airtime estimate (for AQL), and
++ * drivers such as mt76 throttle frames without one.  Estimate it from the
++ * node's net80211 TX rate; we have no AQL limits ourselves.
++ */
++static void
++lkpi_80211_txq_set_time_est(struct ieee80211_txq *txq, struct sk_buff *skb)
++{
++	struct ieee80211_tx_info *info;
++	struct ieee80211_node *ni;
++	uint32_t kbps, us;
++
++	kbps = 0;
++	if (txq->sta != NULL) {
++		ni = STA_TO_LSTA(txq->sta)->ni;
++		if (ni != NULL &&
++		    ni->ni_txrate.type != IEEE80211_NODE_TXRATE_UNDEFINED)
++			kbps = ieee80211_node_get_txrate_kbit(ni);
++	}
++	if (kbps == 0)
++		kbps = 6000;
++	us = howmany((uint64_t)skb->len * 8 * 1000, kbps);
++	/* 10 bit field in 4us units. */
++	info = IEEE80211_SKB_CB(skb);
++	info->tx_time_est = MAX(1, MIN(howmany(us, 4), 1023));
++}
++
+ struct sk_buff *
+ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
+     struct ieee80211_txq *txq)
+@@ -9108,6 +9135,8 @@ linuxkpi_ieee80211_tx_dequeue(struct ieee80211_hw *hw,
+ 	if (skb != NULL)
+ 		ltxq->frms_dequeued++;
+ 	LKPI_80211_LTXQ_UNLOCK(ltxq);
++	if (skb != NULL)
++		lkpi_80211_txq_set_time_est(txq, skb);
+ 
+ stopped:
+ 	return (skb);
+-- 
+2.56.0
+
+
+From 71457e598a1259df5bfeae54c32dff99a393f74c Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Thu, 12 Nov 2026 17:30:32 +0000
+Subject: [PATCH 7/7] LinuxKPI: 802.11: request TX status only when needed
+
+mt76 sends frames that request status outside the BA session, so every
+TCP ACK went out alone; request it as mac80211 does and do not count a
+missing status as a TX error.
+---
+ sys/compat/linuxkpi/common/src/linux_80211.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_80211.c b/sys/compat/linuxkpi/common/src/linux_80211.c
+index a4eed95513e1..a249450cd320 100644
+--- a/sys/compat/linuxkpi/common/src/linux_80211.c
++++ b/sys/compat/linuxkpi/common/src/linux_80211.c
+@@ -6152,7 +6152,13 @@ lkpi_80211_txq_tx_one(struct lkpi_sta *lsta, struct mbuf *m)
+ 	skb_set_queue_mapping(skb, ac);
+ 
+ 	info = IEEE80211_SKB_CB(skb);
+-	info->flags |= IEEE80211_TX_CTL_REQ_TX_STATUS;
++	/*
++	 * Like mac80211, only ask for TX status when someone waits for it:
++	 * mt76 sends frames with a status request outside the BA session.
++	 */
++	if (!ieee80211_is_data(hdr->frame_control) ||
++	    (m->m_flags & (M_EAPOL | M_TXCB)) != 0)
++		info->flags |= IEEE80211_TX_CTL_REQ_TX_STATUS;
+ 	/* Slight delay; probably only happens on scanning so fine? */
+ 	if (c == NULL || c == IEEE80211_CHAN_ANYC)
+ 		c = ic->ic_curchan;
+@@ -9240,8 +9246,11 @@ linuxkpi_ieee80211_tx_status_ext(struct ieee80211_hw *hw,
+ 		status = 1;
+ 		txs.status = IEEE80211_RATECTL_TX_FAIL_UNSPECIFIED;
+ 	}
++	/* No status was requested or reported: unknown, not a failure. */
++	if (txstat->info == NULL)
++		status = 0;
+ 
+-	if (ni != NULL) {
++	if (ni != NULL && txstat->info != NULL) {
+ 		txs.pktlen = skb->len;
+ 		txs.flags |= IEEE80211_RATECTL_STATUS_PKTLEN;
+ 		if (info->status.rates[0].count > 1) {
+-- 
+2.56.0
+

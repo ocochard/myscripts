@@ -1,14 +1,16 @@
 # devmatch: autoload the drivers that live under hostb and vgapci
 
-Patch: [devmatch_hostb.patch](devmatch_hostb.patch), three commits on FreeBSD
-main 46ce9acd6d15 (branch `olivier-devmatch-hostb` of
-github.com/ocochard/freebsd-src; also in branch `zbook`):
+Patch: [devmatch_hostb.patch](devmatch_hostb.patch), two commits on FreeBSD
+main 6dc19a71f70c, the version sent for review:
 
-| Commit | In `zbook` | Subject |
-|---|---|---|
-| 96aeddeb3a89 | 04cef57b2fbd | devmatch: Match host bridges owned by hostb(4) |
-| 0198596f053b | ef7dbe879735 | devmatch: Match hostb and vgapci children on their own bus |
-| 7d6d31baace6 | 8d9d9ecc4441 | acpi_video: Let devmatch load the module |
+| Commit | Subject |
+|---|---|
+| e96cd28f5336 | devmatch: Match hostb(4) and vgapci(4) devices |
+| 8a651c2184de | acpi_video: Let devmatch load the module |
+
+An earlier version, three commits without the `-a` fix of section 3.1, is
+in branch `olivier-devmatch-hostb` of github.com/ocochard/freebsd-src and
+in branch `zbook` (04cef57b2fbd, ef7dbe879735, 8d9d9ecc4441).
 
 Machine: HP ZBook Ultra G1a, AMD Ryzen AI Max (Strix Halo).
 
@@ -116,11 +118,23 @@ driver, and looks it up in the hints for *that driver's* bus, `hostb` or
 		if (!all_flag && !busdrv && dev->dd_flags & DF_ATTACHED_ONCE)
 			break;
 		parent = devinfo_handle_to_device(dev->dd_parent);
-		bus = strdup(busdrv ? dev->dd_drivername : parent->dd_name);
+		bus = strdup(parent->dd_name);
+		...
+		/* -a still reports the matches on the parent bus. */
+		if (!busdrv || all_flag)
+			search_bus(dev, bus);
+		if (busdrv)
+			search_bus(dev, dev->dd_drivername);
 ```
 
-Why the driver's own bus: the first version of the patch (commit
-96aeddeb3a89) matched a host bridge against the `pci` hints.
+`devmatch -a` (list matches for every device, attached or not) searches
+such a device in both: the parent bus `pci`, as before, so it still shows
+the drm drivers that match a display controller, and the driver's own bus.
+The first version searched only the driver's bus there and lost the `pci`
+lines; review caught it.
+
+Why the driver's own bus: an early version of the patch matched a host
+bridge against the `pci` hints.
 Extending that to vgapci would have matched the display controller against
 amdgpu's `pci` table, so devmatch would start loading drm drivers by itself.
 drm is not autoloaded on purpose (it needs packages and firmware, and on
@@ -182,6 +196,17 @@ as the default boot kernel, devmatch from the same branch as
 | `devmatch` after boot | `acpi_video.ko amdsmn.ko amdsmu.ko amdtemp.ko`, not amdgpu (amdgpu loads from `kld_list` only) |
 | Brightness keys after boot | `KEY_BRIGHTNESSDOWN` and `KEY_BRIGHTNESSUP` on `ACPI video extension`; X receives `XF86MonBrightnessDown/Up` (keycodes 232, 233) |
 | `devmatch -u`, stock vs first version | identical output |
+
+Final version, 2026-11-21, same kernel, the three binaries built from main
+(stock), the earlier version and the final version, run from `/tmp`:
+
+| `devmatch -a -v`, buses searched for `hostb0` and `vgapci0` | Result |
+|---|---|
+| stock | `pci` only |
+| earlier version | `hostb` and `vgapci` only (the `pci` matches lost) |
+| final version | `pci`, then `hostb` / `vgapci` |
+| `devmatch` (boot mode), earlier and final | `acpi_video.ko amdsmn.ko amdsmu.ko amdtemp.ko`, no drm module |
+| `devmatch -a`, final vs earlier | same module list (no `pci` hint matches 1002:1586 on this laptop, so the restored `pci` search adds no line here) |
 
 Not tested: Intel host bridges and other display controllers; a machine
 whose firmware lacks `_DOD`/`_DOS` (acpi_video should load and not attach).

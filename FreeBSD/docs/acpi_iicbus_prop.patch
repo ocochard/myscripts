@@ -1,0 +1,210 @@
+From 57ff876fee1dd6ff8fe0069ea3329e16ad147ef7 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sat, 21 Nov 2026 18:49:08 +0100
+Subject: [PATCH 1/2] acpi_iicbus: Free the ivars of deleted children
+
+acpi_iicbus_child_deleted() replaces iicbus_child_deleted() but only
+detached the ACPI data, so the ivars and their resource list leaked
+with every deleted child.  It also used the ivars without checking
+them, while iicbus_add_child_common() can leave a child without any.
+Check them and call iicbus_child_deleted() at the end.
+
+Fixes:		9b7938dcf338 ("iicbus(4): Add support for ACPI-based children enumeration")
+MFC after:	1 week
+---
+ sys/dev/iicbus/acpi_iicbus.c | 3 +++
+ sys/dev/iicbus/iicbus.c      | 2 +-
+ sys/dev/iicbus/iicbus.h      | 1 +
+ 3 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/sys/dev/iicbus/acpi_iicbus.c b/sys/dev/iicbus/acpi_iicbus.c
+index 873a96b04823..ffad1bfb9be7 100644
+--- a/sys/dev/iicbus/acpi_iicbus.c
++++ b/sys/dev/iicbus/acpi_iicbus.c
+@@ -670,8 +670,11 @@ acpi_iicbus_child_deleted(device_t bus, device_t child)
+ {
+ 	struct acpi_iicbus_ivars *devi = device_get_ivars(child);
+ 
++	if (devi == NULL)
++		return;
+ 	if (acpi_get_device(devi->handle) == child)
+ 		AcpiDetachData(devi->handle, acpi_fake_objhandler);
++	iicbus_child_deleted(bus, child);
+ }
+ 
+ static int
+diff --git a/sys/dev/iicbus/iicbus.c b/sys/dev/iicbus/iicbus.c
+index 0894ddddb8e8..48daab6674a6 100644
+--- a/sys/dev/iicbus/iicbus.c
++++ b/sys/dev/iicbus/iicbus.c
+@@ -248,7 +248,7 @@ iicbus_add_child(device_t dev, u_int order, const char *name, int unit)
+ 	    dev, order, name, unit, sizeof(struct iicbus_ivar)));
+ }
+ 
+-static void
++void
+ iicbus_child_deleted(device_t dev, device_t child)
+ {
+ 	struct iicbus_ivar *devi;
+diff --git a/sys/dev/iicbus/iicbus.h b/sys/dev/iicbus/iicbus.h
+index a72b004fcc7f..ec12817bab18 100644
+--- a/sys/dev/iicbus/iicbus.h
++++ b/sys/dev/iicbus/iicbus.h
+@@ -89,6 +89,7 @@ device_t iicbus_add_child_common(device_t dev, u_int order, const char *name,
+     int unit, size_t ivars_size);
+ int iicbus_detach(device_t dev);
+ void iicbus_probe_nomatch(device_t bus, device_t child);
++void iicbus_child_deleted(device_t dev, device_t child);
+ int iicbus_read_ivar(device_t bus, device_t child, int which,
+     uintptr_t *result);
+ int iicbus_write_ivar(device_t bus, device_t child, int which,
+-- 
+2.56.0
+
+
+From 319cab72103f8edb3e37dd4a2125a7c5833deb06 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sat, 21 Nov 2026 18:29:07 +0100
+Subject: [PATCH 2/2] acpi_iicbus: Return _DSD properties of the I2C children
+
+acpi_iicbus has no bus_get_property method, so device_get_property()
+on one of its children reaches acpi(4) through
+bus_generic_get_property().  acpi_bus_get_prop() then takes the
+child's acpi_iicbus ivars for a struct acpi_device and follows garbage
+pointers: on an HP ZBook Ultra G1a, a driver reading _DSD of its I2C
+device froze the machine.
+
+Answer for the I2C children from their own ACPI handle, with a _DSD
+cache in the ivars, through a helper split out of acpi_bus_get_prop().
+---
+ sys/dev/acpica/acpi.c        | 26 ++++++++++++++++++++++----
+ sys/dev/acpica/acpivar.h     |  3 +++
+ sys/dev/iicbus/acpi_iicbus.c | 21 +++++++++++++++++++++
+ 3 files changed, 46 insertions(+), 4 deletions(-)
+
+diff --git a/sys/dev/acpica/acpi.c b/sys/dev/acpica/acpi.c
+index b283856ffe52..d5b75ea255cf 100644
+--- a/sys/dev/acpica/acpi.c
++++ b/sys/dev/acpica/acpi.c
+@@ -168,6 +168,8 @@ static int	acpi_isa_get_compatid(device_t dev, uint32_t *cids, int count);
+ static ACPI_STATUS acpi_device_scan_cb(ACPI_HANDLE h, UINT32 level,
+ 		    void *context, void **retval);
+ static ACPI_STATUS acpi_find_dsd(struct acpi_device *ad);
++static ACPI_STATUS acpi_ad_get_prop(struct acpi_device *ad,
++		    const char *propname, const ACPI_OBJECT **value);
+ static void	acpi_platform_osc(device_t dev);
+ static void	acpi_probe_children(device_t bus);
+ static void	acpi_probe_order(ACPI_HANDLE handle, int *order);
+@@ -1999,14 +2001,18 @@ acpi_device_eval_obj(device_t bus, device_t dev, const char *pathname,
+ static ACPI_STATUS
+ acpi_device_get_prop(device_t bus, device_t dev, const char *propname,
+     const ACPI_OBJECT **value)
++{
++	return (acpi_ad_get_prop(device_get_ivars(dev), propname, value));
++}
++
++static ACPI_STATUS
++acpi_ad_get_prop(struct acpi_device *ad, const char *propname,
++    const ACPI_OBJECT **value)
+ {
+ 	const ACPI_OBJECT *pkg, *name, *val;
+-	struct acpi_device *ad;
+ 	ACPI_STATUS status;
+ 	int i;
+ 
+-	ad = device_get_ivars(dev);
+-
+ 	if (ad == NULL || propname == NULL)
+ 		return (AE_BAD_PARAMETER);
+ 	if (ad->dsd_pkg == NULL) {
+@@ -2102,11 +2108,23 @@ acpi_bus_get_prop_handle(const ACPI_OBJECT *hobj, void *propvalue, size_t size)
+ static ssize_t
+ acpi_bus_get_prop(device_t bus, device_t child, const char *propname,
+     void *propvalue, size_t size, device_property_type_t type)
++{
++	return (acpi_ad_get_property(device_get_ivars(child), propname,
++	    propvalue, size, type));
++}
++
++/*
++ * Return a _DSD property of the device described by ad, for buses whose
++ * children are ACPI devices but whose ivars are not a struct acpi_device.
++ */
++ssize_t
++acpi_ad_get_property(struct acpi_device *ad, const char *propname,
++    void *propvalue, size_t size, device_property_type_t type)
+ {
+ 	ACPI_STATUS status;
+ 	const ACPI_OBJECT *obj;
+ 
+-	status = acpi_device_get_prop(bus, child, propname, &obj);
++	status = acpi_ad_get_prop(ad, propname, &obj);
+ 	if (ACPI_FAILURE(status))
+ 		return (-1);
+ 
+diff --git a/sys/dev/acpica/acpivar.h b/sys/dev/acpica/acpivar.h
+index 66050662853c..7dfdc2e600c5 100644
+--- a/sys/dev/acpica/acpivar.h
++++ b/sys/dev/acpica/acpivar.h
+@@ -508,6 +508,9 @@ acpi_d_state_to_str(int state)
+ char		*acpi_name(ACPI_HANDLE handle);
+ int		acpi_avoid(ACPI_HANDLE handle);
+ int		acpi_disabled(char *subsys);
++ssize_t		acpi_ad_get_property(struct acpi_device *ad,
++		    const char *propname, void *propvalue, size_t size,
++		    device_property_type_t type);
+ int		acpi_get_acpi_device_path(device_t bus, device_t child,
+ 		    const char *locator, struct sbuf *sb);
+ int		acpi_machdep_init(device_t dev);
+diff --git a/sys/dev/iicbus/acpi_iicbus.c b/sys/dev/iicbus/acpi_iicbus.c
+index ffad1bfb9be7..5bee1fccd56c 100644
+--- a/sys/dev/iicbus/acpi_iicbus.c
++++ b/sys/dev/iicbus/acpi_iicbus.c
+@@ -73,6 +73,7 @@ struct acpi_iicbus_softc {
+ struct acpi_iicbus_ivars {
+ 	struct iicbus_ivar	super_ivar;
+ 	ACPI_HANDLE		handle;
++	struct acpi_device	ad;	/* _DSD cache */
+ };
+ 
+ static int install_space_handler = 1;
+@@ -674,9 +675,28 @@ acpi_iicbus_child_deleted(device_t bus, device_t child)
+ 		return;
+ 	if (acpi_get_device(devi->handle) == child)
+ 		AcpiDetachData(devi->handle, acpi_fake_objhandler);
++	if (devi->ad.dsd.Pointer != NULL)
++		AcpiOsFree(devi->ad.dsd.Pointer);
+ 	iicbus_child_deleted(bus, child);
+ }
+ 
++static ssize_t
++acpi_iicbus_get_property(device_t bus, device_t child, const char *propname,
++    void *propvalue, size_t size, device_property_type_t type)
++{
++	struct acpi_iicbus_ivars *devi;
++
++	/* Deeper devices do not carry our ivars. */
++	if (device_get_parent(child) != bus)
++		return (-1);
++	devi = device_get_ivars(child);
++	if (devi->handle == NULL)
++		return (-1);
++	devi->ad.ad_handle = devi->handle;
++	return (acpi_ad_get_property(&devi->ad, propname, propvalue, size,
++	    type));
++}
++
+ static int
+ acpi_iicbus_read_ivar(device_t bus, device_t child, int which, uintptr_t *res)
+ {
+@@ -768,6 +788,7 @@ static device_method_t acpi_iicbus_methods[] = {
+ 	DEVMETHOD(bus_child_location,	acpi_iicbus_child_location),
+ 	DEVMETHOD(bus_child_pnpinfo,	acpi_iicbus_child_pnpinfo),
+ 	DEVMETHOD(bus_get_device_path,	acpi_get_acpi_device_path),
++	DEVMETHOD(bus_get_property,	acpi_iicbus_get_property),
+ 
+ 	DEVMETHOD_END,
+ };
+-- 
+2.56.0
+

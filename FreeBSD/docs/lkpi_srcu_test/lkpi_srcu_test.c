@@ -18,6 +18,7 @@
 #include <sys/kthread.h>
 #include <sys/module.h>
 #include <sys/proc.h>
+#include <sys/smp.h>
 #include <sys/time.h>
 
 #include <linux/srcu.h>
@@ -38,6 +39,7 @@ struct obj {
 static struct obj *volatile shared;
 static int skip_sync;		/* mutant: tunable debug.lkpi_srcu_test_skip */
 static volatile int stop, running;
+static int nreaders;
 static volatile u_long reads, bad;
 
 static void
@@ -116,10 +118,12 @@ srcu_test(void)
 	o->val = MAGIC;
 	shared = o;
 	stop = 0;
-	for (i = 0; i < NREADERS; i++)
+	/* Leave the writer a CPU: the readers never sleep. */
+	nreaders = MIN(NREADERS, mp_ncpus - 1);
+	for (i = 0; i < nreaders; i++)
 		kthread_add(stress_reader, NULL, NULL, NULL, 0, 0, "srcurd%d",
 		    i);
-	while (atomic_load_acq_int(&running) != NREADERS)
+	while (atomic_load_acq_int(&running) != nreaders)
 		pause("srcuw", 1);
 	swaps = 0;
 	t0 = getsbinuptime();
@@ -140,7 +144,7 @@ srcu_test(void)
 		pause("srcuw", 1);
 	free(shared, M_TEMP);
 	printf("srcu test 3 (stress %d readers, %d s%s): %s, %lu swaps, "
-	    "%lu reads, %lu bad\n", NREADERS, STRESS_SEC,
+	    "%lu reads, %lu bad\n", nreaders, STRESS_SEC,
 	    skip_sync ? ", MUTANT no synchronize" : "",
 	    bad == 0 ? "PASS" : "FAIL", swaps, reads, bad);
 	fail |= bad != 0;

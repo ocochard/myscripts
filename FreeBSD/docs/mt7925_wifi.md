@@ -7,6 +7,35 @@ Patches: one per commit in [mt7925/](mt7925/), listed in
 [Commits to land, in order](#commits-to-land-in-order); the whole series as
 one diff: [mt7925_wifi_series.patch](mt7925_wifi_series.patch).
 
+**Sent for review in two parts (2026-11-21).** The 12 commits below were
+split: the 7 LinuxKPI and lindebugfs commits (1, 2, 5 to 9) form branch
+`pr/lkpi-mt7925` on FreeBSD main 6dc19a71f70c, reviewed first; the 5 mt76
+commits (3, 4, 10 to 12) wait on top of it as `pr/mt7925`. After review,
+the page pool commit also returns pool pages through `skb_linearize()`
+(it freed them with `__free_page()`, leaking the side-table record and
+the DMA mapping), and two messages were reworded. The LinuxKPI part as
+sent: [mt7925/lkpi-mt7925-review.patch](mt7925/lkpi-mt7925-review.patch).
+
+| Commit | Subject |
+|---|---|
+| 4cb94968d89b | LinuxKPI: idr: allow lookups after idr_destroy() |
+| 7d97d1e14107 | lindebugfs: export debugfs_create_devm_seqfile() |
+| 56b268ffc1ab | LinuxKPI: skbuff: make napi_consume_skb() free the skb |
+| db5cce1b6ad3 | LinuxKPI: page pool: work without PAGE_IS_LKPI_PAGE |
+| 179c2a7bddef | LinuxKPI: skbuff: cache skb data allocations below mem_limit |
+| acff15d41e97 | LinuxKPI: 802.11: set an airtime estimate on dequeued frames |
+| 71457e598a12 | LinuxKPI: 802.11: request TX status only when needed |
+
+The per-commit patches in [mt7925/](mt7925/) and the numbering below are
+the earlier series; `pr/mt7925` still sits on the old LinuxKPI commits
+and must be rebased on the reviewed ones.
+
+The `skb_linearize()` fix was not exercised at runtime: with dtrace on
+the running kernel, 10 scans and 300 pings made no call to
+`lkpi___skb_linearize()`, and the LinuxKPI kmalloc count stayed at 4177
+over 15 scans, so only MCU events larger than one RX buffer reach it.
+All 7 commits build one by one (`buildkernel GENERIC-NODEBUG`).
+
 ## Status (2026-11-12)
 
 | Step | Stock tree | With the patch + `compat.linuxkpi.skb.mem_limit=1` |

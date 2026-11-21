@@ -1,11 +1,14 @@
 # snd_acp: recording from the built-in microphones of an AMD laptop
 
-Patch: [snd_acp_dmic.patch](snd_acp_dmic.patch), branch
-[`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp)
-(commits 6ba38c3ca4a6, e4c888c47347 and eac669d546ee on FreeBSD main
-d546356523f3).
+Patch: [snd_acp_dmic.patch](snd_acp_dmic.patch), commits 4a48d48141f8 (driver,
+with the devmatch PCI ID folded in) and 228ca612790e (mute and DC filter) on
+FreeBSD main 6dc19a71f70c, the version sent for review. An earlier
+version, three commits (6ba38c3ca4a6, e4c888c47347, eac669d546ee) that
+still enabled the ACP error interrupt, is in branch
+[`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp).
 Laptop: HP ZBook Ultra G1a (AMD Ryzen AI Max+ PRO 395, Strix Halo).
-Line numbers below are `sys/dev/sound/pci/acp.c` in eac669d546ee.
+Line numbers below are `sys/dev/sound/pci/acp.c` in eac669d546ee; the
+final version moves code after `acp_hw_init()` down by a few lines.
 Raw data from Linux: [acp/](acp/).
 
 ## 1. Background
@@ -266,6 +269,25 @@ analysed on another machine:
 Same laptop on Ubuntu (Linux 7.0.0-43) for comparison: quiet -42 to -48
 dBFS per window, clapping peak -2 dBFS. The quieter floor there may be
 the room; it was not compared in the same conditions.
+
+Final version, 2026-11-21, kernel zbook-n291269-0d71515aee38, module
+built from the two final commits against that kernel's source,
+swapped in with `kldunload`/`kldload` and compared with the installed
+earlier module (`dd if=/dev/dsp6 bs=4k count=200`, 800 KB):
+
+| Test | Earlier module | Final module |
+|---|---|---|
+| attach | `pcm6` on irq 37 | `pcm6` on irq 37 |
+| irq 37 interrupts, 3 s idle | 0 | 0 |
+| irq 37 interrupts, 4.27 s recording | 400 (about 94/s) | 400 (about 94/s) |
+| recorded data | 191995 bytes/s, not silent | 191986 bytes/s, not silent |
+| standalone `make` in `sys/modules/sound/driver/acp` | fails (`acpi_if.h` missing) | builds |
+
+The final module no longer enables the ACP error interrupt: nothing
+acknowledged it, so an ACP error would have kept the shared interrupt
+line asserted. `acp_hw_init()` now masks that source in
+`ACP_EXT_INTR_CNTL(1)` and clears both status registers before enabling
+the interrupt. No ACP error was provoked, so that path is untested.
 
 Not tested: suspend and resume while recording,
 desktop applications, ACP revisions 0x71 and 0x72, other laptops.

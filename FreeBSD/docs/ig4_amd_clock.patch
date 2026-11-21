@@ -1,0 +1,86 @@
+From e83caa8359c7995e6f41bd13d2c5e4e6be3e11ca Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sat, 21 Nov 2026 17:21:57 +0100
+Subject: [PATCH] ig4: Use the 150 MHz clock of AMDI0010 controllers
+
+AMDI0010 controllers attach as Atom, whose timings assume a 100 MHz
+input clock, but they run from 150 MHz (Linux drivers/acpi/acpi_apd.c),
+so the bus runs above the 400 kHz of fast mode and the SDA hold time
+is a third short.  The median of 200 timed 1 KB reads on an HP ZBook
+Ultra G1a gives an effective 472 kHz before and 348 kHz after.
+
+Keep the Atom register handling and override only the clock rate.
+---
+ sys/dev/ichiic/ig4_acpi.c |  3 +++
+ sys/dev/ichiic/ig4_iic.c  | 18 ++++++++++--------
+ sys/dev/ichiic/ig4_var.h  |  1 +
+ 3 files changed, 14 insertions(+), 8 deletions(-)
+
+diff --git a/sys/dev/ichiic/ig4_acpi.c b/sys/dev/ichiic/ig4_acpi.c
+index 10540d2bd889..1952c00dcc97 100644
+--- a/sys/dev/ichiic/ig4_acpi.c
++++ b/sys/dev/ichiic/ig4_acpi.c
+@@ -102,6 +102,9 @@ ig4iic_acpi_attach(device_t dev)
+ 	} else {
+ 		/* All the other HIDs matched are Atom SOCs. */
+ 		sc->version = IG4_ATOM;
++		/* AMDI0010 runs from a 150 MHz clock, not 100 MHz. */
++		if (strcmp(str, "AMDI0010") == 0)
++			sc->ic_clock_rate = 150;
+ 	}
+ 	/*
+ 	 * Firmware may leave LPSS functions in D3 (e.g. Dell XPS 13 9343):
+diff --git a/sys/dev/ichiic/ig4_iic.c b/sys/dev/ichiic/ig4_iic.c
+index a326d487e1d9..e19663698ea0 100644
+--- a/sys/dev/ichiic/ig4_iic.c
++++ b/sys/dev/ichiic/ig4_iic.c
+@@ -826,7 +826,7 @@ ig4iic_acpi_params(ACPI_HANDLE handle, char *method,
+ static void
+ ig4iic_get_config(ig4iic_softc_t *sc)
+ {
+-	const struct ig4_hw *hw;
++	struct ig4_hw hw;
+ 	uint32_t v;
+ #ifdef DEV_ACPI
+ 	ACPI_HANDLE handle;
+@@ -859,16 +859,18 @@ ig4iic_get_config(ig4iic_softc_t *sc)
+ 
+ 	/* Override hardware config with IC_clock-based counter values */
+ 	if (ig4_timings < 2 && sc->version < nitems(ig4iic_hw)) {
+-		hw = &ig4iic_hw[sc->version];
++		hw = ig4iic_hw[sc->version];
++		if (sc->ic_clock_rate != 0)
++			hw.ic_clock_rate = sc->ic_clock_rate;
+ 		sc->cfg.bus_speed = IG4_CTL_SPEED_FAST;
+-		ig4iic_clk_params(hw, IG4_CTL_SPEED_STD, &sc->cfg.ss_scl_hcnt,
++		ig4iic_clk_params(&hw, IG4_CTL_SPEED_STD, &sc->cfg.ss_scl_hcnt,
+ 		    &sc->cfg.ss_scl_lcnt, &sc->cfg.ss_sda_hold);
+-		ig4iic_clk_params(hw, IG4_CTL_SPEED_FAST, &sc->cfg.fs_scl_hcnt,
++		ig4iic_clk_params(&hw, IG4_CTL_SPEED_FAST, &sc->cfg.fs_scl_hcnt,
+ 		    &sc->cfg.fs_scl_lcnt, &sc->cfg.fs_sda_hold);
+-		if (hw->txfifo_depth != 0)
+-			sc->cfg.txfifo_depth = hw->txfifo_depth;
+-		if (hw->rxfifo_depth != 0)
+-			sc->cfg.rxfifo_depth = hw->rxfifo_depth;
++		if (hw.txfifo_depth != 0)
++			sc->cfg.txfifo_depth = hw.txfifo_depth;
++		if (hw.rxfifo_depth != 0)
++			sc->cfg.rxfifo_depth = hw.rxfifo_depth;
+ 	} else if (ig4_timings == 2) {
+ 		/*
+ 		 * Timings of original ig4 driver:
+diff --git a/sys/dev/ichiic/ig4_var.h b/sys/dev/ichiic/ig4_var.h
+index 0d000ab34c1d..4c32ab820232 100644
+--- a/sys/dev/ichiic/ig4_var.h
++++ b/sys/dev/ichiic/ig4_var.h
+@@ -87,6 +87,7 @@ struct ig4iic_softc {
+ 	void		*intr_handle;
+ 	int		intr_type;
+ 	enum ig4_vers	version;
++	uint32_t	ic_clock_rate;	/* MHz, 0: from ig4iic_hw */
+ 	struct ig4_cfg	cfg;
+ 	uint32_t	intr_mask;
+ 	uint8_t		last_slave;
+-- 
+2.56.0
+

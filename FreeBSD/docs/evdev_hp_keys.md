@@ -1,9 +1,11 @@
 # evdev: the HP mic mute and programmable keys
 
-Patch: [evdev_hp_keys.patch](evdev_hp_keys.patch), commit 81b24a701a44
+Patch: [evdev_hp_keys.patch](evdev_hp_keys.patch), commit 0c54fd8da608
 "evdev: Map the HP mic mute and programmable keys" on FreeBSD main
-46ce9acd6d15 (branch `olivier-evdev-hp-keys` of
-github.com/ocochard/freebsd-src; in branch `zbook` as 0d71515aee38).
+6dc19a71f70c, the version sent for review (an earlier version, with the
+notes at the end of the table rows, is in branch `olivier-evdev-hp-keys`
+of github.com/ocochard/freebsd-src and in branch `zbook` as
+0d71515aee38).
 Machine: HP ZBook Ultra G1a.
 
 This document explains the work for a first-year computer science student:
@@ -63,11 +65,13 @@ no event for the first two keys.
  	NONE,		NONE,		NONE,		NONE,
  	NONE,		NONE,		NONE,		NONE,
 -	NONE,		NONE,		NONE,		NONE,
-+	KEY_PROG1,	NONE,		NONE,		NONE,		/* 0x68: HP */
++	/* 0x68: HP programmable key */
++	KEY_PROG1,	NONE,		NONE,		NONE,
  ...
  	/* 0x00 - 0x1f. 0xE0 prefixed */
 -	NONE,		NONE,		NONE,		NONE,
-+	NONE,		KEY_MICMUTE,	NONE,		NONE,		/* 0x01: HP */
++	/* 0xE0 0x01: HP mic mute (Fn+Esc on other HP models) */
++	NONE,		KEY_MICMUTE,	NONE,		NONE,
 ```
 
 The key names follow systemd's hwdb: `KEYBOARD_KEY_81=micmute` in its block

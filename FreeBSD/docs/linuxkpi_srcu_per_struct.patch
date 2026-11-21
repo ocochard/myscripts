@@ -1,3 +1,30 @@
+From ba7367828c2bc1337c42b56cb2fe11c1ab5c3a21 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sat, 21 Nov 2026 21:48:18 +0100
+Subject: [PATCH 1/2] linuxkpi: Give each srcu_struct its own grace period
+
+srcu_read_lock() and synchronize_srcu() ignored their srcu_struct and
+shared one sleepable epoch, so synchronize_srcu() inside any SRCU read
+section waited for itself.  drm-kmod runs every ioctl inside
+drm_dev_enter(), an SRCU read section, and the amdxdna driver being
+ported from Linux (AMD XDNA NPU) destroys a hardware context with
+synchronize_srcu() from such an ioctl: the ioctl spins forever in
+ck_epoch_synchronize_wait().
+
+Count readers per srcu_struct in two phases.  synchronize_srcu() flips
+the phase, fences every CPU with cpus_fence_seq_cst(), uses
+quiesce_all_critical() to wait for readers that sampled the old phase
+but have not counted themselves yet, then waits for the old phase to
+drain.  A zeroed srcu_struct stays valid, so DEFINE_STATIC_SRCU() is
+unchanged.
+
+struct srcu_struct grows from 0 to 16 bytes: modules that embed or
+declare one (drm-kmod, ib_uverbs, mlx5_ib) must be rebuilt.
+---
+ .../linuxkpi/common/include/linux/srcu.h      | 10 ++++
+ sys/compat/linuxkpi/common/src/linux_rcu.c    | 56 +++++++++++++++++--
+ 2 files changed, 61 insertions(+), 5 deletions(-)
+
 diff --git a/sys/compat/linuxkpi/common/include/linux/srcu.h b/sys/compat/linuxkpi/common/include/linux/srcu.h
 index b42c28a1311b..680b59cd642d 100644
 --- a/sys/compat/linuxkpi/common/include/linux/srcu.h
@@ -22,10 +49,10 @@ index b42c28a1311b..680b59cd642d 100644
  
  #define	srcu_dereference(p, srcu) \
 diff --git a/sys/compat/linuxkpi/common/src/linux_rcu.c b/sys/compat/linuxkpi/common/src/linux_rcu.c
-index c0b864d269b3..b06c94af8aaf 100644
+index c0b864d269b3..dd7ffb04ba36 100644
 --- a/sys/compat/linuxkpi/common/src/linux_rcu.c
 +++ b/sys/compat/linuxkpi/common/src/linux_rcu.c
-@@ -427,31 +427,68 @@ linux_call_rcu(unsigned type, struct rcu_head *context, rcu_callback_t func)
+@@ -427,31 +427,77 @@ linux_call_rcu(unsigned type, struct rcu_head *context, rcu_callback_t func)
  int
  init_srcu_struct(struct srcu_struct *srcu)
  {
@@ -57,6 +84,8 @@ index c0b864d269b3..b06c94af8aaf 100644
 +	critical_enter();
 +	idx = atomic_load_acq_int(&srcu->ss_phase) & 1;
 +	atomic_add_acq_int(&srcu->ss_readers[idx], 1);
++	/* Count before quiesce_all_critical() can see us leave. */
++	atomic_thread_fence_rel();
 +	critical_exit();
 +	return (idx);
  }
@@ -90,7 +119,14 @@ index c0b864d269b3..b06c94af8aaf 100644
 +	/* Readers from now on count in the other phase. */
 +	atomic_thread_fence_seq_cst();
 +	idx = atomic_fetchadd_int(&srcu->ss_phase, 1) & 1;
++	/*
++	 * Flush every CPU so that a reader that sampled the old phase
++	 * shows up in its critical section, or else sees the new phase.
++	 */
++	cpus_fence_seq_cst();
 +	quiesce_all_critical();
++	/* Read the counters after the td_critnest loads. */
++	atomic_thread_fence_acq();
 +	while (atomic_load_acq_int(&srcu->ss_readers[idx]) != 0)
 +		pause("lsrcu", 1);
 +	atomic_thread_fence_seq_cst();
@@ -99,3 +135,52 @@ index c0b864d269b3..b06c94af8aaf 100644
  }
  
  void
+-- 
+2.56.0
+
+
+From 0c2e08cc4e7d7c7c1d981ca87d2631c5b122ccfd Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sat, 21 Nov 2026 21:48:18 +0100
+Subject: [PATCH 2/2] UPDATING: bump __FreeBSD_version to 1600032 for LinuxKPI
+ srcu_struct
+
+struct srcu_struct grew from 0 to 16 bytes.  Allow modules that embed
+or declare one to be rebuilt by bumping __FreeBSD_version.
+---
+ UPDATING        | 5 +++++
+ sys/sys/param.h | 2 +-
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/UPDATING b/UPDATING
+index 56904191e819..f5cf4791c704 100644
+--- a/UPDATING
++++ b/UPDATING
+@@ -27,6 +27,11 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
+ 	world, or to merely disable the most expensive debugging functionality
+ 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
+ 
++20261121:
++	struct srcu_struct in LinuxKPI grew from 0 to 16 bytes.  Modules
++	that embed or declare one, such as drm-kmod's, must be rebuilt.
++	Bump __FreeBSD_version to 1600032 to allow this change to be detected.
++
+ 20261113:
+ 	pwd_mkdb(8) now validates login names using the same character rules
+ 	that pw(8) applies, so names containing shell metacharacters or other
+diff --git a/sys/sys/param.h b/sys/sys/param.h
+index 04fe7b87bb0f..467581018cd0 100644
+--- a/sys/sys/param.h
++++ b/sys/sys/param.h
+@@ -74,7 +74,7 @@
+  * cannot include sys/param.h and should only be updated here.
+  */
+ #undef __FreeBSD_version
+-#define __FreeBSD_version 1600031
++#define __FreeBSD_version 1600032
+ 
+ /*
+  * __FreeBSD_kernel__ indicates that this system uses the kernel of FreeBSD,
+-- 
+2.56.0
+
