@@ -1,22 +1,25 @@
---- drivers/gpu/drm/i915/gt/intel_gt.c.orig	2026-11-21 16:22:37.205539000 +0100
-+++ drivers/gpu/drm/i915/gt/intel_gt.c	2026-11-21 16:22:37.214800000 +0100
-@@ -961,19 +961,6 @@
+--- drivers/gpu/drm/i915/gt/intel_gt.c	2026-11-21 16:22:37.205539000 +0100
++++ drivers/gpu/drm/i915/gt/intel_gt.c	2026-11-21 18:31:20.040279000 +0100
+@@ -961,15 +961,18 @@
  			break;
  
  		case GT_MEDIA:
 -#ifdef __FreeBSD__
--			/*
--			 * Skip standalone media GT on Meteor Lake.
++#if defined(__FreeBSD__) && __FreeBSD_version < 1600032
+ 			/*
+ 			 * Skip standalone media GT on Meteor Lake.
 -			 * FreeBSD lacks MEI driver support needed for GSC proxy,
 -			 * which causes GuC authentication to fail on GT1.
--			 */
--			if (!IS_ENABLED(CONFIG_INTEL_MEI_HDCP)) {
--				drm_info(&i915->drm,
++			 * The media GT does not snoop the CPU caches, so its GuC
++			 * needs write-combined mappings, but LinuxKPI vmap()
++			 * ignored the pgprot before 1600032: the GuC then fails
++			 * its firmware signature check.  Without MEI, only the
++			 * GSC proxy, PXP and HDCP are missing, not the media GT.
+ 			 */
+ 			if (!IS_ENABLED(CONFIG_INTEL_MEI_HDCP)) {
+ 				drm_info(&i915->drm,
 -						"Skipping GT1 (Standalone Media GT) - MEI driver not available on FreeBSD\n");
--				ret = 0;
--				continue;
--			}
--#endif
- 
- 			ret = intel_sa_mediagt_setup(gt, phys_addr + gtdef->mapping_base,
- 						     gtdef->gsi_offset);
++						"Skipping GT1 (Standalone Media GT): needs FreeBSD 1600032 or later\n");
+ 				ret = 0;
+ 				continue;
+ 			}

@@ -304,7 +304,11 @@ flowchart TD
 
 Both variants remove the GT1 skip:
 
-1. `gt/intel_gt.c`: remove the FreeBSD block that skips GT1.
+1. `gt/intel_gt.c`: remove the FreeBSD block that skips GT1. In
+   [mtl_media_gt_unskip.patch](mtl_media_gt_unskip.patch) (variant B, the
+   one for upstream), the skip stays for kernels older than
+   `__FreeBSD_version` 1600032, the version bumped with the LinuxKPI fix:
+   on those, GT1 would wedge the whole GPU.
 
 Variant A then fixes WC in i915:
 
