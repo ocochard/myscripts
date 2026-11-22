@@ -1,4 +1,4 @@
-From 5aef90fcee695705144f28284bf0abf0ea7e56fe Mon Sep 17 00:00:00 2001
+From d39f06e50dcdd585a6ec284c0230cafa9f1d5e14 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Wed, 11 Nov 2026 16:49:49 +0000
 Subject: [PATCH] fwget: Add ACPI device support
@@ -86,7 +86,7 @@ index 000000000000..e5476835fc86
 +}
 diff --git a/usr.sbin/fwget/acpi/acpi_cirrus b/usr.sbin/fwget/acpi/acpi_cirrus
 new file mode 100644
-index 000000000000..970dad2c116e
+index 000000000000..c4b716f79a86
 --- /dev/null
 +++ b/usr.sbin/fwget/acpi/acpi_cirrus
 @@ -0,0 +1,12 @@
@@ -99,7 +99,7 @@ index 000000000000..970dad2c116e
 +{
 +
 +	case "$1" in
-+	CSC3554)	addpkg "sound-firmware-cirrus-kmod-cs35l54"; return 1 ;;
++	CSC3554)	addpkg "sound-firmware-cirrus-cs35l54"; return 1 ;;
 +	esac
 +}
 diff --git a/usr.sbin/fwget/fwget.8 b/usr.sbin/fwget/fwget.8

@@ -8,7 +8,7 @@ Related fixes found on the way, one commit each:
 [`olivier-ig4-amd-clock`](https://github.com/ocochard/freebsd-src/compare/main...olivier-ig4-amd-clock) (ig4 ran the AMD I2C bus at about 494 kHz instead of 400 kHz).
 Machine: HP ZBook Ultra G1a 14 (AMD Ryzen AI Max+ PRO 395, Realtek ALC245 codec, subsystem 103C:8D01).
 Investigation log and measurements: [cs35l54_speaker_amp_plan.md](cs35l54_speaker_amp_plan.md).
-Firmware port (not committed yet): `audio/sound-firmware-cirrus-kmod`.
+Firmware port (not committed yet): `audio/sound-firmware-cirrus`.
 
 This document explains the work for a first-year computer science student:
 someone who knows C and what an operating system does, but has never looked
@@ -178,7 +178,7 @@ and queues the I2C work to a task (`cs_speaker_event()`, `cs35l54.c:942`): the h
 
 `fwget(8)` installs firmware packages for the hardware it finds, but knew only PCI and USB ids.
 The patch adds an `acpi` subsystem (`usr.sbin/fwget/acpi/acpi`) that reads the `_HID` of every ACPI device from `devinfo -v`,
-and a Cirrus script (`acpi_cirrus`) that maps `CSC3554` to the package `sound-firmware-cirrus-kmod-cs35l54`.
+and a Cirrus script (`acpi_cirrus`) that maps `CSC3554` to the package `sound-firmware-cirrus-cs35l54`.
 The port fetches the files from linux-firmware (tag 20261019) and installs them as raw files under `/boot/firmware/cirrus/`, with the symlinks that linux-firmware declares in `WHENCE`.
 
 ### 3.4 Two traps found on the way
@@ -226,11 +226,11 @@ and the rebased driver passed the rows marked "rebased" below:
 | Test kernel with the hdaa hook, tone with no sysctl | `play` goes 0 -> 1 -> 0 with the stream; sound (heard; also rebased driver, on the old-base test kernel) |
 | YouTube in Chromium through PulseAudio | sound; pause/resume restarts at once |
 | Calibration | each amplifier matched its UEFI entry by silicon id; control addresses and values for AMP1 equal the Linux driver's |
-| Firmware from the `audio/sound-firmware-cirrus-kmod` package (poudriere testport and bulk, then `pkg add`) | download and calibration complete |
+| Firmware from the `audio/sound-firmware-cirrus` package (poudriere testport and bulk, then `pkg add`) | download and calibration complete |
 | `devctl suspend` / `devctl resume` during playback | `play` 1 -> 0 -> 1 |
 | `devctl resume` after resetting the amplifiers | firmware and calibration downloaded again |
 | `kldunload`, then `kldload` of the module with the `subsystem` sysctl (2026-11-21) | firmware and calibration downloaded again in 4 s; `subsystem: 103c8d01`, equal to `dev.hdaa.1.%pnpinfo` |
-| `fwget -n` with the acpi subsystem | prints `sound-firmware-cirrus-kmod-cs35l54` |
+| `fwget -n` with the acpi subsystem | prints `sound-firmware-cirrus-cs35l54` |
 | Real suspend-to-idle | untested |
 | Attach at boot (`kld_list`) | untested |
 | Other laptops, other chips | untested |

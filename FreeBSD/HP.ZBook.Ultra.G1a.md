@@ -285,7 +285,7 @@ Stock FreeBSD: Chromium plays through PulseAudio into `dsp4` (sink RUNNING, not 
 
 Driver (not in FreeBSD yet): `snd_cs35l54`, branch [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) of the FreeBSD fork.
 It downloads the firmware, applies the factory calibration from UEFI, and starts or pauses the amplifiers with the speaker stream, through a new `hdaa` event (so it needs a kernel built from the branch: `snd_hda` is in GENERIC).
-Firmware: the `audio/sound-firmware-cirrus-kmod` port (not committed yet) installs the linux-firmware files under `/boot/firmware/cirrus/`.
+Firmware: the `audio/sound-firmware-cirrus` port (not committed yet) installs the linux-firmware files under `/boot/firmware/cirrus/`.
 Tested 2026-11-11 and, after the rebase onto `main` 29b24020f6fa, 2026-11-12: test tone, YouTube in Chromium, pause/resume.
 
 - How it works, step by step: [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md)
@@ -511,7 +511,7 @@ prints their current state.
 | Area | Branch | Commits | Status | Review | Document |
 |---|---|---|---|---|---|
 | Wi-Fi (MT7925) | [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 12 | works, TX 82-88% / RX 68-74% of Linux, survives suspend-to-idle; firmware port PR 300731 | [#125](https://ron-dev.freebsd.org/FreeBSD/src/pulls/125) (LinuxKPI part); mt76 part after it | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
-| Internal speakers (CS35L54) | [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | works, waiting for review | not sent: after #114 and #116 | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
+| Internal speakers (CS35L54) | [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | works, waiting for review | not sent: after #114 and #116; firmware port [ports #20](https://ron-dev.freebsd.org/FreeBSD/ports/pulls/20) | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
 | SMU power metrics (amdsmu) | [`olivier-amdsmu-strixhalo`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) | 4 | attaches, S0i3 blocker report | not sent: after #115 | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
 | Suspend-to-idle wake and C-states | [`olivier-s2idle-wake`](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) | 3 | key wake and clean resume; no S0i3 yet | [#115](https://ron-dev.freebsd.org/FreeBSD/src/pulls/115) (acpi_cpu); GPIO wake on hold | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
 | PCI D3hot (GPU stayed in D0 over suspend) | [`olivier-pci-d3hot`](https://github.com/ocochard/freebsd-src/compare/main...olivier-pci-d3hot) | 1 | fix, tested | [#111](https://ron-dev.freebsd.org/FreeBSD/src/pulls/111) | [docs/pci_d3hot.md](docs/pci_d3hot.md) |
@@ -583,7 +583,7 @@ document gives the deeper tests of its own branch. Steps 16 to 18 are outside th
 | 4 | freebsd-src [`olivier-pci-d3hot`](https://github.com/ocochard/freebsd-src/compare/main...olivier-pci-d3hot) | 1 | | | [docs/pci_d3hot.md](docs/pci_d3hot.md), [patch](docs/pci_d3hot.patch) |
 | 5 | freebsd-src [`olivier-s2idle-wake`](https://github.com/ocochard/freebsd-src/compare/main...olivier-s2idle-wake) | 3 | `amdgpio` loaded | | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
 | 6 | freebsd-src [`olivier-amdsmu-strixhalo`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdsmu-strixhalo) | 4 | | | [docs/amdsmu_strix_halo.md](docs/amdsmu_strix_halo.md) |
-| 7 | freebsd-src [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | 1, 2, 3 | firmware port `audio/sound-firmware-cirrus-kmod` (not committed yet); devmatch loads `snd_cs35l54` | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
+| 7 | freebsd-src [`olivier-cs35l54`](https://github.com/ocochard/freebsd-src/compare/main...olivier-cs35l54) | 10 | 1, 2, 3 | firmware port `audio/sound-firmware-cirrus` (not committed yet); devmatch loads `snd_cs35l54` | [docs/cs35l54_speaker_amp.md](docs/cs35l54_speaker_amp.md) |
 | 8 | freebsd-src [`olivier-mt7925`](https://github.com/ocochard/freebsd-src/compare/main...olivier-mt7925) | 12 | | MT7925 firmware (port PR 300731); `if_mt7925` in `kld_list` | [docs/mt7925_wifi.md](docs/mt7925_wifi.md) |
 | 9 | freebsd-src [`olivier-amdiommu-irte`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu-irte) | 1 | | interrupt remap entries are freed and aligned (only with `hw.amdiommu.enable=1`) | [docs/amdiommu_irte_free.md](docs/amdiommu_irte_free.md) |
 | 10 | freebsd-src [`olivier-amdiommu`](https://github.com/ocochard/freebsd-src/compare/main...olivier-amdiommu) | 2 | | opt-in: `hw.amdiommu.enable=1 hw.iommu.dma=1` (DMA remapping); with `hw.amdiommu.enable=1` alone also `hw.amdgpu.ip_block_mask=0xfffff7ff` (VPE off, SMU hang) | [bug 1](docs/bugreport_amdiommu_ir_only_loop.md), [bug 2](docs/bugreport_amdiommu_map_invalidation.md) |

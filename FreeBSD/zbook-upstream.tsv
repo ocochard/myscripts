@@ -1,5 +1,5 @@
 # ZBook Ultra G1a patches sent for review on ron-dev (see HP.ZBook.Ultra.G1a.md).
-# topic	round	depends (topics, comma separated, - for none)	pr (ron-dev number, - if not sent)	note
+# topic	round	depends (topics, comma separated, - for none)	pr (ron-dev number, - if not sent)	note; "ports:N" for a ports PR
 acpi-iicbus-prop	1	-	117	replaces acpi-prop-child (broke DPAA2); not needed by cs35l54
 amdgpio-pnp	1	-	116	cs35l54 needs it
 ig4-amd-clock	1	-	114	cs35l54 needs it
@@ -15,8 +15,9 @@ acp	1	-	124
 acpi-cpu-s2idle-cx	1	-	115	split from s2idle-wake: the commit that makes the ZBook wake
 amdgpio-wake	hold	-	-	split from s2idle-wake: GPIO wake unproven (power button still dead); send once a GPIO wake is seen
 amdsmu-strixhalo	2	acpi-cpu-s2idle-cx	-	attaching amdsmu on Strix Halo without acpi-cpu-s2idle-cx: zzz never wakes (tutorial); shares amdsmu.c with devmatch-hostb
-fwget-acpi	2	cs35l54	-	commit audio/sound-firmware-cirrus-kmod (direct ports commit, no review) first
+fwget-acpi	2	cs35l54,sound-firmware-cirrus	-	commit audio/sound-firmware-cirrus (direct ports commit, no review) first
 lkpi-mt7925	1	-	125	LinuxKPI part of mt7925, reviewer bz
 cs35l54	2	amdgpio-pnp,ig4-amd-clock	-	branch not created yet: rebase cs35l54 without the fwget commit once deps land
 amdgpio-intr	2	amdgpio-wake	-	branch not created yet
 mt7925	2	lkpi-mt7925	-	mt76 contrib part, ask bz first
+sound-firmware-cirrus	2	-	ports:20	ports tree (not a src branch); land with or before cs35l54, before fwget-acpi

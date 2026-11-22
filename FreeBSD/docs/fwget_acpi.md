@@ -1,6 +1,6 @@
 # fwget: firmware for ACPI-only devices
 
-Patch: [fwget_acpi.patch](fwget_acpi.patch) (commit 5aef90fcee69
+Patch: [fwget_acpi.patch](fwget_acpi.patch) (commit d39f06e50dcd
 `fwget: Add ACPI device support`), for FreeBSD main of 2026-11-20.
 Machine: HP ZBook Ultra G1a 14, whose four Cirrus Logic CS35L54 speaker
 amplifiers (ACPI `CSC3554`) need a firmware package
@@ -55,17 +55,17 @@ A third subsystem, `acpi`, searched by default:
 - `acpi/acpi`: takes every `_HID=` value from `devinfo -v`, maps its
   vendor prefix (`CSC` for Cirrus Logic) to a vendor script, and calls it,
   the same structure as `usb` and `usb_ralink`;
-- `acpi/acpi_cirrus`: `CSC3554` gives `sound-firmware-cirrus-kmod-cs35l54`;
+- `acpi/acpi_cirrus`: `CSC3554` gives `sound-firmware-cirrus-cs35l54`;
 - `fwget.sh` and `fwget.8` list `acpi` with `pci` and `usb`.
 
 ### Ordering: this commit must land last
 
 `fwget` installs every package it found with one `pkg install`, and pkg
 rejects the whole job when one name is unknown. Until the package
-`sound-firmware-cirrus-kmod-cs35l54` exists in the repositories, plain
+`sound-firmware-cirrus-cs35l54` exists in the repositories, plain
 `fwget` on this laptop would fail to install anything, the Wi-Fi and GPU
 firmware included. The package is also useless without the
-`snd_cs35l54` driver. So the order is: the `audio/sound-firmware-cirrus-kmod`
+`snd_cs35l54` driver. So the order is: the `audio/sound-firmware-cirrus`
 port, the `snd_cs35l54` driver, then this commit.
 
 ### Alternatives
@@ -83,7 +83,7 @@ to `/tmp` (with `LIBEXEC_PATH` pointing there), dry runs only:
 | Run | Result |
 |---|---|
 | stock `fwget -n` | `'wifi-firmware-mt76-kmod-mt7925'` |
-| patched `fwget -n` | `'sound-firmware-cirrus-kmod-cs35l54 wifi-firmware-mt76-kmod-mt7925'` |
+| patched `fwget -n` | `'sound-firmware-cirrus-cs35l54 wifi-firmware-mt76-kmod-mt7925'` |
 | patched `fwget -n -v acpi` | `Trying to match device CSC3554 with acpi_cirrus`, then the Cirrus package |
 | `pkg search sound-firmware-cirrus` | no result: the package is not in a repository yet (why the commit waits) |
 
