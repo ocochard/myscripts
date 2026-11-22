@@ -566,6 +566,38 @@ pyannote runs on CPU here (no GPU PyTorch on FreeBSD). On frwk-bsd
 embeddings step, against 1m06s for whisper with DTW on Vulkan0 (27 s with
 flash attention, without DTW).
 
+### Clean English with a local LLM
+
+[clean.py](clean.py) sends a `*.dia.txt` in ~1500-word chunks to llama-server
+(`LLM_URL`, default `http://127.0.0.1:8080/v1`, thinking off) and writes
+`*.en.txt`: punctuation, grammar, fillers and stutters fixed, turns and
+labels kept. A chunk whose speaker labels do not come back unchanged is
+retried once, then kept raw with a warning. Name the speakers on the way:
+```
+./llmsrv.sh &        # MODEL=flashnext default
+python3 clean.py talk.dia.txt SPEAKER_00=Interviewer SPEAKER_01=Michelle
+```
+```
+[00:00:15] Michelle: So my name is Michelle Moore, and I'm a writer, director, and producer based in Texas. I've worked out in LA as well as in Canada, but my home base is here in Texas.
+```
+
+pyannote numbers speakers in no fixed order (the same interview gave
+`SPEAKER_00` to a different person on a 3 min cut), so read `*.dia.txt`
+before choosing names. On frwk-bsd with Flash-Next the clean pass took 2m04s
+for a 17 min interview and 5m04s for 43 min.
+
+[transcribe.py](transcribe.py) chains everything from the media file, and
+skips each step whose output already exists:
+```
+OPENBLAS_CORETYPE=SKYLAKEX ~/venv/pyannote/bin/python transcribe.py -n 2 talk.mp4
+# read talk.dia.txt, then name the speakers (only clean.py runs again):
+OPENBLAS_CORETYPE=SKYLAKEX ~/venv/pyannote/bin/python transcribe.py talk.mp4 \
+  SPEAKER_00=Interviewer SPEAKER_01=Michelle
+```
+
+The LLM does not repair diarization mistakes: a word given to the wrong
+speaker at a turn boundary stays there (`That's who I...` / `...am.`).
+
 ### Stream mode
 
 When compiled with SDL2, the whisper-stream is available, here is how to transcribe audio from your microphone:
