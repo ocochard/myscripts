@@ -1,9 +1,11 @@
 # Prompt for the next session
 
-Written 2026-11-21 at the end of the session that rebased and pushed the
-branches, added three test cases, and found and fixed the nfscbd bugs #7
-and #8 (session 34d90969, 2026-11-21). Earlier sessions: 4a7ee611
-(2026-11-02 to 11-18). Copy the block below verbatim into the fresh session
+Written 2026-11-22 at the end of the session that rebased and pushed the
+branches, added three test cases, squashed the tests into one commit, found
+and fixed the nfscbd bugs #7 and #8 and the dying server jails #9 and #10,
+and wrote their bug reports (session 34d90969, 2026-11-21 to 11-22). Earlier
+sessions: 4a7ee611 (2026-11-02 to 11-18). The `nfsbug/` docs are committed
+and pushed in myscripts (11f77b6). Copy the block below verbatim into the fresh session
 as the first user message.
 
 ---
@@ -19,7 +21,8 @@ server in vnet jails, and the kernel fixes they need. Read these first:
    `svc_backchannel.md`, `nfsd_jail_state.md`, `gss_jail_remove.md`), and the
    Bugzilla texts `BUGREPORT-*.txt` (one for #9 and #10 together).
 3. Memory `project_freebsd_nfs_jail_limits.md` (jail limits of the NFS
-   client, pNFS and nfscbd, the kgssapi bug, the TMPDIR and atf traps).
+   client, pNFS and nfscbd, the kgssapi bug, the dying-jail cycle and how
+   to measure it with DDB, the TMPDIR and atf traps).
 
 **Goal.** Make NFS regression tests easy to write by running both the NFS
 server and the NFS clients in vnet jails on one machine.
@@ -54,18 +57,26 @@ add `PR:` lines to the commits and the #6 PR number to the
 `atf_expect_fail` message in the tests commit. One diff per review:
 `git diff -U999999 <c>~1 <c>`.
 
-**Tested on 2026-11-21** (bhyve VM, kernel = main 6dc19a71f70c + #3 + #4 +
-#5 + #7 + #8, GENERIC-NODEBUG and GENERIC with WITNESS): all 10 cases passed,
-`session_leak` reported its expected failure; with #6 instead, `session_leak`
-passed. WITNESS showed two LORs unrelated to RPC/NFS (`ifnet_sx` ->
-`in_control`, `ufs` -> `tmpfs`). The #6 branch itself (tests + #6 without
-#3/#4) was not built; its kernel diff equals the tested one.
+**Tested** (bhyve VM, GENERIC-NODEBUG and GENERIC with WITNESS):
+- 2026-11-22, kernel = main 6dc19a71f70c + #3 #4 #5 #7 #8 #9 #10: all 10
+  cases passed (`session_leak`: its expected failure), and after the suite
+  plus 70 s no jail was left dying (7 before #9, 3 Kerberos ones with #9
+  alone). The #9 checks passed too: NFSv4.0, client gone, server removed
+  while mounted, and an nfsd restart in a live jail keeping its state.
+- 2026-11-21, with #6 instead of the expect_fail: `session_leak` passed.
+- WITNESS: only `ifnet_sx` -> `in_control` and `ufs` -> `tmpfs`, both
+  unrelated to RPC/NFS. No panic, no KASSERT.
+- Not built as such: the #6 branch (tests + #6 without the others) and each
+  kernel branch alone; their diffs equal the tested ones.
 
 **Open items** (pick with me first):
 - Reviews and PRs as above; rebase the branches if main moves first.
-- Dying server jails: fixed by #9 and #10 (measured 2026-11-22: 7 left
-  after the suite before, 0 with both). Gap in #9: an nfsd stopped before
-  the jail is removed keeps the state. NFSv3/NLM not checked.
+- Dying server jails: fixed by #9 and #10. Gap in #9: an nfsd stopped
+  before the jail is removed keeps the state (needs a `PR_METHOD_REMOVE`
+  hook in nfsd that cannot race with an nfsd starting). NFSv3/NLM not
+  checked for this. A dying-jail check could go into `nfs_cleanup`, but
+  client jails stay dying ~60 s (TCP TIME_WAIT), so it must wait or check
+  only the server.
 - `krb5p` failed once with "no NFS packet captured", then passed 5 reruns:
   the tcpdump capture check is flaky. Not investigated.
 - `make check` from an installed `/usr/tests` never run: the VM installs the
@@ -81,6 +92,10 @@ passed. WITNESS showed two LORs unrelated to RPC/NFS (`ifnet_sx` ->
   jailed client's RPC counters go to the vnet of the process doing the I/O.
 
 **How the tests are run** (bhyve VM, since a client bug can hang the host):
+- The last full test kernel was built in `/tmp/nfscbd-src` (main + #3 #4
+  and the first tests commit, then #7 #8 #9 #10 applied uncommitted; the VM
+  took the test files from the branch) to `/tmp/kobj-gss-NODEBUG`
+  and `/tmp/kobj-gss-DBG`; a fresh one: cherry-pick the branches instead.
 - Kernel: `include GENERIC-NODEBUG` (or `GENERIC` for WITNESS) plus
   `ident NFSTEST`, `device epair`, `device if_bridge`, `options NULLFS`,
   `options KGSSAPI`. The VM loads no modules. Build in a scratch worktree
@@ -95,8 +110,9 @@ passed. WITNESS showed two LORs unrelated to RPC/NFS (`ifnet_sx` ->
   Without it, `delegation_test:recall` fails on any kernel.
 - Image: `sudo ~/myscripts/FreeBSD/kern-test-vm/mkvm.sh -k /tmp/kobj-X/kernel:X [-k ...] -t /tmp/nfstest-vm`.
   Do not boot it with `bootvm.sh`: its nmdm console hangs intermittently.
-  Use `sudo sh /tmp/runvm-stdio.sh /zroot/vm/kern-test.img X 2700` (the full
-  suite takes about 20 minutes), then read `/tmp/kt2-X.log` and
+  Use `sudo sh /tmp/runvm-stdio.sh /zroot/vm/kern-test.img X 2400` (the full
+  suite takes 10 to 11 minutes plus boot; `server_reset_twice` and
+  `session_leak` are 6 of them), then read `/tmp/kt2-X.log` and
   `/tmp/kt2-X.steps`.
 - Payload `/tmp/nfstest-vm/`: `run.sh` (below), `vnet.subr` from
   `tests/sys/common`, `nfs/` with the test files copied from the branch
@@ -106,7 +122,10 @@ passed. WITNESS showed two LORs unrelated to RPC/NFS (`ifnet_sx` ->
   `cd /usr/local && tar -czf /tmp/nfstest-vm/python.tgz --exclude 'lib/python3.12/site-packages/*' --exclude 'lib/python3.12/test' --exclude '__pycache__' bin/python3.12 bin/python3 lib/libpython3.12.so.1.0 lib/libpython3.12.so lib/libintl.so.8 lib/libintl.so.8.* lib/python3.12`.
 - `/tmp` may be gone after a reboot; recreate both scripts from below. The
   scratch worktrees `/tmp/nfsall-src`, `/tmp/nfscbd-src`, `/tmp/nfsleak-src`
-  are then stale entries: `git -C ~/freebsd-src worktree prune`.
+  are then stale entries: `git -C ~/freebsd-src worktree prune`. The
+  experiment scripts of this session were in `/tmp/delegexp`,
+  `/tmp/dyingexp` and `/tmp/delegexp-tools/rpcdump.py` (prints every RPC
+  call and reply of a port 2049 pcap).
 
 `/tmp/runvm-stdio.sh`:
 
@@ -176,6 +195,7 @@ for t in delegation_test:recall krb5_test:krb5 krb5_test:krb5i krb5_test:krb5p b
 	sync
 done
 step done
+sleep 70	# let the client jails' TCP TIME_WAIT end
 jls -d -h jid path dying | tee -a /root/steps.log
 sysctl vfs.nfsd.issue_delegations | tee -a /root/steps.log
 kill $WD
@@ -202,6 +222,14 @@ and fetch it from the image afterwards (mdconfig + `mount -o ro`).
   ("jail: ... already exists"); judge only the first failure.
 - `timeout` waits for the jailed daemons it reaped: a short body can still
   take the whole timeout.
+- In an experiment, destroying a client jail's interface before a plain
+  `umount` hangs it for good ("not responding"): use `umount -f` under
+  `timeout`.
+- To see what holds a dying jail: `ddb script kdb.enter.sysctl="show prison; c"`
+  then `sysctl debug.kdb.enter=1` (NODEBUG has DDB); `ref`/`uref` land on
+  the console log.
+- A rebase or cherry-pick makes the global identity the committer: amend
+  with `-c user.email=olivier@FreeBSD.org` and check `%cn <%ce>`.
 - My git diffs have no `a/` `b/` prefix: `git apply -p0`.
 - ccache on this host has served stale objects before: build kernels with
   `CCACHE_DISABLE=1` and check new symbols with `nm`.
