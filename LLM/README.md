@@ -405,7 +405,59 @@ cmake --fresh -B build -DGGML_VULKAN=1 -DWHISPER_FFMPEG=yes
 cmake --build build --config Release -j $(nproc)
 ```
 
+## FreeBSD package (Vulkan)
+
+On FreeBSD the package is enough: `whisper.cpp` depends on `misc/ggml`, built
+with its default `VULKAN` option, so the GPU is used with no source build.
+The package is built without `WHISPER_FFMPEG`, so install ffmpeg to extract
+audio from video files:
+```
+sudo pkg install -y whisper.cpp ffmpeg
+```
+
+On the Strix Halo hosts, load `amdgpu` first (`sudo kldload amdgpu`), then
+check the log reports `whisper_backend_init_gpu: using Vulkan0 backend`.
+
 ## Usage
+
+### Audio or video file on Strix Halo (large-v3-turbo)
+
+Download the model once (1.6 GB):
+```
+mkdir -p ~/models/whisper
+whisper.cpp-download-ggml-model.sh large-v3-turbo ~/models/whisper
+```
+
+`whisper-cli` reads wav and mp3 directly, but fails on m4a or video with
+`error: failed to read audio data as wav`. Extract the audio track with ffmpeg
+to 16 kHz mono PCM first (`-vn` drops video; add `-map 0:a:1` to pick another
+audio track), then transcribe:
+```
+f=talk.mp4
+ffmpeg -nostdin -i "$f" -vn -ar 16000 -ac 1 -c:a pcm_s16le "${f%.*}.wav"
+whisper-cli -m ~/models/whisper/ggml-large-v3-turbo.bin \
+  -l auto -t 8 -otxt -osrt -of "${f%.*}" -f "${f%.*}.wav"
+```
+
+- `-l` defaults to `en`: use `-l auto` (or the language code, e.g. `-l fr`)
+  for non-English speech.
+- `-of` sets the output name without extension; `-otxt -osrt` writes
+  `talk.txt` and `talk.srt`. `-ovtt`, `-oj` and `-ocsv` also exist.
+- Flash attention is on by default in 1.8.4.
+
+On frwk-bsd (2026-11-22, whisper.cpp 1.8.4 pkg, Vulkan0), 610 s of English
+audio took 19.9 s, about 30x realtime.
+
+To transcribe a batch of files:
+```
+for f in *.mp4 *.mkv *.m4a *.mp3; do
+  [ -e "$f" ] || continue
+  ffmpeg -nostdin -loglevel error -y -i "$f" -vn -ar 16000 -ac 1 -c:a pcm_s16le "${f%.*}.wav"
+  whisper-cli -m ~/models/whisper/ggml-large-v3-turbo.bin \
+    -l auto -t 8 -np -otxt -osrt -of "${f%.*}" -f "${f%.*}.wav"
+done
+```
+
 
 ### One speaker only
 
@@ -414,7 +466,9 @@ Download a model:
 sh ./models/download-ggml-model.sh base.en
 ```
 
-Transcode your mp3 in wav with ffmpeg (if compiled without ffmpeg):
+Without `WHISPER_FFMPEG`, `whisper-cli` reads wav and mp3 directly; convert
+other formats (m4a, video) to 16 kHz mono wav with ffmpeg. Converting an mp3
+works too:
 ```
 ffmpeg -i FreeBSD\ Foundation\ Update\ -\ May\ 2024\ FreeBSD\ Developer\ Summit.mp3  -ar 16000 -ac 1 -c:a pcm_s16le FreeBSD.Foundation.Update.May.2024.FreeBSD.Developer.Summit.wav
 ```
