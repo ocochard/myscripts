@@ -39,8 +39,8 @@ file in `nfsbug/` is byte-identical to its commit's diff.
 | 2 | `staleclientid.patch`: STALE_CLIENTID in the renew window (45 s stall) | in main | 7a0021a0988f | PR 299221 |
 | 3 | `nfscl_jail.patch`: `VFCF_JAIL` on the NFS client + `NFSSVC_DUMPMNTOPTS` without `PRIV_NFS_DAEMON` | `nfscl-jail` (`~/freebsd-src-nfscljail`) | 5fdb198e1994 | policy change, no PR; needs rmacklem's agreement |
 | 4 | `kgss_vnet.patch`: gssd state per vnet + per-call timeouts on the shared netlink handle | `kgss-vnet` (`~/freebsd-src-kgssvnet`) | e75a5c761d5c | no; text in `bugreport_kgss_vnet_upcall.md` |
-| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 10 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | 91d6b85cea18 | not a bug |
-| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | 6eb294be11ba | no; text in `BUGREPORT-session-leak.txt` |
+| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 10 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | 859b580ce913 | not a bug |
+| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | 261e07ee6c2c | no; text in `BUGREPORT-session-leak.txt` |
 | 7 | `nfscbd_jail.patch`: nfscbd in a jail serves no callbacks (program registered only with the UDP socket, which a jail cannot add) | `nfscbd-jail` (`~/freebsd-src-nfscbdjail`) | 9fe410604812 | no; text in `BUGREPORT-nfscbd-jail.txt` |
 | 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | 537a6cdcd3c4 | no; text in `BUGREPORT-svc-backchannel.txt` |
 | 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | b214c7f03b3b | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
@@ -51,7 +51,7 @@ The branches track `upstream/main` (the GitHub mirror): never use a bare
 
 **Review order** I gave (I create the reviews and push upstream myself):
 #3, #4, #7, #8, #9, #10 (no code dependency, can run in parallel), then the
-tests 91d6b85cea18 (needs #3, #4 and #7), then #6 6eb294be11ba (removes the
+tests 859b580ce913 (needs #3, #4 and #7), then #6 261e07ee6c2c (removes the
 `session_leak` expect_fail). File the PRs first (#9 and #10 share one), then
 add `PR:` lines to the commits and the #6 PR number to the
 `atf_expect_fail` message in the tests commit. One diff per review:
@@ -66,6 +66,16 @@ add `PR:` lines to the commits and the #6 PR number to the
 - 2026-11-21, with #6 instead of the expect_fail: `session_leak` passed.
 - WITNESS: only `ifnet_sx` -> `in_control` and `ufs` -> `tmpfs`, both
   unrelated to RPC/NFS. No panic, no KASSERT.
+- 2026-11-22, installed tests: `make install` of `tests/sys/fs/nfs` into a
+  staging root, unpacked over the VM's `/usr/tests`, then
+  `kyua test -k /usr/tests/sys/fs/nfs/Kyuafile` (what `make check` runs):
+  10/10 in 300 s. `kyua list -v` gives the combined `is_exclusive = true`
+  (`kyua report` prints only the case's own metadata, `false`).
+- 2026-11-22, the `krb5p` flake ("no NFS packet captured"): tcpdump `-w`
+  without `--immediate-mode` holds packets up to the 1 s BPF timeout, and
+  the test killed it after 1 s; on lo0, a kill within 0.5 s lost 10/10
+  captures. Fixed in the tests commit with `--immediate-mode`: krb5p and
+  krb5i 15/15 each.
 - Not built as such: the #6 branch (tests + #6 without the others) and each
   kernel branch alone; their diffs equal the tested ones.
 
@@ -77,11 +87,6 @@ add `PR:` lines to the commits and the #6 PR number to the
   checked for this. A dying-jail check could go into `nfs_cleanup`, but
   client jails stay dying ~60 s (TCP TIME_WAIT), so it must wait or check
   only the server.
-- `krb5p` failed once with "no NFS packet captured", then passed 5 reruns:
-  the tcpdump capture check is flaky. Not investigated.
-- `make check` from an installed `/usr/tests` never run: the VM installs the
-  test files by hand, so the `Makefile` entries (including
-  `delegation_test`) are untested.
 - pNFS tests are blocked: the MDS refuses to run in a jail
   (`nfsrv_setdsserver()`), the DS list is a kernel global, and the MDS needs
   NFS client mounts (#3).

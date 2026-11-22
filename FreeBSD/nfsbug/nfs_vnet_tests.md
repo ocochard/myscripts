@@ -2,7 +2,7 @@
 
 Patch: [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch), adds
 `tests/sys/fs/nfs/`, against main 6dc19a71f70c. Branch `nfs-vnet-tests` in
-`~/freebsd-src-nfstest`, one commit, 91d6b85cea18 (four commits squashed
+`~/freebsd-src-nfstest`, one commit, 859b580ce913 (four commits squashed
 on 2026-11-22: the tests, `v40_basic`, `session_leak` and the delegation
 `recall`). Not committed upstream.
 
@@ -191,9 +191,19 @@ The three later cases, bhyve VM, 2026-11-21, all with the clients in jails:
 | same + #6 (`atf_expect_fail` removed) | not run | passed | not run | reset cases passed |
 | same + #7 + #8 (GENERIC-NODEBUG and GENERIC with WITNESS) | passed | expected failure | passed | passed |
 
-`krb5p` failed once with "no NFS packet captured" and passed in the 5
-reruns: its capture check is flaky, not investigated.
+`krb5p` failed once with "no NFS packet captured". Cause: tcpdump writing
+to a file without `--immediate-mode` keeps packets in BPF up to its 1 s
+timeout, and the test killed it 1 s after the I/O; on lo0, a kill within
+0.5 s lost 10 of 10 captures, with `--immediate-mode` none from 0.2 s on.
+The capture now uses `--immediate-mode`: `krb5p` and `krb5i` passed 15 of
+15 each.
+
+Installed like a release: `make install` of `tests/sys/fs/nfs` into a
+staging root, unpacked over `/usr/tests` in the VM, then
+`kyua test -k /usr/tests/sys/fs/nfs/Kyuafile`, which is what `make check`
+runs: 10 of 10 (one expected failure) in 300 s, cases run exclusively
+(`kyua list -v`: `is_exclusive = true`).
 
 Untested: bare metal, kernels loading NFS and Kerberos as modules, stable/15,
-and `make check` from an installed `/usr/tests` (the VM installed the files
-by hand; `make -n install` lists the expected files).
+and the whole `/usr/tests` tree (the VM image has only `sys/fs/nfs` and
+`sys/common`).

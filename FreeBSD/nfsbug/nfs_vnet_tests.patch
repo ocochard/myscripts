@@ -296,10 +296,10 @@ index 000000000000..1060f8d14b62
 +}
 diff --git tests/sys/fs/nfs/krb5_test.sh tests/sys/fs/nfs/krb5_test.sh
 new file mode 100644
-index 000000000000..1ea33137f6ae
+index 000000000000..259f4465cbd0
 --- /dev/null
 +++ tests/sys/fs/nfs/krb5_test.sh
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,161 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -352,13 +352,14 @@ index 000000000000..1ea33137f6ae
 +	nfs_gssd_start c1 -h
 +}
 +
-+# Capture the NFS traffic on the bridge to wire.pcap.
++# Capture the NFS traffic on the bridge to wire.pcap.  Without immediate
++# mode, packets wait in BPF up to its 1s timeout and are lost at the kill.
 +krb5_capture_start()
 +{
 +	local i
 +
-+	tcpdump -i $(cat nfs_bridge) -U -w wire.pcap tcp port 2049 \
-+	    2> tcpdump.log &
++	tcpdump -i $(cat nfs_bridge) --immediate-mode -U -w wire.pcap \
++	    tcp port 2049 2> tcpdump.log &
 +	echo $! > tcpdump.pid
 +	for i in $(seq 10); do
 +		grep -q "listening on" tcpdump.log && return 0
