@@ -3,9 +3,10 @@
 Written 2026-11-22 at the end of the session that rebased and pushed the
 branches, added three test cases, squashed the tests into one commit, found
 and fixed the nfscbd bugs #7 and #8 and the dying server jails #9 and #10,
-and wrote their bug reports (session 34d90969, 2026-11-21 to 11-22). Earlier
-sessions: 4a7ee611 (2026-11-02 to 11-18). The `nfsbug/` docs are committed
-and pushed in myscripts (11f77b6). Copy the block below verbatim into the fresh session
+and wrote their bug reports, then ran the tests as installed by
+`make install` and fixed the flaky `krb5p` capture (session 34d90969,
+2026-11-21 to 11-22). Earlier sessions: 4a7ee611 (2026-11-02 to 11-18). The
+`nfsbug/` docs are committed and pushed in myscripts (last: ae946e9). Copy the block below verbatim into the fresh session
 as the first user message.
 
 ---
@@ -91,6 +92,9 @@ add `PR:` lines to the commits and the #6 PR number to the
   (`nfsrv_setdsserver()`), the DS list is a kernel global, and the MDS needs
   NFS client mounts (#3).
 - NFSv3 NLM fails for jailed clients ("No locks available"); not audited.
+- Cosmetic: each cleanup prints "ifconfig: interface epairNa does not
+  exist", from the shared `vnet.subr` (destroying the jail's end already
+  destroys the pair). Common to all network tests; not a failure.
 - Design limits, not bugs: `nfscbd_pool` and `vfs.nfsd.issue_delegations`
   are host-wide globals (one nfscbd serves every vnet; the test sets and
   restores the sysctl); NFSv4.0 gets no delegations since 71ac1ec5c9d9; a
@@ -125,6 +129,16 @@ add `PR:` lines to the commits and the #6 PR number to the
   `delegation_test.sh`, `nfs.subr`, `nfs_reset_proxy.py`), the patched
   `nfscbd`, and `python.tgz` built with
   `cd /usr/local && tar -czf /tmp/nfstest-vm/python.tgz --exclude 'lib/python3.12/site-packages/*' --exclude 'lib/python3.12/test' --exclude '__pycache__' bin/python3.12 bin/python3 lib/libpython3.12.so.1.0 lib/libpython3.12.so lib/libintl.so.8 lib/libintl.so.8.* lib/python3.12`.
+- To run the tests as a release installs them (what reviewers will do):
+  `mtree -deU -f etc/mtree/BSD.tests.dist -p $R/usr/tests`, then in
+  `tests/sys/fs/nfs` `MAKEOBJDIRPREFIX=/tmp/nfstests-obj make` and
+  `make install DESTDIR=$R INSTALL="install -U -M /tmp/nfstests.meta -D $R"`
+  (unprivileged), add `tests/sys/common/vnet.subr`, tar `usr/tests` into the
+  payload, unpack it over `/` in the VM and run
+  `kyua test -k /usr/tests/sys/fs/nfs/Kyuafile` (what `make check` runs).
+  The VM image does not copy the host's `/usr/tests` (`mkvm.sh` copies
+  only part of the base system), so ship `vnet.subr` too. Check the
+  exclusivity kyua uses with `kyua list -v`, not `kyua report`.
 - `/tmp` may be gone after a reboot; recreate both scripts from below. The
   scratch worktrees `/tmp/nfsall-src`, `/tmp/nfscbd-src`, `/tmp/nfsleak-src`
   are then stale entries: `git -C ~/freebsd-src worktree prune`. The
