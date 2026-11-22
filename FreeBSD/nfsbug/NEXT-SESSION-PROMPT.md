@@ -44,8 +44,8 @@ file in `nfsbug/` is byte-identical to its commit's diff.
 | 2 | `staleclientid.patch`: STALE_CLIENTID in the renew window (45 s stall) | in main | 7a0021a0988f | PR 299221 |
 | 3 | `nfscl_jail.patch`: `VFCF_JAIL` on the NFS client + `NFSSVC_DUMPMNTOPTS` without `PRIV_NFS_DAEMON` | `nfscl-jail` (`~/freebsd-src-nfscljail`) | b7aa61997495 | policy change, no PR; needs rmacklem's agreement |
 | 4 | `kgss_vnet.patch`: gssd state per vnet + per-call timeouts on the shared netlink handle | `kgss-vnet` (`~/freebsd-src-kgssvnet`) | f78949734da0 | no; text in `bugreport_kgss_vnet_upcall.md` |
-| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 12 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | d3b606ca7605 | not a bug |
-| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | bbf6501dfda0 | no; text in `BUGREPORT-session-leak.txt` |
+| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 13 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | de7f3c5a6fa7 | not a bug |
+| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | 0cc0f3961479 | no; text in `BUGREPORT-session-leak.txt` |
 | 7 | `nfscbd_jail.patch`: nfscbd in a jail serves no callbacks (program registered only with the UDP socket, which a jail cannot add) | `nfscbd-jail` (`~/freebsd-src-nfscbdjail`) | aa9ec5017d91 | no; text in `BUGREPORT-nfscbd-jail.txt` |
 | 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | e25acea11283 | no; text in `BUGREPORT-svc-backchannel.txt` |
 | 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | f5ab46ed04b0 (one commit with #10) | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
@@ -56,7 +56,7 @@ The branches track `upstream/main` (the GitHub mirror): never use a bare
 
 **Review order** I gave (I create the reviews and push upstream myself):
 #3, #4, #7, #8, #9+#10 (no code dependency, can run in parallel), then the
-tests d3b606ca7605 (needs #3, #4, #7, #9 and #10), then #6 bbf6501dfda0 (removes the
+tests de7f3c5a6fa7 (needs #3, #4, #7, #9 and #10), then #6 0cc0f3961479 (removes the
 `session_leak` expect_fail). File the PRs first (#9 and #10 share one), then
 add `PR:` lines to the commits and the #6 PR number to the
 `atf_expect_fail` message in the tests commit. One diff per review:
@@ -111,7 +111,6 @@ add `PR:` lines to the commits and the #6 PR number to the
 - pNFS tests are blocked: the MDS refuses to run in a jail
   (`nfsrv_setdsserver()`), the DS list is a kernel global, and the MDS needs
   NFS client mounts (#3).
-- NFSv3 NLM fails for jailed clients ("No locks available"); not audited.
 - Cosmetic: each cleanup prints "ifconfig: interface epairNa does not
   exist", from the shared `vnet.subr` (destroying the jail's end already
   destroys the pair). Common to all network tests; not a failure.
@@ -119,6 +118,13 @@ add `PR:` lines to the commits and the #6 PR number to the
   are host-wide globals (one nfscbd serves every vnet; the test sets and
   restores the sysctl); NFSv4.0 gets no delegations since 71ac1ec5c9d9; a
   jailed client's RPC counters go to the vnet of the process doing the I/O.
+- NLM (NFSv3 locking) cannot work in jails, measured 2026-11-22:
+  `PRIV_NFS_LOCKD` is `#ifdef notyet` for jails, so `rpc.lockd` dies in
+  one, and the kernel NLM state is host-wide (`nlm_is_running`, sockets,
+  statd client, host list; the client names itself with the host's
+  hostname). Making it per vnet would be a large `sys/nlm` change: ask
+  rmacklem first, as for pNFS. The tests cover NFSv3 with `nolockd`
+  (`v3_basic`).
 
 **How the tests are run** (bhyve VM, since a client bug can hang the host):
 - The last full test kernel is in `/tmp/kobj-new-NODEBUG` and
@@ -232,7 +238,7 @@ atf_test_program{name="krb5_test", is_exclusive=true}
 atf_test_program{name="delegation_test", is_exclusive=true}
 KF
 cd $D
-for t in delegation_test:recall krb5_test:krb5 krb5_test:krb5i krb5_test:krb5p krb5_test:server_freed basic_test:basic basic_test:v40_basic basic_test:v40_server_freed basic_test:two_clients recovery_test:server_reset recovery_test:server_reset_twice recovery_test:session_leak; do
+for t in delegation_test:recall krb5_test:krb5 krb5_test:krb5i krb5_test:krb5p krb5_test:server_freed basic_test:basic basic_test:v3_basic basic_test:v40_basic basic_test:v40_server_freed basic_test:two_clients recovery_test:server_reset recovery_test:server_reset_twice recovery_test:session_leak; do
 	step "test $t"
 	timeout -s KILL 400 kyua debug -k Kyuafile $t 2>&1 | grep -v '^Executing command' | tee -a /root/steps.log
 	sync

@@ -1,6 +1,6 @@
 # Bug #6: every recovery leaks a session until unmount
 
-Patch: [`session-leak.patch`](session-leak.patch), commit bbf6501dfda0 on
+Patch: [`session-leak.patch`](session-leak.patch), commit 0cc0f3961479 on
 branch `session-leak` in `~/freebsd-src-sessleak`, on top of the tests
 (`nfs-vnet-tests`): it also removes the `atf_expect_fail` of the
 `session_leak` test. Not filed yet. Bugzilla text:

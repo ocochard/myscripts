@@ -49,10 +49,10 @@ index 000000000000..1bf93391e294
 +.include <bsd.test.mk>
 diff --git tests/sys/fs/nfs/basic_test.sh tests/sys/fs/nfs/basic_test.sh
 new file mode 100644
-index 000000000000..6dbdc49ddee8
+index 000000000000..fd6b999d66ec
 --- /dev/null
 +++ tests/sys/fs/nfs/basic_test.sh
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,201 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -125,7 +125,13 @@ index 000000000000..6dbdc49ddee8
 +	nfs_client_start c1
 +	cl=$(nfs_client c1)
 +	nfs_mount ${cl} $(nfs_addr srv) $1
-+	m=$(nfs_mnt ${cl})
++	basic_files $(nfs_mnt ${cl})
++}
++
++# Check file operations in mount point $1 of server srv.
++basic_files()
++{
++	local m=$1
 +
 +	echo hello > $m/file
 +	atf_check -o inline:"hello\n" cat $m/file
@@ -138,6 +144,41 @@ index 000000000000..6dbdc49ddee8
 +	atf_check -o file:big.sum sha256 -q srv/export/big
 +	atf_check rm -r $m/dir $m/big
 +	atf_check -o empty ls srv/export
++}
++
++atf_test_case "v3_basic" "cleanup"
++v3_basic_head()
++{
++	atf_set descr 'NFSv3 file operations against a vnet jail server, no NLM'
++	atf_set require.user root
++	atf_set require.progs rpcbind
++}
++
++v3_basic_body()
++{
++	local cl m
++
++	nfs_init
++	nfs_server_start_v3 srv
++	nfs_client_start c1
++	cl=$(nfs_client c1)
++	# NLM cannot run in a jail: lock locally.
++	nfs_mount ${cl} $(nfs_addr srv) nfsv3,tcp,nolockd
++	m=$(nfs_mnt ${cl})
++	if [ ${cl} = host ]; then
++		atf_check -o match:nfsv3 nfsstat -m
++	else
++		atf_check -o match:nfsv3 jexec ${cl} nfsstat -m
++	fi
++	echo locked > $m/lockfile
++	atf_check lockf -k -w -t 0 $m/lockfile true
++	atf_check rm $m/lockfile
++	basic_files $m
++}
++
++v3_basic_cleanup()
++{
++	nfs_cleanup
 +}
 +
 +atf_test_case "v40_server_freed" "cleanup"
@@ -209,6 +250,7 @@ index 000000000000..6dbdc49ddee8
 +{
 +	atf_add_test_case "basic"
 +	atf_add_test_case "v40_basic"
++	atf_add_test_case "v3_basic"
 +	atf_add_test_case "v40_server_freed"
 +	atf_add_test_case "two_clients"
 +}
@@ -514,10 +556,10 @@ index 000000000000..52e4f1ca3910
 +}
 diff --git tests/sys/fs/nfs/nfs.subr tests/sys/fs/nfs/nfs.subr
 new file mode 100644
-index 000000000000..3455ff2a6f5d
+index 000000000000..86127ff78088
 --- /dev/null
 +++ tests/sys/fs/nfs/nfs.subr
-@@ -0,0 +1,506 @@
+@@ -0,0 +1,524 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -690,6 +732,14 @@ index 000000000000..3455ff2a6f5d
 +	nfs_server_run $1
 +}
 +
++# Start a server in jail $1 that also serves NFSv3, which needs rpcbind and
++# the MOUNT protocol.  No NLM: rpc.lockd cannot run in a jail.
++nfs_server_start_v3()
++{
++	nfs_server_jail "$@"
++	nfs_server_run $1 v3
++}
++
 +# First half of nfs_server_start: create the jail and its exports, so that
 +# a test can set up more (Kerberos, ...) before nfsd starts.
 +nfs_server_jail()
@@ -708,16 +758,24 @@ index 000000000000..3455ff2a6f5d
 +	EOF
 +}
 +
-+# Second half of nfs_server_start: start mountd and nfsd in jail $1.
++# Second half of nfs_server_start: start mountd and nfsd in jail $1, for
++# NFSv4 only unless $2 is v3.
 +nfs_server_run()
 +{
 +	local name=$1 i
 +
-+	# NFSv4 only: no rpcbind needed.  mountd -R does not clear
-+	# nfs_privport, and the proxy connects from an unprivileged port.
-+	atf_check -o ignore jexec ${name} sysctl \
-+	    vfs.nfsd.server_min_nfsvers=4 vfs.nfsd.nfs_privport=0
-+	atf_check jexec ${name} mountd -R -n /exports
++	# mountd does not clear nfs_privport, and the proxy connects from an
++	# unprivileged port.
++	atf_check -o ignore jexec ${name} sysctl vfs.nfsd.nfs_privport=0
++	if [ "$2" = v3 ]; then
++		atf_check jexec ${name} rpcbind
++		atf_check jexec ${name} mountd -n /exports
++	else
++		# NFSv4 only: no rpcbind needed.
++		atf_check -o ignore jexec ${name} sysctl \
++		    vfs.nfsd.server_min_nfsvers=4
++		atf_check jexec ${name} mountd -R -n /exports
++	fi
 +	atf_check jexec ${name} nfsd -t
 +	for i in $(seq 10); do
 +		jexec ${name} sockstat -4l -P tcp -p 2049 | grep -q nfsd &&
@@ -761,25 +819,27 @@ index 000000000000..3455ff2a6f5d
 +}
 +
 +# Mount server $2 (address, or address:port) on client $1 with NFSv4.1,
-+# unless the extra mount options, comma separated, give a minorversion.
++# unless the extra mount options, comma separated, give a minorversion or
++# nfsv3.
 +nfs_mount()
 +{
-+	local cl=$1 srv=$2 opts=nfsv4,retrycnt=1 port
++	local cl=$1 srv=$2 opts=nfsv4,retrycnt=1 path=/ port
 +
 +	shift 2
 +	case ${srv} in
 +	*:*)	port=${srv#*:}; srv=${srv%:*}; opts=${opts},port=${port} ;;
 +	esac
 +	case "$1" in
++	*nfsv3*) opts=retrycnt=1; path=/export ;;
 +	*minorversion=*) ;;
 +	*)	opts=${opts},minorversion=1 ;;
 +	esac
 +	[ $# -gt 0 ] && opts=${opts},$1
 +	if [ ${cl} = host ]; then
 +		mkdir -p mnt
-+		atf_check mount -t nfs -o ${opts} ${srv}:/ $(nfs_mnt host)
++		atf_check mount -t nfs -o ${opts} ${srv}:${path} $(nfs_mnt host)
 +	else
-+		atf_check jexec ${cl} mount -t nfs -o ${opts} ${srv}:/ /mnt
++		atf_check jexec ${cl} mount -t nfs -o ${opts} ${srv}:${path} /mnt
 +	fi
 +	echo $(nfs_mnt ${cl}) >> nfs_mounts
 +}

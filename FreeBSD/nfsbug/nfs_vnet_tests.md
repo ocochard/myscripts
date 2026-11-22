@@ -2,7 +2,7 @@
 
 Patch: [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch), adds
 `tests/sys/fs/nfs/`, against main 6edecf52def6. Branch `nfs-vnet-tests` in
-`~/freebsd-src-nfstest`, one commit, d3b606ca7605 (four commits squashed
+`~/freebsd-src-nfstest`, one commit, de7f3c5a6fa7 (four commits squashed
 on 2026-11-22: the tests, `v40_basic`, `session_leak` and the delegation
 `recall`). Not committed upstream.
 
@@ -94,8 +94,9 @@ is short:
 |---|---|
 | `nfs_init` | create the virtual switch, load the modules or skip |
 | `nfs_server_start srv` | jail `srv` running an NFSv4 server exporting `/export` |
+| `nfs_server_start_v3 srv` | the same, also serving NFSv3 (`rpcbind`, `mountd` with the MOUNT protocol); no NLM |
 | `nfs_client_start c1` | client jail `c1`, if the kernel allows NFS in jails |
-| `nfs_mount <client> <server> [options]` | mount with NFSv4.1, unless the options give a `minorversion` |
+| `nfs_mount <client> <server> [options]` | mount with NFSv4.1, unless the options give a `minorversion` or `nfsv3` (then `/export` is mounted) |
 | `nfs_proxy_start srv`, `nfs_reset` | put the proxy in front of `srv`; make it forget |
 | `nfs_sessions` | NFS client sessions in use in the kernel (`vmstat -m`) |
 | `nfs_probe_start`, `nfs_probe_check` | start the probe; fail on a gap over 10 s |
@@ -113,6 +114,7 @@ is short:
 | `krb5_test.sh` | `krb5` | Kerberos mount works, and a mount without Kerberos is refused |
 | | `krb5i` | integrity only: the data is visible on the wire |
 | | `krb5p` | privacy: the data is not visible on the wire |
+| `basic_test.sh` | `v3_basic` | the `basic` checks over NFSv3 with `nolockd`, a local lock, and `nfsstat -m` showing `nfsv3` |
 | `basic_test.sh` | `v40_basic` | the `basic` checks over NFSv4.0 (SETCLIENTID instead of sessions) |
 | `recovery_test.sh` | `session_leak` | three resets, then 120 s: at most one session left for the mount; expected to fail until #6 |
 | `basic_test.sh` | `v40_server_freed` | NFSv4.0 mount, I/O, unmount, then the server jail is removed: it must be gone within 10 s; needs #9 |
@@ -192,6 +194,14 @@ The three later cases, bhyve VM, 2026-11-21, all with the clients in jails:
 | main 6dc19a71f70c + #3 + #4 | passed | expected failure: 4 sessions | failed: no delegation | passed |
 | same + #6 (`atf_expect_fail` removed) | not run | passed | not run | reset cases passed |
 | same + #7 + #8 (GENERIC-NODEBUG and GENERIC with WITNESS) | passed | expected failure | passed | passed |
+
+NFSv3 in jails, measured 2026-11-22: without NLM, NFSv3 works (mount, I/O,
+checksums, a local lock with `nolockd`; `v3_basic` passed 3 of 3). NLM
+cannot work: `PRIV_NFS_LOCKD` is not granted to jails (`kern_jail.c`,
+`#ifdef notyet`), so `rpc.lockd` dies in one, and the kernel NLM state is
+host-wide (`nlm_is_running`, its sockets, the statd client, the host list),
+so a second `rpc.lockd` anywhere gets EPERM. A jailed client's `lockf` got
+"No locks available" with and without `rpc.lockd` on the host.
 
 The two jail-freed cases, 2026-11-22, GENERIC-NODEBUG:
 
