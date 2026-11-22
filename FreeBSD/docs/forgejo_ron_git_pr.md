@@ -245,6 +245,40 @@ git rebase review/main
 git pr main -f
 ```
 
+### Add review tags to every commit
+
+Before the commits land, each one needs its tags, such as
+`Reviewed by:` and `Pull Request:`. Do it in the rebase onto the
+current `main` that landing needs anyway:
+
+```
+git fetch freebsd
+git rebase -i freebsd/main
+```
+
+In the todo list, change `pick` to `reword` (or `r`) on each commit, then
+save. Git opens the editor once per commit: add the tags, with a tab
+after each colon. With the `prepare-commit-msg` hook installed, the
+editor lists the tags as comments, in the Committer's Guide order.
+
+This also moves the branch onto the newest `main`; rebuild if upstream
+touched the same files. To change only the messages and keep the
+reviewed base, rebase onto the branch's own base instead:
+`git rebase -i $(git merge-base HEAD freebsd/main)`.
+
+When every commit gets the same tags, `--exec` does it without an
+editor (the gaps after the colons are tabs; type them with Ctrl-V Tab):
+
+```
+git rebase --exec 'm=$(git log -1 --format=%B); printf "%s\n%s\n%s\n" "$m" \
+  "Reviewed by:	kib" \
+  "Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/112" \
+  | git commit -q --amend -F -' freebsd/main
+```
+
+It appends the tags after the last existing tag. Tested 2026-11-22 on a
+two-commit branch.
+
 ## Find pull requests
 
 ```
