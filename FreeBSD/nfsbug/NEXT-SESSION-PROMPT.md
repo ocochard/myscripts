@@ -6,10 +6,11 @@ and fixed the nfscbd bugs #7 and #8 and the dying server jails #9 and #10,
 and wrote their bug reports, ran the tests as installed by `make install`,
 fixed the flaky `krb5p` capture, closed the last gap in #9 (an nfsd
 stopped before its jail is removed), moved that hook's work to a task to
-avoid a deadlock, and added two tests that a removed server jail goes away
-(session 34d90969, 2026-11-21 to 11-22). Earlier sessions: 4a7ee611
-(2026-11-02 to 11-18). The `nfsbug/` docs are committed and pushed in
-myscripts (last: e65d1f8). Copy the block below verbatim into the fresh
+avoid a deadlock, added two tests that a removed server jail goes away,
+then rebased everything onto main 6edecf52def6 and squashed #9 and #10
+into one commit (session 34d90969, 2026-11-21 to 11-22). Earlier sessions:
+4a7ee611 (2026-11-02 to 11-18). The `nfsbug/` docs are committed and
+pushed in myscripts (last: 40a1587). Copy the block below verbatim into the fresh
 session as the first user message.
 
 ---
@@ -120,11 +121,14 @@ add `PR:` lines to the commits and the #6 PR number to the
   jailed client's RPC counters go to the vnet of the process doing the I/O.
 
 **How the tests are run** (bhyve VM, since a client bug can hang the host):
-- The last full test kernel was built in `/tmp/nfscbd-src` (main + #3 #4
-  and the first tests commit, then #7 #8 #9 #10 applied uncommitted; the VM
-  took the test files from the branch) to `/tmp/kobj-gap-NODEBUG` and
-  `/tmp/kobj-gap-DBG` (all fixes, #9 with its task-based hook); a fresh one:
-  cherry-pick the branches instead.
+- The last full test kernel is in `/tmp/kobj-new-NODEBUG` and
+  `/tmp/kobj-new-DBG`, built from `/tmp/nfsnew-src`: upstream/main
+  6edecf52def6 with all 8 commits cherry-picked, in this order:
+  `nfscl-jail`, `kgss-vnet`, `upstream/main..nfscbd-jail`,
+  `upstream/main..nfsd-jail-dying`, `upstream/main..session-leak` (the
+  last range holds the tests and #6). Do the same for a fresh one; with #6
+  in, take the test files from `session-leak`, where `session_leak` has no
+  `atf_expect_fail`.
 - Kernel: `include GENERIC-NODEBUG` (or `GENERIC` for WITNESS) plus
   `ident NFSTEST`, `device epair`, `device if_bridge`, `options NULLFS`,
   `options KGSSAPI`. The VM loads no modules. Build in a scratch worktree
@@ -160,8 +164,8 @@ add `PR:` lines to the commits and the #6 PR number to the
   only part of the base system), so ship `vnet.subr` too. Check the
   exclusivity kyua uses with `kyua list -v`, not `kyua report`.
 - `/tmp` may be gone after a reboot; recreate both scripts from below. The
-  scratch worktrees `/tmp/nfsall-src`, `/tmp/nfscbd-src`, `/tmp/nfsleak-src`
-  are then stale entries: `git -C ~/freebsd-src worktree prune`. The
+  scratch worktrees `/tmp/nfsall-src`, `/tmp/nfscbd-src`, `/tmp/nfsleak-src`,
+  `/tmp/nfsnew-src` are then stale entries: `git -C ~/freebsd-src worktree prune`. The
   experiment scripts of this session were in `/tmp/delegexp`,
   `/tmp/dyingexp` and `/tmp/delegexp-tools/rpcdump.py` (prints every RPC
   call and reply of a port 2049 pcap).
