@@ -487,6 +487,10 @@ build/bin/whisper-cli -t 16 -otxt ../FreeBSD.Foundation.Update.May.2024.FreeBSD.
 ```
 
 While using larger model, it could repeats same sentence multiple times: Increase entropy threshold ,`-et 2.8` to reduce this problem.
+`-mc 0` (no previous text as context) works too: on a 78 min dialog,
+large-v3-turbo repeated one sentence 115 times over 4 min; `-et 2.8` and
+`-mc 0` each cut that to 1 or 2 lines. The loop only appears when transcribing
+the full file, not that 8 min window alone.
 
 ### Multi speakers (Speaker diarization)
 
@@ -508,6 +512,59 @@ build/bin/whisper-cli -t 16 -m models/ggml-small.en-tdrz.bin -otxt -np -di ../BS
 [00:01:17.280 --> 00:01:33.240]  (speaker ?) is with some news from the B_S_D_ space and uh starting off with headlines of course, like always like all the other five hundred fifty eight or fifty seven uh episodes started before, let B_S_D_ nine dot four is it this time.
 (etc.)
 ```
+
+Both only help when each speaker has their own channel; on a mono or mixed
+recording every line stays `(speaker ?)`.
+
+### Speaker labels on a mono recording (pyannote)
+
+[diarize.py](diarize.py) merges a whisper.cpp word-timed transcript with the
+speaker turns found by
+[pyannote community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
+(open weights, CC-BY-4.0). It labels speakers `SPEAKER_00`, `SPEAKER_01`...;
+rename them to the real names afterwards. pyannote `precision-2` scores better
+but runs only on the pyannoteAI cloud, so the audio leaves the host.
+
+Setup on FreeBSD (PyTorch from packages; pip only adds pure-Python wheels, so
+nothing compiles):
+```
+sudo pkg install -y py312-pytorch py312-torchaudio py312-torchcodec \
+  py312-scipy py312-matplotlib py312-pytorch-lightning py312-einops \
+  py312-safetensors py312-rich py312-huggingface-hub py312-torchmetrics \
+  py312-scikit-learn py312-pandas py312-soundfile py312-optuna \
+  py312-opentelemetry-sdk py312-opentelemetry-exporter-otlp
+python3.12 -m venv --system-site-packages ~/venv/pyannote
+~/venv/pyannote/bin/pip install --only-binary=:all: pyannote.audio
+hf auth login   # after accepting the model terms on its Hugging Face page
+```
+
+Without `--only-binary`, pip tries to build scipy from source and fails on the
+missing Fortran compiler. The PyTorch package needs
+`OPENBLAS_CORETYPE=SKYLAKEX` on Zen5 (see `pkg info -D py312-pytorch`).
+
+Transcribe with DTW token timestamps (`-dtw` silently gives `t_dtw = -1`
+unless flash attention is off with `-nfa`), then diarize:
+```
+whisper-cli -m ~/models/whisper/ggml-large-v3-turbo.bin -l auto -t 8 -np \
+  -mc 0 -nfa -ojf -dtw large.v3.turbo -of talk -f talk.wav
+OPENBLAS_CORETYPE=SKYLAKEX ~/venv/pyannote/bin/python diarize.py talk.wav talk.json
+```
+
+It writes `talk.dia.txt` and `talk.rttm` (the speaker turns, reused on the
+next run). Add the speaker count as a third argument when known:
+```
+[00:00:02] SPEAKER_00: amazing okay so michelle you're a writer director would you like to introduce yourself more deeply or is it
+
+[00:00:15] SPEAKER_01: uh so my name is michelle moore and i'm a writer director producer based in texas
+```
+
+DTW matters: with the default segment offsets a turn started 1.7 s early on
+the example above, and the dialog split into 68 turns instead of 48.
+
+pyannote runs on CPU here (no GPU PyTorch on FreeBSD). On frwk-bsd
+(2026-11-22) a 17 min interview took 7m18s, nearly all of it in the
+embeddings step, against 1m06s for whisper with DTW on Vulkan0 (27 s with
+flash attention, without DTW).
 
 ### Stream mode
 
