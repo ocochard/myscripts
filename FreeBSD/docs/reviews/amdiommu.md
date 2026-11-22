@@ -1,35 +1,43 @@
 e38153bb186c42e650df0922e42d8fd03ec86748 ("iommu: Identity-map contexts when DMA remapping is disabled")
-ea9897aaa755e6e19fa3ff6c71409172cd8b6c2e ("amdiommu: Skip the invalidation after a map that only fills PTEs")
+56481221379bf97f6d1f2506cf2a10fbb9ab4aea ("amdiommu: Skip the invalidation after PTE-only maps")
 
-No runtime bug found.
+POSTCR-56481221379bf97f6d1f2506cf2a10fbb9ab4aea-1: a map that reuses a PDE just written by a concurrent map skips the flush, so its DMA can walk the stale cached PDE and IO_PAGE_FAULT
 
-e38153bb186c, checked:
-- iommu_instantiate_ctx() callers on main: amdiommu_ir_find() (amd_intrmap.c), iommu_get_dev_ctx() (returns NULL earlier when !dma_enabled), dmar_inst_rmrr_iter() (reached only via dmar_instantiate_rmrr_ctxs() <- unit_pre_instantiate_ctx <- iommu_get_dev_ctx(), after the same dma_enabled check). arm64/riscv have no other caller. So the new `!unit->dma_enabled` term is reachable only from the AMD IR path. Intel DMAR: no behaviour change (dmar_ir_find() never instantiates a ctx). dma_enabled is CTLFLAG_RD, set once in iommu_init_busdma().
-- Disabled path: first ref kept with IOMMU_CTX_DISABLED, later refs dropped via iommu_free_ctx_locked() -> amdiommu_free_ctx_locked() refs > 1 branch, so the IR path no longer piles refs in this mode. id_mapped domain sets IOMMU_DOMAIN_IDMAP, DTE pgmode 1T1, IRT still programmed in dte_entry_init_one().
+The branch head moved during the review: c9710d5ad454 was re-committed at 14:08 as 56481221379b, message only ("430 MB/s" -> "about 410 MB/s"), same tree. Read against the merge base 6dc19a71f70c.
 
-ea9897aaa755, checked:
-- PCIM_AMDIOMMU_CAP_NPCACHE (1 << 26) and PCIR_AMDIOMMU_CAP_HEADER exist in pcireg.h; bit matches spec #48882 capability header NpCache.
-- IOVA reuse: unload frees GAS space only after the invalidation completes (iommu_qi_drain_tlb_flush(), or sync invalidate before iommu_domain_free_entry()), so a map never reuses an IOVA with a stale present IOTLB entry.
-- Freed table pages: iommu_pgfree() with entry keeps the page on entry->pgtbl_free until the deferred flush; a new PDE in that slot always comes from the allocation branch of amdiommu_pgtbl_map_pte(), which sets pde_set, and the sync flush (INVALIDATE_IOMMU_PAGES, pde = 1) covers the walk of the new range. Upper-level PDEs created by the same map are covered the same way.
-- pde_set written only under the domain pglock (map_pte from map/unmap paths, both locked); read back before unlock.
-- ENOMEM path of amdiommu_map_buf_locked(): partial PTEs were never handed to the device; any new PDE still forces the flush.
+Detail of the -1 bug. The commit's rule is that DMA through a new PDE needs a flush first, because unmap clears the PDE of a freed table before its invalidation runs (amdiommu_unmap_clear_pte() -> iommu_pgfree(entry) and amdiommu_free_pgtbl_pde(), amd_idpgtbl.c:318-333; amdiommu_domain_unload() emits INVALIDATE_IOMMU_PAGES afterwards, amd_ctx.c:131-141). But only the call that wrote the PDE flushes:
+1. An unload removes the last mapping of a 2 MB region R: the leaf table P is freed (deferred) and PDE(R) cleared; the IOMMU may hold PDE(R) -> P until that invalidation executes.
+2. Map X (CPU B) into R allocates P', writes PDE(R) -> P', sets pde_set, drops the pglock, then queues its flush behind the unload's commands and waits.
+3. Map Y (CPU C) into R takes the pglock in that window, finds P' present and writes only its PTE: pde_set false, NpCache clear, no flush (amd_idpgtbl.c:290-293). amdiommu_map_buf() returns and the driver starts the DMA.
+4. Y's DMA uses the cached PDE(R) -> P and reads a cleared PTE: IO_PAGE_FAULT, the signature of the 1303 faults measured for the NpCache-only version.
+Maps of one domain do run concurrently: iommu_gas_map() calls domain->ops->map() after dropping the domain lock (iommu_gas.c:837), and nvme(4) loads from one I/O queue per CPU. The unload emits one INVALIDATE_IOMMU_PAGES per 4 KB page (amd_cmd.c:216-219), so under load the window is the one that produced the measured faults. The single-stream dd tests never have two maps in flight. The earlier per-domain field had the same hole: the problem is the skip condition, not kib's plumbing.
+Fix options: keep the obligation until the flush completes, e.g. a per-domain count of PDE flushes in flight, raised under the pglock where pde_set is set, dropped after iommu_qi_invalidate_sync() returns, and flush whenever it is non-zero (Y's own pde = 1 flush then drops the stale PDE and completes after the earlier commands); or keep empty page table pages on unmap, as Linux v1 does, so that no map needs a flush with NpCache clear. Test with several parallel dd readers on nda0 at different offsets, then read the event log.
 
-Interaction with pr/amdiommu-irte: both edit amd_iommu.h; hunks apply in either order (verified with patch(1)), different structs and locks, no semantic conflict.
+kib's PR #113 design, implemented:
+- pde_set is gone from struct amdiommu_domain; amd_iommu.h only gains cap_hdr in struct amdiommu_unit.
+- bool *pde_set goes through amdiommu_pgtbl_map_pte() and amdiommu_map_buf_locked(), set only where the PDE of a new table page is written (amd_idpgtbl.c:177-178); the recursion passes it down, so upper-level PDEs count.
+- Callers (git grep; all static in amd_idpgtbl.c): the recursion and map_buf_locked() pass it; amdiommu_free_pgtbl_pde() and amdiommu_unmap_buf_locked() pass NULL and never allocate (tables exist, KASSERT(pte != NULL)); the store is guarded anyway.
+- map_buf_locked() sets *pde_set = false before the loop (amd_idpgtbl.c:207), so amdiommu_map_buf() reads an initialized value on the 0 and ENOMEM returns. On ENOMEM without a new PDE the unwind only clears PTEs of this call, never handed to a device: no flush needed.
+- Out-parameter rather than return value: the returns already carry the errno and the PTE pointer. Say so in the reply to kib.
+- Flush condition: pde_set || NpCache (capability header bit 26, read in amdiommu_attach(), amd_drv.c:487); the flush is INVALIDATE_IOMMU_PAGES with pde = 1 per 4 KB page of the mapped range.
+
+e38153bb186c, unchanged since the previous review:
+- Only the AMD IR path reaches iommu_instantiate_ctx() with dma_enabled clear. iommu_get_dev_ctx() (also the entry point for arm64 gicv3_its and riscv, which share busdma_iommu.c) returns before it when DMA is off; Intel's RMRR caller runs from iommu_unit_pre_instantiate_ctx() behind the same check.
+- The identity domain gets DTE pgmode 0 (pass-through) with iv and intctl still set, so IR keeps working; later references on the disabled context are dropped in iommu_instantiate_ctx().
 
 Comments:
-- ea9897aaa755 message: "capped NVMe reads at 44 MB/s with 46 IOMMU interrupts per 128 KB read" does not match the tutorial, which measures 51 interrupts per 128 KB read and 752/760/653 MB/s for stock + DMA remapping on the SER6, and states the NV2 itself varies 44.7 to 750 MB/s between boots. 44 MB/s is drive variance, not an IOMMU cap. Use the tutorial's numbers (e.g. 51 -> 19 interrupts per 128 KB read; ZBook 200 -> 430 MB/s).
-- ea9897aaa755 has no Fixes: tag; it is a performance change, so none is required.
-- e38153bb186c body says "On a Ryzen 7 7735HS"; the ZBook (Strix Halo) reproduces too, optional to mention.
+- Throughput: the message now says "about 410 MB/s"; the tutorial ZBook row says 433/430/433 MB/s (earlier revision) and the retest of this code reported 374 MB/s. Quote a figure the tutorial table shows, with its runs.
+- e38153bb186c is committed as olivier@cochard.me (personal identity, non-ASCII name); the other three commits, and every committer in the last 500 freebsd/main commits, use @FreeBSD.org. Re-stamp the committer before pushing.
 
 ## Checks
 
-- style(9): clang-format21 with upstream .clang-format on changed lines. Flags: struct comment alignment (matches neighbours), pci_read_config() split in amd_drv.c (matches the two reads right below), and 8-column continuation in busdma_iommu.c (style(9) uses 4, as written). No real deviation. The patch also drops a trailing space on the pci_get_slot() line.
-- Non-ASCII: none in diffs or commit messages.
-- GPL: ea9897aaa755 follows Linux behaviour (amd_iommu_iotlb_sync_map() flushes on map only with NpCache), cited in the body; the code is FreeBSD's own (flag in map_pte, test in map_buf), nothing copied. e38153bb186c has no Linux counterpart. OK.
-- Spec: NpCache semantic comes from AMD IOMMU spec #48882 (capability header bit 26); citing it in ea9897aaa755 would help reviewers, optional.
-- Commit messages: subjects 59 and 64 chars (over 50, acceptable); prefixes "iommu:" and "amdiommu:" (pr/amdiommu-irte uses "amd_iommu:", pick one); bodies <= 72 cols; Fixes:/MFC after: with tabs; no PR:.
-- Tutorials: ~/myscripts/FreeBSD/docs/bugreport_amdiommu_ir_only_loop.md matches e38153bb186c (same hunk, caller analysis). ~/myscripts/FreeBSD/docs/bugreport_amdiommu_map_invalidation.md matches the code of ea9897aaa755, but its numbers contradict the commit message (above).
+- style(9): clang-format21 with freebsd/main .clang-format on the changed lines. Flags only reflows that match the neighbours: the pci_read_config() split (same as the BASE_LOW read below it), the map_buf_locked() and map_pte() call wraps, the 4-column continuation in busdma_iommu.c, the tab-aligned cap_hdr member. All added lines <= 80 columns. No deviation. busdma_iommu.c also loses a trailing blank.
+- Non-ASCII: none in the diff or the messages (committer field of e38153bb186c above).
+- GPL: nothing copied; the NpCache rule mirrors Linux amd_iommu_iotlb_sync_map(), as the message says, in FreeBSD's own code. e38153bb186c has no Linux counterpart.
+- Spec: NpCache is AMD IOMMU spec 48882 capability header bit 26; pcireg.h already cites the document (rev 3.09). Optional in the message.
+- Commit messages: subjects 59 and 51 chars, prefixes iommu: (sys/dev/iommu) and amdiommu:; bodies <= 72 columns; tags tab-aligned; Fixes: only on the bug fix; no PR:.
+- Tutorials: bugreport_amdiommu_ir_only_loop.md and iommu_idmap_when_dma_disabled.patch match e38153bb186c (same +/- lines). bugreport_amdiommu_map_invalidation.md does not match: lines 55-58 put pde_set in struct amdiommu_domain, cleared and read in amdiommu_map_buf(); describe the bool * out-parameter (NULL from the unmap callers) instead, add the retest of this revision next to the 433/430/433 MB/s row, and the concurrency limit or its fix. amdiommu_skip_map_invalidation.patch is still the domain->pde_set version under the old subject; regenerate it.
 
-VERDICT: ready
+VERDICT: fix needed (POSTCR-56481221379bf97f6d1f2506cf2a10fbb9ab4aea-1 flush skipped by concurrent maps; tutorial and .patch show domain->pde_set; reconcile the 410 MB/s figure; e38153bb186c committer identity)
 
-Resolved 2026-11-21: ea9897aaa755 message amended to the tutorial numbers (now 45463d7ab4e0, same tree); subject shortened to 51 chars.
+Status 2026-11-22: POSTCR-...-1 confirmed from the code (main flushes after every map, so the hole is new; the flush has pde = 1, so the second map's own flush would clear the stale PDE). 16+16 parallel dd readers gave 0 faults on the unfixed kernel: not reproduced. Draft fix d4d285d4df8e (not on pr/amdiommu yet): per-domain pde_flushes count under the page-table lock; a map writing a PDE counts itself until its flush completes; any map seeing a nonzero count flushes. Zbook test of the draft: dd 439/442/443 MB/s, 16+16 parallel readers, msigt 64/64, hdac 64/64, 0 faults. Committer identity fixed in the draft. Throughput varies by boot (374, 407-431, 439-443 MB/s): message to say "400 to 440 MB/s". Tutorial and .patch still stale.
