@@ -184,6 +184,22 @@ sudo LD_PRELOAD="/usr/obj/usr/src/amd64.amd64/lib/libmd/libmd.so.7 \
 tools/build/beinstall.sh
 ```
 
+The builder links the objdir bootstrap tools (`tmp/legacy`, `tmp/usr/bin`) against its own libraries.
+So the client needs every library and symbol version those tools reference.
+`ldd` shows a missing soname, but not a missing symbol version (e.g. libc `FBSD_1.9`).
+List the libraries to preload before running beinstall.sh:
+```
+sh pre-beinstall-check.sh [objdir]
+/usr/obj/usr/src/amd64.amd64/lib/libc/libc.so.7
+    needs FBSD_1.9
+/usr/obj/usr/src/amd64.amd64/lib/libutil/libutil.so.10
+    needs FBSD_1.8
+```
+
+Put each printed path in `LD_PRELOAD`, space separated.
+No output means no preload is needed.
+The check only covers the bootstrap tools under `tmp/`.
+
 #### beinstall.sh fails with `etcupdate (pre-world) failed!`
 
 beinstall.sh hides the etcupdate output. The pre-world step runs
