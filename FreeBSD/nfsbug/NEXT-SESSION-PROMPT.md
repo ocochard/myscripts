@@ -3,11 +3,12 @@
 Written 2026-11-22 at the end of the session that rebased and pushed the
 branches, added three test cases, squashed the tests into one commit, found
 and fixed the nfscbd bugs #7 and #8 and the dying server jails #9 and #10,
-and wrote their bug reports, then ran the tests as installed by
-`make install` and fixed the flaky `krb5p` capture (session 34d90969,
-2026-11-21 to 11-22). Earlier sessions: 4a7ee611 (2026-11-02 to 11-18). The
-`nfsbug/` docs are committed and pushed in myscripts (last: ae946e9). Copy the block below verbatim into the fresh session
-as the first user message.
+and wrote their bug reports, ran the tests as installed by `make install`,
+fixed the flaky `krb5p` capture, and closed the last gap in #9 (an nfsd
+stopped before its jail is removed) (session 34d90969, 2026-11-21 to
+11-22). Earlier sessions: 4a7ee611 (2026-11-02 to 11-18). The `nfsbug/`
+docs are committed and pushed in myscripts (last: df553de). Copy the block
+below verbatim into the fresh session as the first user message.
 
 ---
 
@@ -77,6 +78,12 @@ add `PR:` lines to the commits and the #6 PR number to the
   the test killed it after 1 s; on lo0, a kill within 0.5 s lost 10/10
   captures. Fixed in the tests commit with `--immediate-mode`: krb5p and
   krb5i 15/15 each.
+- 2026-11-22, #9 with its jail removal hook and start guard: same suite and
+  checks passed on both kernels; an NFSv4.0 server jail whose nfsd was
+  stopped before `jail -r` went away at 0 s (before: never). With nfsd
+  stopped while an NFSv4.1 client is still mounted, the jail went away
+  after 598 s: TCP `FIN_WAIT_2` of the server's socket, no NFS state.
+  The start guard is untested (it needs a process left in a dying jail).
 - Not built as such: the #6 branch (tests + #6 without the others) and each
   kernel branch alone; their diffs equal the tested ones.
 
@@ -84,9 +91,12 @@ add `PR:` lines to the commits and the #6 PR number to the
 - Reviews and PRs as above; rebase the branches if main moves first.
 - Dying server jails: fixed by #9 and #10, including an nfsd stopped
   before the removal (#9's jail removal hook and start guard, folded in
-  2026-11-22). NFSv3/NLM not checked for this. A dying-jail check could go into `nfs_cleanup`, but
-  client jails stay dying ~60 s (TCP TIME_WAIT), so it must wait or check
-  only the server.
+  2026-11-22). NFSv3/NLM not checked for this. Unmeasured risk in #9's
+  hook: it waits for the exclusive `nfsv4rootfs_lock` with
+  `allprison_lock` held (no nfsd path found that takes `allprison_lock`
+  while holding a shared reference). A dying-jail check could go into
+  `nfs_cleanup`, but client jails stay dying ~60 s (TCP TIME_WAIT), so it
+  must wait or check only the server.
 - pNFS tests are blocked: the MDS refuses to run in a jail
   (`nfsrv_setdsserver()`), the DS list is a kernel global, and the MDS needs
   NFS client mounts (#3).
@@ -102,8 +112,9 @@ add `PR:` lines to the commits and the #6 PR number to the
 **How the tests are run** (bhyve VM, since a client bug can hang the host):
 - The last full test kernel was built in `/tmp/nfscbd-src` (main + #3 #4
   and the first tests commit, then #7 #8 #9 #10 applied uncommitted; the VM
-  took the test files from the branch) to `/tmp/kobj-gss-NODEBUG`
-  and `/tmp/kobj-gss-DBG`; a fresh one: cherry-pick the branches instead.
+  took the test files from the branch) to `/tmp/kobj-gap-NODEBUG` and
+  `/tmp/kobj-gap-DBG` (all fixes including the #9 hook); a fresh one:
+  cherry-pick the branches instead.
 - Kernel: `include GENERIC-NODEBUG` (or `GENERIC` for WITNESS) plus
   `ident NFSTEST`, `device epair`, `device if_bridge`, `options NULLFS`,
   `options KGSSAPI`. The VM loads no modules. Build in a scratch worktree
