@@ -1,8 +1,9 @@
 # #10: a Kerberos NFS server jail stays dying forever
 
-Patch: [`gss_jail_remove.patch`](gss_jail_remove.patch), against main
-6dc19a71f70c. Branch `nfsd-jail-dying` in `~/freebsd-src-nfsddying`, with #9.
-Not committed, not filed. Touches the krpc RPCSEC_GSS code: needs review by
+Patch: part of [`nfsd_jail_state.patch`](nfsd_jail_state.patch), against
+main 6edecf52def6: #9 and #10 are one commit, f5ab46ed04b0, on branch
+`nfsd-jail-dying` in `~/freebsd-src-nfsddying` (squashed 2026-11-22). Not
+committed upstream, not filed. Touches the krpc RPCSEC_GSS code: needs review by
 rmacklem.
 
 Read [`nfsd_jail_state.md`](nfsd_jail_state.md) (#9) first: same cycle, other

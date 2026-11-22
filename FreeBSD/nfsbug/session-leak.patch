@@ -78,7 +78,7 @@ index 160329968fa2..fb2ee41d92ea 100644
   * Reset slots above nfsess_foreslots that are not busy.
   */
 diff --git sys/fs/nfs/nfs_commonsubs.c sys/fs/nfs/nfs_commonsubs.c
-index a11b55b11c43..cb8c2a15f207 100644
+index 4ebc2a937a6c..48e4a80f4488 100644
 --- sys/fs/nfs/nfs_commonsubs.c
 +++ sys/fs/nfs/nfs_commonsubs.c
 @@ -368,6 +368,7 @@ nfscl_reqstart(struct nfsrv_descript *nd, int procnum, struct nfsmount *nmp,
@@ -106,10 +106,10 @@ index a11b55b11c43..cb8c2a15f207 100644
  				 * For MDS mount sessions, check for bad
  				 * slots.  If the caller does not want this
 diff --git sys/fs/nfs/nfs_var.h sys/fs/nfs/nfs_var.h
-index 488ddbd1c582..d21cafb85260 100644
+index 35c92b63bc4a..781e7ce411f9 100644
 --- sys/fs/nfs/nfs_var.h
 +++ sys/fs/nfs/nfs_var.h
-@@ -563,6 +563,7 @@ int nfscl_doiods(vnode_t, struct uio *, int *, int *, uint32_t, int,
+@@ -567,6 +567,7 @@ int nfscl_doiods(vnode_t, struct uio *, int *, int *, uint32_t, int,
  int nfscl_findlayoutforio(struct nfscllayout *, uint64_t, uint32_t,
      struct nfsclflayout **);
  void nfscl_freenfsclds(struct nfsclds *);

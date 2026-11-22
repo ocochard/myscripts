@@ -32,7 +32,7 @@ server in vnet jails, and the kernel fixes they need. Read these first:
 server and the NFS clients in vnet jails on one machine.
 
 **Patches** (numbering used in all docs). All branches are in `~/freebsd-src`
-(one worktree each), based on `freebsd/main` 6dc19a71f70c, committed with
+(one worktree each), based on `freebsd/main` 6edecf52def6 (rebased 2026-11-22), committed with
 author `Olivier Cochard <olivier@FreeBSD.org>`, and pushed to my fork
 (`origin`, github.com/ocochard/freebsd-src) at the same head. Each patch
 file in `nfsbug/` is byte-identical to its commit's diff.
@@ -41,21 +41,21 @@ file in `nfsbug/` is byte-identical to its commit's diff.
 |---|---|---|---|---|
 | 1 | `badsession.patch`: recovery skipped on a defunct session (permanent hang) | in main | 5ab48fb9f7ac | PR 297252 |
 | 2 | `staleclientid.patch`: STALE_CLIENTID in the renew window (45 s stall) | in main | 7a0021a0988f | PR 299221 |
-| 3 | `nfscl_jail.patch`: `VFCF_JAIL` on the NFS client + `NFSSVC_DUMPMNTOPTS` without `PRIV_NFS_DAEMON` | `nfscl-jail` (`~/freebsd-src-nfscljail`) | 5fdb198e1994 | policy change, no PR; needs rmacklem's agreement |
-| 4 | `kgss_vnet.patch`: gssd state per vnet + per-call timeouts on the shared netlink handle | `kgss-vnet` (`~/freebsd-src-kgssvnet`) | e75a5c761d5c | no; text in `bugreport_kgss_vnet_upcall.md` |
-| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 12 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | 741748e69409 | not a bug |
-| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | d4b2da24ef9b | no; text in `BUGREPORT-session-leak.txt` |
-| 7 | `nfscbd_jail.patch`: nfscbd in a jail serves no callbacks (program registered only with the UDP socket, which a jail cannot add) | `nfscbd-jail` (`~/freebsd-src-nfscbdjail`) | 9fe410604812 | no; text in `BUGREPORT-nfscbd-jail.txt` |
-| 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | 537a6cdcd3c4 | no; text in `BUGREPORT-svc-backchannel.txt` |
-| 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | f4649b41215c | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
-| 10 | `gss_jail_remove.patch`: same cycle with the RPCSEC_GSS server contexts (Kerberos); `PR_METHOD_REMOVE` hook | `nfsd-jail-dying`, after #9 | c60f6270d97f | no; same report as #9 |
+| 3 | `nfscl_jail.patch`: `VFCF_JAIL` on the NFS client + `NFSSVC_DUMPMNTOPTS` without `PRIV_NFS_DAEMON` | `nfscl-jail` (`~/freebsd-src-nfscljail`) | b7aa61997495 | policy change, no PR; needs rmacklem's agreement |
+| 4 | `kgss_vnet.patch`: gssd state per vnet + per-call timeouts on the shared netlink handle | `kgss-vnet` (`~/freebsd-src-kgssvnet`) | f78949734da0 | no; text in `bugreport_kgss_vnet_upcall.md` |
+| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 12 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | d3b606ca7605 | not a bug |
+| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | bbf6501dfda0 | no; text in `BUGREPORT-session-leak.txt` |
+| 7 | `nfscbd_jail.patch`: nfscbd in a jail serves no callbacks (program registered only with the UDP socket, which a jail cannot add) | `nfscbd-jail` (`~/freebsd-src-nfscbdjail`) | aa9ec5017d91 | no; text in `BUGREPORT-nfscbd-jail.txt` |
+| 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | e25acea11283 | no; text in `BUGREPORT-svc-backchannel.txt` |
+| 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | f5ab46ed04b0 (one commit with #10) | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
+| 10 | same commit as #9 (squashed 2026-11-22): the same cycle with the RPCSEC_GSS server contexts (Kerberos); write-up `gss_jail_remove.md` | `nfsd-jail-dying` | f5ab46ed04b0 | same report as #9 |
 
 The branches track `upstream/main` (the GitHub mirror): never use a bare
 `git push`; always `git push origin <branch>`.
 
 **Review order** I gave (I create the reviews and push upstream myself):
-#3, #4, #7, #8, #9, #10 (no code dependency, can run in parallel), then the
-tests 741748e69409 (needs #3, #4, #7, #9 and #10), then #6 d4b2da24ef9b (removes the
+#3, #4, #7, #8, #9+#10 (no code dependency, can run in parallel), then the
+tests d3b606ca7605 (needs #3, #4, #7, #9 and #10), then #6 bbf6501dfda0 (removes the
 `session_leak` expect_fail). File the PRs first (#9 and #10 share one), then
 add `PR:` lines to the commits and the #6 PR number to the
 `atf_expect_fail` message in the tests commit. One diff per review:
@@ -90,6 +90,10 @@ add `PR:` lines to the commits and the #6 PR number to the
   cases added: same suite and checks passed on both kernels;
   `v40_server_freed` and `server_freed` pass with #9 and #10 and fail
   without ("jail srv still dying 10s after its removal").
+- 2026-11-22, after the rebase onto main 6edecf52def6 (one conflict in
+  `nfsd_modevent()`, both lines kept) and the #9+#10 squash: one kernel
+  with all 8 commits, #6 included, NODEBUG and WITNESS: all 12 cases
+  passed, `session_leak` included, nothing dying, no panic.
 - Not built as such: the #6 branch (tests + #6 without the others) and each
   kernel branch alone; their diffs equal the tested ones.
 

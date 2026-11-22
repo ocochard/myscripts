@@ -1,7 +1,8 @@
 # #7: NFSv4.1 callbacks from an nfscbd in a jail
 
-Patch: [`nfscbd_jail.patch`](nfscbd_jail.patch), against main 6dc19a71f70c.
-Branch `nfscbd-jail` in `~/freebsd-src-nfscbdjail`. Not committed, not filed.
+Patch: [`nfscbd_jail.patch`](nfscbd_jail.patch), against main 6edecf52def6.
+Branch `nfscbd-jail` in `~/freebsd-src-nfscbdjail`, commit aa9ec5017d91.
+Not committed upstream, not filed.
 Needs review by rmacklem.
 
 ## 1. Background

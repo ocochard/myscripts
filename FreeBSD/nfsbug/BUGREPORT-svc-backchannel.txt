@@ -1,6 +1,6 @@
 Summary: krpc: after an nfscbd(8) restart, recalls on older NFSv4.1 mounts are dropped (255s stall)
 
-Product: Base System   Component: kern   Version: 16.0-CURRENT (main 6dc19a71f70c)
+Product: Base System   Component: kern   Version: 16.0-CURRENT (main 6edecf52def6)
 
 Description:
 
@@ -34,7 +34,7 @@ them again. A later callback is still queued on the connection by
 clnt_vc_soupcall(), but xprt_active() sees an unregistered transport and
 drops it ("Race with xprt_unregister - we lose").
 
-Fix (attached, svc_backchannel.patch, against main 6dc19a71f70c):
+Fix (attached, svc_backchannel.patch, against main 6edecf52def6):
 - svcpool_close() keeps transports without a socket registered. Only
   svc_vc_create_backchannel() creates such transports; the mount still
   unregisters them at unmount. svcpool_destroy() still removes all.

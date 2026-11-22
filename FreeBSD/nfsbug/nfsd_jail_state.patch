@@ -1,5 +1,5 @@
 diff --git sys/fs/nfs/nfs_var.h sys/fs/nfs/nfs_var.h
-index 488ddbd1c582..78c254c70064 100644
+index 35c92b63bc4a..e8cda62a1e13 100644
 --- sys/fs/nfs/nfs_var.h
 +++ sys/fs/nfs/nfs_var.h
 @@ -137,6 +137,7 @@ int nfsrv_checkgetattr(struct nfsrv_descript *, vnode_t,
@@ -28,7 +28,7 @@ index 181e93a9ac1f..34a816958aae 100644
  		nfsdev_time = time_second;
  		p = td->td_proc;
 diff --git sys/fs/nfsserver/nfs_nfsdport.c sys/fs/nfsserver/nfs_nfsdport.c
-index fbbdef03f440..2f4b50bfeb0c 100644
+index bda047d2d226..618f5bf9a995 100644
 --- sys/fs/nfsserver/nfs_nfsdport.c
 +++ sys/fs/nfsserver/nfs_nfsdport.c
 @@ -51,6 +51,7 @@
@@ -39,7 +39,7 @@ index fbbdef03f440..2f4b50bfeb0c 100644
  #include <nlm/nlm_prot.h>
  #include <nlm/nlm.h>
  #include <vm/vm_param.h>
-@@ -4798,6 +4799,9 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
+@@ -4804,6 +4805,9 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
  		nfsd_timer(TD_TO_VNET(td));
  		error = nfsrvd_nfsd(td, &nfsdarg);
  		callout_drain(&VNET(nfsd_callout));
@@ -49,7 +49,7 @@ index fbbdef03f440..2f4b50bfeb0c 100644
  		free(nfsdarg.addr, M_TEMP);
  		free(nfsdarg.dnshost, M_TEMP);
  		free(nfsdarg.dspath, M_TEMP);
-@@ -8678,14 +8682,66 @@ VNET_SYSUNINIT(nfsrv_cleanup, SI_SUB_VNET_DONE, SI_ORDER_ANY,
+@@ -8680,14 +8684,66 @@ VNET_SYSUNINIT(nfsrv_cleanup, SI_SUB_VNET_DONE, SI_ORDER_ANY,
  
  extern int (*nfsd_call_nfsd)(struct thread *, struct nfssvc_args *);
  
@@ -116,15 +116,15 @@ index fbbdef03f440..2f4b50bfeb0c 100644
  
  	switch (type) {
  	case MOD_LOAD:
-@@ -8701,6 +8757,7 @@ nfsd_modevent(module_t mod, int type, void *data)
- 		vn_deleg_ops.vndeleg_disable = nfsd_disabledelegation;
+@@ -8704,6 +8760,7 @@ nfsd_modevent(module_t mod, int type, void *data)
  #endif
  		nfsd_call_nfsd = nfssvc_nfsd;
+ 		nfs_enable_extpg_cache();
 +		prison_slot = osd_jail_register(NULL, methods);
  		loaded = 1;
  		break;
  
-@@ -8715,6 +8772,8 @@ nfsd_modevent(module_t mod, int type, void *data)
+@@ -8718,6 +8775,8 @@ nfsd_modevent(module_t mod, int type, void *data)
  		vn_deleg_ops.vndeleg_disable = NULL;
  #endif
  		nfsd_call_nfsd = NULL;
@@ -208,3 +208,88 @@ index de5e5da86202..bbb65d747674 100644
  /*
   * Check the sequence# for the session and slot provided as an argument.
   * Also, renew the lease if the session will return NFS_OK.
+diff --git sys/rpc/rpcsec_gss/svc_rpcsec_gss.c sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
+index 3990b0220229..2e1707b9b2d9 100644
+--- sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
++++ sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
+@@ -198,13 +198,21 @@ SYSCTL_UINT(_kern_rpc_gss, OID_AUTO, client_count, CTLFLAG_RD,
+ VNET_DEFINE(struct svc_rpc_gss_client_list *, svc_rpc_gss_client_hash);
+ VNET_DEFINE(struct svc_rpc_gss_client_list, svc_rpc_gss_clients);
+ VNET_DEFINE_STATIC(uint32_t, svc_rpc_gss_next_clientid) = 1;
++static int svc_rpc_gss_prison_slot;
++
++static void svc_rpc_gss_forget_all_clients(void);
++static int svc_rpc_gss_prison_remove(void *obj, void *data);
+ 
+ static void
+ svc_rpc_gss_init(void *unused __unused)
+ {
++	osd_method_t methods[PR_MAXMETHOD] = {
++	    [PR_METHOD_REMOVE] =	svc_rpc_gss_prison_remove,
++	};
+ 
+ 	svc_auth_reg(RPCSEC_GSS, svc_rpc_gss, rpc_gss_svc_getcred);
+ 	sx_init(&svc_rpc_gss_lock, "gsslock");
++	svc_rpc_gss_prison_slot = osd_jail_register(NULL, methods);
+ }
+ SYSINIT(svc_rpc_gss_init, SI_SUB_VFS, SI_ORDER_ANY,
+     svc_rpc_gss_init, NULL);
+@@ -213,6 +221,7 @@ static void
+ svc_rpc_gss_cleanup(void *unused __unused)
+ {
+ 
++	osd_jail_deregister(svc_rpc_gss_prison_slot);
+ 	sx_destroy(&svc_rpc_gss_lock);
+ }
+ SYSUNINIT(svc_rpc_gss_cleanup, SI_SUB_VFS, SI_ORDER_ANY,
+@@ -237,6 +246,7 @@ static void
+ svc_rpc_gss_vnet_cleanup(void *unused __unused)
+ {
+ 
++	svc_rpc_gss_forget_all_clients();
+ 	mem_free(VNET(svc_rpc_gss_client_hash),
+ 	    sizeof(struct svc_rpc_gss_client_list) *
+ 	    svc_rpc_gss_client_hash_size);
+@@ -789,6 +799,42 @@ svc_rpc_gss_timeout_clients(void)
+ 	sx_xunlock(&svc_rpc_gss_lock);
+ }
+ 
++/*
++ * Forget every client of the current vnet.
++ */
++static void
++svc_rpc_gss_forget_all_clients(void)
++{
++	struct svc_rpc_gss_client *client;
++
++	sx_xlock(&svc_rpc_gss_lock);
++	while ((client = TAILQ_FIRST(&VNET(svc_rpc_gss_clients))) != NULL) {
++		svc_rpc_gss_forget_client_locked(client);
++		sx_xunlock(&svc_rpc_gss_lock);
++		svc_rpc_gss_release_client(client);
++		sx_xlock(&svc_rpc_gss_lock);
++	}
++	sx_xunlock(&svc_rpc_gss_lock);
++}
++
++/*
++ * A client holds a credential, so a reference on the jail of the service
++ * that created it, and clients expire only when a request arrives: forget
++ * them when a vnet jail is removed, or the jail could never go away.
++ */
++static int
++svc_rpc_gss_prison_remove(void *obj, void *data __unused)
++{
++	struct prison *pr = obj;
++
++	if ((pr->pr_flags & PR_VNET) == 0)
++		return (0);
++	CURVNET_SET(pr->pr_vnet);
++	svc_rpc_gss_forget_all_clients();
++	CURVNET_RESTORE();
++	return (0);
++}
++
+ #ifdef DEBUG
+ /*
+  * OID<->string routines.  These are uuuuugly.

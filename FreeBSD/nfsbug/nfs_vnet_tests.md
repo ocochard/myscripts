@@ -1,8 +1,8 @@
 # #5: regression tests for the FreeBSD NFS client
 
 Patch: [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch), adds
-`tests/sys/fs/nfs/`, against main 6dc19a71f70c. Branch `nfs-vnet-tests` in
-`~/freebsd-src-nfstest`, one commit, 741748e69409 (four commits squashed
+`tests/sys/fs/nfs/`, against main 6edecf52def6. Branch `nfs-vnet-tests` in
+`~/freebsd-src-nfstest`, one commit, d3b606ca7605 (four commits squashed
 on 2026-11-22: the tests, `v40_basic`, `session_leak` and the delegation
 `recall`). Not committed upstream.
 

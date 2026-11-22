@@ -1,6 +1,6 @@
 Summary: nfscl: nfscbd(8) in a vnet jail serves no callbacks, so NFSv4.1 clients get no delegations
 
-Product: Base System   Component: kern   Version: 16.0-CURRENT (main 6dc19a71f70c)
+Product: Base System   Component: kern   Version: 16.0-CURRENT (main 6edecf52def6)
 
 Description:
 
@@ -29,7 +29,7 @@ So the pool serves no program and refuses every callback. With nfscbd on the
 host, step 1 succeeds and registers the program; nfscbd_pool is a single
 global, so a host nfscbd also serves jailed clients, which hides the bug.
 
-Fix (attached, nfscbd_jail.patch, against main 6dc19a71f70c):
+Fix (attached, nfscbd_jail.patch, against main 6edecf52def6):
 - nfscbd_nfsd() registers NFS_CALLBCKPROG on the pool before svc_run(),
   through a temporary backchannel transport (svc_reg() needs a transport
   only for its pool), and sets nfscl_enablecallb. It runs at each nfscbd

@@ -1,7 +1,8 @@
 # #8: recalls lost after an nfscbd restart
 
 Patch: [`svc_backchannel.patch`](svc_backchannel.patch), against main
-6dc19a71f70c, on top of #7. Not committed, not filed. Touches the generic
+6edecf52def6, on top of #7 (commit e25acea11283). Not committed upstream, not
+filed. Touches the generic
 krpc (`sys/rpc/svc.c`): needs review by rmacklem.
 
 Read [`nfscbd_jail.md`](nfscbd_jail.md) first: it explains delegations,
