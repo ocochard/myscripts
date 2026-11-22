@@ -4,11 +4,13 @@ Written 2026-11-22 at the end of the session that rebased and pushed the
 branches, added three test cases, squashed the tests into one commit, found
 and fixed the nfscbd bugs #7 and #8 and the dying server jails #9 and #10,
 and wrote their bug reports, ran the tests as installed by `make install`,
-fixed the flaky `krb5p` capture, and closed the last gap in #9 (an nfsd
-stopped before its jail is removed) (session 34d90969, 2026-11-21 to
-11-22). Earlier sessions: 4a7ee611 (2026-11-02 to 11-18). The `nfsbug/`
-docs are committed and pushed in myscripts (last: df553de). Copy the block
-below verbatim into the fresh session as the first user message.
+fixed the flaky `krb5p` capture, closed the last gap in #9 (an nfsd
+stopped before its jail is removed), moved that hook's work to a task to
+avoid a deadlock, and added two tests that a removed server jail goes away
+(session 34d90969, 2026-11-21 to 11-22). Earlier sessions: 4a7ee611
+(2026-11-02 to 11-18). The `nfsbug/` docs are committed and pushed in
+myscripts (last: e65d1f8). Copy the block below verbatim into the fresh
+session as the first user message.
 
 ---
 
@@ -117,7 +119,7 @@ add `PR:` lines to the commits and the #6 PR number to the
 - The last full test kernel was built in `/tmp/nfscbd-src` (main + #3 #4
   and the first tests commit, then #7 #8 #9 #10 applied uncommitted; the VM
   took the test files from the branch) to `/tmp/kobj-gap-NODEBUG` and
-  `/tmp/kobj-gap-DBG` (all fixes including the #9 hook); a fresh one:
+  `/tmp/kobj-gap-DBG` (all fixes, #9 with its task-based hook); a fresh one:
   cherry-pick the branches instead.
 - Kernel: `include GENERIC-NODEBUG` (or `GENERIC` for WITNESS) plus
   `ident NFSTEST`, `device epair`, `device if_bridge`, `options NULLFS`,
@@ -263,6 +265,12 @@ and fetch it from the image afterwards (mdconfig + `mount -o ro`).
   the console log.
 - A rebase or cherry-pick makes the global identity the committer: amend
   with `-c user.email=olivier@FreeBSD.org` and check `%cn <%ce>`.
+- In atf, a failing cleanup makes the result "broken", not "failed": put
+  a check that must fail the test in the body (as `nfs_jail_remove` does).
+- To update a scratch build tree with a changed branch, copy the changed
+  files from the branch worktree (`cmp` them) after checking that no other
+  scratch patch touches them; `git checkout` plus `git apply` there lost
+  #9 once, and the kernels built without it.
 - My git diffs have no `a/` `b/` prefix: `git apply -p0`.
 - ccache on this host has served stale objects before: build kernels with
   `CCACHE_DISABLE=1` and check new symbols with `nm`.
