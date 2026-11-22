@@ -11,6 +11,7 @@ Hardware / platform notes:
 - [ThinkPad X1 Carbon Gen 12: devices without driver](X1.Carbon.Gen.12.md)
 - [HP ZBook Ultra G1a (Strix Halo laptop): devices without driver](HP.ZBook.Ultra.G1a.md)
 - [Beelink SER6 (Rembrandt mini PC): devices without driver](Beelink.SER6.md)
+- [Intel NUC 13 Pro (Raptor Lake mini PC): devices without driver](Intel.NUC13.Pro.md)
 - [NETINT Quadra VPU on FreeBSD](docs/netint_quadra.md) — how the card works, libxcoder / FFmpeg / GStreamer port results, firmware upgrade tool; live demo in [netint_demo/](netint_demo/)
 
 Install / system setup:
