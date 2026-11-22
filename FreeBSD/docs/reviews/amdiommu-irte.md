@@ -47,3 +47,5 @@ Comments:
 VERDICT: fix needed (tutorial and .patch stale; rerun the AMD group test on 27c94c177c17)
 
 Status 2026-11-22: the AMD group test ran on this code (zbook test kernel with the 27c94c177c17 delta, hw.amdiommu.enable=1 hw.iommu.dma=1): msigt 64/64 cycles of 16 messages, 0 misaligned; hdac 64/64; 0 IOMMU faults. Test module: docs/amdiommu_msigt.c. Tutorial and .patch still stale.
+
+Resolved 2026-11-22: tutorial rewritten for the two-commit design with the zbook and carbon rows; patch regenerated from freebsd/main..pr/amdiommu-irte.

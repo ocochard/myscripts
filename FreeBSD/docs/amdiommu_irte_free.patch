@@ -1,120 +1,367 @@
-From 65aadcde275b9ce185b904861b52fbf229aab5df Mon Sep 17 00:00:00 2001
+From ede5032f6fb073e0656f58d98d92de453923e47b Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
-Date: Mon, 16 Nov 2026 19:59:31 +0100
-Subject: [PATCH] amd_iommu: Free and align interrupt remapping entries
+Date: Sun, 22 Nov 2026 12:51:54 +0100
+Subject: [PATCH 1/2] x86: Release the IOMMU entries of an MSI group at once
 
-The IRTE index allocator never got indexes back: amdiommu_ir_free_irte()
-cleared the entry but not its vmem index.  With the default 32 entries
-a device using 32 MSI-X vectors (the AMD XDNA NPU) gets ENOMEM from
-pci_alloc_msix() on its second attach.  A plain vmem_free() of one
-cookie is not enough: msi_alloc() takes a multiple-message group in
-one vmem segment and msi_release() frees it cookie by cookie.
+msi_alloc() takes the interrupt remapping entries of a multiple-message
+MSI group as one block, but msi_release() returned them one message at
+a time.  The DMAR driver frees each with vmem_free(cookie, 1): the
+extra messages, released first, do not start a vmem segment, so
+releasing a group with interrupt remapping on fails an assertion or
+dereferences a NULL segment.
 
-Track the indexes in a bitmap instead, and align a group on its size,
-since the device ORs the message number into the MSI data, which is
-the IRTE index.
+Pass the whole group to iommu_unmap_msi_intr() with its count, and free
+the block at once in the DMAR driver.  The AMD driver keeps clearing
+each entry for now.
+
+Fixes:		0a110d5b172e ("Use VT-d interrupt remapping block (IR) to perform FSB messages translation.")
+MFC after:	1 week
+---
+ sys/x86/iommu/amd_intrmap.c   |  5 +++--
+ sys/x86/iommu/amd_iommu.h     |  2 +-
+ sys/x86/iommu/intel_dmar.h    |  2 +-
+ sys/x86/iommu/intel_intrmap.c | 27 +++++++++++++++------------
+ sys/x86/iommu/iommu_intrmap.h |  2 +-
+ sys/x86/iommu/iommu_utils.c   |  6 +++---
+ sys/x86/iommu/x86_iommu.h     |  2 +-
+ sys/x86/x86/msi.c             | 19 ++++++++-----------
+ 8 files changed, 33 insertions(+), 32 deletions(-)
+
+diff --git a/sys/x86/iommu/amd_intrmap.c b/sys/x86/iommu/amd_intrmap.c
+index 3e48281d1931..585a5d84c3a2 100644
+--- a/sys/x86/iommu/amd_intrmap.c
++++ b/sys/x86/iommu/amd_intrmap.c
+@@ -192,14 +192,15 @@ amdiommu_map_msi_intr(device_t src, u_int cpu, u_int vector,
+ }
+ 
+ int
+-amdiommu_unmap_msi_intr(device_t src, u_int cookie)
++amdiommu_unmap_msi_intr(device_t src, u_int cookie, u_int count)
+ {
+ 	struct amdiommu_ctx *ctx;
+ 
+ 	if (cookie == -1)
+ 		return (0);
+ 	ctx = amdiommu_ir_find(src, NULL, NULL);
+-	amdiommu_ir_free_irte(ctx, src, cookie);
++	for (u_int i = 0; i < count; i++)
++		amdiommu_ir_free_irte(ctx, src, cookie + i);
+ 	return (0);
+ }
+ 
+diff --git a/sys/x86/iommu/amd_iommu.h b/sys/x86/iommu/amd_iommu.h
+index b9f07418ca9d..f138efb4b23e 100644
+--- a/sys/x86/iommu/amd_iommu.h
++++ b/sys/x86/iommu/amd_iommu.h
+@@ -199,7 +199,7 @@ void amdiommu_fini_event(struct amdiommu_unit *unit);
+ int amdiommu_alloc_msi_intr(device_t src, u_int *cookies, u_int count);
+ int amdiommu_map_msi_intr(device_t src, u_int cpu, u_int vector,
+     u_int cookie, uint64_t *addr, uint32_t *data);
+-int amdiommu_unmap_msi_intr(device_t src, u_int cookie);
++int amdiommu_unmap_msi_intr(device_t src, u_int cookie, u_int count);
+ int amdiommu_map_ioapic_intr(u_int ioapic_id, u_int cpu, u_int vector,
+     bool edge, bool activehi, int irq, u_int *cookie, uint32_t *hi,
+     uint32_t *lo);
+diff --git a/sys/x86/iommu/intel_dmar.h b/sys/x86/iommu/intel_dmar.h
+index 018501082dd2..1a32506b8f47 100644
+--- a/sys/x86/iommu/intel_dmar.h
++++ b/sys/x86/iommu/intel_dmar.h
+@@ -258,7 +258,7 @@ void dmar_fini_irt(struct dmar_unit *unit);
+ int dmar_alloc_msi_intr(device_t src, u_int *cookies, u_int count);
+ int dmar_map_msi_intr(device_t src, u_int cpu, u_int vector, u_int cookie,
+     uint64_t *addr, uint32_t *data);
+-int dmar_unmap_msi_intr(device_t src, u_int cookie);
++int dmar_unmap_msi_intr(device_t src, u_int cookie, u_int count);
+ int dmar_map_ioapic_intr(u_int ioapic_id, u_int cpu, u_int vector, bool edge,
+     bool activehi, int irq, u_int *cookie, uint32_t *hi, uint32_t *lo);
+ int dmar_unmap_ioapic_intr(u_int ioapic_id, u_int *cookie);
+diff --git a/sys/x86/iommu/intel_intrmap.c b/sys/x86/iommu/intel_intrmap.c
+index f12a0c9bae9b..4fef971231a1 100644
+--- a/sys/x86/iommu/intel_intrmap.c
++++ b/sys/x86/iommu/intel_intrmap.c
+@@ -63,7 +63,8 @@ static struct dmar_unit *dmar_ir_find(device_t src, uint16_t *rid,
+     int *is_dmar);
+ static void dmar_ir_program_irte(struct dmar_unit *unit, u_int idx,
+     uint64_t low, uint16_t rid);
+-static int dmar_ir_free_irte(struct dmar_unit *unit, u_int cookie);
++static int dmar_ir_free_irte(struct dmar_unit *unit, u_int cookie,
++    u_int count);
+ 
+ int
+ dmar_alloc_msi_intr(device_t src, u_int *cookies, u_int count)
+@@ -140,14 +141,14 @@ dmar_map_msi_intr(device_t src, u_int cpu, u_int vector, u_int cookie,
+ }
+ 
+ int
+-dmar_unmap_msi_intr(device_t src, u_int cookie)
++dmar_unmap_msi_intr(device_t src, u_int cookie, u_int count)
+ {
+ 	struct dmar_unit *unit;
+ 
+ 	if (cookie == -1)
+ 		return (0);
+ 	unit = dmar_ir_find(src, NULL, NULL);
+-	return (dmar_ir_free_irte(unit, cookie));
++	return (dmar_ir_free_irte(unit, cookie, count));
+ }
+ 
+ int
+@@ -226,7 +227,7 @@ dmar_unmap_ioapic_intr(u_int ioapic_id, u_int *cookie)
+ 	unit = dmar_find_ioapic(ioapic_id, NULL);
+ 	KASSERT(unit != NULL && unit->ir_enabled,
+ 	    ("unmap: cookie %d unit %p", idx, unit));
+-	return (dmar_ir_free_irte(unit, idx));
++	return (dmar_ir_free_irte(unit, idx, 1));
+ }
+ 
+ static struct dmar_unit *
+@@ -302,21 +303,23 @@ dmar_ir_program_irte(struct dmar_unit *unit, u_int idx, uint64_t low,
+ }
+ 
+ static int
+-dmar_ir_free_irte(struct dmar_unit *unit, u_int cookie)
++dmar_ir_free_irte(struct dmar_unit *unit, u_int cookie, u_int count)
+ {
+ 	dmar_irte_t *irte;
+ 
+ 	KASSERT(unit != NULL && unit->ir_enabled,
+ 	    ("unmap: cookie %d unit %p", cookie, unit));
+-	KASSERT(cookie < unit->irte_cnt,
+-	    ("bad cookie %u %u", cookie, unit->irte_cnt));
+-	irte = &(unit->irt[cookie]);
+-	dmar_pte_clear(&irte->irte1);
+-	dmar_pte_clear(&irte->irte2);
++	KASSERT(cookie < unit->irte_cnt && count <= unit->irte_cnt - cookie,
++	    ("bad cookie %u count %u %u", cookie, count, unit->irte_cnt));
++	for (u_int i = 0; i < count; i++) {
++		irte = &(unit->irt[cookie + i]);
++		dmar_pte_clear(&irte->irte1);
++		dmar_pte_clear(&irte->irte2);
++	}
+ 	DMAR_LOCK(unit);
+-	dmar_qi_invalidate_iec(unit, cookie, 1);
++	dmar_qi_invalidate_iec(unit, cookie, count);
+ 	DMAR_UNLOCK(unit);
+-	vmem_free(unit->irtids, cookie, 1);
++	vmem_free(unit->irtids, cookie, count);
+ 	return (0);
+ }
+ 
+diff --git a/sys/x86/iommu/iommu_intrmap.h b/sys/x86/iommu/iommu_intrmap.h
+index 59e6317f7e15..7fbc854f1e93 100644
+--- a/sys/x86/iommu/iommu_intrmap.h
++++ b/sys/x86/iommu/iommu_intrmap.h
+@@ -32,7 +32,7 @@
+ int iommu_alloc_msi_intr(device_t src, u_int *cookies, u_int count);
+ int iommu_map_msi_intr(device_t src, u_int cpu, u_int vector, u_int cookie,
+     uint64_t *addr, uint32_t *data);
+-int iommu_unmap_msi_intr(device_t src, u_int cookie);
++int iommu_unmap_msi_intr(device_t src, u_int cookie, u_int count);
+ int iommu_map_ioapic_intr(u_int ioapic_id, u_int cpu, u_int vector, bool edge,
+     bool activehi, int irq, u_int *cookie, uint32_t *hi, uint32_t *lo);
+ int iommu_unmap_ioapic_intr(u_int ioapic_id, u_int *cookie);
+diff --git a/sys/x86/iommu/iommu_utils.c b/sys/x86/iommu/iommu_utils.c
+index d2ff9a985968..d984d6970d9d 100644
+--- a/sys/x86/iommu/iommu_utils.c
++++ b/sys/x86/iommu/iommu_utils.c
+@@ -218,7 +218,7 @@ x86_no_iommu_map_msi_intr(device_t src, u_int cpu, u_int vector,
+ }
+ 
+ static int
+-x86_no_iommu_unmap_msi_intr(device_t src, u_int cookie)
++x86_no_iommu_unmap_msi_intr(device_t src, u_int cookie, u_int count)
+ {
+ 	return (0);
+ }
+@@ -309,9 +309,9 @@ iommu_map_msi_intr(device_t src, u_int cpu, u_int vector, u_int cookie,
+ }
+ 
+ int
+-iommu_unmap_msi_intr(device_t src, u_int cookie)
++iommu_unmap_msi_intr(device_t src, u_int cookie, u_int count)
+ {
+-	return (x86_iommu->unmap_msi_intr(src, cookie));
++	return (x86_iommu->unmap_msi_intr(src, cookie, count));
+ }
+ 
+ int
+diff --git a/sys/x86/iommu/x86_iommu.h b/sys/x86/iommu/x86_iommu.h
+index 431228512fd8..18a98893610a 100644
+--- a/sys/x86/iommu/x86_iommu.h
++++ b/sys/x86/iommu/x86_iommu.h
+@@ -85,7 +85,7 @@ struct x86_iommu {
+ 	int (*alloc_msi_intr)(device_t src, u_int *cookies, u_int count);
+ 	int (*map_msi_intr)(device_t src, u_int cpu, u_int vector,
+ 	    u_int cookie, uint64_t *addr, uint32_t *data);
+-	int (*unmap_msi_intr)(device_t src, u_int cookie);
++	int (*unmap_msi_intr)(device_t src, u_int cookie, u_int count);
+ 	int (*map_ioapic_intr)(u_int ioapic_id, u_int cpu, u_int vector,
+ 	    bool edge, bool activehi, int irq, u_int *cookie, uint32_t *hi,
+ 	    uint32_t *lo);
+diff --git a/sys/x86/x86/msi.c b/sys/x86/x86/msi.c
+index 9d5409015de7..03b3dc5bac32 100644
+--- a/sys/x86/x86/msi.c
++++ b/sys/x86/x86/msi.c
+@@ -561,16 +561,18 @@ msi_release(int *irqs, int count)
+ 	}
+ 	KASSERT(first->msi_dev != NULL, ("unowned group"));
+ 
++#ifdef IOMMU
++	/* The remapping entries of the group were allocated as one block. */
++	mtx_unlock(&msi_lock);
++	iommu_unmap_msi_intr(first->msi_dev, first->msi_remap_cookie, count);
++	mtx_lock(&msi_lock);
++#endif
++
+ 	/* Clear all the extra messages in the group. */
+ 	for (i = 1; i < count; i++) {
+ 		msi = (struct msi_intsrc *)intr_lookup_source(irqs[i]);
+ 		KASSERT(msi->msi_first == first, ("message not in group"));
+ 		KASSERT(msi->msi_dev == first->msi_dev, ("owner mismatch"));
+-#ifdef IOMMU
+-		mtx_unlock(&msi_lock);
+-		iommu_unmap_msi_intr(first->msi_dev, msi->msi_remap_cookie);
+-		mtx_lock(&msi_lock);
+-#endif
+ 		msi->msi_first = NULL;
+ 		msi->msi_dev = NULL;
+ 		apic_free_vector(msi->msi_cpu, msi->msi_vector, msi->msi_irq);
+@@ -578,11 +580,6 @@ msi_release(int *irqs, int count)
+ 	}
+ 
+ 	/* Clear out the first message. */
+-#ifdef IOMMU
+-	mtx_unlock(&msi_lock);
+-	iommu_unmap_msi_intr(first->msi_dev, first->msi_remap_cookie);
+-	mtx_lock(&msi_lock);
+-#endif
+ 	first->msi_first = NULL;
+ 	first->msi_dev = NULL;
+ 	apic_free_vector(first->msi_cpu, first->msi_vector, first->msi_irq);
+@@ -787,7 +784,7 @@ msix_release(int irq)
+ 	/* Clear out the message. */
+ #ifdef IOMMU
+ 	mtx_unlock(&msi_lock);
+-	iommu_unmap_msi_intr(msi->msi_dev, msi->msi_remap_cookie);
++	iommu_unmap_msi_intr(msi->msi_dev, msi->msi_remap_cookie, 1);
+ 	mtx_lock(&msi_lock);
+ #endif
+ 	msi->msi_first = NULL;
+-- 
+2.56.0
+
+
+From 27c94c177c17994cc8e12815fb2025f84a57c372 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sun, 22 Nov 2026 12:52:38 +0100
+Subject: [PATCH 2/2] amdiommu: Free and align interrupt remapping entries
+
+amdiommu_ir_free_irte() cleared the IRTE but never returned its index,
+so a device's 32 default entries run out: a driver using 32 MSI-X
+vectors gets ENOMEM from pci_alloc_msix() on its second attach.  Free
+the block with vmem_xfree(), now that msi_release() hands a group over
+whole, and allocate it with vmem_xalloc() aligned on its size, since
+the device ORs the message number into the MSI data, which is the IRTE
+index.
 
 Fixes:		0f5116d7efe3 ("AMD IOMMU driver")
 MFC after:	1 week
 ---
- sys/x86/iommu/amd_intrmap.c | 31 +++++++++++++++++++------------
- sys/x86/iommu/amd_iommu.h   |  3 ++-
- 2 files changed, 21 insertions(+), 13 deletions(-)
+ sys/x86/iommu/amd_intrmap.c | 49 ++++++++++++++++++++++---------------
+ 1 file changed, 29 insertions(+), 20 deletions(-)
 
 diff --git a/sys/x86/iommu/amd_intrmap.c b/sys/x86/iommu/amd_intrmap.c
-index 3e48281d1931..70f9309db13e 100644
+index 585a5d84c3a2..b410b36b6a7c 100644
 --- a/sys/x86/iommu/amd_intrmap.c
 +++ b/sys/x86/iommu/amd_intrmap.c
-@@ -82,9 +82,8 @@ int
- amdiommu_alloc_msi_intr(device_t src, u_int *cookies, u_int count)
- {
- 	struct amdiommu_ctx *ctx;
--	vmem_addr_t vmem_res;
-+	struct amdiommu_unit *unit;
- 	u_int idx, i;
--	int error;
+@@ -76,7 +76,7 @@
+ static struct amdiommu_ctx *amdiommu_ir_find(device_t src, uint16_t *rid,
+     bool *is_iommu);
+ static void amdiommu_ir_free_irte(struct amdiommu_ctx *ctx, device_t src,
+-    u_int cookie);
++    u_int cookie, u_int count);
  
- 	ctx = amdiommu_ir_find(src, NULL, NULL);
- 	if (ctx == NULL || !CTX2AMD(ctx)->irte_enabled) {
-@@ -92,15 +91,23 @@ amdiommu_alloc_msi_intr(device_t src, u_int *cookies, u_int count)
- 			cookies[i] = -1;
+ int
+ amdiommu_alloc_msi_intr(device_t src, u_int *cookies, u_int count)
+@@ -93,8 +93,13 @@ amdiommu_alloc_msi_intr(device_t src, u_int *cookies, u_int count)
  		return (EOPNOTSUPP);
  	}
-+	unit = CTX2AMD(ctx);
  
 -	error = vmem_alloc(ctx->irtids, count, M_FIRSTFIT | M_NOWAIT,
 -	    &vmem_res);
--	if (error != 0) {
--		KASSERT(error != EOPNOTSUPP,
--		    ("impossible EOPNOTSUPP from vmem"));
--		return (error);
 +	/*
-+	 * The MSI data is the IRTE index, and a multiple message device
-+	 * ORs the message number into it: align the block on count.
++	 * The MSI data is the entry index, and a multiple-message device
++	 * ORs the message number into it: align the block on its size.
 +	 */
-+	AMDIOMMU_LOCK(unit);
-+	for (idx = 0; idx + count <= unit->irte_nentries; idx += count) {
-+		if (bit_ntest(ctx->irtids, idx, idx + count - 1, 0))
-+			break;
- 	}
--	idx = vmem_res;
-+	if (idx + count > unit->irte_nentries) {
-+		AMDIOMMU_UNLOCK(unit);
-+		return (ENOMEM);
-+	}
-+	bit_nset(ctx->irtids, idx, idx + count - 1);
-+	AMDIOMMU_UNLOCK(unit);
- 	for (i = 0; i < count; i++)
- 		cookies[i] = idx + i;
++	KASSERT(powerof2(count), ("MSI count %u", count));
++	error = vmem_xalloc(ctx->irtids, count, count, 0, 0, VMEM_ADDR_MIN,
++	    VMEM_ADDR_MAX, M_FIRSTFIT | M_NOWAIT, &vmem_res);
+ 	if (error != 0) {
+ 		KASSERT(error != EOPNOTSUPP,
+ 		    ("impossible EOPNOTSUPP from vmem"));
+@@ -199,8 +204,8 @@ amdiommu_unmap_msi_intr(device_t src, u_int cookie, u_int count)
+ 	if (cookie == -1)
+ 		return (0);
+ 	ctx = amdiommu_ir_find(src, NULL, NULL);
+-	for (u_int i = 0; i < count; i++)
+-		amdiommu_ir_free_irte(ctx, src, cookie + i);
++	amdiommu_ir_free_irte(ctx, src, cookie, count);
++	vmem_xfree(ctx->irtids, cookie, count);
  	return (0);
-@@ -301,6 +308,7 @@ amdiommu_ir_free_irte(struct amdiommu_ctx *ctx, device_t src,
+ }
+ 
+@@ -268,7 +273,7 @@ amdiommu_ir_find(device_t src, uint16_t *ridp, bool *is_iommu)
+ 
+ static void
+ amdiommu_ir_free_irte(struct amdiommu_ctx *ctx, device_t src,
+-    u_int cookie)
++    u_int cookie, u_int count)
+ {
+ 	struct amdiommu_unit *unit;
+ 	device_t requester;
+@@ -280,24 +285,28 @@ amdiommu_ir_free_irte(struct amdiommu_ctx *ctx, device_t src,
+ 
+ 	KASSERT(unit->irte_enabled,
+ 	    ("unmap: cookie %d ctx %p unit %p", cookie, ctx, unit));
+-	KASSERT(cookie < unit->irte_nentries,
+-	    ("bad cookie %u %u", cookie, unit->irte_nentries));
++	KASSERT(cookie < unit->irte_nentries &&
++	    count <= unit->irte_nentries - cookie,
++	    ("bad cookie %u count %u %u", cookie, count, unit->irte_nentries));
+ 
+-	if (unit->irte_x2apic) {
+-		struct amdiommu_irte_basic_vapic_x2 *irte;
++	for (u_int i = cookie; i < cookie + count; i++) {
++		if (unit->irte_x2apic) {
++			struct amdiommu_irte_basic_vapic_x2 *irte;
+ 
+-		irte = &ctx->irtx2[cookie];
+-		irte->remapen = 0;
+-		atomic_thread_fence_rel();
+-		bzero(irte, sizeof(*irte));
+-	} else {
+-		struct amdiommu_irte_basic_novapic *irte;
++			irte = &ctx->irtx2[i];
++			irte->remapen = 0;
++			atomic_thread_fence_rel();
++			bzero(irte, sizeof(*irte));
++		} else {
++			struct amdiommu_irte_basic_novapic *irte;
+ 
+-		irte = &ctx->irtb[cookie];
+-		irte->remapen = 0;
+-		atomic_thread_fence_rel();
+-		bzero(irte, sizeof(*irte));
++			irte = &ctx->irtb[i];
++			irte->remapen = 0;
++			atomic_thread_fence_rel();
++			bzero(irte, sizeof(*irte));
++		}
+ 	}
++	/* One invalidation covers the whole table of the device. */
+ 	error = iommu_get_requester(src, &requester, &rid);
  	MPASS(error == 0);
  	AMDIOMMU_LOCK(unit);
- 	amdiommu_qi_invalidate_ir_locked(unit, rid);
-+	bit_clear(ctx->irtids, cookie);
- 	AMDIOMMU_UNLOCK(unit);
- }
- 
-@@ -339,8 +347,7 @@ amdiommu_ctx_init_irte(struct amdiommu_ctx *ctx)
- 		ctx->irtx2 = ptr;
- 	else
- 		ctx->irtb = ptr;
--	ctx->irtids = vmem_create("amdirt", 0, unit->irte_nentries, 1, 0,
--	    M_FIRSTFIT | M_NOWAIT);
-+	ctx->irtids = bit_alloc(unit->irte_nentries, M_DEVBUF, M_WAITOK);
- 
- 	intr_reprogram();	// XXXKIB
- 
-@@ -359,7 +366,7 @@ amdiommu_ctx_fini_irte(struct amdiommu_ctx *ctx)
- 		free(ctx->irtx2, M_DEVBUF);
- 	else
- 		free(ctx->irtb, M_DEVBUF);
--	vmem_destroy(ctx->irtids);
-+	free(ctx->irtids, M_DEVBUF);
- }
- 
- int
-diff --git a/sys/x86/iommu/amd_iommu.h b/sys/x86/iommu/amd_iommu.h
-index b9f07418ca9d..4fad3ade0fda 100644
---- a/sys/x86/iommu/amd_iommu.h
-+++ b/sys/x86/iommu/amd_iommu.h
-@@ -31,6 +31,7 @@
- #ifndef __X86_IOMMU_AMD_IOMMU_H
- #define	__X86_IOMMU_AMD_IOMMU_H
- 
-+#include <sys/bitstring.h>
- #include <dev/iommu/iommu.h>
- 
- #define	AMDIOMMU_DEV_REPORTED	0x00000001
-@@ -54,7 +55,7 @@ struct amdiommu_ctx {
- 	struct iommu_ctx context;
- 	struct amdiommu_irte_basic_novapic *irtb;
- 	struct amdiommu_irte_basic_vapic_x2 *irtx2;
--	vmem_t *irtids;
-+	bitstr_t *irtids;		/* IRTE indexes in use */
- };
- 
- struct amdiommu_unit {
 -- 
 2.56.0
 

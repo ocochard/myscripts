@@ -8,7 +8,8 @@ Version:   16.0-CURRENT
 
 Patch: [`amdiommu_skip_map_invalidation.patch`](amdiommu_skip_map_invalidation.patch)
 (`sys/x86/iommu/amd_drv.c`, `amd_idpgtbl.c`, `amd_iommu.h`).
-Branch: `olivier-amdiommu` on github.com/ocochard/freebsd-src, on top of the identity-mapping fix (separate report).
+Commit `amdiommu: Skip the invalidation after PTE-only maps`, review [#113](https://ron-dev.freebsd.org/FreeBSD/src/pulls/113),
+on top of the identity-mapping fix (separate report).
 Background for readers new to this code: [`amdiommu_ser6.md`](amdiommu_ser6.md), sections 1, 3.2 and 4.2.
 
 **Summary.** With `hw.amdiommu.enable=1 hw.iommu.dma=1`, `amdiommu_map_buf()` queues an invalidation and a completion wait after every map,
@@ -52,10 +53,21 @@ The event log overflowed 4 times. ZFS reported no checksum error.
 
 ## Fix
 
-- `amd_iommu.h`: `cap_hdr` in `struct amdiommu_unit`; `pde_set` in `struct amdiommu_domain`, protected by the page table lock.
+- `amd_iommu.h`: `cap_hdr` in `struct amdiommu_unit`; `pde_flushes` in `struct amdiommu_domain`, protected by the page table lock.
 - `amd_drv.c`, `amdiommu_attach()`: read the capability header.
-- `amd_idpgtbl.c`, `amdiommu_pgtbl_map_pte()`: set `pde_set` when it writes the PDE of a new table page.
-- `amd_idpgtbl.c`, `amdiommu_map_buf()`: clear `pde_set`, map, then call `iommu_qi_invalidate_sync()` only if `pde_set` is true or `PCIM_AMDIOMMU_CAP_NPCACHE` is set.
+- `amd_idpgtbl.c`, `amdiommu_pgtbl_map_pte()`: a new `bool *pde_set` argument, set to true when it writes the PDE of a new table page
+  (NULL from the unmap callers). `amdiommu_map_buf_locked()` passes it up the same way: the return values already carry the error and the PTE pointer.
+- `amd_idpgtbl.c`, `amdiommu_map_buf()`: map under the page table lock; if the map wrote a PDE, increment `pde_flushes`.
+  Flush with `iommu_qi_invalidate_sync()` if `pde_flushes` is not 0 or `PCIM_AMDIOMMU_CAP_NPCACHE` is set; after the flush, a map that wrote a PDE decrements `pde_flushes`.
+
+Why a count and not only the local flag: map A writes a new PDE and drops the lock before its flush completes.
+Map B, in the same domain, can then fill a PTE under that PDE, write no PDE itself, and return before A's flush;
+B's DMA would walk the stale cached PDE. With the count, B sees A's flush in flight and flushes too.
+The `INVALIDATE_IOMMU_PAGES` commands set the PDE bit, so B's own flush clears the cached PDE above B's range,
+and B's completion wait also waits for A's earlier commands.
+This case was found by review, not seen on hardware (32 parallel `dd` readers gave 0 faults without the count).
+
+History: the first version kept `pde_set` in `struct amdiommu_domain`; kib asked to return it from the map functions instead.
 
 Unmap invalidation is unchanged.
 
@@ -93,6 +105,13 @@ Same reads as above (`dd if=/dev/nda0`, 1000 MB in 128 KB blocks three times at 
 
 The patch doubles read throughput and halves the IOMMU interrupts here too, but DMA remapping still costs half of the
 no-IOMMU speed on this machine (the SER6 came close to it). In both IOMMU boots Wi-Fi associated and amdgpu logged no display error; USB enumerated in the patched one (not checked in the stock one); `zpool status -x`: all pools are healthy.
+
+Final revision (out-parameter and `pde_flushes`), 2026-11-22, zbook kernel 0d71515aee38 plus #112 and #113, `hw.amdiommu.enable=1 hw.iommu.dma=1`:
+`dd if=/dev/nda0 of=/dev/null bs=1m count=4096` three times: 439, 442, 443 MB/s.
+Earlier boots of the out-parameter revision without the count gave 374 MB/s, then 407, 415, 431 MB/s: the speed varies between boots,
+hence "400 to 440 MB/s" in the commit message.
+16 parallel 128 KB readers, then 16 parallel 4 KB readers; 64 cycles of a 16-message MSI group; 64 `hdac0` detach/attach cycles:
+0 IOMMU events, 0 NVMe errors.
 
 Framework Desktop (Strix Halo, IOMMU capability header `0x190b640f`), 2026-11-16, kernel 6871285f194d plus both patches:
 `hw.amdiommu.enable=1 hw.iommu.dma=1` with the NPU and GPU exempted (`bounce`) boots, `rge0`, `nvme0`, `hdac0`, `xhci0`, `hdac1` are "re-mapped",
