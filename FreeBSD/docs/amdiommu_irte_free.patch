@@ -1,4 +1,4 @@
-From ede5032f6fb073e0656f58d98d92de453923e47b Mon Sep 17 00:00:00 2001
+From 342579ded8e0c5ff0f91570aee0a83514fb91426 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 22 Nov 2026 12:51:54 +0100
 Subject: [PATCH 1/2] x86: Release the IOMMU entries of an MSI group at once
@@ -14,8 +14,10 @@ Pass the whole group to iommu_unmap_msi_intr() with its count, and free
 the block at once in the DMAR driver.  The AMD driver keeps clearing
 each entry for now.
 
+Reviewed by:	kib
 Fixes:		0a110d5b172e ("Use VT-d interrupt remapping block (IR) to perform FSB messages translation.")
 MFC after:	1 week
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/112
 ---
  sys/x86/iommu/amd_intrmap.c   |  5 +++--
  sys/x86/iommu/amd_iommu.h     |  2 +-
@@ -251,7 +253,7 @@ index 9d5409015de7..03b3dc5bac32 100644
 2.56.0
 
 
-From 27c94c177c17994cc8e12815fb2025f84a57c372 Mon Sep 17 00:00:00 2001
+From 60acc4c686a3522e955c473fd8ee589418dc2fb6 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 22 Nov 2026 12:52:38 +0100
 Subject: [PATCH 2/2] amdiommu: Free and align interrupt remapping entries
@@ -264,8 +266,10 @@ whole, and allocate it with vmem_xalloc() aligned on its size, since
 the device ORs the message number into the MSI data, which is the IRTE
 index.
 
+Reviewed by:	kib
 Fixes:		0f5116d7efe3 ("AMD IOMMU driver")
 MFC after:	1 week
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/112
 ---
  sys/x86/iommu/amd_intrmap.c | 49 ++++++++++++++++++++++---------------
  1 file changed, 29 insertions(+), 20 deletions(-)

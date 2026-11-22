@@ -44,8 +44,12 @@ Comments:
   5. Section 4: add the zbook rows (16-message USB4 x64, hdac x64) and the carbon row (8-message xhci1 x64) with kernel and revision; the "multiple-message MSI device under IR: untested" row is now tested.
   6. Regenerate amdiommu_irte_free.patch from freebsd/main..pr/amdiommu-irte (it is the bitmap version).
 
-VERDICT: fix needed (tutorial and .patch stale; rerun the AMD group test on 27c94c177c17)
+VERDICT: ready
 
 Status 2026-11-22: the AMD group test ran on this code (zbook test kernel with the 27c94c177c17 delta, hw.amdiommu.enable=1 hw.iommu.dma=1): msigt 64/64 cycles of 16 messages, 0 misaligned; hdac 64/64; 0 IOMMU faults. Test module: docs/amdiommu_msigt.c. Tutorial and .patch still stale.
 
 Resolved 2026-11-22: tutorial rewritten for the two-commit design with the zbook and carbon rows; patch regenerated from freebsd/main..pr/amdiommu-irte.
+
+Pushed 2026-11-22 as c6fdd1d8634f, 9b0aa430a96c (rebased on 02e1b1cd1fb1, tags added, code unchanged).
+
+Local 2026-11-22: 342579ded8e0, 60acc4c686a3 (ron link tag unified to Pull Request:, code unchanged; to push).

@@ -7,7 +7,8 @@ Version:   16.0-CURRENT
 ```
 
 Patch: [`iommu_idmap_when_dma_disabled.patch`](iommu_idmap_when_dma_disabled.patch) (`sys/dev/iommu/busdma_iommu.c`).
-Branch: `olivier-amdiommu` on github.com/ocochard/freebsd-src.
+Commit `iommu: Identity-map contexts when DMA remapping is disabled` on FreeBSD main 02e1b1cd1fb1, first commit of
+[#113](https://ron-dev.freebsd.org/FreeBSD/src/pulls/113), with the map-invalidation commit.
 Background for readers new to this code: [`amdiommu_ser6.md`](amdiommu_ser6.md), sections 1 and 3.1.
 
 **Summary.** Setting only `hw.amdiommu.enable=1` leaves DMA remapping off (`hw.iommu.dma=0`) and interrupt remapping on (`hw.iommu.ir=1`).

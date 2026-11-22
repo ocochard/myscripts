@@ -38,8 +38,12 @@ Comments:
 - Commit messages: subjects 59 and 51 chars, prefixes iommu: (sys/dev/iommu) and amdiommu:; bodies <= 72 columns; tags tab-aligned; Fixes: only on the bug fix; no PR:.
 - Tutorials: bugreport_amdiommu_ir_only_loop.md and iommu_idmap_when_dma_disabled.patch match e38153bb186c (same +/- lines). bugreport_amdiommu_map_invalidation.md does not match: lines 55-58 put pde_set in struct amdiommu_domain, cleared and read in amdiommu_map_buf(); describe the bool * out-parameter (NULL from the unmap callers) instead, add the retest of this revision next to the 433/430/433 MB/s row, and the concurrency limit or its fix. amdiommu_skip_map_invalidation.patch is still the domain->pde_set version under the old subject; regenerate it.
 
-VERDICT: fix needed (POSTCR-56481221379bf97f6d1f2506cf2a10fbb9ab4aea-1 flush skipped by concurrent maps; tutorial and .patch show domain->pde_set; reconcile the 410 MB/s figure; e38153bb186c committer identity)
+VERDICT: ready
 
 Status 2026-11-22: POSTCR-...-1 confirmed from the code (main flushes after every map, so the hole is new; the flush has pde = 1, so the second map's own flush would clear the stale PDE). 16+16 parallel dd readers gave 0 faults on the unfixed kernel: not reproduced. Draft fix d4d285d4df8e (not on pr/amdiommu yet): per-domain pde_flushes count under the page-table lock; a map writing a PDE counts itself until its flush completes; any map seeing a nonzero count flushes. Zbook test of the draft: dd 439/442/443 MB/s, 16+16 parallel readers, msigt 64/64, hdac 64/64, 0 faults. Committer identity fixed in the draft. Throughput varies by boot (374, 407-431, 439-443 MB/s): message to say "400 to 440 MB/s". Tutorial and .patch still stale.
 
 Resolved 2026-11-22: pr/amdiommu = 00e0dde9484b, 195da7d956f6 (pde_flushes fix, committer olivier@FreeBSD.org on both, message "400 to 440 MB/s" plus one sentence on concurrent maps). Tutorial and patches regenerated.
+
+Pushed 2026-11-22 as 1ee56becca24, e05c5047a189 (rebased on 02e1b1cd1fb1, tags added, code unchanged; the body of e05c5047a189 was rewrapped past 72 columns).
+
+Local 2026-11-22: 5280e641fefa, b691d33d220f (72-column body restored, ron link tag Pull Request:, code unchanged; to push).

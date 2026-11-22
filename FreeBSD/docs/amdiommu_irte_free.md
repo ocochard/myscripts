@@ -1,15 +1,16 @@
 # IOMMU: MSI interrupt remap entries are never freed (AMD), freed piecewise (Intel), not aligned (AMD)
 
 Patch: [amdiommu_irte_free.patch](amdiommu_irte_free.patch), two commits
-on FreeBSD main 6dc19a71f70c, review
-[#112](https://ron-dev.freebsd.org/FreeBSD/src/pulls/112):
+on FreeBSD main 02e1b1cd1fb1, in review as
+[#112](https://ron-dev.freebsd.org/FreeBSD/src/pulls/112) (waiting for
+kib's answer to the rework he asked for):
 
 1. `x86: Release the IOMMU entries of an MSI group at once`
    (`msi.c`, the IOMMU interface, the Intel driver);
 2. `amdiommu: Free and align interrupt remapping entries`.
 
 Found while porting the AMD XDNA NPU driver ([amdxdna_npu.md](amdxdna_npu.md)).
-Line numbers are from main 6dc19a71f70c unless the patched file is named.
+Line numbers are from main 02e1b1cd1fb1 unless the patched file is named.
 
 ## 1. Background
 
@@ -93,7 +94,9 @@ which takes one cookie per vector at line 734):
 ## 3. The fix
 
 The group is allocated as one block, so it is freed as one block, by
-the code that knows it is a group (design asked by kib in review).
+the code that knows it is a group. kib suggested this design in review:
+fix `msi.c` to free the whole block, and use `vmem_xalloc()` for the
+alignment.
 
 **Commit 1, `msi.c` and the interface.** `iommu_unmap_msi_intr(dev,
 cookie, count)` gains a `count`. `msi_release()` calls it once for the
@@ -129,10 +132,9 @@ stale cached IRTE.
 
 Alternatives:
 
-- A bitmap of IRTE indexes, freed one bit per message (the first
-  version of this patch). It keeps the per-message interface, but the
-  allocator then hides that the group is one block, and Intel stays
-  broken. Rejected in review for the design above.
+- A bitmap of IRTE indexes in the AMD driver, freed one bit per
+  message. It keeps the per-message interface of `msi.c`, but hides that
+  the group is one block, and leaves the Intel driver broken.
 - Raise `hw.iommu.amd.ir_num`. Delays the failure, costs IRT memory on
   every device.
 
@@ -142,21 +144,31 @@ arena (separate patch).
 
 ## 4. Tested
 
-frwk-bsd (Framework Desktop, Strix Halo), kernel main 6871285f194d plus
-the SRCU, amdiommu and LinuxKPI pcim_iomap patches,
-`hw.amdiommu.enable=1` (IR-only; the only multiple-message MSI device
-here is the IOMMU itself, which does not use the IRT), amdxdna from drm-kmod `olivier-amdxdna`.
+Test module: [amdiommu_msigt.c](amdiommu_msigt.c)
+([Makefile](amdiommu_msigt.Makefile)). On load it takes an idle device
+with multiple-message MSI, then 64 times: allocates a group, sets up a
+handler on each message (which programs the remapping entries), checks
+that the MSI data of the first message is aligned on the group size,
+and releases the group.
 
-The amdxdna and first hdac rows tested the first (bitmap) version; the
-last three rows test the final commits.
-
-| Test | Before | After |
+| Machine, kernel, tunables | Test | Result |
 |---|---|---|
-| amdxdna second kldload | `failed to alloc irq vectors, ret -22` | attaches |
-| kldload/kldunload cycles | 1 of 4 | 6 of 6, `/dev/accel/accel0` each time |
-| `xrt-smi validate` after the cycles | | gemm 51.0 TOPS, latency 56 us, PASSED |
-| HP ZBook Ultra G1a, `hw.iommu.dma=1`, `devctl detach`/`attach` of `hdac0` (1 MSI vector), branch cherry-picked on `olivier-amdiommu` | MSI for cycles 1 to 31, then INTx fallback from cycle 32 (boot entry + 31 lost) | 64 cycles, MSI every time, interrupts counting, 0 IOMMU events |
-| HP ZBook Ultra G1a, final two commits (zbook kernel 0d71515aee38 plus #112 and #113), `hw.amdiommu.enable=1 hw.iommu.dma=1`: [amdiommu_msigt.c](amdiommu_msigt.c) allocates, sets up and releases a 16-message MSI group on the idle USB4 router (1022:158d) 64 times | | 64/64 cycles, MSI data aligned on 16 each time, 0 IOMMU events |
-| same kernel, `hdac0` detach/attach | | 64/64 with MSI |
-| ThinkPad X1 Carbon (Meteor Lake, Intel), `hw.dmar.enable=1 hw.iommu.dma=0`, msigt on xhci1 (8086:7e7d), 8-message group | | 64/64 cycles |
-| other devices, other AMD machines | untested | untested |
+| HP ZBook Ultra G1a (Strix Halo), laptop kernel 0d71515aee38 plus #112 and #113, `hw.amdiommu.enable=1 hw.iommu.dma=1` | msigt, 16-message group on the idle USB4 router (1022:158d) | 64/64 cycles, data aligned on 16 each time |
+| same | `devctl detach`/`attach` of `hdac0` (1 MSI vector), 64 times; stock main falls back to INTx from cycle 32 | 64/64 with MSI |
+| same | IOMMU events after the tests | 0 |
+| ThinkPad X1 Carbon (Meteor Lake, Intel), `hw.dmar.enable=1 hw.iommu.dma=0` | msigt, 8-message group on xhci1 (8086:7e7d) | 64/64 cycles |
+| both commits on main | `buildkernel` GENERIC (INVARIANTS) and GENERIC-NODEBUG | no warning |
+
+Untested: amdxdna attach cycles with these commits (the failure in
+section 2 is from stock main), IOAPIC remapping changes, other AMD and
+Intel machines.
+
+## 5. Review
+
+- [#112](https://ron-dev.freebsd.org/FreeBSD/src/pulls/112): reviewers
+  asked: imp, kbowling, kib. kib's comment led to the design in section
+  3; the rework was posted 2026-11-22, no approval yet.
+- Local review (Opus): no bug found. Every `vmem_alloc()`/`vmem_free()`
+  and `vmem_xalloc()`/`vmem_xfree()` pairs up on the MSI, MSI-X, IOAPIC
+  and error paths; the range checks cannot overflow; all callers are
+  converted, i386 included.

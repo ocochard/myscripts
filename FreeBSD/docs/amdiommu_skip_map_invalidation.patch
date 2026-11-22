@@ -1,4 +1,4 @@
-From 195da7d956f6a90e58d90a012598627f99dac56f Mon Sep 17 00:00:00 2001
+From b691d33d220f75780bb764b71ed6ab4cd29494a2 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 16 Nov 2026 15:34:58 +0100
 Subject: [PATCH] amdiommu: Skip the invalidation after PTE-only maps
@@ -19,7 +19,9 @@ before its flush completes flushes too.
 With this change the same reads raise 19 and 33 interrupts, and the
 second machine reads at 400 to 440 MB/s.
 
+Reviewed by:	kib
 MFC after:	1 week
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/113
 ---
  sys/x86/iommu/amd_drv.c     |  2 ++
  sys/x86/iommu/amd_idpgtbl.c | 43 ++++++++++++++++++++++++++-----------

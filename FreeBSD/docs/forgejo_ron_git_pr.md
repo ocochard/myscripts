@@ -341,10 +341,10 @@ Do these steps in order, once the reviewers approve the pull request.
    Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/3
    ```
 
-   `Reviewed by:` lists the logins that approved on Forgejo. The
-   `Pull Request:` trailer is the one the Committer's Guide uses for GitHub
-   pull requests. No commit in `main` references ron yet, so this use is a
-   suggestion, not an established rule. Check with your reviewers.
+   `Reviewed by:` lists the logins that reviewed the change and are fine
+   with it. `Pull Request:` is the tag `main` uses for ron pull requests
+   (about 100 commits by olce, christos, jhb and others, 2025-08 to
+   2026-11); `Differential Revision:` is for Phabricator.
 
 3. Build and test the final commits. The rebase can break what the reviewers
    saw working.

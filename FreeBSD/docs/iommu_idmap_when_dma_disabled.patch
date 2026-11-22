@@ -1,4 +1,4 @@
-From 00e0dde9484babe8cb92deb39c1efd25c66159e4 Mon Sep 17 00:00:00 2001
+From 5280e641fefacb7c0c606c0cbc9892c071f05966 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 16 Nov 2026 15:34:06 +0100
 Subject: [PATCH] iommu: Identity-map contexts when DMA remapping is disabled
@@ -13,8 +13,10 @@ attached in an endless loop.
 Treat a unit with DMA remapping disabled like a device with remapping
 disabled: give the context the identity mapping.
 
+Reviewed by:	kib
 Fixes:		0f5116d7efe3 ("AMD IOMMU driver")
 MFC after:	1 week
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/113
 ---
  sys/dev/iommu/busdma_iommu.c | 9 ++++++---
  1 file changed, 6 insertions(+), 3 deletions(-)
