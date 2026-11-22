@@ -55,12 +55,15 @@ The event log overflowed 4 times. ZFS reported no checksum error.
 
 - `amd_iommu.h`: `cap_hdr` in `struct amdiommu_unit`; `pde_flushes` in `struct amdiommu_domain`, protected by the page table lock.
 - `amd_drv.c`, `amdiommu_attach()`: read the capability header.
-- `amd_idpgtbl.c`, `amdiommu_pgtbl_map_pte()`: a new `bool *pde_set` argument, set to true when it writes the PDE of a new table page
-  (NULL from the unmap callers). `amdiommu_map_buf_locked()` passes it up the same way: the return values already carry the error and the PTE pointer.
-- `amd_idpgtbl.c`, `amdiommu_map_buf()`: map under the page table lock; if the map wrote a PDE, increment `pde_flushes`.
-  Flush with `iommu_qi_invalidate_sync()` if `pde_flushes` is not 0 or `PCIM_AMDIOMMU_CAP_NPCACHE` is set; after the flush, a map that wrote a PDE decrements `pde_flushes`.
+- `amd_idpgtbl.c`, `amdiommu_pgtbl_map_pte()`: a new `bool *pde_set` argument (NULL from the unmap callers).
+  When it writes the PDE of a new table page, still under the page table lock, it sets `*pde_set` and increments `pde_flushes`,
+  once per map call. `amdiommu_map_buf_locked()` passes `pde_set` up the same way: the return values already carry the error and the PTE pointer.
+- `amd_idpgtbl.c`, `amdiommu_map_buf()`: map under the page table lock, then flush with `iommu_qi_invalidate_sync()` if `pde_flushes` is not 0
+  or `PCIM_AMDIOMMU_CAP_NPCACHE` is set; after the flush, a map that wrote a PDE decrements `pde_flushes`.
 
 Why a count and not only the local flag: map A writes a new PDE and drops the lock before its flush completes.
+It can drop it even before it returns: a sleepable map (`IOMMU_PGF_WAITOK`) calls `iommu_map_pgtbl()`, which unlocks the page table object,
+the same lock as `AMDIOMMU_DOMAIN_PGLOCK`, around `sf_buf_alloc()`. That is why the count is raised at the moment the PDE is written, not when the map returns.
 Map B, in the same domain, can then fill a PTE under that PDE, write no PDE itself, and return before A's flush;
 B's DMA would walk the stale cached PDE. With the count, B sees A's flush in flight and flushes too.
 The `INVALIDATE_IOMMU_PAGES` commands set the PDE bit, so B's own flush clears the cached PDE above B's range,
@@ -107,9 +110,10 @@ Same reads as above (`dd if=/dev/nda0`, 1000 MB in 128 KB blocks three times at 
 The patch doubles read throughput and halves the IOMMU interrupts here too, but DMA remapping still costs half of the
 no-IOMMU speed on this machine (the SER6 came close to it). In both IOMMU boots Wi-Fi associated and amdgpu logged no display error; USB enumerated in the patched one (not checked in the stock one); `zpool status -x`: all pools are healthy.
 
-HP ZBook Ultra G1a, 2026-11-22, laptop kernel 0d71515aee38 plus #112 and #113, `hw.amdiommu.enable=1 hw.iommu.dma=1`:
-`dd if=/dev/nda0 of=/dev/null bs=1m count=4096` three times: 439, 442, 443 MB/s.
-The speed varies between boots (other boots the same day: 374 MB/s, and 407 to 431 MB/s), hence "400 to 440 MB/s" in the commit message.
+HP ZBook Ultra G1a, 2026-11-22, laptop kernel 0d71515aee38 plus #112 and #113 as sent, `hw.amdiommu.enable=1 hw.iommu.dma=1`:
+`dd if=/dev/nda0 of=/dev/null bs=1m count=4096` three times: 440, 435, 446 MB/s.
+The speed varies between boots (other boots the same day: 374 MB/s, 407 to 431 MB/s, 439 to 443 MB/s), hence "400 to 440 MB/s" in the commit message.
+The sleepable-map window was not reproduced (no test forces two maps to race there).
 16 parallel 128 KB readers, then 16 parallel 4 KB readers; 64 cycles of a 16-message MSI group; 64 `hdac0` detach/attach cycles:
 0 IOMMU events, 0 NVMe errors.
 
@@ -132,4 +136,7 @@ Not tested:
   it is a `bool *` argument because the return values already carry the error and the PTE pointer.
   The rework was posted 2026-11-22, no approval yet.
 - Local review (Opus) found the concurrent-map case described under Fix; the `pde_flushes` count is the answer to it.
+- kbowling found that the count was first raised only when the map returned, after a sleepable `iommu_map_pgtbl()` could already
+  have dropped the lock; it is now raised where the PDE is written.
+- Lesson: before relying on "held under the lock", open every callee and check where it can drop the lock or sleep.
 

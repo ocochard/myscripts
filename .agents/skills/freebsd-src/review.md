@@ -39,3 +39,30 @@ If the change introduces some new user-visible interface, such as a new system c
 Begin the summary of such an ID with "syzkaller:".
 
 Finally, provide any further comments, feedback, etc. on the change.
+
+## Local checks (not part of the CI prompt)
+
+These come from bugs that earlier reviews missed. Do each one on every
+changed function before writing the report.
+
+1. Open every function the changed code calls, not only the changed
+   lines. Note where a callee can drop a lock, sleep or allocate with
+   waiting. Never rely on "this runs under lock X" without checking that
+   no callee releases X. (Missed: a counter raised after a sleepable
+   iommu_map_pgtbl() had already dropped the page table lock.)
+2. When the patch widens what an existing helper receives (one entry to
+   N, a new caller, a bigger range), read the helper and its hardware or
+   API limits for the new inputs: masks, maximum sizes, alignment.
+   (Missed: an Intel invalidation mask not capped at the unit's MHMV once
+   callers passed groups instead of single entries.)
+3. When something is installed under a key and later invalidated, freed
+   or looked up, check both sides use the same key: ID, index, address,
+   alias. Copying the key from a neighbouring path is not a check.
+   (Missed: an AMD table installed under the IVRS DeviceID but
+   invalidated under the PCI requester ID.)
+4. Check every new early return and shortcut with out-of-range and
+   invalid inputs: it must not turn an error into success. (Missed: a
+   D3 shortcut that returned 0 for states above PCI_POWERSTATE_MAX.)
+5. Write the report from the code, not from a summary of the intended
+   design. When a brief lists areas to examine, treat the list as a
+   minimum, not as the scope.

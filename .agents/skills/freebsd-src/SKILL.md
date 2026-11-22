@@ -50,16 +50,21 @@ uniq -c | sort -rn`) rather than trusting recall; conventions drift, and
 `contrib/`, `sys/contrib/` and `sys/cddl/` carry vendored Linux-style
 tags that are not native usage.
 
-- `PR:` — only for a bug that this change actually closes. Never inherit
+- `PR:`: only for a bug that this change actually closes. Never inherit
   the PR number of the commit being fixed; `Fixes:` already carries that
   lineage.
-- `Fixes:` — `<12-hex> ("original subject")`. Native and common.
-- `Reported-by:`, `Reviewed-by:`, `Co-authored-by:`, `Tested-by:` — the
-  hyphenated spellings dominate the tree; prefer them over the older
-  `Reviewed by:` form in the committer's guide.
-- `MFC after:` — a duration such as `1 week`. Drop it if the change is
+- `Fixes:`: `<12-hex> ("original subject")`. Native and common.
+- `Reported by:`, `Reviewed by:`, `Tested by:`, `Sponsored by:`: the
+  committer's guide spellings, with a tab after the colon. They dominate
+  main (2026 commits: 4837 `Reviewed by:` against 2103 `Reviewed-by:`).
+  `Co-authored-by:` keeps its hyphens. Name a reviewer once they have
+  reviewed and are fine with the change, approval click or not.
+- `MFC after:`: a duration such as `1 week`. Drop it if the change is
   not headed to a stable branch.
-- `Sponsored-by:`, `Differential Revision:` — when they apply.
+- `Pull Request:`: the URL of a ron-dev.freebsd.org or GitHub pull
+  request (2026: 456 against 79 `Pull-Request:`).
+- `Differential Revision:`: a Phabricator review
+  (`https://reviews.freebsd.org/D###`) only.
 
 Example:
 

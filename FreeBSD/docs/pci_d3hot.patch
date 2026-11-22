@@ -1,13 +1,12 @@
-From dd75503aa8cfaf58d704e3d8daabbbcca70ab19b Mon Sep 17 00:00:00 2001
+From 9bb5b48fd98fe583ed91c0a0679f1925a9013783 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 15 Nov 2026 13:35:15 +0000
 Subject: [PATCH] pci: Accept D3hot in pci_set_powerstate_method()
 
-Since D3 was split into D3hot (3) and D3cold (4), PCI_POWERSTATE_D3 is
-D3cold and the switch rejects D3hot with EINVAL.  An _SxD of 3 is D3hot,
-so on suspend such devices silently stay in D0; acpi_pci also skips
-their ACPI transition.  The HP ZBook Ultra G1a GPU (GFX0 _S3D = 3) is
-one, and LinuxKPI pci_set_power_state(PCI_D3hot) has the same problem.
+Since D3 was split into D3hot and D3cold, PCI_POWERSTATE_D3 is D3cold
+and the switch rejects D3hot with EINVAL.  Devices whose _SxD is 3
+(D3hot) then stay in D0 on suspend, and acpi_pci skips their ACPI
+transition.  LinuxKPI pci_set_power_state(PCI_D3hot) fails the same way.
 
 The PM register has a single D3 state, so write it for both.
 
@@ -18,7 +17,7 @@ MFC after:	1 week
  1 file changed, 7 insertions(+), 4 deletions(-)
 
 diff --git a/sys/dev/pci/pci.c b/sys/dev/pci/pci.c
-index 35f8e1154d6c..3d78cde34604 100644
+index 35f8e1154d6c..a95ace27d122 100644
 --- a/sys/dev/pci/pci.c
 +++ b/sys/dev/pci/pci.c
 @@ -2891,10 +2891,12 @@ pci_set_powerstate_method(device_t dev, device_t child, int state)
@@ -32,7 +31,7 @@ index 35f8e1154d6c..3d78cde34604 100644
  	oldstate = pci_get_powerstate(child);
 -	if (oldstate == state)
 +	if (oldstate == state || (oldstate >= PCI_POWERSTATE_D3_HOT &&
-+	    state >= PCI_POWERSTATE_D3_HOT))
++	    state >= PCI_POWERSTATE_D3_HOT && state <= PCI_POWERSTATE_MAX))
  		return (0);
  
  	/*

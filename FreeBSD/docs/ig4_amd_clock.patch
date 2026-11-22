@@ -1,4 +1,4 @@
-From aa0669aa77b09e8d3f3d4045f44afbec10988947 Mon Sep 17 00:00:00 2001
+From aa1d328e39506e92efcbd505e3f81dc0a0fca759 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 22 Nov 2026 16:15:29 +0100
 Subject: [PATCH] ig4: Add an AMD generation with a 150 MHz clock
@@ -14,6 +14,7 @@ and of the Atom register handling only the DesignWare FIFO depth and
 component version checks, not the Intel LPSS private registers.  It
 sorts before IG4_SKYLAKE, so IG4_HAS_ADDREGS() stays false.
 
+Reviewed by:	wulf
 MFC after:	1 week
 Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/114
 ---

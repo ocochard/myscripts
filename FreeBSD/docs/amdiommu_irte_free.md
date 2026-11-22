@@ -108,6 +108,14 @@ entry cache once for the range (`dmar_qi_invalidate_iec(unit, cookie,
 count)`), then gives the block back with `vmem_free(unit->irtids, cookie,
 count)`. The IOAPIC path passes 1.
 
+`dmar_qi_invalidate_iec()` sends one descriptor per aligned power-of-two
+chunk of the range, with an index mask `IM` = log2 of the chunk size.
+Until now it only ever got one entry (mask 0). A unit accepts masks up
+to `MHMV` (Maximum Handle Mask Value, in the extended capability
+register); a larger mask is an invalid descriptor that can stall the
+queue. So each chunk's mask is capped at `DMAR_ECAP_MHMV()`: a group of
+8 on a unit with `MHMV` 1 becomes four descriptors of 2 entries.
+
 **Commit 2, AMD.** Allocation keeps vmem but aligns the block:
 
 ```c
@@ -118,13 +126,20 @@ count)`. The IOAPIC path passes 1.
 
 `count` is a power of 2 for MSI (`pci_alloc_msi_method()` refuses
 others) and 1 for MSI-X. Release clears the `count` entries, issues one
-INVALIDATE_INTERRUPT_TABLE for the device (the AMD command invalidates
-the whole table of a requester ID, so one is enough), then frees:
+INVALIDATE_INTERRUPT_TABLE (the AMD command invalidates the whole table
+of a DeviceID, so one is enough), then frees:
 
 ```c
-	amdiommu_ir_free_irte(ctx, src, cookie, count);
+	amdiommu_ir_free_irte(ctx, cookie, count);
 	vmem_xfree(ctx->irtids, cookie, count);
 ```
+
+The invalidation names the DeviceID the table is installed at:
+`ctx->context.rid`, which the context took from the IVRS ACPI table
+(`amdiommu_find_unit()`, `rid_real`). For an aliased device IVRS gives
+another ID than the PCI requester ID that `iommu_get_requester()`
+returns, and invalidating the requester ID would leave the cached table
+in place. The map path (`amdiommu_map_msi_intr()`) uses the same ID.
 
 Memory allocated with `vmem_xalloc()` must go back with `vmem_xfree()`.
 The index is freed after the invalidation, so a new owner never sees a
@@ -153,13 +168,15 @@ and releases the group.
 
 | Machine, kernel, tunables | Test | Result |
 |---|---|---|
-| HP ZBook Ultra G1a (Strix Halo), laptop kernel 0d71515aee38 plus #112 and #113, `hw.amdiommu.enable=1 hw.iommu.dma=1` | msigt, 16-message group on the idle USB4 router (1022:158d) | 64/64 cycles, data aligned on 16 each time |
+| HP ZBook Ultra G1a (Strix Halo), laptop kernel 0d71515aee38 plus #112 and #113 as sent (with the kbowling fixes), `hw.amdiommu.enable=1 hw.iommu.dma=1` | msigt, 16-message group on the idle USB4 router (1022:158d) | 64/64 cycles, data aligned on 16 each time |
 | same | `devctl detach`/`attach` of `hdac0` (1 MSI vector), 64 times; stock main falls back to INTx from cycle 32 | 64/64 with MSI |
 | same | IOMMU events after the tests | 0 |
-| ThinkPad X1 Carbon (Meteor Lake, Intel), `hw.dmar.enable=1 hw.iommu.dma=0` | msigt, 8-message group on xhci1 (8086:7e7d) | 64/64 cycles |
-| both commits on main | `buildkernel` GENERIC (INVARIANTS) and GENERIC-NODEBUG | no warning |
+| ThinkPad X1 Carbon (Meteor Lake, Intel), main 6dc19a71f70c plus both commits, `hw.dmar.enable=1 hw.iommu.dma=0` | msigt on xhci1 (8086:7e7d, `devctl set driver -f xhci1 msigt`), 8-message group | 64/64 cycles, 0 DMAR faults |
+| same, DTrace on `dmar_qi_invalidate_iec()` | one call per release, e.g. `start 54 cnt 8`; the unit's MHMV is 15, so the cap does not apply | Intel does not align the group (the subhandle is added, not ORed), so the chunks are 2 entries, mask 1 |
+| [amdiommu_iec_mask_sim.c](amdiommu_iec_mask_sim.c), the capped loop in userland | start 48 cnt 8 with MHMV 15: one chunk, mask 3; with MHMV 1: four chunks of 2; start 32 cnt 32 with MHMV 0: 32 chunks of 1 | every chunk aligned, range covered, mask never above MHMV |
+| both commits on main 02e1b1cd1fb1 | `buildkernel` GENERIC (INVARIANTS) and GENERIC-NODEBUG | no warning |
 
-Untested: amdxdna attach cycles with these commits (the failure in
+Untested: an Intel unit with a small MHMV (none here), an AMD device whose IVRS DeviceID differs from its requester ID (none here), amdxdna attach cycles with these commits (the failure in
 section 2 is from stock main), IOAPIC remapping changes, other AMD and
 Intel machines.
 
@@ -168,7 +185,13 @@ Intel machines.
 - [#112](https://ron-dev.freebsd.org/FreeBSD/src/pulls/112): reviewers
   asked: imp, kbowling, kib. kib's comment led to the design in section
   3; the rework was posted 2026-11-22, no approval yet.
-- Local review (Opus): no bug found. Every `vmem_alloc()`/`vmem_free()`
-  and `vmem_xalloc()`/`vmem_xfree()` pairs up on the MSI, MSI-X, IOAPIC
-  and error paths; the range checks cannot overflow; all callers are
+- kbowling found two problems, now fixed (section 3): the Intel index
+  mask was not capped at `MHMV`, and AMD invalidated the PCI requester
+  ID instead of the IVRS DeviceID of the table.
+- Local review (Opus): every `vmem_alloc()`/`vmem_free()` and
+  `vmem_xalloc()`/`vmem_xfree()` pairs up on the MSI, MSI-X, IOAPIC and
+  error paths; the range checks cannot overflow; all callers are
   converted, i386 included.
+- Lesson: when a patch widens what an existing helper receives (here one
+  entry to a group), check the helper's hardware limits for the new
+  range, and check that install and invalidate use the same key.

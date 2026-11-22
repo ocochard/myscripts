@@ -53,3 +53,5 @@ Resolved 2026-11-22: tutorial rewritten for the two-commit design with the zbook
 Pushed 2026-11-22 as c6fdd1d8634f, 9b0aa430a96c (rebased on 02e1b1cd1fb1, tags added, code unchanged).
 
 Local 2026-11-22: 342579ded8e0, 60acc4c686a3 (ron link tag unified to Pull Request:, code unchanged; to push).
+
+kbowling 2026-11-22: IEC index mask not capped at MHMV (fixed in c05c25cc6728), AMD invalidated the requester ID instead of ctx->context.rid (fixed in 56a12c719059, map path too). zbook msigt/hdac 64/64; carbon 64/64 (MHMV 15, cap not hit; loop checked with docs/amdiommu_iec_mask_sim.c).

@@ -1,4 +1,4 @@
-From b691d33d220f75780bb764b71ed6ab4cd29494a2 Mon Sep 17 00:00:00 2001
+From 02e8ee6d86b098ee3ade3198faadd3a73d25a0f7 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 16 Nov 2026 15:34:58 +0100
 Subject: [PATCH] amdiommu: Skip the invalidation after PTE-only maps
@@ -24,9 +24,9 @@ MFC after:	1 week
 Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/113
 ---
  sys/x86/iommu/amd_drv.c     |  2 ++
- sys/x86/iommu/amd_idpgtbl.c | 43 ++++++++++++++++++++++++++-----------
+ sys/x86/iommu/amd_idpgtbl.c | 48 +++++++++++++++++++++++++++----------
  sys/x86/iommu/amd_iommu.h   |  2 ++
- 3 files changed, 34 insertions(+), 13 deletions(-)
+ 3 files changed, 39 insertions(+), 13 deletions(-)
 
 diff --git a/sys/x86/iommu/amd_drv.c b/sys/x86/iommu/amd_drv.c
 index ba6abae055fa..c871681c3793 100644
@@ -42,7 +42,7 @@ index ba6abae055fa..c871681c3793 100644
  	base_low = pci_read_config(dev, sc->seccap_reg +
  	    PCIR_AMDIOMMU_BASE_LOW, 4);
 diff --git a/sys/x86/iommu/amd_idpgtbl.c b/sys/x86/iommu/amd_idpgtbl.c
-index 007883ccdaa9..aeb7d96aaf53 100644
+index 007883ccdaa9..6fd5adde1e29 100644
 --- a/sys/x86/iommu/amd_idpgtbl.c
 +++ b/sys/x86/iommu/amd_idpgtbl.c
 @@ -129,7 +129,7 @@ amdiommu_domain_free_pgtbl(struct amdiommu_domain *domain)
@@ -63,16 +63,23 @@ index 007883ccdaa9..aeb7d96aaf53 100644
  			if (ptep == NULL) {
  				KASSERT(m->pindex != 0,
  				    ("loosing root page %p", domain));
-@@ -174,6 +174,8 @@ amdiommu_pgtbl_map_pte(struct amdiommu_domain *domain, iommu_gaddr_t base,
+@@ -174,6 +174,15 @@ amdiommu_pgtbl_map_pte(struct amdiommu_domain *domain, iommu_gaddr_t base,
  			ptep->pte = VM_PAGE_TO_PHYS(m) |  AMDIOMMU_PTE_IR |
  			    AMDIOMMU_PTE_IW | AMDIOMMU_PTE_PR |
  			    ((domain->pglvl - lvl) << AMDIOMMU_PTE_NLVL_SHIFT);
-+			if (pde_set != NULL)
++			/*
++			 * Count the pending flush now: a sleepable
++			 * iommu_map_pgtbl() may drop the page table lock
++			 * before this map returns.
++			 */
++			if (pde_set != NULL && !*pde_set) {
 +				*pde_set = true;
++				domain->pde_flushes++;
++			}
  			vm_page_wire(sf_buf_page(sfp));
  			vm_page_unwire_noq(m);
  			iommu_unmap_pgtbl(sfp);
-@@ -188,7 +190,7 @@ amdiommu_pgtbl_map_pte(struct amdiommu_domain *domain, iommu_gaddr_t base,
+@@ -188,7 +197,7 @@ amdiommu_pgtbl_map_pte(struct amdiommu_domain *domain, iommu_gaddr_t base,
  static int
  amdiommu_map_buf_locked(struct amdiommu_domain *domain, iommu_gaddr_t base,
      iommu_gaddr_t size, vm_page_t *ma, uint64_t pflags, int flags,
@@ -81,7 +88,7 @@ index 007883ccdaa9..aeb7d96aaf53 100644
  {
  	iommu_pte_t *pte;
  	struct sf_buf *sf;
-@@ -202,6 +204,7 @@ amdiommu_map_buf_locked(struct amdiommu_domain *domain, iommu_gaddr_t base,
+@@ -202,6 +211,7 @@ amdiommu_map_buf_locked(struct amdiommu_domain *domain, iommu_gaddr_t base,
  	idx = -1;
  	pte = NULL;
  	sf = NULL;
@@ -89,7 +96,7 @@ index 007883ccdaa9..aeb7d96aaf53 100644
  
  	for (pi = 0; size > 0; base += IOMMU_PAGE_SIZE, size -= IOMMU_PAGE_SIZE,
  	    pi++) {
-@@ -209,7 +212,7 @@ amdiommu_map_buf_locked(struct amdiommu_domain *domain, iommu_gaddr_t base,
+@@ -209,7 +219,7 @@ amdiommu_map_buf_locked(struct amdiommu_domain *domain, iommu_gaddr_t base,
  		    ("mapping loop overflow %p %jx %jx %jx", domain,
  		    (uintmax_t)base, (uintmax_t)size, (uintmax_t)IOMMU_PAGE_SIZE));
  		pte = amdiommu_pgtbl_map_pte(domain, base, domain->pglvl - 1,
@@ -98,7 +105,7 @@ index 007883ccdaa9..aeb7d96aaf53 100644
  		if (pte == NULL) {
  			KASSERT((flags & IOMMU_PGF_WAITOK) == 0,
  			    ("failed waitable pte alloc %p", domain));
-@@ -236,6 +239,7 @@ amdiommu_map_buf(struct iommu_domain *iodom, struct iommu_map_entry *entry,
+@@ -236,6 +246,7 @@ amdiommu_map_buf(struct iommu_domain *iodom, struct iommu_map_entry *entry,
  	uint64_t pflags;
  	iommu_gaddr_t base, size;
  	int error;
@@ -106,7 +113,7 @@ index 007883ccdaa9..aeb7d96aaf53 100644
  
  	base = entry->start;
  	size = entry->end - entry->start;
-@@ -274,15 +278,28 @@ amdiommu_map_buf(struct iommu_domain *iodom, struct iommu_map_entry *entry,
+@@ -274,15 +285,26 @@ amdiommu_map_buf(struct iommu_domain *iodom, struct iommu_map_entry *entry,
  
  	AMDIOMMU_DOMAIN_PGLOCK(domain);
  	error = amdiommu_map_buf_locked(domain, base, size, ma, pflags,
@@ -119,8 +126,6 @@ index 007883ccdaa9..aeb7d96aaf53 100644
 +	 * IOMMU may still hold the old one.  So does a map that uses a
 +	 * new PDE whose flush, by a concurrent map, is not done yet.
 +	 */
-+	if (pde_set)
-+		domain->pde_flushes++;
 +	flush = domain->pde_flushes != 0 ||
 +	    (DOM2AMD(domain)->cap_hdr & PCIM_AMDIOMMU_CAP_NPCACHE) != 0;
  	AMDIOMMU_DOMAIN_PGUNLOCK(domain);
@@ -142,7 +147,7 @@ index 007883ccdaa9..aeb7d96aaf53 100644
  	return (error);
  }
  
-@@ -295,7 +312,7 @@ amdiommu_free_pgtbl_pde(struct amdiommu_domain *domain, iommu_gaddr_t base,
+@@ -295,7 +317,7 @@ amdiommu_free_pgtbl_pde(struct amdiommu_domain *domain, iommu_gaddr_t base,
  	vm_pindex_t idx;
  
  	sf = NULL;
@@ -151,7 +156,7 @@ index 007883ccdaa9..aeb7d96aaf53 100644
  	amdiommu_unmap_clear_pte(domain, base, lvl, flags, pde, &sf, entry,
  	    true);
  }
-@@ -362,7 +379,7 @@ amdiommu_unmap_buf_locked(struct amdiommu_domain *domain, iommu_gaddr_t base,
+@@ -362,7 +384,7 @@ amdiommu_unmap_buf_locked(struct amdiommu_domain *domain, iommu_gaddr_t base,
  
  	for (sf = NULL; size > 0; base += pg_sz, size -= pg_sz) {
  		pte = amdiommu_pgtbl_map_pte(domain, base,

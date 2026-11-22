@@ -47,3 +47,5 @@ Resolved 2026-11-22: pr/amdiommu = 00e0dde9484b, 195da7d956f6 (pde_flushes fix, 
 Pushed 2026-11-22 as 1ee56becca24, e05c5047a189 (rebased on 02e1b1cd1fb1, tags added, code unchanged; the body of e05c5047a189 was rewrapped past 72 columns).
 
 Local 2026-11-22: 5280e641fefa, b691d33d220f (72-column body restored, ron link tag Pull Request:, code unchanged; to push).
+
+kbowling 2026-11-22: pde_flushes raised only at return, after a sleepable iommu_map_pgtbl() may have dropped the lock; now raised where the PDE is written (02e8ee6d86b0). zbook 435-446 MB/s, 32 parallel readers, 0 faults.

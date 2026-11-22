@@ -47,3 +47,5 @@ No serious bugs found.
   branch is now on 6dc19a71f70c; line numbers are approximate.
 
 VERDICT: ready
+
+kbowling 2026-11-22: out-of-range state on a D3 device returned 0; fixed with state <= PCI_POWERSTATE_MAX (9bb5b48fd98f). zbook d3t module: state 5 returns EINVAL, D3hot/D3cold no-ops.

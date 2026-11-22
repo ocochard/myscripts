@@ -1,7 +1,8 @@
 # pci: devices that ask for D3hot never leave D0
 
-Patch: [pci_d3hot.patch](pci_d3hot.patch) (branch `olivier-pci-d3hot` on
-github.com/ocochard/freebsd-src, based on main cf58c8667cfd).
+Patch: [pci_d3hot.patch](pci_d3hot.patch) (commit `pci: Accept D3hot in
+pci_set_powerstate_method()` on main 6dc19a71f70c), in review as
+[#111](https://ron-dev.freebsd.org/FreeBSD/src/pulls/111).
 
 Found while chasing suspend-to-idle on the HP ZBook Ultra G1a (Strix Halo),
 see [amdsmu_strix_halo.md](amdsmu_strix_halo.md).
@@ -95,7 +96,7 @@ aborted: Abort due to systemic unresponsiveness".
  	oldstate = pci_get_powerstate(child);
 -	if (oldstate == state)
 +	if (oldstate == state || (oldstate >= PCI_POWERSTATE_D3_HOT &&
-+	    state >= PCI_POWERSTATE_D3_HOT))
++	    state >= PCI_POWERSTATE_D3_HOT && state <= PCI_POWERSTATE_MAX))
  		return (0);
 ...
 -	if (highest == PCI_POWERSTATE_D3)
@@ -117,7 +118,9 @@ Whether the slot loses power (cold) is the ACPI layer's job, and
 - The no-change test: `pci_get_powerstate()` reads D3 back as
   `PCI_POWERSTATE_D3` (cold, 4), so a D3hot request on a device already in
   D3 would otherwise rewrite D3 to D3, which the comment says some devices
-  dislike.
+  dislike. The upper bound keeps an invalid state (above
+  `PCI_POWERSTATE_MAX`) out of this shortcut, so it still reaches the
+  `default:` case and returns `EINVAL`.
 - The delay: the 10 ms D3 transition delay applies to both.
 
 Alternatives:
@@ -146,5 +149,23 @@ work (test kernel `kernel.combo`), `kern.power.suspend=suspend_to_idle`.
 | LinuxKPI `pci_set_power_state(PCI_D3hot)` (rtw88) | untested |
 | devices with `_PR3` that ask for D3hot | untested |
 
-The commit itself (on main cf58c8667cfd) has the same code as the tested
-kernel, but was not booted on its own.
+Requests on a device already in D3, with the commit as sent (zbook
+kernel 0d71515aee38 plus this commit and the IOMMU work), using
+[pci_d3hot_test.c](pci_d3hot_test.c)
+([Makefile](pci_d3hot_test.Makefile)) on the idle USB4 router
+(1022:158d function 5). The module attaches, runs the requests, prints
+each result and the state read back, and refuses the device:
+
+| Request | Return | State read back |
+|---|---|---|
+| D3hot (from D0) | 0 | 4 (the register says D3) |
+| D3hot again | 0 | 4 |
+| D3cold | 0 | 4 |
+| 5 (above `PCI_POWERSTATE_MAX`) | 22 (`EINVAL`) | 4 |
+| D0 | 0 | 0 |
+
+## Review
+
+[#111](https://ron-dev.freebsd.org/FreeBSD/src/pulls/111): kbowling
+found that an out-of-range state on a device in D3 returned 0; the upper
+bound in the early return fixes it (the table's fourth row).
