@@ -24,7 +24,8 @@ if [ "${1:-}" != "-n" ]; then
 	git -C "$PORTS_REPO" fetch -q freebsd main 2>/dev/null || true
 fi
 subjects=$(mktemp)
-trap 'rm -f "$subjects"' EXIT
+fwait=$(mktemp)
+trap 'rm -f "$subjects" "$fwait"' EXIT
 git log --since='3 months ago' --format=%s "$MAIN" >"$subjects"
 
 # landed <topic>: prints "landed/total"; patch-id match first, then subject
@@ -57,6 +58,31 @@ is_landed() {
 	l=$(landed "$1")
 	case $l in */0|no-branch) return 1 ;; esac
 	[ "${l%/*}" = "${l#*/}" ]
+}
+
+# api_of <pr>: API base and number of a TSV pr field ("N" or "ports:N")
+api_of() {
+	case $1 in
+	ports:*) echo "${API%/src}/ports ${1#ports:}" ;;
+	*) echo "$API $1" ;;
+	esac
+}
+
+# forgejo_deps <pr>: "key state" per dependency set on that pull request,
+# key in TSV form ("N" for src, "ports:N" for ports, else repo#N)
+forgejo_deps() {
+	set -- $(api_of "$1")
+	curl -fsS -m 20 "$1/issues/$2/dependencies" 2>/dev/null | jq -r '.[] |
+	    (.repository.full_name) as $r |
+	    (if $r == "FreeBSD/src" then "\(.number)"
+	     elif $r == "FreeBSD/ports" then "ports:\(.number)"
+	     else "\($r)#\(.number)" end) + " " + .state'
+}
+
+# topic_of <key>: the TSV topic whose pr field is key, or key itself
+topic_of() {
+	t=$(awk -F'\t' -v k="$1" '!/^#/ && $4 == k {print $1}' "$tsv")
+	echo "${t:-$1}"
 }
 
 pr_state() {
@@ -108,18 +134,64 @@ grep -v '^#' "$tsv" | while IFS='	' read -r topic round deps pr note; do
 			is_landed "$d" || waiting="$waiting $d"
 		done
 	fi
+	# Dependencies set in Forgejo: an open one blocks too; a TSV
+	# dependency that has a pull request but is not set there is listed.
+	unset_deps=
+	if [ "$pr" != "-" ]; then
+		fdeps=$(forgejo_deps "$pr")
+		echo "$fdeps" | while read -r key state; do
+			if [ -n "$key" ] && [ "$state" = open ]; then
+				topic_of "$key"
+			fi
+		done > "$fwait"
+		for d in $(cat "$fwait"); do
+			case " $waiting " in *" $d "*) ;; *) waiting="$waiting $d" ;; esac
+		done
+		if [ "$deps" != "-" ]; then
+			for d in $(echo "$deps" | tr , ' '); do
+				dpr=$(awk -F'\t' -v t="$d" '$1 == t {print $4}' "$tsv")
+				[ -n "$dpr" ] && [ "$dpr" != "-" ] || continue
+				echo "$fdeps" | grep -q "^$dpr " ||
+				    unset_deps="$unset_deps $d"
+			done
+		fi
+	fi
 	rv=$(review_state "$topic")
+	# Not sent yet: it may go out once every dependency has a pull
+	# request, with those set as Forgejo dependencies; it lands after them.
+	unsent=; setdeps=
+	if [ "$pr" = "-" ]; then
+		for d in $waiting; do
+			dpr=$(awk -F'\t' -v t="$d" '$1 == t {print $4}' "$tsv")
+			if [ -z "$dpr" ] || [ "$dpr" = "-" ]; then
+				unsent="$unsent $d"
+			else
+				setdeps="$setdeps ${dpr}"
+			fi
+		done
+	fi
 	if is_landed "$topic"; then next="done"
 	elif [ "$round" = hold ]; then next="on hold: $note"
-	elif [ -n "$waiting" ]; then next="wait for$waiting"
+	elif [ "$pr" = "-" ] && [ -n "$unsent" ]; then
+		next="send after$unsent"
+	elif [ "$pr" != "-" ] && [ -n "$waiting" ]; then
+		next="lands after$waiting"
 	elif [ "$rb" = CONFLICT ]; then next="rebase, git pr -f"
 	elif [ "$rb" = - ]; then next="create branch"
 	elif [ "$rv" = "not reviewed" ] && [ "${pr#ports:}" = "$pr" ]; then
 		next="review"
 	elif [ "$rv" != "not reviewed" ] && [ "${rv%%,*}" != ready ]; then
 		next="fix review findings"
-	elif [ "$pr" = "-" ]; then next="git pr main -o $topic"
+	elif [ "$pr" = "-" ]; then
+		next="git pr main (on pr/$topic)"
+		if [ -n "$setdeps" ]; then
+			next="$next, then set Forgejo dependencies:$(echo "$setdeps" |
+			    sed 's/ \([0-9]\)/ #\1/g; s/ports:/ports#/g')"
+		fi
 	else next="wait for reviewers"
+	fi
+	if [ -n "$unset_deps" ]; then
+		next="$next; not set in Forgejo:$unset_deps"
 	fi
 	echo "| $topic | $round | $l | $(pr_state "$pr") | $rv | $rb | $next |"
 done

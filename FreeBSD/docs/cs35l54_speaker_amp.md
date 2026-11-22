@@ -10,6 +10,38 @@ Machine: HP ZBook Ultra G1a 14 (AMD Ryzen AI Max+ PRO 395, Realtek ALC245 codec,
 Investigation log and measurements: [cs35l54_speaker_amp_plan.md](cs35l54_speaker_amp_plan.md).
 Firmware port (not committed yet): `audio/sound-firmware-cirrus`.
 
+**Sent for review (2026-11-22).** The version for review is branch
+`pr/cs35l54` ([cs35l54_review.patch](cs35l54_review.patch)), 2 commits on FreeBSD main 2cc3f14701c9 (the hdaa event, then the driver with its man page): the fwget commit
+moved to its own pull request (fwget-acpi, [fwget_acpi.md](fwget_acpi.md)),
+which lands first, after the firmware port (ron-dev ports #20). After
+review: the two register tables taken from the Linux driver are one table
+in address order with our own comments, values from the I2C trace of this
+laptop; a failed start stops the amplifiers already started; the module
+depends on `efirt` and is built on amd64 only; the man page fixups are one
+commit. The patch file and the section numbers below are the earlier
+11-commit branch. Hardware check of the reworked module (2026-11-22): it
+attaches, reads the calibration and loads firmware 3.11.18. A tenth
+commit keeps the amplifiers ready between streams (parallel wake, pause
+1 s after the stream stops, hibernation allowed 3 s later, setup only
+after hibernation). Two 3 s 440 Hz tones played with ffmpeg 2 s apart and
+recorded by the built-in microphones
+([cs35l54_tone_record.sh](cs35l54_tone_record.sh),
+[cs35l54_tone_measure.py](cs35l54_tone_measure.py)) are audible for
+2.90 s and 2.95 s; dtrace shows the amplifiers playing 50 ms after the
+first stream start (cold) and 6 ms after the second (still set up). An
+earlier test played raw bytes with `cat file > /dev/dsp4`, which closes
+the device right after writing and stopped the stream after 149 ms: that,
+not the amplifiers, made the tones sound about 1 s long.
+A third test, a tone right after the firmware download
+([cs35l54_tone_record_load.sh](cs35l54_tone_record_load.sh)), found a bug
+in the first version of that commit: marking the amplifiers ready after
+the download skipped the setup, and the tone came out in pieces (0.95 s,
+then 0.30, 0.15, 0.15, 0.25 s); the earlier module played it whole
+(2.95 s). The setup written before the firmware's REINIT does not hold,
+so the final commit lets the amplifiers hibernate after a download and
+the first stream rewrites it: right after the download 3.00 s, then a
+cold and a warm tone 2.95 s each.
+
 This document explains the work for a first-year computer science student:
 someone who knows C and what an operating system does, but has never looked
 at FreeBSD sound, I2C, ACPI or firmware loading.
