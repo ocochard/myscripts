@@ -1,6 +1,6 @@
 # fwget: firmware for ACPI-only devices
 
-Patch: [fwget_acpi.patch](fwget_acpi.patch) (commit d39f06e50dcd
+Patch: [fwget_acpi.patch](fwget_acpi.patch) (commit 17d162d4c895
 `fwget: Add ACPI device support`), for FreeBSD main of 2026-11-20.
 Machine: HP ZBook Ultra G1a 14, whose four Cirrus Logic CS35L54 speaker
 amplifiers (ACPI `CSC3554`) need a firmware package

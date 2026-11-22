@@ -1,4 +1,4 @@
-From d39f06e50dcdd585a6ec284c0230cafa9f1d5e14 Mon Sep 17 00:00:00 2001
+From 17d162d4c8950dc72e1fa48dde974362e2b96d3e Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Wed, 11 Nov 2026 16:49:49 +0000
 Subject: [PATCH] fwget: Add ACPI device support
@@ -50,12 +50,12 @@ index 000000000000..ab57620fb000
 +.include <bsd.prog.mk>
 diff --git a/usr.sbin/fwget/acpi/acpi b/usr.sbin/fwget/acpi/acpi
 new file mode 100644
-index 000000000000..e5476835fc86
+index 000000000000..317f2cfc40ed
 --- /dev/null
 +++ b/usr.sbin/fwget/acpi/acpi
 @@ -0,0 +1,30 @@
 +#
-+# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++# Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +
@@ -86,12 +86,12 @@ index 000000000000..e5476835fc86
 +}
 diff --git a/usr.sbin/fwget/acpi/acpi_cirrus b/usr.sbin/fwget/acpi/acpi_cirrus
 new file mode 100644
-index 000000000000..c4b716f79a86
+index 000000000000..460aa80053d0
 --- /dev/null
 +++ b/usr.sbin/fwget/acpi/acpi_cirrus
 @@ -0,0 +1,12 @@
 +#
-+# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++# Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +

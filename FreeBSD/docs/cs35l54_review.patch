@@ -1,4 +1,4 @@
-From a4ef014e882ffa06fb3ad534c8952ee9c2d2bd41 Mon Sep 17 00:00:00 2001
+From 580dafb2eff735537a85932e8207b6c5ab7b153e Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Wed, 11 Nov 2026 15:04:26 +0000
 Subject: [PATCH 1/2] hdaa: Add an event for internal speaker stream start and
@@ -86,14 +86,14 @@ index b91864d45dba..1504b44aafe2 100644
  }
 diff --git a/sys/dev/sound/pci/hda/hdaa_speaker.h b/sys/dev/sound/pci/hda/hdaa_speaker.h
 new file mode 100644
-index 000000000000..df6b7a528142
+index 000000000000..078024edeb7e
 --- /dev/null
 +++ b/sys/dev/sound/pci/hda/hdaa_speaker.h
 @@ -0,0 +1,22 @@
 +/*-
 + * SPDX-License-Identifier: BSD-2-Clause
 + *
-+ * Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++ * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 + */
 +
 +#ifndef _HDAA_SPEAKER_H_
@@ -116,7 +116,7 @@ index 000000000000..df6b7a528142
 2.56.0
 
 
-From 1c9eb709c98ab726cbdda6a0be9e29a43664ecc6 Mon Sep 17 00:00:00 2001
+From e1a757990d4aba8a8e4307f26afff10dc5bedc5f Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sun, 22 Nov 2026 12:15:22 +0100
 Subject: [PATCH 2/2] sound: Add snd_cs35l54 for HDA side speaker amplifiers
@@ -166,14 +166,14 @@ index 4a39645fcba3..f26e05537f53 100644
  MLINKS+=iwx.4 if_iwx.4
 diff --git a/share/man/man4/snd_cs35l54.4 b/share/man/man4/snd_cs35l54.4
 new file mode 100644
-index 000000000000..1576991fb59b
+index 000000000000..c5b70bf3c2a8
 --- /dev/null
 +++ b/share/man/man4/snd_cs35l54.4
 @@ -0,0 +1,156 @@
 +.\"
 +.\" SPDX-License-Identifier: BSD-2-Clause
 +.\"
-+.\" Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++.\" Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 +.\"
 +.\" Redistribution and use in source and binary forms, with or without
 +.\" modification, are permitted provided that the following conditions
@@ -306,7 +306,7 @@ index 000000000000..1576991fb59b
 +The
 +.Nm
 +driver and this manual page were written by
-+.An Olivier Cochard-Labbe Aq Mt olivier@FreeBSD.org .
++.An Olivier Cochard Aq Mt olivier@FreeBSD.org .
 +.Sh CAVEATS
 +The reset line is a GPIO of the AMD GPIO controller.
 +If the
@@ -328,14 +328,14 @@ index 000000000000..1576991fb59b
 +attachment are not supported.
 diff --git a/sys/dev/sound/pci/hda/cs35l54.c b/sys/dev/sound/pci/hda/cs35l54.c
 new file mode 100644
-index 000000000000..69c1038415f5
+index 000000000000..e1a131b68457
 --- /dev/null
 +++ b/sys/dev/sound/pci/hda/cs35l54.c
 @@ -0,0 +1,1313 @@
 +/*-
 + * SPDX-License-Identifier: BSD-2-Clause
 + *
-+ * Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++ * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 + *
 + * Redistribution and use in source and binary forms, with or without
 + * modification, are permitted provided that the following conditions
