@@ -7,11 +7,16 @@ and wrote their bug reports, ran the tests as installed by `make install`,
 fixed the flaky `krb5p` capture, closed the last gap in #9 (an nfsd
 stopped before its jail is removed), moved that hook's work to a task to
 avoid a deadlock, added two tests that a removed server jail goes away,
-then rebased everything onto main 6edecf52def6 and squashed #9 and #10
-into one commit (session 34d90969, 2026-11-21 to 11-22). Earlier sessions:
+rebased everything onto main 6edecf52def6, squashed #9 and #10 into one
+commit, measured why NLM cannot run in a jail and added an NFSv3 case
+without NLM (session 34d90969, 2026-11-21 to 11-22). Earlier sessions:
 4a7ee611 (2026-11-02 to 11-18). The `nfsbug/` docs are committed and
-pushed in myscripts (last: 40a1587). Copy the block below verbatim into the fresh
-session as the first user message.
+pushed in myscripts (last: fa9e41e). Copy the block below verbatim into
+the fresh session as the first user message.
+
+State at the end: no coding item left. Next steps are mine (file the PRs,
+add `PR:` lines, create the reviews in the order below) and two design
+questions for rmacklem (NLM and pNFS in jails).
 
 ---
 
@@ -99,10 +104,12 @@ add `PR:` lines to the commits and the #6 PR number to the
   kernel branch alone; their diffs equal the tested ones.
 
 **Open items** (pick with me first):
-- Reviews and PRs as above; rebase the branches if main moves first.
+- Reviews and PRs as above; rebase the branches if main moves first
+  (check with `git fetch upstream` and `git range-diff`, then build all
+  8 commits together and run the 13 cases before force-pushing).
 - Dying server jails: fixed by #9 and #10, including an nfsd stopped
   before the removal (#9's jail removal hook and start guard, folded in
-  2026-11-22). NFSv3/NLM not checked for this. The hook does its work in
+  2026-11-22). The hook does its work in
   a task: waiting for the exclusive `nfsv4rootfs_lock` with
   `allprison_lock` held could deadlock with an nfsd thread mounting a ZFS
   snapshot (`vfs_exjail_clone()`); found by reading, not reproduced. The
