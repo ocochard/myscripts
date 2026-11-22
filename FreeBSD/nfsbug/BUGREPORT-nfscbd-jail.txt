@@ -1,0 +1,58 @@
+Summary: nfscl: nfscbd(8) in a vnet jail serves no callbacks, so NFSv4.1 clients get no delegations
+
+Product: Base System   Component: kern   Version: 16.0-CURRENT (main 6dc19a71f70c)
+
+Description:
+
+With nfscbd(8) running in the client's vnet jail (allow.nfsd), an NFSv4.1
+server never issues a delegation to that client. nfsdumpstate(8) on the
+server never shows the CB flag for it.
+
+A capture on the bridge shows the server's CB_NULL on the backchannel and
+the client's reply "accepted, PROG_UNAVAIL". The server (vfs.nfsd.debuglevel=4)
+logs "aft newnfs_request=13" (EACCES) and leaves callbacks off. The client
+(vfs.nfs.debuglevel=1) never prints "cbproc=": nfscb_program() is not
+reached.
+
+Cause: NFS_CALLBCKPROG is registered on nfscbd_pool only by svc_reg() in
+nfscbd_addsock(), for each socket nfscbd(8) adds:
+
+1. nfscbd first adds a UDP socket. svc_dg_create() returns NULL for a
+   jailed caller (6a76d35cac8e), so svc_reg() is never reached.
+2. nfscbd_addsock() still returns 0, so nfssvc_nfscl() sets
+   nfscl_enablecallb, and the client asks for a backchannel at
+   CREATE_SESSION.
+3. The TCP listener adds sockets only when a server connects to it, which
+   NFSv4.1 never does.
+
+So the pool serves no program and refuses every callback. With nfscbd on the
+host, step 1 succeeds and registers the program; nfscbd_pool is a single
+global, so a host nfscbd also serves jailed clients, which hides the bug.
+
+Fix (attached, nfscbd_jail.patch, against main 6dc19a71f70c):
+- nfscbd_nfsd() registers NFS_CALLBCKPROG on the pool before svc_run(),
+  through a temporary backchannel transport (svc_reg() needs a transport
+  only for its pool), and sets nfscl_enablecallb. It runs at each nfscbd
+  start, since svcpool_close() removes the registrations at exit.
+- nfscbd_addsock() returns EPERM when no transport could be created, as
+  nfsrvd_addsock() does.
+- nfscbd(8) skips its UDP socket when security.jail.jailed is set, since
+  the kernel now refuses it with an error.
+
+Tradeoff: an old nfscbd binary in a jail on a patched kernel exits at start
+("can't Add UDP socket"), where before it ran and served nothing.
+
+Tested in a bhyve VM, GENERIC-NODEBUG, NFSv4.1, server and two clients in
+vnet jails, vfs.nfsd.issue_delegations=1. A jailed NFS client needs the
+VFCF_JAIL change for nfscl (not in main); it was applied for the test.
+
+                                                stock       patched
+  nfscbd in client jail c1: CB flag, delegation no, 0      yes, 1
+  c2 opens the file for writing: recall         not reached done in 0s
+  nfscbd and client on the host (regression)    0s recall   0s recall
+
+Not tested: a host mount with nfscbd only in a jail, Kerberos callbacks
+(nfscbd -P), pNFS layout recalls, a WITNESS kernel.
+
+Note: NFSv4.0 clients get no delegations anyway since 71ac1ec5c9d9 (the
+client sends callback address 0.0.0.0.0.0).

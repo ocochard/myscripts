@@ -1,8 +1,8 @@
 diff --git etc/mtree/BSD.tests.dist etc/mtree/BSD.tests.dist
-index cec7a9f82627..0cc1b73c39e4 100644
+index e828cfd3cc56..d0221c738536 100644
 --- etc/mtree/BSD.tests.dist
 +++ etc/mtree/BSD.tests.dist
-@@ -834,6 +834,8 @@
+@@ -836,6 +836,8 @@
              ..
              fusefs
              ..
@@ -25,10 +25,10 @@ index 42fd087b16f6..5831325d634f 100644
  TESTS_SUBDIRS+=		tmpfs
 diff --git tests/sys/fs/nfs/Makefile tests/sys/fs/nfs/Makefile
 new file mode 100644
-index 000000000000..1c90226294d7
+index 000000000000..1bf93391e294
 --- /dev/null
 +++ tests/sys/fs/nfs/Makefile
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,18 @@
 +PACKAGE=	tests
 +
 +TESTSDIR=	${TESTSBASE}/sys/fs/nfs
@@ -37,6 +37,7 @@ index 000000000000..1c90226294d7
 +ATF_TESTS_SH+=	basic_test
 +ATF_TESTS_SH+=	recovery_test
 +ATF_TESTS_SH+=	krb5_test
++ATF_TESTS_SH+=	delegation_test
 +
 +# Tests share the jail names, addresses and proxy port.
 +TEST_METADATA+=	is_exclusive="true"
@@ -48,10 +49,10 @@ index 000000000000..1c90226294d7
 +.include <bsd.test.mk>
 diff --git tests/sys/fs/nfs/basic_test.sh tests/sys/fs/nfs/basic_test.sh
 new file mode 100644
-index 000000000000..48f9f35b19e4
+index 000000000000..ec2c8a7e962e
 --- /dev/null
 +++ tests/sys/fs/nfs/basic_test.sh
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,129 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -89,13 +90,41 @@ index 000000000000..48f9f35b19e4
 +
 +basic_body()
 +{
++	basic_io
++}
++
++basic_cleanup()
++{
++	nfs_cleanup
++}
++
++atf_test_case "v40_basic" "cleanup"
++v40_basic_head()
++{
++	atf_set descr 'NFSv4.0 file operations against a vnet jail server'
++	atf_set require.user root
++}
++
++v40_basic_body()
++{
++	basic_io minorversion=0
++}
++
++v40_basic_cleanup()
++{
++	nfs_cleanup
++}
++
++# Mount a server with extra mount options $1 and check file operations.
++basic_io()
++{
 +	local cl m
 +
 +	nfs_init
 +	nfs_server_start srv
 +	nfs_client_start c1
 +	cl=$(nfs_client c1)
-+	nfs_mount ${cl} $(nfs_addr srv)
++	nfs_mount ${cl} $(nfs_addr srv) $1
 +	m=$(nfs_mnt ${cl})
 +
 +	echo hello > $m/file
@@ -109,11 +138,6 @@ index 000000000000..48f9f35b19e4
 +	atf_check -o file:big.sum sha256 -q srv/export/big
 +	atf_check rm -r $m/dir $m/big
 +	atf_check -o empty ls srv/export
-+}
-+
-+basic_cleanup()
-+{
-+	nfs_cleanup
 +}
 +
 +atf_test_case "two_clients" "cleanup"
@@ -155,7 +179,120 @@ index 000000000000..48f9f35b19e4
 +atf_init_test_cases()
 +{
 +	atf_add_test_case "basic"
++	atf_add_test_case "v40_basic"
 +	atf_add_test_case "two_clients"
++}
+diff --git tests/sys/fs/nfs/delegation_test.sh tests/sys/fs/nfs/delegation_test.sh
+new file mode 100644
+index 000000000000..1060f8d14b62
+--- /dev/null
++++ tests/sys/fs/nfs/delegation_test.sh
+@@ -0,0 +1,106 @@
++#
++# SPDX-License-Identifier: BSD-2-Clause
++#
++# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++#
++# Redistribution and use in source and binary forms, with or without
++# modification, are permitted provided that the following conditions
++# are met:
++# 1. Redistributions of source code must retain the above copyright
++#    notice, this list of conditions and the following disclaimer.
++# 2. Redistributions in binary form must reproduce the above copyright
++#    notice, this list of conditions and the following disclaimer in the
++#    documentation and/or other materials provided with the distribution.
++#
++# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++# SUCH DAMAGE.
++
++#
++# Delegations: the server recalls the one a client holds when another
++# client opens the file for writing.  vfs.nfsd.issue_delegations is global,
++# so the test sets it on the host and restores it.
++#
++
++. $(atf_get_srcdir)/nfs.subr
++
++# Print server statistic $2 of jail $1, as named by nfsstat(1) --libxo.
++srvstat()
++{
++	jexec $1 nfsstat -e -s --libxo xml |
++	    sed -n "s|.*<$2>\([0-9]*\)</$2>.*|\1|p"
++}
++
++# Check that c2 opening a file for writing recalls the delegation that c1
++# holds, with extra mount options $1.
++recall_check()
++{
++	local i m1 m2 ret t0
++
++	nfs_init
++	nfs_require_clients 2
++	sysctl -n vfs.nfsd.issue_delegations > issue_delegations
++	atf_check -o ignore sysctl vfs.nfsd.issue_delegations=1
++	nfs_server_start srv
++	# Only a client running nfscbd(8) gets delegations.
++	nfs_client_start c1 allow.nfsd
++	atf_check jexec c1 nfscbd
++	nfs_client_start c2
++	nfs_mount c1 $(nfs_addr srv) $1
++	nfs_mount c2 $(nfs_addr srv) $1
++	m1=$(nfs_mnt c1)
++	m2=$(nfs_mnt c2)
++
++	echo one > srv/export/file
++	# The server checks the callback path first: retry until c1 opens
++	# the file with a delegation.
++	for i in $(seq 10); do
++		atf_check -o inline:"one\n" cat ${m1}/file
++		[ "$(srvstat srv delegs)" -gt 0 ] && break
++		sleep 1
++	done
++	[ "$(srvstat srv delegs)" -gt 0 ] || atf_fail "no delegation issued"
++	ret=$(srvstat srv delreg)
++
++	t0=$(date +%s)
++	echo two >> ${m2}/file
++	[ $(($(date +%s) - t0)) -le ${NFS_MAX_STALL} ] ||
++	    atf_fail "write waited $(($(date +%s) - t0))s for the recall"
++	[ "$(srvstat srv delreg)" -gt ${ret} ] ||
++	    atf_fail "c1 did not return its delegation"
++	atf_check -o inline:"one\ntwo\n" cat ${m1}/file
++}
++
++atf_test_case "recall" "cleanup"
++recall_head()
++{
++	atf_set descr 'NFSv4.1: a conflicting open recalls a delegation'
++	atf_set require.user root
++	atf_set timeout 120
++}
++
++recall_body()
++{
++	recall_check
++}
++
++recall_cleanup()
++{
++	nfs_cleanup
++	[ -f issue_delegations ] &&
++	    sysctl vfs.nfsd.issue_delegations=$(cat issue_delegations) > /dev/null
++	true
++}
++
++atf_init_test_cases()
++{
++	atf_add_test_case "recall"
 +}
 diff --git tests/sys/fs/nfs/krb5_test.sh tests/sys/fs/nfs/krb5_test.sh
 new file mode 100644
@@ -325,10 +462,10 @@ index 000000000000..1ea33137f6ae
 +}
 diff --git tests/sys/fs/nfs/nfs.subr tests/sys/fs/nfs/nfs.subr
 new file mode 100644
-index 000000000000..0079818fbc91
+index 000000000000..9427ea054b47
 --- /dev/null
 +++ tests/sys/fs/nfs/nfs.subr
-@@ -0,0 +1,466 @@
+@@ -0,0 +1,477 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -571,15 +708,19 @@ index 000000000000..0079818fbc91
 +	fi
 +}
 +
-+# Mount server $2 (address, or address:port) on client $1 with NFSv4.1;
-+# extra mount options follow, comma separated.
++# Mount server $2 (address, or address:port) on client $1 with NFSv4.1,
++# unless the extra mount options, comma separated, give a minorversion.
 +nfs_mount()
 +{
-+	local cl=$1 srv=$2 opts=nfsv4,minorversion=1,retrycnt=1 port
++	local cl=$1 srv=$2 opts=nfsv4,retrycnt=1 port
 +
 +	shift 2
 +	case ${srv} in
 +	*:*)	port=${srv#*:}; srv=${srv%:*}; opts=${opts},port=${port} ;;
++	esac
++	case "$1" in
++	*minorversion=*) ;;
++	*)	opts=${opts},minorversion=1 ;;
 +	esac
 +	[ $# -gt 0 ] && opts=${opts},$1
 +	if [ ${cl} = host ]; then
@@ -711,6 +852,13 @@ index 000000000000..0079818fbc91
 +nfs_reset()
 +{
 +	kill -USR1 $(cat proxy.pid)
++}
++
++# Print the number of NFS client sessions allocated in the kernel.
++nfs_sessions()
++{
++	vmstat -m | awk '$1 == "NFSCL" && $2 == "session" { n = $3 }
++	    END { print n + 0 }'
 +}
 +
 +# Create a file every second in directory $1 in the background and log the
@@ -1093,10 +1241,10 @@ index 000000000000..8cb9ea205be7
 +    main()
 diff --git tests/sys/fs/nfs/recovery_test.sh tests/sys/fs/nfs/recovery_test.sh
 new file mode 100644
-index 000000000000..538de98f62ac
+index 000000000000..f75e6320ba6d
 --- /dev/null
 +++ tests/sys/fs/nfs/recovery_test.sh
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,150 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -1204,8 +1352,46 @@ index 000000000000..538de98f62ac
 +	nfs_cleanup
 +}
 +
++atf_test_case "session_leak" "cleanup"
++session_leak_head()
++{
++	atf_set descr 'Free the sessions that recovery replaced'
++	atf_set require.user root
++	atf_set require.progs python3
++	atf_set timeout 300
++}
++
++session_leak_body()
++{
++	local i n0 n
++
++	n0=$(nfs_sessions)
++	recovery_setup
++	for i in 1 2 3; do
++		nfs_reset
++		sleep 20
++	done
++	# A replaced session is freed 2 x nfsc_renew (120s with nfsd) after
++	# the recovery that replaced it.
++	sleep 120
++
++	# The mount and each recovery create a session.
++	[ $(grep -c 'learn session' proxy.log) -ge 4 ] ||
++	    atf_fail "not every reset caused a recovery"
++	n=$(nfs_sessions)
++	atf_expect_fail "Sessions replaced by recovery are freed only at unmount"
++	[ ${n} -le $((n0 + 1)) ] ||
++	    atf_fail "$((n - n0)) sessions in use for one mount"
++}
++
++session_leak_cleanup()
++{
++	nfs_cleanup
++}
++
 +atf_init_test_cases()
 +{
 +	atf_add_test_case "server_reset"
 +	atf_add_test_case "server_reset_twice"
++	atf_add_test_case "session_leak"
 +}

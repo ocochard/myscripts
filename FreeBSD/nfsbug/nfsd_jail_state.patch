@@ -1,0 +1,33 @@
+diff --git sys/fs/nfsserver/nfs_nfsdport.c sys/fs/nfsserver/nfs_nfsdport.c
+index fbbdef03f440..827e7c1179ce 100644
+--- sys/fs/nfsserver/nfs_nfsdport.c
++++ sys/fs/nfsserver/nfs_nfsdport.c
+@@ -4798,6 +4798,13 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
+ 		nfsd_timer(TD_TO_VNET(td));
+ 		error = nfsrvd_nfsd(td, &nfsdarg);
+ 		callout_drain(&VNET(nfsd_callout));
++		/*
++		 * A dying jail cannot run nfsd again, and its client state
++		 * holds credentials that keep the jail from going away.
++		 */
++		if (!prison_isalive(td->td_ucred->cr_prison) &&
++		    VNET(nfsrv_numnfsd) == 0)
++			nfsrv_throwawayallstate(td);
+ 		free(nfsdarg.addr, M_TEMP);
+ 		free(nfsdarg.dnshost, M_TEMP);
+ 		free(nfsdarg.dspath, M_TEMP);
+diff --git sys/fs/nfsserver/nfs_nfsdstate.c sys/fs/nfsserver/nfs_nfsdstate.c
+index de5e5da86202..33bb43d8f4d4 100644
+--- sys/fs/nfsserver/nfs_nfsdstate.c
++++ sys/fs/nfsserver/nfs_nfsdstate.c
+@@ -6060,8 +6060,8 @@ nfsrv_throwawayallstate(NFSPROC_T *p)
+ 			nfsrv_cleanclient(clp, p, false, NULL);
+ 			nfsrv_freedeleglist(&clp->lc_deleg);
+ 			nfsrv_freedeleglist(&clp->lc_olddeleg);
+-			free(clp->lc_stateid, M_NFSDCLIENT);
+-			free(clp, M_NFSDCLIENT);
++			LIST_REMOVE(clp, lc_hash);
++			nfsrv_zapclient(clp, p);
+ 		}
+ 	}
+ 

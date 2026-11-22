@@ -1,0 +1,88 @@
+Summary: nfsd: a removed vnet jail running nfsd stays dying forever (client records and RPCSEC_GSS contexts hold its credential)
+
+Product: Base System   Component: kern   Version: 16.0-CURRENT (main 6dc19a71f70c)
+
+Description:
+
+Run nfsd(8) in a vnet jail, serve an NFSv4 client, stop the client, then
+remove the jail with "jail -r". The jail never goes away: jls -d shows it
+dying for good, with its vnet, and DDB "show prison" shows ref = 1,
+uref = 0. It happens when the server still has a client record at removal
+(an NFSv4.0 client, which never sends DESTROY_CLIENTID, or any client that
+went away without unmounting), and with any Kerberos (sec=krb5*) client.
+
+How to reproduce (vnet jail "srv" with allow.nfsd, an NFSv4.0 client):
+
+  srv# mountd -R -n /exports; nfsd -t
+  client# mount -t nfs -o nfsv4,minorversion=0 srv:/ /mnt
+  client# cat /mnt/f; umount /mnt
+  host# jail -r srv; jls -d jid name dying     # srv stays, dying
+
+Cause: a cycle between a credential and the vnet cleanup.
+
+1. nfsd keeps a credential in each client record (lc_req.nr_cred, taken at
+   SETCLIENTID / EXCHANGE_ID from nd_cred). svc_getcred() builds that
+   credential in the server's jail and calls prison_hold(), so each record
+   holds a reference on the jail. The RPCSEC_GSS server code does the same
+   for each Kerberos context (cl_cred in rpc_gss_svc_getcred()).
+2. The records are freed by nfsrv_cleanup() and the GSS contexts by
+   svc_rpc_gss_vnet_cleanup(), both VNET_SYSUNINITs, which run from
+   vnet_destroy(). prison_deref() calls vnet_destroy() only once the last
+   reference on the jail is gone.
+3. Nothing else frees them in a dying jail: stopping nfsd keeps the
+   records (so that a restarted nfsd keeps its clients), an idle record is
+   only marked for expiry after 5 leases and an nfsd must then handle a
+   request, and GSS contexts expire only in svc_rpc_gss_timeout_clients(),
+   which runs when a request arrives.
+
+Two more leaks on these paths: nfsrv_throwawayallstate() freed each client
+record with free() only (no crfree() of the credential, no
+newnfs_disconnect(), no removal from the hash, no counter update, unlike
+nfsrv_zapclient()), and svc_rpc_gss_vnet_cleanup() freed only the hash
+array, not the contexts in it.
+
+Measured in a bhyve VM, server and clients in vnet jails (DDB show prison
+on the jails left):
+
+  scenario                                   records  server jail
+  NFSv4.1 client, clean unmount              0        gone at once
+  NFSv4.0 client, clean unmount              1        dying after 971s, ref=1
+  NFSv4.0, nfsd kept running 900s first      1        dying, ref=1
+  client jail removed before its unmount     1        dying, ref=1
+  server removed while the client mounted    1        dying, ref=1
+  sec=krb5/krb5i/krb5p (with fix 1 alone)    -        dying, ref=1
+
+Fixes (attached, against main 6dc19a71f70c, two commits):
+
+1. nfsd_jail_state.patch: when the last nfsd of a vnet exits and its
+   callout is drained, nfssvc_nfsd() throws the NFSv4 state away if the
+   jail is dying (it can never run nfsd again). A host nfsd, or one in a
+   live jail, keeps its state across a restart as before.
+   nfsrv_throwawayallstate() now unlinks each record and frees it with
+   nfsrv_zapclient().
+2. gss_jail_remove.patch: a PR_METHOD_REMOVE hook (osd_jail_register())
+   forgets the RPCSEC_GSS server contexts of a removed vnet jail, and
+   svc_rpc_gss_vnet_cleanup() forgets them too. Contexts are reference
+   counted, so this is safe while the jail's nfsd still runs; crfree()
+   under allprison_lock is safe since prison_free() defers the last
+   release.
+
+Tested with tests/sys/fs/nfs (server and clients in vnet jails), main
+6dc19a71f70c plus other pending NFS jail patches:
+
+                                        stock   fix 1   fixes 1+2   1+2, WITNESS
+  server jails dying after the suite    7       3       0           0
+  NFSv4.0 clean unmount                 never   0s      0s          0s
+  client gone / server removed first    never   70s     70s         70s
+  nfsd restart in a live jail:          -       kept    kept        kept
+    client record kept, I/O after
+  panic / KASSERT                       -       none    none        none
+
+(70s is likely TCP TIME_WAIT of the server's connections; not measured.)
+WITNESS showed only ifnet_sx -> in_control and ufs -> tmpfs, unrelated.
+
+Known gap: if nfsd was stopped before the jail is removed, no nfsd exits
+during the removal and fix 1 does not apply.
+
+Not tested: NFSv3 and NLM, pNFS, a Kerberos service in a jail without its
+own vnet, kgssapi unload.

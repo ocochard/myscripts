@@ -1,7 +1,7 @@
-diff --git a/sys/fs/nfs/nfs.h b/sys/fs/nfs/nfs.h
-index 7212a68..d9ba596 100644
---- a/sys/fs/nfs/nfs.h
-+++ b/sys/fs/nfs/nfs.h
+diff --git sys/fs/nfs/nfs.h sys/fs/nfs/nfs.h
+index 7212a685d902..d9ba5962efab 100644
+--- sys/fs/nfs/nfs.h
++++ sys/fs/nfs/nfs.h
 @@ -686,6 +686,7 @@ struct nfsrv_descript {
  	uint32_t		*nd_slotseq;	/* ptr to slot seq# in req */
  	uint8_t			nd_sessionid[NFSX_V4SESSIONID];	/* Session id */
@@ -18,10 +18,10 @@ index 7212a68..d9ba596 100644
  
  /*
   * ND_GSS should be the "or" of all GSS type authentications.
-diff --git a/sys/fs/nfs/nfs_commonkrpc.c b/sys/fs/nfs/nfs_commonkrpc.c
-index 1603299..fb2ee41 100644
---- a/sys/fs/nfs/nfs_commonkrpc.c
-+++ b/sys/fs/nfs/nfs_commonkrpc.c
+diff --git sys/fs/nfs/nfs_commonkrpc.c sys/fs/nfs/nfs_commonkrpc.c
+index 160329968fa2..fb2ee41d92ea 100644
+--- sys/fs/nfs/nfs_commonkrpc.c
++++ sys/fs/nfs/nfs_commonkrpc.c
 @@ -711,8 +711,8 @@ nfs_feedback(int type, int proc, void *arg)
   *	- break down rpc header and return with nfs reply
   * nb: always frees up nd_mreq mbuf list
@@ -33,7 +33,7 @@ index 1603299..fb2ee41 100644
      struct nfsclient *clp, struct nfssockreq *nrp, vnode_t vp,
      struct thread *td, struct ucred *cred, u_int32_t prog, u_int32_t vers,
      u_char *retsum, int toplevel, u_int64_t *xidp, struct nfsclsession *dssep)
-@@ -1363,6 +1363,13 @@ tryagain:
+@@ -1363,6 +1363,13 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
  				 * has been created during the sleep.
  				 */
  				sep = NFSMNT_MDSSESSION(nmp);
@@ -47,7 +47,7 @@ index 1603299..fb2ee41 100644
  				NFSUNLOCKMNT(nmp);
  				if ((nd->nd_flag & ND_LOOPBADSESS) != 0) {
  					reterr = nfsv4_sequencelookup(nmp, sep,
-@@ -1563,6 +1570,29 @@ nfsmout:
+@@ -1563,6 +1570,29 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
  	return (error);
  }
  
@@ -77,10 +77,10 @@ index 1603299..fb2ee41 100644
  /*
   * Reset slots above nfsess_foreslots that are not busy.
   */
-diff --git a/sys/fs/nfs/nfs_commonsubs.c b/sys/fs/nfs/nfs_commonsubs.c
-index a11b55b..cb8c2a1 100644
---- a/sys/fs/nfs/nfs_commonsubs.c
-+++ b/sys/fs/nfs/nfs_commonsubs.c
+diff --git sys/fs/nfs/nfs_commonsubs.c sys/fs/nfs/nfs_commonsubs.c
+index a11b55b11c43..cb8c2a15f207 100644
+--- sys/fs/nfs/nfs_commonsubs.c
++++ sys/fs/nfs/nfs_commonsubs.c
 @@ -368,6 +368,7 @@ nfscl_reqstart(struct nfsrv_descript *nd, int procnum, struct nfsmount *nmp,
  	 * First, fill in some of the fields of nd.
  	 */
@@ -105,11 +105,11 @@ index a11b55b..cb8c2a1 100644
  				/*
  				 * For MDS mount sessions, check for bad
  				 * slots.  If the caller does not want this
-diff --git a/sys/fs/nfs/nfs_var.h b/sys/fs/nfs/nfs_var.h
-index 57cf156..ab77cce 100644
---- a/sys/fs/nfs/nfs_var.h
-+++ b/sys/fs/nfs/nfs_var.h
-@@ -561,6 +561,7 @@ int nfscl_doiods(vnode_t, struct uio *, int *, int *, uint32_t, int,
+diff --git sys/fs/nfs/nfs_var.h sys/fs/nfs/nfs_var.h
+index 488ddbd1c582..d21cafb85260 100644
+--- sys/fs/nfs/nfs_var.h
++++ sys/fs/nfs/nfs_var.h
+@@ -563,6 +563,7 @@ int nfscl_doiods(vnode_t, struct uio *, int *, int *, uint32_t, int,
  int nfscl_findlayoutforio(struct nfscllayout *, uint64_t, uint32_t,
      struct nfsclflayout **);
  void nfscl_freenfsclds(struct nfsclds *);
@@ -117,10 +117,10 @@ index 57cf156..ab77cce 100644
  int nfsrpc_allocate(vnode_t, off_t, off_t, struct nfsvattr *, int *,
      struct ucred *, NFSPROC_T *);
  int nfsrpc_deallocate(vnode_t, off_t, off_t, struct nfsvattr *, int *,
-diff --git a/sys/fs/nfs/nfsclstate.h b/sys/fs/nfs/nfsclstate.h
-index ce8fc70..1fb0be9 100644
---- a/sys/fs/nfs/nfsclstate.h
-+++ b/sys/fs/nfs/nfsclstate.h
+diff --git sys/fs/nfs/nfsclstate.h sys/fs/nfs/nfsclstate.h
+index ce8fc7018c4b..1fb0be96c4a7 100644
+--- sys/fs/nfs/nfsclstate.h
++++ sys/fs/nfs/nfsclstate.h
 @@ -74,6 +74,8 @@ struct nfsclsession {
  	uint16_t	nfsess_backslots;
  	uint8_t		nfsess_sessionid[NFSX_V4SESSIONID];
@@ -130,11 +130,11 @@ index ce8fc70..1fb0be9 100644
  };
  
  /*
-diff --git a/sys/fs/nfs/nfsport.h b/sys/fs/nfs/nfsport.h
-index cd50d12..d8aa21e 100644
---- a/sys/fs/nfs/nfsport.h
-+++ b/sys/fs/nfs/nfsport.h
-@@ -1209,6 +1209,36 @@ nfsmnt_mdssession(struct nfsmount *nmp)
+diff --git sys/fs/nfs/nfsport.h sys/fs/nfs/nfsport.h
+index 196226577d6c..c45971bb557b 100644
+--- sys/fs/nfs/nfsport.h
++++ sys/fs/nfs/nfsport.h
+@@ -1210,6 +1210,36 @@ nfsmnt_mdssession(struct nfsmount *nmp)
  	return (tsep);
  }
  
@@ -171,11 +171,11 @@ index cd50d12..d8aa21e 100644
  #endif	/* _KERNEL */
  
  #endif	/* _NFS_NFSPORT_H */
-diff --git a/sys/fs/nfsclient/nfs_clrpcops.c b/sys/fs/nfsclient/nfs_clrpcops.c
-index d69c630..fe290e3 100644
---- a/sys/fs/nfsclient/nfs_clrpcops.c
-+++ b/sys/fs/nfsclient/nfs_clrpcops.c
-@@ -1130,6 +1130,7 @@ nfsrpc_setclient(struct nfsmount *nmp, struct nfsclclient *clp, int reclaim,
+diff --git sys/fs/nfsclient/nfs_clrpcops.c sys/fs/nfsclient/nfs_clrpcops.c
+index 1f9942689d2a..25d28f226a14 100644
+--- sys/fs/nfsclient/nfs_clrpcops.c
++++ sys/fs/nfsclient/nfs_clrpcops.c
+@@ -1133,6 +1133,7 @@ nfsrpc_setclient(struct nfsmount *nmp, struct nfsclclient *clp, int reclaim,
  				 */
  				tsep = NFSMNT_MDSSESSION(nmp);
  				tsep->nfsess_defunct = 1;
@@ -183,7 +183,7 @@ index d69c630..fe290e3 100644
  			}
  			TAILQ_INSERT_HEAD(&nmp->nm_sess, dsp,
  			    nfsclds_list);
-@@ -7659,6 +7660,42 @@ nfscl_freenfsclds(struct nfsclds *dsp)
+@@ -7680,6 +7681,42 @@ nfscl_freenfsclds(struct nfsclds *dsp)
  	free(dsp, M_NFSCLDS);
  }
  
@@ -226,11 +226,11 @@ index d69c630..fe290e3 100644
  static enum nfsclds_state
  nfscl_getsameserver(struct nfsmount *nmp, struct nfsclds *newdsp,
      struct nfsclds **retdspp, uint32_t *sequencep)
-diff --git a/sys/fs/nfsclient/nfs_clstate.c b/sys/fs/nfsclient/nfs_clstate.c
-index aa3aef8..5a8826a 100644
---- a/sys/fs/nfsclient/nfs_clstate.c
-+++ b/sys/fs/nfsclient/nfs_clstate.c
-@@ -2848,6 +2848,8 @@ checkdsrenew:
+diff --git sys/fs/nfsclient/nfs_clstate.c sys/fs/nfsclient/nfs_clstate.c
+index aa3aef876cbe..5a8826ace3e6 100644
+--- sys/fs/nfsclient/nfs_clstate.c
++++ sys/fs/nfsclient/nfs_clstate.c
+@@ -2848,6 +2848,8 @@ nfscl_renewthread(struct nfsclclient *clp, NFSPROC_T *p)
  				dsp = TAILQ_NEXT(dsp, nfsclds_list);
  			}
  			NFSUNLOCKMNT(clp->nfsc_nmp);
@@ -239,3 +239,15 @@ index aa3aef8..5a8826a 100644
  		}
  
  		TAILQ_INIT(&dh);
+diff --git tests/sys/fs/nfs/recovery_test.sh tests/sys/fs/nfs/recovery_test.sh
+index f75e6320ba6d..758734a19dea 100644
+--- tests/sys/fs/nfs/recovery_test.sh
++++ tests/sys/fs/nfs/recovery_test.sh
+@@ -132,7 +132,6 @@ session_leak_body()
+ 	[ $(grep -c 'learn session' proxy.log) -ge 4 ] ||
+ 	    atf_fail "not every reset caused a recovery"
+ 	n=$(nfs_sessions)
+-	atf_expect_fail "Sessions replaced by recovery are freed only at unmount"
+ 	[ ${n} -le $((n0 + 1)) ] ||
+ 	    atf_fail "$((n - n0)) sessions in use for one mount"
+ }

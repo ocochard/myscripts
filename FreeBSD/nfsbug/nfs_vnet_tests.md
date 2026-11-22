@@ -1,8 +1,10 @@
 # #5: regression tests for the FreeBSD NFS client
 
 Patch: [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch), adds
-`tests/sys/fs/nfs/`, against main 7a0021a0988f. Branch `nfs-vnet-tests` in
-`~/freebsd-src-nfstest`. Not committed upstream.
+`tests/sys/fs/nfs/`, against main 6dc19a71f70c. Branch `nfs-vnet-tests` in
+`~/freebsd-src-nfstest`, one commit, 91d6b85cea18 (four commits squashed
+on 2026-11-22: the tests, `v40_basic`, `session_leak` and the delegation
+`recall`). Not committed upstream.
 
 Read [`badsession.md`](badsession.md) and
 [`staleclientid.md`](staleclientid.md) first: these tests exist to catch
@@ -93,8 +95,9 @@ is short:
 | `nfs_init` | create the virtual switch, load the modules or skip |
 | `nfs_server_start srv` | jail `srv` running an NFSv4 server exporting `/export` |
 | `nfs_client_start c1` | client jail `c1`, if the kernel allows NFS in jails |
-| `nfs_mount <client> <server>` | mount with NFSv4.1 |
+| `nfs_mount <client> <server> [options]` | mount with NFSv4.1, unless the options give a `minorversion` |
 | `nfs_proxy_start srv`, `nfs_reset` | put the proxy in front of `srv`; make it forget |
+| `nfs_sessions` | NFS client sessions in use in the kernel (`vmstat -m`) |
 | `nfs_probe_start`, `nfs_probe_check` | start the probe; fail on a gap over 10 s |
 | `nfs_kdc_start`, `nfs_krb5_keytab`, `nfs_gssd_start` | Kerberos realm, keys and daemons |
 | `nfs_cleanup` | unmount, stop everything, remove the jails |
@@ -110,6 +113,9 @@ is short:
 | `krb5_test.sh` | `krb5` | Kerberos mount works, and a mount without Kerberos is refused |
 | | `krb5i` | integrity only: the data is visible on the wire |
 | | `krb5p` | privacy: the data is not visible on the wire |
+| `basic_test.sh` | `v40_basic` | the `basic` checks over NFSv4.0 (SETCLIENTID instead of sessions) |
+| `recovery_test.sh` | `session_leak` | three resets, then 120 s: at most one session left for the mount; expected to fail until #6 |
+| `delegation_test.sh` | `recall` | c1, running `nfscbd`, gets a delegation; c2 writes the file: recalled within 10 s; needs #7 |
 
 `krb5i` and `krb5p` check each other: both capture the traffic with
 `tcpdump`. With krb5i the written text must be in the capture, which proves
@@ -176,6 +182,17 @@ bhyve VM, 4 CPUs, 4 GB, kernels with `device epair`, `device if_bridge` and
 
 The pre-fix kernels were run with the first, single-file version of the
 tests, which had `basic` and both reset cases.
+
+The three later cases, bhyve VM, 2026-11-21, all with the clients in jails:
+
+| Kernel | `v40_basic` | `session_leak` | `recall` | other 7 cases |
+|---|---|---|---|---|
+| main 6dc19a71f70c + #3 + #4 | passed | expected failure: 4 sessions | failed: no delegation | passed |
+| same + #6 (`atf_expect_fail` removed) | not run | passed | not run | reset cases passed |
+| same + #7 + #8 (GENERIC-NODEBUG and GENERIC with WITNESS) | passed | expected failure | passed | passed |
+
+`krb5p` failed once with "no NFS packet captured" and passed in the 5
+reruns: its capture check is flaky, not investigated.
 
 Untested: bare metal, kernels loading NFS and Kerberos as modules, stable/15,
 and `make check` from an installed `/usr/tests` (the VM installed the files

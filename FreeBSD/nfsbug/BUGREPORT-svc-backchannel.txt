@@ -1,0 +1,70 @@
+Summary: krpc: after an nfscbd(8) restart, recalls on older NFSv4.1 mounts are dropped (255s stall)
+
+Product: Base System   Component: kern   Version: 16.0-CURRENT (main 6dc19a71f70c)
+
+Description:
+
+Stop nfscbd(8) (SIGUSR1) and start it again on an NFSv4.1 client. A mount
+made before the restart no longer answers recalls: when another client opens
+a file it holds a delegation on, the open waits 255s, until the server
+revokes the delegation (2 * lease + NFSRV_LEASEDELTA with nfsd). A remount
+after the restart works again.
+
+How to reproduce (one FreeBSD nfsd with vfs.nfsd.issue_delegations=1, two
+NFSv4.1 clients A and B):
+
+  A# nfscbd; mount -t nfs -o nfsv4,minorversion=1 srv:/ /mnt
+  A# cat /mnt/f                  # repeat until nfsdumpstate on srv shows
+                                 # the delegation
+  B# echo x >> /mnt/f            # returns at once: A returned it
+  A# pkill -USR1 nfscbd; sleep 3; nfscbd
+  A# cat /mnt/g                  # again until A holds a delegation on g
+  B# echo x >> /mnt/g            # waits 255s
+
+A capture shows the server sending CB_COMPOUND on A's
+backchannel 11 times in 20s, with no reply. vfs.nfs.debuglevel=1 on A shows
+no "cbproc=": the request never reaches nfscb_program().
+
+Cause: a mount registers its backchannel transport in nfscbd_pool once, at
+connect (CLSET_BACKCHANNEL in clnt_rc.c calls xprt_register()), and
+unregisters it at unmount (clnt_reconnect_destroy()). When nfscbd exits,
+nfsrvd_cbinit(1) calls svcpool_close(), whose svcpool_cleanup() unregisters
+every transport of the pool, the backchannels included. Nothing registers
+them again. A later callback is still queued on the connection by
+clnt_vc_soupcall(), but xprt_active() sees an unregistered transport and
+drops it ("Race with xprt_unregister - we lose").
+
+Fix (attached, svc_backchannel.patch, against main 6dc19a71f70c):
+- svcpool_close() keeps transports without a socket registered. Only
+  svc_vc_create_backchannel() creates such transports; the mount still
+  unregisters them at unmount. svcpool_destroy() still removes all.
+- A service thread that exits with a transport assigned to it clears
+  xp_thread and puts the transport back on sg_active if it is active.
+  Before, xp_thread was left pointing at the freed thread; harmless while
+  every transport was unregistered right after, but it would leave a kept
+  backchannel stuck.
+
+With the fix, a callback that arrives while nfscbd is down waits on the
+transport until nfscbd starts again, instead of being dropped.
+
+The nfsd pool also uses svcpool_close(), but all its transports have
+sockets, so it is not affected.
+
+Tested in a bhyve VM, NFSv4.1, client A and nfscbd on the host, client B and
+the server in vnet jails, with the fix for "nfscbd in a vnet jail serves no
+callbacks" also applied:
+
+                                          stock   NODEBUG   GENERIC (WITNESS)
+  recall on a mount older than restart    255s    0s        0s
+  recall while nfscbd is down, nfscbd     -       +10s      +10s
+    started 10s later: write returns at
+  unmount while nfscbd is down, restart,  -       0s        0s
+    new mount, recall
+  panic / KASSERT                         -       none      none
+
+WITNESS reported two lock order reversals, ifnet_sx -> in_control
+(netinet/in.c) and ufs -> tmpfs (jail root mounts); neither involves an RPC
+or NFS lock.
+
+Not tested: RPC-over-TLS mounts, pNFS data server sessions, nfscl module
+unload after a close.

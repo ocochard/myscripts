@@ -1,7 +1,9 @@
 # Bug #6: every recovery leaks a session until unmount
 
-Patch: [`session-leak.patch`](session-leak.patch), against main
-a2fbd988638e. Not filed yet. Bugzilla text:
+Patch: [`session-leak.patch`](session-leak.patch), commit 6eb294be11ba on
+branch `session-leak` in `~/freebsd-src-sessleak`, on top of the tests
+(`nfs-vnet-tests`): it also removes the `atf_expect_fail` of the
+`session_leak` test. Not filed yet. Bugzilla text:
 [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt).
 
 Read [`badsession.md`](badsession.md) first: it explains sessions and
@@ -104,5 +106,7 @@ every 120 s, run together with the fix for bug #2:
 | `NFSCL session` in use | 1 to 9 (one per reset) | at most 3 | at most 3 |
 | lock order reversal, KASSERT, panic | - | - | none |
 
-Untested: pNFS (data server sessions) and Kerberos mounts. The
-`tests/sys/fs/nfs` framework does not check for this leak yet.
+Untested: pNFS (data server sessions) and Kerberos mounts.
+
+`tests/sys/fs/nfs` case `session_leak` (three resets, then 120 s): with the
+fix, passed; without it, 4 sessions left for the mount.

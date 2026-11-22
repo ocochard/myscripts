@@ -1,0 +1,70 @@
+diff --git sys/rpc/svc.c sys/rpc/svc.c
+index f94e744d40f4..c246eecf45d4 100644
+--- sys/rpc/svc.c
++++ sys/rpc/svc.c
+@@ -75,7 +75,7 @@ static void svc_new_thread(SVCGROUP *grp);
+ static void xprt_unregister_locked(SVCXPRT *xprt);
+ static void svc_change_space_used(SVCPOOL *pool, long delta);
+ static bool_t svc_request_space_available(SVCPOOL *pool);
+-static void svcpool_cleanup(SVCPOOL *pool);
++static void svcpool_cleanup(SVCPOOL *pool, bool closing);
+ 
+ /* ***************  SVCXPRT related stuff **************** */
+ 
+@@ -177,10 +177,12 @@ svcpool_create(const char *name, struct sysctl_oid_list *sysctl_base)
+ 
+ /*
+  * Code common to svcpool_destroy() and svcpool_close(), which cleans up
+- * the pool data structures.
++ * the pool data structures.  On close, a backchannel transport stays
++ * registered: it belongs to a client connection, not to the service, and
++ * nothing would register it again for the next svc_run().
+  */
+ static void
+-svcpool_cleanup(SVCPOOL *pool)
++svcpool_cleanup(SVCPOOL *pool, bool closing)
+ {
+ 	SVCGROUP *grp;
+ 	SVCXPRT *xprt, *nxprt;
+@@ -194,7 +196,9 @@ svcpool_cleanup(SVCPOOL *pool)
+ 	for (g = 0; g < SVC_MAXGROUPS; g++) {
+ 		grp = &pool->sp_groups[g];
+ 		mtx_lock(&grp->sg_lock);
+-		while ((xprt = TAILQ_FIRST(&grp->sg_xlist)) != NULL) {
++		TAILQ_FOREACH_SAFE(xprt, &grp->sg_xlist, xp_link, nxprt) {
++			if (closing && xprt->xp_socket == NULL)
++				continue;
+ 			xprt_unregister_locked(xprt);
+ 			TAILQ_INSERT_TAIL(&cleanup, xprt, xp_link);
+ 		}
+@@ -226,7 +230,7 @@ svcpool_destroy(SVCPOOL *pool)
+ 	SVCGROUP *grp;
+ 	int g;
+ 
+-	svcpool_cleanup(pool);
++	svcpool_cleanup(pool, false);
+ 
+ 	for (g = 0; g < SVC_MAXGROUPS; g++) {
+ 		grp = &pool->sp_groups[g];
+@@ -251,7 +255,7 @@ svcpool_close(SVCPOOL *pool)
+ 	SVCGROUP *grp;
+ 	int g;
+ 
+-	svcpool_cleanup(pool);
++	svcpool_cleanup(pool, true);
+ 
+ 	/* Now, initialize the pool's state for a fresh svc_run() call. */
+ 	mtx_lock(&pool->sp_lock);
+@@ -1335,8 +1339,12 @@ svc_run_internal(SVCGROUP *grp, bool_t ismaster)
+ 	}
+ 
+ 	if (st->st_xprt) {
++		/* Leave the transport to the next svc_run() of the pool. */
+ 		xprt = st->st_xprt;
++		xprt->xp_thread = NULL;
+ 		st->st_xprt = NULL;
++		if (xprt->xp_active)
++			TAILQ_INSERT_TAIL(&grp->sg_active, xprt, xp_alink);
+ 		SVC_RELEASE(xprt);
+ 	}
+ 	KASSERT(STAILQ_EMPTY(&st->st_reqs), ("stray reqs on exit"));

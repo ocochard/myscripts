@@ -1,0 +1,92 @@
+diff --git sys/fs/nfsclient/nfs_clkrpc.c sys/fs/nfsclient/nfs_clkrpc.c
+index bf19c5d14d23..ab1f59456057 100644
+--- sys/fs/nfsclient/nfs_clkrpc.c
++++ sys/fs/nfsclient/nfs_clkrpc.c
+@@ -53,6 +53,7 @@ static int nfs_cbproc(struct nfsrv_descript *, u_int32_t);
+ extern u_long sb_max_adj;
+ extern int nfs_numnfscbd;
+ extern int nfscl_debuglevel;
++extern int nfscl_enablecallb;
+ 
+ /*
+  * NFS client system calls for handling callbacks.
+@@ -206,7 +207,8 @@ nfscbd_addsock(struct file *fp)
+ 		svc_reg(xprt, NFS_CALLBCKPROG, NFSV4_CBVERS, nfscb_program,
+ 		    NULL);
+ 		SVC_RELEASE(xprt);
+-	}
++	} else
++		return (EPERM);
+ 
+ 	return (0);
+ }
+@@ -229,6 +231,7 @@ int
+ nfscbd_nfsd(struct thread *td, struct nfsd_nfscbd_args *args)
+ {
+ 	char principal[128];
++	SVCXPRT *xprt;
+ 	int error;
+ 
+ 	if (args != NULL) {
+@@ -253,6 +256,17 @@ nfscbd_nfsd(struct thread *td, struct nfsd_nfscbd_args *args)
+ 
+ 		NFSD_UNLOCK();
+ 
++		/*
++		 * Register the callback program on the pool itself, since an
++		 * NFSv4.1 backchannel has no socket of its own and a jail
++		 * cannot add the UDP one.
++		 */
++		xprt = svc_vc_create_backchannel(nfscbd_pool);
++		svc_reg(xprt, NFS_CALLBCKPROG, NFSV4_CBVERS, nfscb_program,
++		    NULL);
++		SVC_RELEASE(xprt);
++		nfscl_enablecallb = 1;
++
+ 		if (principal[0] != '\0')
+ 			rpc_gss_set_svc_name_call(principal, "kerberosv5",
+ 			    GSS_C_INDEFINITE, NFS_CALLBCKPROG, NFSV4_CBVERS);
+diff --git usr.sbin/nfscbd/nfscbd.c usr.sbin/nfscbd/nfscbd.c
+index 6b0b938973f2..4e806f74bc3b 100644
+--- usr.sbin/nfscbd/nfscbd.c
++++ usr.sbin/nfscbd/nfscbd.c
+@@ -33,6 +33,7 @@
+ #include <sys/socket.h>
+ #include <sys/socketvar.h>
+ #include <sys/stat.h>
++#include <sys/sysctl.h>
+ #include <sys/ucred.h>
+ #include <sys/uio.h>
+ #include <sys/vnode.h>
+@@ -99,12 +100,13 @@ main(int argc, char *argv[])
+ 	struct sockaddr_in inetaddr, inetpeer;
+ 	fd_set ready, sockbits;
+ 	int ch, connect_type_cnt, maxsock, msgsock, error;
+-	int nfssvc_flag, on, sock, tcpsock, ret, mustfreeai = 0;
++	int jailed, nfssvc_flag, on, sock, tcpsock, ret, mustfreeai = 0;
+ 	char *cp, princname[128];
+ 	char myname[MAXHOSTNAMELEN], *myfqdnname = NULL;
+ 	struct addrinfo *aip, hints;
+ 	pid_t pid;
+ 	short myport = NFSV4_CBPORT;
++	size_t jailed_size;
+ 	socklen_t len;
+ 
+ 	if (modfind("nfscl") < 0) {
+@@ -225,8 +227,14 @@ main(int argc, char *argv[])
+ 	inetaddr.sin_port = htons(myport);
+ 	inetaddr.sin_len = sizeof(inetaddr);
+ 	ret = bind(sock, (struct sockaddr *)&inetaddr, sizeof(inetaddr));
+-	/* If bind() fails, this is a restart, so just skip UDP. */
+-	if (ret == 0) {
++	/*
++	 * If bind() fails, this is a restart, so just skip UDP.
++	 * The kernel does not serve UDP for a jail.
++	 */
++	jailed = 0;
++	jailed_size = sizeof(jailed);
++	sysctlbyname("security.jail.jailed", &jailed, &jailed_size, NULL, 0);
++	if (ret == 0 && jailed == 0) {
+ 		len = sizeof(inetaddr);
+ 		if (getsockname(sock, (struct sockaddr *)&inetaddr, &len) < 0){
+ 			syslog(LOG_ERR, "can't get bound addr");
