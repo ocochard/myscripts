@@ -55,11 +55,14 @@ on the jails left):
 Fixes (attached, against main 6dc19a71f70c, two commits):
 
 1. nfsd_jail_state.patch: when the last nfsd of a vnet exits and its
-   callout is drained, nfssvc_nfsd() throws the NFSv4 state away if the
-   jail is dying (it can never run nfsd again). A host nfsd, or one in a
-   live jail, keeps its state across a restart as before.
-   nfsrv_throwawayallstate() now unlinks each record and frees it with
-   nfsrv_zapclient().
+   callout is drained, nfssvc_nfsd() throws the client state away if the
+   jail is dying (it can never run nfsd again). If nfsd was stopped before
+   the removal, a PR_METHOD_REMOVE hook does it, and nfsrvd_nfsd() refuses
+   to start an nfsd in a dying jail (both check under NFSD_LOCK). The
+   state is freed under the exclusive nfsv4rootfs_lock, clients and lock
+   files only (pNFS layouts are global). A host nfsd, or one in a live
+   jail, keeps its state across a restart as before. Records are now
+   unlinked and freed with nfsrv_zapclient().
 2. gss_jail_remove.patch: a PR_METHOD_REMOVE hook (osd_jail_register())
    forgets the RPCSEC_GSS server contexts of a removed vnet jail, and
    svc_rpc_gss_vnet_cleanup() forgets them too. Contexts are reference
@@ -76,13 +79,15 @@ Tested with tests/sys/fs/nfs (server and clients in vnet jails), main
   client gone / server removed first    never   70s     70s         70s
   nfsd restart in a live jail:          -       kept    kept        kept
     client record kept, I/O after
+  NFSv4.0, nfsd stopped, then jail -r   never   -       0s          0s
   panic / KASSERT                       -       none    none        none
 
 (70s is likely TCP TIME_WAIT of the server's connections; not measured.)
 WITNESS showed only ifnet_sx -> in_control and ufs -> tmpfs, unrelated.
 
-Known gap: if nfsd was stopped before the jail is removed, no nfsd exits
-during the removal and fix 1 does not apply.
+With nfsd stopped while an NFSv4.1 client is still mounted, the server
+jail went away after 598s: its socket stayed in FIN_WAIT_2 (the live client
+kept its end open) until TCP dropped it; no NFS state was left.
 
 Not tested: NFSv3 and NLM, pNFS, a Kerberos service in a jail without its
 own vnet, kgssapi unload.

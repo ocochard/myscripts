@@ -44,8 +44,8 @@ file in `nfsbug/` is byte-identical to its commit's diff.
 | 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | 261e07ee6c2c | no; text in `BUGREPORT-session-leak.txt` |
 | 7 | `nfscbd_jail.patch`: nfscbd in a jail serves no callbacks (program registered only with the UDP socket, which a jail cannot add) | `nfscbd-jail` (`~/freebsd-src-nfscbdjail`) | 9fe410604812 | no; text in `BUGREPORT-nfscbd-jail.txt` |
 | 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | 537a6cdcd3c4 | no; text in `BUGREPORT-svc-backchannel.txt` |
-| 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | b214c7f03b3b | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
-| 10 | `gss_jail_remove.patch`: same cycle with the RPCSEC_GSS server contexts (Kerberos); `PR_METHOD_REMOVE` hook | `nfsd-jail-dying`, after #9 | 716fc04e72e6 | no; same report as #9 |
+| 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | e00d165c87be | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
+| 10 | `gss_jail_remove.patch`: same cycle with the RPCSEC_GSS server contexts (Kerberos); `PR_METHOD_REMOVE` hook | `nfsd-jail-dying`, after #9 | 86eca014c632 | no; same report as #9 |
 
 The branches track `upstream/main` (the GitHub mirror): never use a bare
 `git push`; always `git push origin <branch>`.
@@ -82,10 +82,9 @@ add `PR:` lines to the commits and the #6 PR number to the
 
 **Open items** (pick with me first):
 - Reviews and PRs as above; rebase the branches if main moves first.
-- Dying server jails: fixed by #9 and #10. Gap in #9: an nfsd stopped
-  before the jail is removed keeps the state (needs a `PR_METHOD_REMOVE`
-  hook in nfsd that cannot race with an nfsd starting). NFSv3/NLM not
-  checked for this. A dying-jail check could go into `nfs_cleanup`, but
+- Dying server jails: fixed by #9 and #10, including an nfsd stopped
+  before the removal (#9's jail removal hook and start guard, folded in
+  2026-11-22). NFSv3/NLM not checked for this. A dying-jail check could go into `nfs_cleanup`, but
   client jails stay dying ~60 s (TCP TIME_WAIT), so it must wait or check
   only the server.
 - pNFS tests are blocked: the MDS refuses to run in a jail

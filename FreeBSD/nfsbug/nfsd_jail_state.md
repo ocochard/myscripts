@@ -58,20 +58,32 @@ record from its hash list, and never updated the client counters, unlike
 - `nfsrv_throwawayallstate()` removes each record from the hash and frees it
   with `nfsrv_zapclient()`, as the client expiry code does.
 - `nfssvc_nfsd()`, when the last nfsd of a vnet exits and the timer callout
-  is drained, throws the state away if its jail is dying: a dying jail can
-  never run nfsd again, so the state can never be used. A host nfsd, or one
-  in a live jail, keeps its state across a restart as before.
+  is drained, throws the client state away if its jail is dying: a dying
+  jail can never run nfsd again, so the state can never be used. A host
+  nfsd, or one in a live jail, keeps its state across a restart as before.
+- If nfsd was stopped before the jail is removed, no nfsd exits during the
+  removal. A jail removal hook (`PR_METHOD_REMOVE`, registered at module
+  load) then throws the state away when no nfsd runs in the vnet and it
+  has clients. The hook runs while the jail's processes are still alive,
+  so `nfsrvd_nfsd()` refuses to start an nfsd in a dying jail; both check
+  under `NFSD_LOCK`, so either the hook sees the nfsd and leaves the state
+  to its exit, or the nfsd sees the jail dying.
+- Both paths free the state with `nfsrv_throwawaydyingstate()`, under the
+  exclusive `nfsv4rootfs_lock`, as the admin revoke code does, since
+  `nfsdumpstate` may still run in the jail. It frees only the clients and
+  lock files of the vnet, not the pNFS layouts and device IDs, which are
+  global; `nfsrv_throwawayallstate()` still frees those at vnet destroy.
 
 Alternatives:
 
-- **A jail removal hook (`PR_METHOD_REMOVE`).** It runs while the jail's
-  processes are still alive, so nfsd may still use the state; it would need
-  to keep a new nfsd from starting in the dying jail.
+- **The hook alone.** An nfsd may still run when it is called, so it would
+  have to wait for the nfsd to exit.
 - **No credential in the record.** The callback code needs it to find the
   vnet of the client connection.
 
-Gap: if nfsd was stopped before the jail is removed, no nfsd exits during the
-removal, and the state stays. Not covered.
+Risk, not measured: the hook runs with `allprison_lock` held and waits for
+the exclusive `nfsv4rootfs_lock`. An nfsd thread holding a shared reference
+that needed `allprison_lock` would deadlock; I found no such path.
 
 ## 4. Tested
 
@@ -83,13 +95,18 @@ NFSv4.1, server and clients in vnet jails:
 | NFSv4.0 clean unmount: server jail | dying forever | gone at 0 s | gone at 0 s | gone at 0 s |
 | client jail removed first / server removed while mounted | dying forever | gone at 70 s | gone at 70 s | gone at 70 s |
 | nfsd restart in a live jail: record kept, I/O after | | yes | yes | yes |
+| NFSv4.0, nfsd stopped before `jail -r` (with the hook) | dying forever | | gone at 0 s | gone at 0 s |
+| NFSv4.1 still mounted, nfsd stopped, `jail -r` | | | gone after 598 s | |
 | server jails dying after the full suite + 70 s | 7 | 3 (Kerberos, #10) | 0 | 0 |
 | full `tests/sys/fs/nfs` suite | | passed | passed | passed |
 | panic, KASSERT | | none | none | none |
 
 The 70 s is likely TCP TIME_WAIT (2 x MSL) of the server's connections; not
-measured. WITNESS showed only `ifnet_sx` -> `in_control` and `ufs` -> `tmpfs`,
+measured. The 598 s case is TCP too: stopping nfsd closed its end, the live
+client kept its own open, and the server's socket stayed in `FIN_WAIT_2`
+(seen with `netstat`) holding the jail until TCP gave up on it; no NFS
+state was left. WITNESS showed only `ifnet_sx` -> `in_control` and `ufs` -> `tmpfs`,
 seen before this patch too.
 
-Untested: NFSv3 and NLM, pNFS, delegations held at removal, an nfsd stopped
-before the jail is removed (the gap above).
+Untested: NFSv3 and NLM, pNFS, delegations held at removal, the start guard
+(it needs a process left in a jail that is already dying).
