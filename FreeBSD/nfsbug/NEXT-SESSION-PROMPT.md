@@ -41,19 +41,19 @@ file in `nfsbug/` is byte-identical to its commit's diff.
 | 2 | `staleclientid.patch`: STALE_CLIENTID in the renew window (45 s stall) | in main | 7a0021a0988f | PR 299221 |
 | 3 | `nfscl_jail.patch`: `VFCF_JAIL` on the NFS client + `NFSSVC_DUMPMNTOPTS` without `PRIV_NFS_DAEMON` | `nfscl-jail` (`~/freebsd-src-nfscljail`) | 5fdb198e1994 | policy change, no PR; needs rmacklem's agreement |
 | 4 | `kgss_vnet.patch`: gssd state per vnet + per-call timeouts on the shared netlink handle | `kgss-vnet` (`~/freebsd-src-kgssvnet`) | e75a5c761d5c | no; text in `bugreport_kgss_vnet_upcall.md` |
-| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 10 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | 859b580ce913 | not a bug |
-| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | 261e07ee6c2c | no; text in `BUGREPORT-session-leak.txt` |
+| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 12 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | 741748e69409 | not a bug |
+| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | d4b2da24ef9b | no; text in `BUGREPORT-session-leak.txt` |
 | 7 | `nfscbd_jail.patch`: nfscbd in a jail serves no callbacks (program registered only with the UDP socket, which a jail cannot add) | `nfscbd-jail` (`~/freebsd-src-nfscbdjail`) | 9fe410604812 | no; text in `BUGREPORT-nfscbd-jail.txt` |
 | 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | 537a6cdcd3c4 | no; text in `BUGREPORT-svc-backchannel.txt` |
-| 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | e00d165c87be | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
-| 10 | `gss_jail_remove.patch`: same cycle with the RPCSEC_GSS server contexts (Kerberos); `PR_METHOD_REMOVE` hook | `nfsd-jail-dying`, after #9 | 86eca014c632 | no; same report as #9 |
+| 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | f4649b41215c | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
+| 10 | `gss_jail_remove.patch`: same cycle with the RPCSEC_GSS server contexts (Kerberos); `PR_METHOD_REMOVE` hook | `nfsd-jail-dying`, after #9 | c60f6270d97f | no; same report as #9 |
 
 The branches track `upstream/main` (the GitHub mirror): never use a bare
 `git push`; always `git push origin <branch>`.
 
 **Review order** I gave (I create the reviews and push upstream myself):
 #3, #4, #7, #8, #9, #10 (no code dependency, can run in parallel), then the
-tests 859b580ce913 (needs #3, #4 and #7), then #6 261e07ee6c2c (removes the
+tests 741748e69409 (needs #3, #4, #7, #9 and #10), then #6 d4b2da24ef9b (removes the
 `session_leak` expect_fail). File the PRs first (#9 and #10 share one), then
 add `PR:` lines to the commits and the #6 PR number to the
 `atf_expect_fail` message in the tests commit. One diff per review:
@@ -84,6 +84,10 @@ add `PR:` lines to the commits and the #6 PR number to the
   stopped while an NFSv4.1 client is still mounted, the jail went away
   after 598 s: TCP `FIN_WAIT_2` of the server's socket, no NFS state.
   The start guard is untested (it needs a process left in a dying jail).
+- 2026-11-22, the hook's work moved to a task, and the two jail-freed
+  cases added: same suite and checks passed on both kernels;
+  `v40_server_freed` and `server_freed` pass with #9 and #10 and fail
+  without ("jail srv still dying 10s after its removal").
 - Not built as such: the #6 branch (tests + #6 without the others) and each
   kernel branch alone; their diffs equal the tested ones.
 
@@ -91,12 +95,12 @@ add `PR:` lines to the commits and the #6 PR number to the
 - Reviews and PRs as above; rebase the branches if main moves first.
 - Dying server jails: fixed by #9 and #10, including an nfsd stopped
   before the removal (#9's jail removal hook and start guard, folded in
-  2026-11-22). NFSv3/NLM not checked for this. Unmeasured risk in #9's
-  hook: it waits for the exclusive `nfsv4rootfs_lock` with
-  `allprison_lock` held (no nfsd path found that takes `allprison_lock`
-  while holding a shared reference). A dying-jail check could go into
-  `nfs_cleanup`, but client jails stay dying ~60 s (TCP TIME_WAIT), so it
-  must wait or check only the server.
+  2026-11-22). NFSv3/NLM not checked for this. The hook does its work in
+  a task: waiting for the exclusive `nfsv4rootfs_lock` with
+  `allprison_lock` held could deadlock with an nfsd thread mounting a ZFS
+  snapshot (`vfs_exjail_clone()`); found by reading, not reproduced. The
+  tests check it: `basic_test:v40_server_freed` and
+  `krb5_test:server_freed` fail without #9 / #10.
 - pNFS tests are blocked: the MDS refuses to run in a jail
   (`nfsrv_setdsserver()`), the DS list is a kernel global, and the MDS needs
   NFS client mounts (#3).
@@ -218,7 +222,7 @@ atf_test_program{name="krb5_test", is_exclusive=true}
 atf_test_program{name="delegation_test", is_exclusive=true}
 KF
 cd $D
-for t in delegation_test:recall krb5_test:krb5 krb5_test:krb5i krb5_test:krb5p basic_test:basic basic_test:v40_basic basic_test:two_clients recovery_test:server_reset recovery_test:server_reset_twice recovery_test:session_leak; do
+for t in delegation_test:recall krb5_test:krb5 krb5_test:krb5i krb5_test:krb5p krb5_test:server_freed basic_test:basic basic_test:v40_basic basic_test:v40_server_freed basic_test:two_clients recovery_test:server_reset recovery_test:server_reset_twice recovery_test:session_leak; do
 	step "test $t"
 	timeout -s KILL 400 kyua debug -k Kyuafile $t 2>&1 | grep -v '^Executing command' | tee -a /root/steps.log
 	sync

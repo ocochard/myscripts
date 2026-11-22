@@ -2,7 +2,7 @@
 
 Patch: [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch), adds
 `tests/sys/fs/nfs/`, against main 6dc19a71f70c. Branch `nfs-vnet-tests` in
-`~/freebsd-src-nfstest`, one commit, 859b580ce913 (four commits squashed
+`~/freebsd-src-nfstest`, one commit, 741748e69409 (four commits squashed
 on 2026-11-22: the tests, `v40_basic`, `session_leak` and the delegation
 `recall`). Not committed upstream.
 
@@ -115,6 +115,8 @@ is short:
 | | `krb5p` | privacy: the data is not visible on the wire |
 | `basic_test.sh` | `v40_basic` | the `basic` checks over NFSv4.0 (SETCLIENTID instead of sessions) |
 | `recovery_test.sh` | `session_leak` | three resets, then 120 s: at most one session left for the mount; expected to fail until #6 |
+| `basic_test.sh` | `v40_server_freed` | NFSv4.0 mount, I/O, unmount, then the server jail is removed: it must be gone within 10 s; needs #9 |
+| `krb5_test.sh` | `server_freed` | the same with a Kerberos mount; needs #10 |
 | `delegation_test.sh` | `recall` | c1, running `nfscbd`, gets a delegation; c2 writes the file: recalled within 10 s; needs #7 |
 
 `krb5i` and `krb5p` check each other: both capture the traffic with
@@ -190,6 +192,13 @@ The three later cases, bhyve VM, 2026-11-21, all with the clients in jails:
 | main 6dc19a71f70c + #3 + #4 | passed | expected failure: 4 sessions | failed: no delegation | passed |
 | same + #6 (`atf_expect_fail` removed) | not run | passed | not run | reset cases passed |
 | same + #7 + #8 (GENERIC-NODEBUG and GENERIC with WITNESS) | passed | expected failure | passed | passed |
+
+The two jail-freed cases, 2026-11-22, GENERIC-NODEBUG:
+
+| Kernel | `v40_server_freed` | `server_freed` (Kerberos) |
+|---|---|---|
+| main 6dc19a71f70c + #3 #4 #5 #7 #8 | failed: "jail srv still dying 10s after its removal" | failed: same |
+| same + #9 + #10 | passed | passed |
 
 `krb5p` failed once with "no NFS packet captured". Cause: tcpdump writing
 to a file without `--immediate-mode` keeps packets in BPF up to its 1 s

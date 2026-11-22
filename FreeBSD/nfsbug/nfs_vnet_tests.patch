@@ -49,10 +49,10 @@ index 000000000000..1bf93391e294
 +.include <bsd.test.mk>
 diff --git tests/sys/fs/nfs/basic_test.sh tests/sys/fs/nfs/basic_test.sh
 new file mode 100644
-index 000000000000..ec2c8a7e962e
+index 000000000000..6dbdc49ddee8
 --- /dev/null
 +++ tests/sys/fs/nfs/basic_test.sh
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,159 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -140,6 +140,35 @@ index 000000000000..ec2c8a7e962e
 +	atf_check -o empty ls srv/export
 +}
 +
++atf_test_case "v40_server_freed" "cleanup"
++v40_server_freed_head()
++{
++	atf_set descr 'A server jail goes away after its NFSv4.0 client unmounts'
++	atf_set require.user root
++}
++
++v40_server_freed_body()
++{
++	local cl m
++
++	nfs_init
++	nfs_server_start srv
++	nfs_client_start c1
++	cl=$(nfs_client c1)
++	nfs_mount ${cl} $(nfs_addr srv) minorversion=0
++	m=$(nfs_mnt ${cl})
++	echo hello > $m/file
++	atf_check -o inline:"hello\n" cat $m/file
++	# NFSv4.0 has no DESTROY_CLIENTID: the server keeps the client.
++	nfs_umount ${cl}
++	nfs_jail_remove srv 10
++}
++
++v40_server_freed_cleanup()
++{
++	nfs_cleanup
++}
++
 +atf_test_case "two_clients" "cleanup"
 +two_clients_head()
 +{
@@ -180,6 +209,7 @@ index 000000000000..ec2c8a7e962e
 +{
 +	atf_add_test_case "basic"
 +	atf_add_test_case "v40_basic"
++	atf_add_test_case "v40_server_freed"
 +	atf_add_test_case "two_clients"
 +}
 diff --git tests/sys/fs/nfs/delegation_test.sh tests/sys/fs/nfs/delegation_test.sh
@@ -296,10 +326,10 @@ index 000000000000..1060f8d14b62
 +}
 diff --git tests/sys/fs/nfs/krb5_test.sh tests/sys/fs/nfs/krb5_test.sh
 new file mode 100644
-index 000000000000..259f4465cbd0
+index 000000000000..52e4f1ca3910
 --- /dev/null
 +++ tests/sys/fs/nfs/krb5_test.sh
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,182 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -455,18 +485,39 @@ index 000000000000..259f4465cbd0
 +	nfs_cleanup
 +}
 +
++atf_test_case "server_freed" "cleanup"
++server_freed_head()
++{
++	atf_set descr 'A Kerberos server jail goes away after its client unmounts'
++	atf_set require.user root
++}
++
++server_freed_body()
++{
++	krb5_setup
++	krb5_check krb5 nfstest-marker-freed
++	nfs_umount c1
++	nfs_jail_remove srv 10
++}
++
++server_freed_cleanup()
++{
++	nfs_cleanup
++}
++
 +atf_init_test_cases()
 +{
 +	atf_add_test_case "krb5"
 +	atf_add_test_case "krb5i"
 +	atf_add_test_case "krb5p"
++	atf_add_test_case "server_freed"
 +}
 diff --git tests/sys/fs/nfs/nfs.subr tests/sys/fs/nfs/nfs.subr
 new file mode 100644
-index 000000000000..9427ea054b47
+index 000000000000..3455ff2a6f5d
 --- /dev/null
 +++ tests/sys/fs/nfs/nfs.subr
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,506 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -901,6 +952,35 @@ index 000000000000..9427ea054b47
 +	if [ ${gap} -gt ${NFS_MAX_STALL} ]; then
 +		atf_fail "NFS I/O stalled for ${gap}s"
 +	fi
++}
++
++# Unmount client $1.
++nfs_umount()
++{
++	if [ "$1" = host ]; then
++		atf_check umount $(nfs_mnt host)
++	else
++		atf_check jexec $1 umount /mnt
++	fi
++}
++
++# Remove jail $1, and fail unless it is gone within $2 seconds: state that
++# the kernel keeps for NFS must not keep a removed jail dying.
++nfs_jail_remove()
++{
++	local name=$1 i ifname
++
++	for ifname in $(awk -v n=${name} '$1 == n { $1 = ""; print }' \
++	    created_jails.lst); do
++		ifconfig -j ${name} ${ifname} destroy
++	done
++	atf_check jail -r ${name}
++	sed -i "" "/^${name} /d" created_jails.lst
++	for i in $(seq $2); do
++		jls -d path | grep -qx "$PWD/${name}" || return 0
++		sleep 1
++	done
++	atf_fail "jail ${name} still dying $2s after its removal"
 +}
 +
 +nfs_cleanup()

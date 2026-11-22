@@ -28,10 +28,18 @@ index 181e93a9ac1f..34a816958aae 100644
  		nfsdev_time = time_second;
  		p = td->td_proc;
 diff --git sys/fs/nfsserver/nfs_nfsdport.c sys/fs/nfsserver/nfs_nfsdport.c
-index fbbdef03f440..d6425f68acaf 100644
+index fbbdef03f440..2f4b50bfeb0c 100644
 --- sys/fs/nfsserver/nfs_nfsdport.c
 +++ sys/fs/nfsserver/nfs_nfsdport.c
-@@ -4798,6 +4798,9 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
+@@ -51,6 +51,7 @@
+ #include <sys/netexport.h>
+ #include <sys/osd.h>
+ #include <sys/sysctl.h>
++#include <sys/taskqueue.h>
+ #include <nlm/nlm_prot.h>
+ #include <nlm/nlm.h>
+ #include <vm/vm_param.h>
+@@ -4798,6 +4799,9 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
  		nfsd_timer(TD_TO_VNET(td));
  		error = nfsrvd_nfsd(td, &nfsdarg);
  		callout_drain(&VNET(nfsd_callout));
@@ -41,19 +49,39 @@ index fbbdef03f440..d6425f68acaf 100644
  		free(nfsdarg.addr, M_TEMP);
  		free(nfsdarg.dnshost, M_TEMP);
  		free(nfsdarg.dspath, M_TEMP);
-@@ -8678,14 +8681,41 @@ VNET_SYSUNINIT(nfsrv_cleanup, SI_SUB_VNET_DONE, SI_ORDER_ANY,
+@@ -8678,14 +8682,66 @@ VNET_SYSUNINIT(nfsrv_cleanup, SI_SUB_VNET_DONE, SI_ORDER_ANY,
  
  extern int (*nfsd_call_nfsd)(struct thread *, struct nfssvc_args *);
  
++struct nfsrv_dyingtask {
++	struct task	dt_task;
++	struct prison	*dt_pr;
++};
++
++static void
++nfsrv_dyingtask(void *arg, int pending __unused)
++{
++	struct nfsrv_dyingtask *dt = arg;
++
++	CURVNET_SET(dt->dt_pr->pr_vnet);
++	nfsrv_throwawaydyingstate(curthread);
++	CURVNET_RESTORE();
++	prison_free(dt->dt_pr);
++	free(dt, M_TEMP);
++}
++
 +/*
 + * A vnet jail being removed while no nfsd runs in it, after nfsd was
 + * stopped, still has its client state; nfsrvd_nfsd() refuses to start an
-+ * nfsd in it from now on, so the state can be thrown away.
++ * nfsd in it from now on, so the state can be thrown away.  Do it from a
++ * task: an nfsd thread holding a reference on nfsv4rootfs_lock may need
++ * allprison_lock, which is held here.
 + */
 +static int
 +nfsrv_prison_remove(void *obj, void *data __unused)
 +{
 +	struct prison *pr = obj;
++	struct nfsrv_dyingtask *dt;
 +	bool idle;
 +
 +	if ((pr->pr_flags & PR_VNET) == 0)
@@ -62,8 +90,13 @@ index fbbdef03f440..d6425f68acaf 100644
 +	NFSD_LOCK();
 +	idle = VNET(nfsrv_mntinited) && VNET(nfsrv_numnfsd) == 0;
 +	NFSD_UNLOCK();
-+	if (idle && VNET(nfsstatsv1_p)->srvclients > 0)
-+		nfsrv_throwawaydyingstate(curthread);
++	if (idle && VNET(nfsstatsv1_p)->srvclients > 0) {
++		dt = malloc(sizeof(*dt), M_TEMP, M_WAITOK);
++		prison_hold(pr);
++		dt->dt_pr = pr;
++		TASK_INIT(&dt->dt_task, 0, nfsrv_dyingtask, dt);
++		taskqueue_enqueue(taskqueue_thread, &dt->dt_task);
++	}
 +	CURVNET_RESTORE();
 +	return (0);
 +}
@@ -83,7 +116,7 @@ index fbbdef03f440..d6425f68acaf 100644
  
  	switch (type) {
  	case MOD_LOAD:
-@@ -8701,6 +8731,7 @@ nfsd_modevent(module_t mod, int type, void *data)
+@@ -8701,6 +8757,7 @@ nfsd_modevent(module_t mod, int type, void *data)
  		vn_deleg_ops.vndeleg_disable = nfsd_disabledelegation;
  #endif
  		nfsd_call_nfsd = nfssvc_nfsd;
@@ -91,11 +124,12 @@ index fbbdef03f440..d6425f68acaf 100644
  		loaded = 1;
  		break;
  
-@@ -8715,6 +8746,7 @@ nfsd_modevent(module_t mod, int type, void *data)
+@@ -8715,6 +8772,8 @@ nfsd_modevent(module_t mod, int type, void *data)
  		vn_deleg_ops.vndeleg_disable = NULL;
  #endif
  		nfsd_call_nfsd = NULL;
 +		osd_jail_deregister(prison_slot);
++		taskqueue_quiesce(taskqueue_thread);
  		mtx_destroy(&nfsrc_udpmtx);
  		mtx_destroy(&nfs_v4root_mutex);
  		mtx_destroy(&nfsrv_dontlistlock_mtx);

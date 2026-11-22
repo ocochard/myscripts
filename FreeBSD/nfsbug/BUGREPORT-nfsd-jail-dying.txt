@@ -57,8 +57,11 @@ Fixes (attached, against main 6dc19a71f70c, two commits):
 1. nfsd_jail_state.patch: when the last nfsd of a vnet exits and its
    callout is drained, nfssvc_nfsd() throws the client state away if the
    jail is dying (it can never run nfsd again). If nfsd was stopped before
-   the removal, a PR_METHOD_REMOVE hook does it, and nfsrvd_nfsd() refuses
-   to start an nfsd in a dying jail (both check under NFSD_LOCK). The
+   the removal, a PR_METHOD_REMOVE hook queues it on taskqueue_thread
+   (waiting for the exclusive nfsv4rootfs_lock with allprison_lock held
+   could deadlock with an nfsd thread mounting a ZFS snapshot, which takes
+   allprison_lock in vfs_exjail_clone()), and nfsrvd_nfsd() refuses to
+   start an nfsd in a dying jail (both check under NFSD_LOCK). The
    state is freed under the exclusive nfsv4rootfs_lock, clients and lock
    files only (pNFS layouts are global). A host nfsd, or one in a live
    jail, keeps its state across a restart as before. Records are now

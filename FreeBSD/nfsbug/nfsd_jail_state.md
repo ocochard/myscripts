@@ -81,9 +81,16 @@ Alternatives:
 - **No credential in the record.** The callback code needs it to find the
   vnet of the client connection.
 
-Risk, not measured: the hook runs with `allprison_lock` held and waits for
-the exclusive `nfsv4rootfs_lock`. An nfsd thread holding a shared reference
-that needed `allprison_lock` would deadlock; I found no such path.
+The hook does not free the state itself: it holds a reference on the jail
+and queues the work on `taskqueue_thread`. The hook runs with
+`allprison_lock` held, and an nfsd thread can hold a shared reference on
+`nfsv4rootfs_lock` (for a whole compound, `nfsrvd_compound()`) while it
+needs `allprison_lock`: a LOOKUP into a ZFS `.zfs/snapshot/` mounts the
+snapshot, and `vfs_exjail_clone()` takes `allprison_lock` shared. Waiting
+for the exclusive lock in the hook could deadlock with it, so the task does
+that wait without `allprison_lock`, then releases the jail. Module unload
+waits for pending tasks (`taskqueue_quiesce()`). Found by reading the code,
+not reproduced (the VM uses UFS).
 
 ## 4. Tested
 
