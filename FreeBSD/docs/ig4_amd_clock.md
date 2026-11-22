@@ -1,8 +1,9 @@
 # ig4: the I2C bus of AMD AMDI0010 controllers ran above 400 kHz
 
 Patch: [ig4_amd_clock.patch](ig4_amd_clock.patch) (commit
-`ig4: Use the 150 MHz clock of AMDI0010 controllers`), for FreeBSD main
-of 2026-11-20.
+`ig4: Add an AMD generation with a 150 MHz clock`) on FreeBSD main
+02e1b1cd1fb1, in review as
+[#114](https://ron-dev.freebsd.org/FreeBSD/src/pulls/114).
 Machine: HP ZBook Ultra G1a 14 (AMD Ryzen AI Max+ PRO 395), four AMDI0010
 I2C controllers (`ig4iic0` to `ig4iic3`): touchpad, touchscreen and the
 four CS35L54 speaker amplifiers.
@@ -56,8 +57,15 @@ or Haswell `sc->version = IG4_ATOM`, AMDI0010 included. The version
 also selects which non-standard registers the driver touches:
 `IG4_HAS_ADDREGS(vers)` (`ig4_var.h:56`) is true from `IG4_SKYLAKE`
 on, and enables the Intel LPSS private registers (resets at 0x204, LTR,
-`DEVIDLE_CTRL`), which the AMD cores do not have. AMD cores must stay
-on the Atom path.
+`DEVIDLE_CTRL`), which the AMD cores do not have.
+
+The Atom path itself has seven `sc->version == IG4_ATOM` tests in
+`ig4_iic.c`. Two read standard DesignWare registers: `COMP_PARAM1`
+(FIFO depths, `ig4iic_get_config()`) and `COMP_VER` (refuse a too old
+core, `ig4iic_set_config()`). The others touch Intel LPSS private
+registers (`RESETS_HSW`, `GENERAL`, `CLK_PARMS`) or only dump registers
+for debugging. The `RESETS_HSW` write runs only when a reset is asked,
+and the driver asks for one only when `IG4_HAS_ADDREGS()` is true.
 
 ## 2. The problem
 
@@ -96,37 +104,45 @@ above the 400 kHz fast-mode limit.
 
 ## 3. The fix
 
+AMDI0010 controllers get their own generation, as the reviewer (wulf)
+asked:
+
 ```diff
---- sys/dev/ichiic/ig4_acpi.c
- 		/* All the other HIDs matched are Atom SOCs. */
- 		sc->version = IG4_ATOM;
-+		/* AMDI0010 runs from a 150 MHz clock, not 100 MHz. */
-+		if (strcmp(str, "AMDI0010") == 0)
-+			sc->ic_clock_rate = 150;
---- sys/dev/ichiic/ig4_iic.c (ig4iic_get_config)
--		hw = &ig4iic_hw[sc->version];
-+		hw = ig4iic_hw[sc->version];
-+		if (sc->ic_clock_rate != 0)
-+			hw.ic_clock_rate = sc->ic_clock_rate;
---- sys/dev/ichiic/ig4_var.h (struct ig4iic_softc)
-+	uint32_t	ic_clock_rate;	/* MHz, 0: from ig4iic_hw */
+--- sys/dev/ichiic/ig4_var.h (enum ig4_vers)
+ 	IG4_ATOM,
++	IG4_AMD,
+ 	IG4_SKYLAKE,
+--- sys/dev/ichiic/ig4_iic.c (ig4iic_hw[])
++	[IG4_AMD] = {
++		.ic_clock_rate = 150,
++		.sda_fall_time = 280,
++		.scl_fall_time = 240,
++		.sda_hold_time = 60,
++		.txfifo_depth = 32,
++		.rxfifo_depth = 32,
++	},
+--- sys/dev/ichiic/ig4_acpi.c (ig4iic_acpi_attach)
++	} else if (strcmp(str, "AMDI0010") == 0) {
++		sc->version = IG4_AMD;
 ```
 
-The controller keeps `sc->version = IG4_ATOM`, so every register access
-stays as before. Only the clock used to compute the counts changes. The
-softc is allocated zeroed, so PCI controllers and the other ACPI IDs
-keep the table clock.
+and `|| sc->version == IG4_AMD` in the two DesignWare checks of section
+1.4 (`COMP_PARAM1`, `COMP_VER`).
+
+- `IG4_AMD` sits before `IG4_SKYLAKE`, so `IG4_HAS_ADDREGS()` stays
+  false: no Intel LPSS register is touched.
+- The table entry is the Atom entry with a 150 MHz clock: the same fall
+  and hold times the AMD cores ran with as Atom, so only the clock
+  changes the counts.
+- The AMD cores no longer read the Intel `GENERAL` register at attach;
+  those reads had no effect.
+- `AMD0010` and `AMDI0510` stay on the Atom entry (no hardware here).
 
 ### Alternatives
 
-- A new `IG4_AMD` generation with its own table entry. This was the
-  first version of the patch. Added at the end of `enum ig4_vers`, it
-  sorts after `IG4_SKYLAKE`, so `IG4_HAS_ADDREGS()` became true and the
-  AMD cores were sent down the Intel LPSS path (writes to registers
-  that do not exist on AMD, the FIFO depth read and the component
-  version check skipped). Placing it before `IG4_SKYLAKE` works, but
-  every `== IG4_ATOM` test (seven in `ig4_iic.c`) then needs `|| IG4_AMD`. A clock
-  override is smaller and cannot change the register path.
+- Keep AMDI0010 as Atom and override only the clock with a softc field.
+  Smaller, but the softc then carries a per-controller exception to the
+  generation table, and the AMD cores keep touching Intel registers.
 - Program the counts in ACPI `FMCN`: the firmware is not ours to change.
 - A tunable: users would have to know the clock; the driver knows it
   from the ACPI ID.
@@ -142,29 +158,32 @@ keep the table clock.
 
 ## 4. Tested
 
-Kernel `zbook-n291269-0d71515aee38` (zbook branch of 2026-11-17), with
-`ig4.ko` built from the same source in three variants and swapped with
-`kldunload`/`kldload`. Each row with two values ran twice, with the same result.
+Kernel built from the ZBook source tree of 2026-11-17 (with the IOMMU
+patches), `ig4.ko` built from the same tree with this commit's
+`sys/dev/ichiic` files, swapped in with `kldunload ig4`/`kldload`.
+Bus rate: [ig4_amd_clock_bench.pl](ig4_amd_clock_bench.pl) on
+`/dev/iic18` (amplifier bus) with `snd_cs35l54` unloaded, 200 timed 1 KB
+reads, twice.
 
 | `ig4.ko` | Median per 1 KB read | Effective rate |
 |---|---|---|
-| stock (zbook source, ig4 commit reverted) | 19.52 ms, 19.53 ms | 472 kHz |
-| this patch | 26.49 ms, 26.48 ms | 348 kHz |
-| first version (`IG4_AMD` enum, `/boot/kernel.zbook/ig4.ko`) | 26.48 ms, 26.48 ms | 348 kHz |
-
-The first version gives the same counts, so the same rate: the patch
-changes the register path, not the timings. (An earlier run of this
-table showed 471 kHz for the first version after a reload; that module
-came from `/boot/kernel`, a stock main kernel, not from the running
-kernel's directory.)
+| stock (ig4 as Atom, 100 MHz) | 19.52 ms, 19.53 ms | 472 kHz |
+| this commit | 26.48 ms, 26.47 ms | 348 kHz |
 
 | Check | Result |
 |---|---|
-| Touchpad (`iichid0`) and amplifiers (`cs35l540`) reattach after each module swap | yes, `devinfo` |
-| `snd_cs35l54` attach after the swap: calibration read, firmware download | yes, 4 amplifiers, firmware 3.11.18 |
+| All four controllers attach after the swap (`ig4iic0` to `ig4iic3`) | yes |
+| Touchpad: `iichid0`, `hmt0` SYNA3133 TouchPad | attached |
+| `snd_cs35l54`: calibration of the 4 amplifiers, firmware download | yes, firmware 3.11.18 |
+| Speaker playback: two 3 s 440 Hz tones, recorded from the microphones and measured with [cs35l54_tone_measure.py](cs35l54_tone_measure.py) | 3.00 s and 2.95 s |
+| ig4 timeouts or errors in `dmesg` | 0 |
 | ACPI `SSCN`/`FMCN` present | no (`acpidump`) |
-| `ig4.ko` builds against main 6dc19a71f70c | yes, no warning |
-| Attach at boot (patched `ig4.ko` in `/boot/kernel`) | untested: only module swaps were tested |
-| Suspend and resume with the patch | untested (register path identical to stock) |
-| Speaker playback, touchpad use | untested in this run |
-| Other AMDI0010 machines, Intel controllers | untested (Intel: code path unchanged, clock override is 0) |
+| `buildkernel GENERIC` on main 02e1b1cd1fb1 | no warning |
+| Attach at boot, suspend and resume | untested (module swaps only) |
+| Other AMDI0010 machines, Intel controllers | untested (Intel: code path unchanged) |
+
+## 5. Review
+
+[#114](https://ron-dev.freebsd.org/FreeBSD/src/pulls/114): wulf asked for
+a new `enum ig4_vers` item and `struct ig4_hw` entry instead of a softc
+field; this is that design.

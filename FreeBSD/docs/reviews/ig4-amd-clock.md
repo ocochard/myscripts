@@ -71,3 +71,5 @@ this limit.
     claim not re-checked here (no builds in this review).
 
 VERDICT: ready
+
+Rework 2026-11-22 (wulf, #114): aa0669aa77b0 on 02e1b1cd1fb1, IG4_AMD before IG4_SKYLAKE with its own table entry; DesignWare COMP_PARAM1/COMP_VER checks only. zbook: 348 kHz twice, 4 controllers, touchpad, amplifiers and tones OK, GENERIC builds. Tutorial and patch updated.
