@@ -86,6 +86,7 @@ The six loader/md(4) memdisk fixes are summarized in a table in
 
 - [bugreport_rpcbind_mergeaddr_wildcard.txt](bugreport_rpcbind_mergeaddr_wildcard.txt): rpcbind GETADDR returns the address of an unrelated interface. Patch: [rpcbind_mergeaddr_wildcard.patch](rpcbind_mergeaddr_wildcard.patch), reproducer: [rpcbind_getaddr_wildcard_repro.sh](rpcbind_getaddr_wildcard_repro.sh)
 - [virtual_oss.md](virtual_oss.md): virtual_oss problems in one place: the default configuration records the microphone all the time (about 750 interrupts a second), its default 16 ms buffer is a third of a kernel device's (crackling under Wine), and Wine does not find its `/dev/dsp`. Recommended settings.
+- [wineoss_float_mix_format.md](wineoss_float_mix_format.md): Wine's OSS driver reports a 16-bit mix format instead of 32-bit float, so Wwise games overrun their sound buffer and crash. Wine MR 12728; tested with Wine's conformance test and a public Wwise demo
 - [bugreport_ffmpeg_vaapi_x11.md](bugreport_ffmpeg_vaapi_x11.md): the default `multimedia/ffmpeg` build has no VA-API X11 backend (`--disable-xlib`), so moonlight-embedded decodes in software. Ports patch: [ffmpeg_vaapi_x11.patch](ffmpeg_vaapi_x11.patch)
 - [bird3_freebsd_memory_madvise.md](bird3_freebsd_memory_madvise.md): bird3 memory reporting on FreeBSD vs Linux (`MADV_FREE` semantics). Script: [bird3_freebsd_memory_madvise.sh](bird3_freebsd_memory_madvise.sh)
 
