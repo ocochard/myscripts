@@ -8,13 +8,13 @@ evdev-hp-keys	1	-	122
 lkpi-srcu	1	-	120	NPU needs it
 lkpi-pcim-iomap	1	-	121	NPU needs it
 lkpi-sysfs-binary	1	-	118
-amdiommu-irte	1	-	112	shares amd_iommu.h with amdiommu
-amdiommu	1	-	113	shares amd_iommu.h with amdiommu-irte
+amdiommu-irte	1	-	112	wait for kib (kbowling); shares amd_iommu.h with amdiommu
+amdiommu	1	-	113	wait for kib (kbowling); shares amd_iommu.h with amdiommu-irte
 devmatch-hostb	1	-	123	shares amdsmu.c with amdsmu-strixhalo
 acp	1	-	124
 acpi-cpu-s2idle-cx	1	-	115	split from s2idle-wake: the commit that makes the ZBook wake
 amdgpio-wake	hold	-	-	split from s2idle-wake: GPIO wake unproven (power button still dead); send once a GPIO wake is seen
-amdsmu-strixhalo	2	acpi-cpu-s2idle-cx	-	attaching amdsmu on Strix Halo without acpi-cpu-s2idle-cx: zzz never wakes (tutorial); shares amdsmu.c with devmatch-hostb
+amdsmu-strixhalo	2	acpi-cpu-s2idle-cx	129	attaching amdsmu on Strix Halo without acpi-cpu-s2idle-cx: zzz never wakes (tutorial); shares amdsmu.c with devmatch-hostb
 fwget-acpi	2	sound-firmware-cirrus	126	send now; Forgejo dep: ports#20; cs35l54 depends on it
 lkpi-mt7925	1	-	125	LinuxKPI part of mt7925, reviewer bz
 cs35l54	2	amdgpio-pnp,ig4-amd-clock,fwget-acpi	127	lands last: after fwget-acpi (man page names fwget); Forgejo deps #114, #116, fwget PR

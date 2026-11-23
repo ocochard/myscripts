@@ -51,12 +51,16 @@ landed() {
 		    done=$((done + 1)) ;;
 		esac
 	done
+	# Pushed as is: the branch tip is in main, so git cherry lists nothing.
+	if [ $total = 0 ] && $g merge-base --is-ancestor "$br" "$MAIN"; then
+		echo "in-main"; return
+	fi
 	echo "$done/$total"
 }
 
 is_landed() {
 	l=$(landed "$1")
-	case $l in */0|no-branch) return 1 ;; esac
+	case $l in in-main) return 0 ;; */0|no-branch) return 1 ;; esac
 	[ "${l%/*}" = "${l#*/}" ]
 }
 
@@ -96,10 +100,11 @@ pr_state() {
 	j=$(curl -fsS -m 20 "$api/pulls/$n") || { echo "#$n api-error"; return; }
 	st=$(echo "$j" | jq -r 'if .merged then "merged" else .state end')
 	r=$(curl -fsS -m 20 "$api/pulls/$n/reviews" | jq -r \
-	    '(map(select(.state == "APPROVED")) | length) as $a |
+	    '(map(select(.state == "APPROVED" and (.stale | not))) | length) as $a |
+	     (map(select(.state == "APPROVED" and .stale)) | length) as $s |
 	     (map(select(.state == "REQUEST_CHANGES")) | length) as $c |
 	     (map(select(.state == "REQUEST_REVIEW")) | length) as $q |
-	     "\($a) approved, \($c) changes requested, \($q) asked"') ||
+	     "\($a) approved\(if $s > 0 then " (+\($s) stale)" else "" end), \($c) changes requested, \($q) asked"') ||
 	    r="reviews: api-error"
 	echo "[$label]($web/pulls/$n) $st, $r"
 }
@@ -170,6 +175,7 @@ grep -v '^#' "$tsv" | while IFS='	' read -r topic round deps pr note; do
 			fi
 		done
 	fi
+	ps=$(pr_state "$pr")
 	if is_landed "$topic"; then next="done"
 	elif [ "$round" = hold ]; then next="on hold: $note"
 	elif [ "$pr" = "-" ] && [ -n "$unsent" ]; then
@@ -188,10 +194,16 @@ grep -v '^#' "$tsv" | while IFS='	' read -r topic round deps pr note; do
 			next="$next, then set Forgejo dependencies:$(echo "$setdeps" |
 			    sed 's/ \([0-9]\)/ #\1/g; s/ports:/ports#/g')"
 		fi
+	elif echo "$ps" | grep -q ' [1-9][0-9]* approved'; then
+		# A TSV note "wait for X; ..." holds an approved pull request.
+		case $note in
+		"wait for "*) next="approved, ${note%%;*}" ;;
+		*) next="land: rebase, tags, git pr -f, push" ;;
+		esac
 	else next="wait for reviewers"
 	fi
 	if [ -n "$unset_deps" ]; then
 		next="$next; not set in Forgejo:$unset_deps"
 	fi
-	echo "| $topic | $round | $l | $(pr_state "$pr") | $rv | $rb | $next |"
+	echo "| $topic | $round | $l | $ps | $rv | $rb | $next |"
 done

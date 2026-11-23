@@ -67,3 +67,15 @@ No serious bugs found.
 VERDICT: ready
 
 Resolved 2026-11-21: log-reset commit moved before the > filter (order now 31cad82a9b5a, f522735ca04d, 669b77e23c4e, f56cea26e82c), the two 81-column comments shortened; final tree differs from 837d301b93fe only in those comments. The 82-column table row matches the existing Krackan 70h row. Land after s2idle-wake (see the devmatch-hostb comment above).
+
+## Re-review 2026-11-23 (5ade961352ce..f03bcd10ec70 on d34baf1b5ca0, full effort)
+
+No POSTCR. Checked against the code and Linux drivers/platform/x86/amd/pmc/pmc.c (master):
+
+- Commit 1: Linux maps 0x1507 (1AH_M20H_ROOT) with x86_model 0x70 to amd_1ah_m70_cpu_info: message register 0x938 and soc15_ip_blk_v2 (25 entries, BIT(i) == index), the same as the existing 0x1122/0x70 row. Claim holds. 0x1507 with other models still does not attach (no -1 row), unchanged.
+- Commit 2: Linux amd_pmc_s2idle_prepare() calls amd_pmc_setup_smu_logging() (LOG_RESET, LOG_START) before the OS hint. Claim holds. Linux also memset_io()s the table first; FreeBSD reads it only after LOG_DUMP_DATA, and the measured per-sleep values (tutorial) show the dump overwrites it. Return values ignored, as at attach. amdsmu_cmd() has no lock; its only callers are attach and the serialized suspend/resume handlers, sysctls read memory only.
+- Commit 3: design question, not a bug. The `>` filter applies to Phoenix and Krackan Point too, but equality of a real blocker with time_last_in_sw_drips is measured on Strix Halo only. If those SMUs report a real blocker a few us above the SWDRIPS time, its report disappears. The driver's existing way to drop a garbage block is the amdsmu_diagnostics ignore entry (USB4_0, Phoenix/Krackan); a USB4_1 entry would hit both tables, so it cannot be Strix Halo only. Ask the amdsmu authors (obiwac, emaste) whether equality holds on their machines; or restrict the filter to Strix Halo.
+- Commit 4: Linux prints only blocks with bit_mask & active_ips. Claim holds; ip_blocks_active[] is filled for every product at attach (amdsmu.c:181).
+- Merges cleanly with pr/devmatch-hostb (git merge-tree).
+
+VERDICT: ready
