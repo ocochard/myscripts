@@ -57,7 +57,8 @@ build/bin/llama-server --host 0.0.0.0 \
 ```
 
 On the Strix Halo hosts, `llmsrv.sh` wraps the tuned recipes; pick a slot with
-`MODEL=flashnext` (default), `MODEL=flashnext-abl`, `MODEL=qwen38-mtp` or
+`MODEL=flashnext` (default), `MODEL=flashnext-abl`, `MODEL=flashnext-gsq`,
+`MODEL=qwen38-mtp` or
 `MODEL=qwen38-q8`:
 ```
 MODEL=qwen38-q8 HOST=0.0.0.0 ./llmsrv.sh
@@ -168,6 +169,13 @@ For the Qwen3.8 models the head ships as a separate GGUF passed with
   scale 1; decode and MTP acceptance unchanged (38.5-40.1 vs 39.5-40.2 t/s,
   0.64-0.68 vs 0.65-0.68 on prose; 45.0 vs 46.4 t/s, 0.84 vs 0.86 on a C
   coding prompt). One sample per cell, so quality is not measured.
+
+- **Pruned Flash-Next (`flashnext-gsq` slot, experimental)**: `IQ1_M/`
+  from `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF` (58.4 GB, half the
+  experts pruned) plus the unsloth MTP head above; `SPEC=0` runs it without
+  the head. On v1.0.0 (framework, 2026-11-22): 41.7 t/s at N=2, acceptance
+  0.81, but 9/15 on `fbsd-quality` against 12/15 for `flashnext`. See
+  benches.FrameWork-Desktop.md.
 
 Example for the dense model (download the head first; `-hf` does not fetch it):
 

@@ -39,6 +39,9 @@ Environment variables:
                 (ggml-org). Speculative decoding; v1.0.0: 17.0-17.4 t/s
                 decode, acceptance ~0.52-0.55. Draft path still unverified
                 on FreeBSD/Mesa 26. See the slot comment.
+  MODEL=flashnext-gsq
+                EXPERIMENTAL. ISTA-DASLab GSQ-RCO Coder (58.4 GB, half the
+                experts pruned) + borrowed unsloth MTP head. SPEC=0 = no MTP.
   MODEL=qwen38-q8
                 Qwen3.8-27B dense Q8_K_XL (unsloth), no MTP; v1.0.0:
                 7.2-7.3 t/s decode. Best FreeBSD-source doc accuracy in the
@@ -313,6 +316,32 @@ case "${MODEL}" in
       model_extra="${model_extra} --lora ${lora}"
     fi
     ;;
+  flashnext-gsq)
+    # EXPERIMENTAL. ISTA-DASLab GSQ-RCO Coder: Flash-Next with half the routed
+    # experts pruned (256/512 kept, 10 active) and the rest at ~3.5 bpw.
+    # 2 shards, 58.4 GB: shard 1 = transformer, shard 2 = n-gram table.
+    # The repo ships no MTP head; this slot borrows the unsloth self-contained
+    # head trained on the UNPRUNED model. SPEC=0 runs it spec-off.
+    # v1.0.0 on framework: 41.7 t/s at N=2, acceptance 0.81, but fbsd-quality
+    # 9/15 vs flashnext's 12/15 (benches.FrameWork-Desktop.md).
+    hf_repo="ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF"
+    hf_file="IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf"
+    hf_dir="${HF_HUB}/models--ISTA-DASLab--Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF"
+    model=$(hf_resolve "${hf_dir}" "${hf_file}")
+    alias="Qwen3.8-Flash-Next-GSQ-RCO-Coder-IQ1_M"
+    warmup_flag=""
+    [ "${OS}" = "FreeBSD" ] && nohost_flag=""
+    if [ "${SPEC:-1}" = "1" ]; then
+      draft=$(hf_resolve "${HF_HUB}/models--unsloth--Qwen3.8-Flash-Next-GGUF" \
+        "MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf")
+      if [ -z "${draft}" ] || [ ! -e "${draft}" ]; then
+        echo "unsloth MTP head not cached; fetch it or run SPEC=0" >&2
+        exit 1
+      fi
+      alias="${alias}-MTP"
+      model_extra="--model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 2"
+    fi
+    ;;
   qwen38-q8)
     # Spec-off fallback for the default, and the DaemonDocs production recipe.
     # Note this is a DIFFERENT repo+quant from qwen38-mtp: unsloth Q8_K_XL vs
@@ -326,7 +355,7 @@ case "${MODEL}" in
     [ "${OS}" = "FreeBSD" ] && nohost_flag=""
     ;;
   *)
-    echo "unknown MODEL='${MODEL}' (use qwen38-mtp|qwen38-q8|flashnext|flashnext-abl)" >&2; exit 1 ;;
+    echo "unknown MODEL='${MODEL}' (use qwen38-mtp|qwen38-q8|flashnext|flashnext-abl|flashnext-gsq)" >&2; exit 1 ;;
 esac
 
 # If the file isn't in the HF cache, hand off to llama-server's -hf/-hff so it

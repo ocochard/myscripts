@@ -62,6 +62,7 @@ hf_resolve() {
 #   draft       — sidecar draft GGUF filename (same repo dir), or "-" if the
 #                 MTP head is embedded in the main GGUF
 #                 or the model is non-MTP. Passed via --model-draft when set.
+#                 A head from another repo is written "models--org--repo/file".
 #   ctx         — --ctx-size for this slot, or "-" to use $CTX (131072).
 #                 Lower it only when the weights leave no room for the KV
 #                 reservation at the default; note the deviation in the doc.
@@ -77,6 +78,7 @@ MODELS='
 qwen38-mtp-q8: models--ggml-org--Qwen3.8-27B-GGUF               : Qwen3.8-27B-Q8_0.gguf               : dense : 1 : mtp-Qwen3.8-27B-Q8_0.gguf : - : Qwen3.8-27B Q8_0
 qwen38-q8    : models--unsloth--Qwen3.8-27B-GGUF                : Qwen3.8-27B-UD-Q8_K_XL.gguf         : dense : 0 : - : - : Qwen3.8-27B UD-Q8_K_XL
 flashnext-iq3: models--unsloth--Qwen3.8-Flash-Next-GGUF : UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf : moe : 1 : MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf : - : Qwen3.8-Flash-Next UD-IQ3_XXS
+flashnext-gsq: models--ISTA-DASLab--Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF : IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf : moe : 1 : models--unsloth--Qwen3.8-Flash-Next-GGUF/MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf : - : Qwen3.8-Flash-Next-GSQ-RCO-Coder IQ1_M
 '
 
 # Filter by ONLY= if set.
@@ -345,7 +347,11 @@ stage_mtp_sweep() {
     # slots use "-" and load the draft from the main GGUF (empty draftpath).
     draftpath=""
     if [ -n "${draft}" ] && [ "${draft}" != "-" ]; then
-      draftpath=$(hf_resolve "${HF_HUB}/${repo}" "${draft}") || {
+      case "${draft}" in
+        models--*/*) draftrepo=${draft%%/*}; draft=${draft#*/} ;;
+        *)           draftrepo=${repo} ;;
+      esac
+      draftpath=$(hf_resolve "${HF_HUB}/${draftrepo}" "${draft}") || {
         log "SKIP ${slot}: sidecar draft ${draft} not cached"; continue; }
     fi
 

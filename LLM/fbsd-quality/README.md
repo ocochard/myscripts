@@ -19,11 +19,12 @@ then cost.
 | 1 | claude-opus-4-5 | — | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | PASS | **6/6** | 99 | reference; 1 rep per tier |
 | 2 | Qwen3.8-Flash-Next | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 1/3 | 3/3 | PASS | **14/16** | 1 740 | best local; 17× Opus wall time |
 | 3 | Qwen3.8-Flash-Next (llama.cpp v1.0.0) | UD-IQ3_XXS | 3/3 | 3/3 | 3/3 | 2/3 | 1/3 | not run | **12/15** | 1 199 | fixed harness (`v44`); see below |
-| 4 | Qwen3.8-27B | Q8_0 MTP | 4/10 | 3/7 | 2/5 | 1/3 | 0/3 | PASS | **10/28** | 1 646 | fewest t6 steps of the locals (36) |
-| 5 | Qwen3.8-27B | UD3.1 UD-Q4_K_XL | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | not run | **6/15** | 1 600 | no MTP, ~11 t/s; tree 1600031, see below |
-| 6 | Sage-A1.5 35B-A3B | Q8_0 MTP | 0/3 | 0/3 | 2/3 | 1/3 | 0/3 | not run | **3/15** | 408 | ~60 t/s; fails the easy tiers; see below |
-| 7 | Swift-Qwen3.8-27B-Uncensored | Q8_0 | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | abliterated; ignores the spec |
-| 8 | Qwen3-Coder-Next 80B-A3B | UD-Q4_K_XL | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | fastest (0.7 h/sweep) and still zero |
+| 4 | Qwen3.8-Flash-Next GSQ-RCO Coder | IQ1_M (58 GB) | 2/3 | 3/3 | 2/3 | 2/3 | 0/3 | not run | **9/15** | 1 197 | half the experts pruned (`v45`); see below |
+| 5 | Qwen3.8-27B | Q8_0 MTP | 4/10 | 3/7 | 2/5 | 1/3 | 0/3 | PASS | **10/28** | 1 646 | fewest t6 steps of the locals (36) |
+| 6 | Qwen3.8-27B | UD3.1 UD-Q4_K_XL | 1/3 | 2/3 | 1/3 | 0/3 | 1/3 | not run | **6/15** | 1 600 | no MTP, ~11 t/s; tree 1600031, see below |
+| 7 | Sage-A1.5 35B-A3B | Q8_0 MTP | 0/3 | 0/3 | 2/3 | 1/3 | 0/3 | not run | **3/15** | 408 | ~60 t/s; fails the easy tiers; see below |
+| 8 | Swift-Qwen3.8-27B-Uncensored | Q8_0 | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | abliterated; ignores the spec |
+| 9 | Qwen3-Coder-Next 80B-A3B | UD-Q4_K_XL | 0/3 | 0/3 | 0/3 | — | — | — | **0/9** | — | fastest (0.7 h/sweep) and still zero |
 
 Tier 6 is `--reps 1` for every model, so it is reported PASS/— rather than as a
 rate.
@@ -41,7 +42,7 @@ stalls without writing a file at all in a third of runs. Neither is usable for
 agent work.
 
 **Qwen3.8-27B UD3.1 Q4_K_XL** (run-id `v38-q38-ud31-q4`, 2026-11-12) is the
-same model as row 3 at half the bits, without MTP. It ranks below row 3 on t6
+same model as row 5 at half the bits, without MTP. It ranks below row 5 on t6
 alone, which it did not run: on t1-t5 both clear four tiers, and 6/15 against
 10/28 is within noise. It traded t4 (0/3) for t5 (1/3, which the Q8 model never
 cleared). 8 of its 9 failures are `no_progress` with no source file written:
@@ -50,7 +51,7 @@ and the same tier flipped between reps (t1, t2). The ninth (t3 rep 2) is a
 client timeout: one reply ran past the 1800 s request limit, so it is scored
 `harness`. Not directly comparable to the older rows: the tree moved from
 `__FreeBSD_version` 1600022 to 1600031 (new guest image
-`fbsdq-1600031.img`), and the harness gained the symbol checks after row 3's
+`fbsdq-1600031.img`), and the harness gained the symbol checks after row 5's
 early runs.
 
 **Sage-A1.5 Q8_0** (InternScience, the Agents-A1 successor; run-id
@@ -64,12 +65,12 @@ not transfer to this bench. Sampling is the Qwen thinking preset (temp 0.6,
 top-p 0.95, top-k 20, no presence penalty), **not** the model card's temp 1.0 +
 presence penalty 1.5: a first attempt with the card's values (`v39`, aborted,
 no rows) produced degenerate text (fused words, dropped articles, invented
-APIs). Same tree and image as row 4. Served on llama.cpp v1.0.0 with the
+APIs). Same tree and image as row 6. Served on llama.cpp v1.0.0 with the
 GGUF's embedded MTP head at N=3.
 
 **Qwen3.8-Flash-Next on llama.cpp v1.0.0** (run-id `v44-flashnext-tcfix`,
 2026-11-16) is row 2's model on mainline v1.0.0 with the self-contained Q8_0
-MTP head (`llmsrv.sh` default, `MODEL=flashnext`), same image as rows 5-6 on a
+MTP head (`llmsrv.sh` default, `MODEL=flashnext`), same image as rows 6-7 on a
 newer tree (`6871285f194d`, still 1600031). 12/15, every tier passed at least
 once. The t4 failure is a real guest panic (general protection fault at
 `kldload`); the two t5 failures are `no_progress`. Its first run (`v41`,
@@ -83,6 +84,23 @@ the fallback sees has no closing tag, which the translator required. The other
 42 are empty `<function=print></function>` calls, malformed tags or prose.
 Not directly comparable with row 2, which mixed harness versions, the 1600022
 tree and single reps.
+
+**Qwen3.8-Flash-Next GSQ-RCO Coder** (ISTA-DASLab, run-id
+`v45-flashnext-gsq`, 2026-11-22) is row 3's model with half the routed
+experts pruned (256 of 512 kept, 10 active) and the rest at ~3.5 bpw, 58 GB.
+The repo ships no MTP head; it borrowed row 3's unsloth head at N=2 and
+accepted 0.67 of drafts over the run. 9/15 against row 3's 12/15, same
+image, newer tree (`6dc19a71f70c`, still 1600031). All six failures are
+`no_progress` with no source file written, against two of three for row 3.
+The traces show the API found early and then never used: t1 had
+`EVENTHANDLER_REGISTER` and `exitlist_fn` by step 4 and spent 38 steps in
+`kern_linker.c` looking for Linux-style `_mod_init` symbols; t5 had the full
+`epoch_alloc`/`epoch_call`/`__containerof` design by step 30 and then audited
+`printf` locking; t3 rep 3 had `new_unrhdr` by step 13 and grepped for
+`modload`/`MODULE_LICENSE` for 29 steps. The model card warns that long
+agentic tasks tolerate the pruning less well than one-shot codegen, and this
+is that. What it does better: 3 parse errors in 668 steps (row 3: 80 in 817),
+t4 passes in 30-32 steps (row 3: 49-58), and 32 % fewer output tokens.
 
 Compare models on **`model_s`** and `tokens_out`, never on steps: a
 `ToolCallingAgent` step is one tool call, a `CodeAgent` step is one Python block

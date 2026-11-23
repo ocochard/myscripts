@@ -40,6 +40,7 @@ Decode t/s on one coding prompt, llama.cpp v1.0.0, `llmsrv.sh` defaults
 | **`flashnext`** ★  | Qwen3.8-Flash-Next UD-IQ3_XXS + MTP N=2    | **38.2-38.6 / 35.4-38.9** | 0.61-0.70 | 125B `qwen4exp`, 82 GB. Fastest recipe here. `llmsrv.sh` default and `USAGE=coding`. |
 | `qwen38-mtp`       | Qwen3.8-27B Q8_0 + sidecar MTP Q8_0 head   | 17.0 / 17.4      | 405/774, 411/749 | Dense. |
 | `qwen38-q8`        | Qwen3.8-27B UD-Q8_K_XL, no MTP             |  7.3 / 7.2       | n/a              | DaemonDocs doc-accuracy recipe; fallback when MTP misbehaves. `USAGE=doc`. |
+| `flashnext-gsq`    | Flash-Next GSQ-RCO Coder IQ1_M + borrowed MTP N=2 | 41.7 (total TPS) / not run | 0.81 | 58 GB, half the experts pruned. Faster, scores 9/15 vs 12/15 on `fbsd-quality`. Experimental. |
 | _(no slot)_        | Qwen3.8-Flash-Next UD-IQ4_XS               | n/a              | n/a              | 93.7 GB. Loads only with a raised GTT aperture; on Linux that aperture panicked the kernel. Use IQ3_XXS. |
 
 ★ = recommended and the `llmsrv.sh` default; `USAGE=coding` → `flashnext`,
@@ -301,6 +302,46 @@ total RAM**:
 | UD-Q4_K_XL   | 111 GB | upstream's own recommended pairing; does not fit here |
 | UD-IQ4_XS    | 93.7 GB| loads, but **not worth using**, see below           |
 | **UD-IQ3_XXS**| **82 GB** | **the recipe**                                   |
+
+### GSQ-RCO Coder (58 GB): faster, scores lower (`flashnext-gsq`)
+
+`ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF` prunes half the routed
+experts (256 of 512 per layer, still 10 active) with a KL search calibrated on
+code, agentic and vision data, and stores the rest at ~3.5 bpw. Two shards,
+58.4 GB: 29.6 GB of transformer and the 28.8 GB n-gram table (IQ4_NL,
+unpruned). The repo ships no MTP head; the unsloth self-contained head loads
+beside it and accepts **more** drafts than on IQ3_XXS. Loads in ~24 s.
+
+frwk-bsd, v1.0.0 (`b1b770d90`), 2026-11-22, both models in one `bench-all.sh`
+session. llama-bench, spec-off:
+
+| depth | IQ3_XXS pp4096 | GSQ pp4096 | IQ3_XXS tg128 | GSQ tg128 |
+|------:|---------------:|-----------:|--------------:|----------:|
+| 0     | 235.6 | 236.3 | 26.57 | 24.79 |
+| 8192  | 249.1 | 247.6 | 25.82 | 24.00 |
+| 32768 | 248.2 | 250.1 | 25.00 | 23.17 |
+
+`bench_model.py` on the ~4 k coding prompt, Total TPS (acceptance):
+
+| config        | IQ3_XXS        | GSQ            |
+|---------------|---------------:|---------------:|
+| spec-off      | 29.3           | 27.0           |
+| MTP N=2       | 38.6 (0.72)    | 41.7 (0.81)    |
+| MTP N=3       | (server failed)| **43.8** (0.76)|
+| MTP N=4       | 38.0 (0.60)    | 40.4 (0.69)    |
+| MTP N=5       | 33.3 (0.51)    | 39.9 (0.62)    |
+| MTP N=5, ~32 k| 39.8 (0.56)    | 35.3 (0.60)    |
+
+Spec-off decode is ~7 % slower (more bits per active weight); with MTP it is
+8-13 % faster at ~4 k and slower at ~32 k. One prompt, 2 reps, and MTP is
+nondeterministic. The IQ3_XXS N=3 failure is the Mesa-26 CPC fault
+(`Faulty UTCL2 client ID: CPC (0x5)`), not the model.
+
+Quality decides it: `fbsd-quality` `v45` scored **9/15** against IQ3_XXS's
+12/15, every failure a model that found the API and never wrote the file
+(details in [fbsd-quality/README.md](fbsd-quality/README.md)). Keep
+`flashnext` as the default; `flashnext-gsq` is for when 24 GB of headroom or
+the Linux default GTT aperture matters more than agentic reliability.
 
 ### Why not IQ4_XS (93.7 GB)
 
