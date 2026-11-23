@@ -100,8 +100,13 @@ add `PR:` lines to the commits and the #6 PR number to the
   `nfsd_modevent()`, both lines kept) and the #9+#10 squash: one kernel
   with all 8 commits, #6 included, NODEBUG and WITNESS: all 12 cases
   passed, `session_leak` included, nothing dying, no panic.
-- Not built as such: the #6 branch (tests + #6 without the others) and each
-  kernel branch alone; their diffs equal the tested ones.
+- 2026-11-23, each branch built alone on main 6edecf52def6: kernel plus
+  the nfscommon, nfscl, nfsd, krpc, kgssapi and nfslockd modules, and the
+  nfscbd userland for `nfscbd-jail`: all built, no compiler warning.
+- 2026-11-23, final heads together (main 6edecf52def6 + the 7 commits,
+  `n291531-ed0a6ec4666b`): all 13 cases passed on NODEBUG and WITNESS,
+  `session_leak` and `v3_basic` included; nothing dying after the suite
+  plus 70 s; no panic; WITNESS showed only the two unrelated LORs.
 
 **Open items** (pick with me first):
 - Reviews and PRs as above; rebase the branches if main moves first
