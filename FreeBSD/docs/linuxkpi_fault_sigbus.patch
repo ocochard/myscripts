@@ -1,0 +1,79 @@
+From b2936ef4dc75b44b064e4d68d12e5971da4e260b Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 23 Nov 2026 15:15:32 +0100
+Subject: [PATCH] linuxkpi: Make a fault handler's SIGBUS fail the fault
+
+linux_cdev_pager_populate() translates VM_FAULT_SIGBUS to VM_PAGER_BAD,
+which vm_fault_populate() takes as a request for normal fault handling.
+The LinuxKPI pager has no cdev_pg_fault method, so that path zero-fills
+a page: the process reads zeros where the driver refused the access,
+and gets no signal.
+
+Pages the handler inserted before the error stay exclusive-busy, since
+vm_fault_populate() returns at once on failure.  The next fault on one
+of them sleeps forever, and kill -9 cannot end the process.
+
+Translate VM_FAULT_SIGBUS to VM_PAGER_ERROR, and release the pages the
+handler busied when populate fails.
+---
+ sys/compat/linuxkpi/common/src/linux_compat.c | 21 ++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_compat.c b/sys/compat/linuxkpi/common/src/linux_compat.c
+index 08c7cfdac8ed..3093495dc9a2 100644
+--- a/sys/compat/linuxkpi/common/src/linux_compat.c
++++ b/sys/compat/linuxkpi/common/src/linux_compat.c
+@@ -507,8 +507,14 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+     vm_prot_t max_prot, vm_pindex_t *first, vm_pindex_t *last)
+ {
+ 	struct vm_area_struct *vmap;
++	vm_page_t m;
++	vm_pindex_t i, pfn_first;
++	int pfn_count;
+ 	int err;
+ 
++	pfn_first = 0;
++	pfn_count = 0;
++
+ 	/* get VM area structure */
+ 	vmap = linux_cdev_handle_find(vm_obj->handle);
+ 	MPASS(vmap != NULL);
+@@ -541,6 +547,8 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+ 			kern_yield(PRI_USER);
+ 			err = vmap->vm_ops->fault(&vmf);
+ 		}
++		pfn_first = vmap->vm_pfn_first;
++		pfn_count = vmap->vm_pfn_count;
+ 	}
+ 
+ 	/* translate return code */
+@@ -549,7 +557,7 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+ 		err = VM_PAGER_AGAIN;
+ 		break;
+ 	case VM_FAULT_SIGBUS:
+-		err = VM_PAGER_BAD;
++		err = VM_PAGER_ERROR;
+ 		break;
+ 	case VM_FAULT_NOPAGE:
+ 		/*
+@@ -570,6 +578,17 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+ 	}
+ 	up_write(&vmap->vm_mm->mmap_sem);
+ 	VM_OBJECT_WLOCK(vm_obj);
++
++	/* On failure, release the pages the fault handler busied. */
++	if (err != VM_PAGER_OK) {
++		for (i = pfn_first; i < pfn_first + pfn_count; i++) {
++			m = vm_page_lookup(vm_obj, i);
++			if (m != NULL) {
++				vm_page_deactivate(m);
++				vm_page_xunbusy(m);
++			}
++		}
++	}
+ 	return (err);
+ }
+ 
+-- 
+2.56.0
+
