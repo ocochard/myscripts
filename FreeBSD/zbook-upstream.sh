@@ -156,6 +156,7 @@ grep -v '^#' "$tsv" | while IFS='	' read -r topic round deps pr note; do
 			for d in $(echo "$deps" | tr , ' '); do
 				dpr=$(awk -F'\t' -v t="$d" '$1 == t {print $4}' "$tsv")
 				[ -n "$dpr" ] && [ "$dpr" != "-" ] || continue
+				is_landed "$d" && continue	# no longer blocks
 				echo "$fdeps" | grep -q "^$dpr " ||
 				    unset_deps="$unset_deps $d"
 			done
