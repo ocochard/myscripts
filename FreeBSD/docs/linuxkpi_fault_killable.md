@@ -100,8 +100,10 @@ fault cannot take that page while the first mapping maps it, since a page has on
 (section 1.1): `lkpi_vmf_insert_pfn_prot_locked()` (`src/linux_page.c`) prints the message and returns
 `VM_FAULT_NOPAGE` with nothing inserted, and the loop of section 1.3 calls it again, forever.
 
-The same LinuxKPI limit stops Xorg in [drm-kmod#481](https://github.com/freebsd/drm-kmod/issues/481)
-and [PR 296195](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=296195), and other processes in
+Xorg prints the same message at startup in [drm-kmod#481](https://github.com/freebsd/drm-kmod/issues/481).
+A different hang in the same function is not this loop and is not touched by this patch: an uninterruptible
+sleep on a busy page in `vm_page_busy_acquire()`, reported in
+[PR 296195](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=296195),
 [nextbsd #71](https://github.com/nextbsd/nextbsd-kernel/issues/71) and
 [nextbsd #188](https://github.com/nextbsd/nextbsd-kernel/issues/188).
 
@@ -185,8 +187,14 @@ Not fixed:
 
 - The process still spins at 100% of one CPU until killed. SIGTERM and SIGINT do not end it when the
   program catches them, as ffmpeg does: they are not fatal, so the loop keeps going.
-- A stop request (SIGSTOP, a debugger attach) or a core dump started from another thread still waits
-  on the spinning thread, as before.
+- A stop request (SIGSTOP, a debugger attach) or a multithreaded `execve()` still waits on the
+  spinning thread, as before. A core dump does not: `sigexit()` sets `P2_WEXIT` before it single-threads
+  the process (`kern_ucoredump.c`), so the spinning thread now leaves the loop.
+- SIGKILL sent to one thread (`pthread_kill()`) goes to that thread's own queue (`tdsendsignal()`).
+  If that thread is blocked on the `mmap_sem` that the spinning thread holds, neither thread sees it,
+  and both stay stuck, as before. `kill -9 <pid>` queues on the process and is not affected.
+- An aio daemon that faults on the requester's memory checks itself (`curproc`), not the requester, so
+  killing the requester does not end its retry.
 - A debugger reading the memory of a process stuck this way spins in the same loop until the debugger
   itself is killed.
 - The cause: LinuxKPI cannot map one page through two mappings. That needs a second mapping built from
@@ -204,6 +212,7 @@ its original kernel. 1920x1080 300-frame clips; VA-API through ffmpeg 9.0.2; eac
 | NUC 13 (Raptor Lake, i915) | `h264_vaapi` default encode, then `kill -9` | survives `kill -9`, reboot needed (5 times) | gone 1 s after `kill -9`, exit status 137 (3 times) |
 | NUC 13 | same, SIGTERM or SIGINT | not run | still spinning after 20 s (ffmpeg catches them), then gone 1 s after `kill -9` |
 | NUC 13 | console after the kill | message without end | no message in the next 3 s |
+| NUC 13, `GENERIC` with INVARIANTS and WITNESS | `kill -9` of the spinning encode, 3 times (once after SIGTERM) | (not run) | gone in 1 s each time; 0 lock order reversals, no assertion |
 | ThinkPad X1 Carbon Gen 12 (Meteor Lake, i915) | decode H.264, HEVC | bit-exact | bit-exact |
 | X1 Carbon | encode H.264, HEVC, `low_power 0`, CQP and VBR | 300 frames each | 300 frames each |
 | X1 Carbon | encode `low_power 1` | fails cleanly, exit 178 (not supported) | same |
@@ -219,6 +228,9 @@ its original kernel. 1920x1080 300-frame clips; VA-API through ffmpeg 9.0.2; eac
 The vkmark spread between runs (about 10%) is larger than any difference between the kernels.
 The ZBook LLM baseline ran on `kernel.evdevtest` (212babfc84dd: the ZBook base plus an evdev change, no LinuxKPI change),
 the patched run on 9f0a9cd7ffcf plus this patch.
+
+An independent review of the patch (code and goal only) found no defect; the last two "not fixed"
+items above come from it.
 
 Not tested: a desktop session (Xorg or Wayland) on the patched kernels, OpenGL, amdgpu under memory
 pressure (the LLM run used 29 GB of 96 GB), other LinuxKPI drivers (nvidia-drm), and the Xorg hang of drm-kmod#481.
