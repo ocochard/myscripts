@@ -1,11 +1,17 @@
 # acpi_iicbus: device properties of I2C devices froze the machine
 
-Patch: [acpi_iicbus_prop.patch](acpi_iicbus_prop.patch), two commits for
-FreeBSD main of 2026-11-20: `acpi_iicbus: Free the ivars of deleted
-children` (a leak since 9b7938dcf338: `acpi_iicbus_child_deleted()`
-replaced `iicbus_child_deleted()` without calling it, and used the ivars
-without a NULL check), then `acpi_iicbus: Return _DSD properties of the
-I2C children`, explained below.
+Patch: [acpi_iicbus_prop.patch](acpi_iicbus_prop.patch), three commits on
+FreeBSD main 6dc19a71f70c, in review as
+[#117](https://ron-dev.freebsd.org/FreeBSD/src/pulls/117):
+
+1. `acpi: Return the handle of a reference property, not its target`
+   (section 3.1);
+2. `acpi_iicbus: Free the ivars of deleted children` (a leak since
+   9b7938dcf338: `acpi_iicbus_child_deleted()` replaced
+   `iicbus_child_deleted()` without calling it, and used the ivars
+   without a NULL check);
+3. `acpi_iicbus: Return _DSD properties of the I2C children`, explained
+   below.
 Machine: HP ZBook Ultra G1a 14 (AMD Ryzen AI Max+ PRO 395); the device
 used for the test is the CS35L54 speaker amplifier node `\_SB_.I2CB.SPKR`
 behind the `ig4iic1` I2C controller.
@@ -93,8 +99,24 @@ acpi_iicbus_get_property(device_t bus, device_t child, const char *propname,
   children of an I2C mux) now gets -1 instead of reaching acpi with
   foreign ivars.
 
+### 3.1 The reference property fix
+
+A `_DSD` value can be a bare reference to another ACPI object. Asked for
+it with `DEVICE_PROP_ANY` (or another type than `DEVICE_PROP_HANDLE`),
+`acpi_bus_get_prop()` resolved the reference to a handle `h`, then did
+`memcpy(propvalue, h, sizeof(ACPI_HANDLE))`: it copied the first 8 bytes
+of the namespace node `h` points to, not `h`. The fix copies `&h`. The
+bug dates from 99e6980fcf5e; `DEVICE_PROP_HANDLE` itself was not hit,
+it uses a separate function. It goes first so it can be merged to
+stable alone, and the refactor below keeps the fixed line.
+
 ### Alternatives
 
+- Read every child's `_DSD` through `acpi_get_handle()` instead of its
+  ivars, as [D60063](https://reviews.freebsd.org/D60063) proposes. That
+  fixes every bus at once, but it frees `_DSD` before returning, so a
+  package value (such as `cirrus,dev-index` here) cannot be returned,
+  and it drops the cache for acpi's own children.
 - Refuse, in `acpi_bus_get_prop()`, every child that is not a direct
   child of acpi. This was the first version. It breaks DPAA2:
   `dpaa2_mc_acpi` and `memac_mdio_acpi` give their own children a real
@@ -148,6 +170,32 @@ noise, unrelated). With both commits, the 20 `device_get_property()` calls
 returned the package each time, the touchpad and amplifiers reattached
 after every cycle, and there was no fault in the log.
 
-Both commits build (`buildkernel GENERIC-NODEBUG`, each commit, no
+Reference property: [acpi_prop_ref_test.c](acpi_prop_ref_test.c)
+([Makefile](acpi_prop_ref_test.Makefile)) builds a synthetic `_DSD`
+whose value is a bare reference to `\_SB_` and asks
+`acpi_ad_get_property()` for it (the ZBook firmware has no such
+property: its `reset-gpios` is a package).
+
+| Kernel | `DEVICE_PROP_ANY` | `DEVICE_PROP_HANDLE` (one-element package) |
+|---|---|---|
+| ZBook test kernel with commits 2 and 3 only | 0xfffff80105cb1780, not `\_SB_` (0xfffff80101734b00): FAIL | `\_SB_`: PASS |
+| same plus commit 1 | `\_SB_`: PASS | `\_SB_`: PASS |
+
+On the second kernel the `cirrus,dev-index` test above still returns the
+four values and a missing property -1, and the touchpad and amplifiers
+attach.
+
+All three commits build (`buildkernel GENERIC` with INVARIANTS, no
 warning). Untested: DPAA2 (no hardware; this patch does not change its
 path).
+
+## 5. Review
+
+- [#117](https://ron-dev.freebsd.org/FreeBSD/src/pulls/117): approved by
+  wulf ("simpler and better" than D60063).
+- [D60060 to D60063](https://reviews.freebsd.org/D60063) (yarshure, an
+  external contributor, 2026-09-27, needs review): an ACPI I2C and mux
+  series for arm64 DPAA2 boards. D60063 fixes the same crash for every
+  bus but cannot return packages; it also carried the reference fix of
+  section 3.1.
+

@@ -85,3 +85,5 @@ Pre-existing details:
 VERDICT: ready
 
 Update 2026-11-21: findings -1 and -2 fixed in a new first commit 57ff876fee1d ("acpi_iicbus: Free the ivars of deleted children", Fixes: 9b7938dcf338); the property commit is now 319cab72103f and frees its _DSD cache before calling iicbus_child_deleted(). Both commits build. -3 (prefix match in acpi_ad_get_prop) left for a separate PR.
+
+2026-11-23: added commit 1 (cce18749f956) for the DEVICE_PROP_ANY reference memcpy bug (99e6980fcf5e), seen in D60063; zbook: FAIL before, PASS after (docs/acpi_prop_ref_test.c), cirrus,dev-index unchanged. Branch 95cde369275b.
