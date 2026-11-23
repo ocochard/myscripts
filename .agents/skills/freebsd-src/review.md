@@ -63,6 +63,14 @@ changed function before writing the report.
 4. Check every new early return and shortcut with out-of-range and
    invalid inputs: it must not turn an error into success. (Missed: a
    D3 shortcut that returned 0 for states above PCI_POWERSTATE_MAX.)
-5. Write the report from the code, not from a summary of the intended
+5. A change to a shared table or default (scan code maps, ID tables,
+   quirk lists, tunable defaults) applies to every machine that uses
+   it. Look up what other vendors and other systems give the same value
+   (for keys: systemd hwdb 60-keyboard.hwdb), including keys without a
+   release code. (Missed: HP key codes added to the global AT table,
+   where Dell, Lenovo and Samsung use them for other keys.)
+6. Check every claim in the commit message against its source ("as
+   Linux does": read the Linux code).
+7. Write the report from the code, not from a summary of the intended
    design. When a brief lists areas to examine, treat the list as a
    minimum, not as the scope.

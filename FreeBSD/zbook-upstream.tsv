@@ -21,3 +21,4 @@ cs35l54	2	amdgpio-pnp,ig4-amd-clock,fwget-acpi	127	lands last: after fwget-acpi 
 amdgpio-intr	2	amdgpio-wake	-	branch not created yet
 mt7925	2	lkpi-mt7925	-	mt76 contrib part, ask bz first
 sound-firmware-cirrus	2	-	ports:20	ports tree; Forgejo deps #114, #116; lands before fwget-acpi
+evdev-hp-keys-fix	1	-	130	fixes the landed d34baf1b5ca0 (POSTCR: global AT table); reviewer wulf

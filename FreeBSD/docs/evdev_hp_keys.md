@@ -1,11 +1,9 @@
 # evdev: the HP mic mute and programmable keys
 
-Patch: [evdev_hp_keys.patch](evdev_hp_keys.patch), commit 0c54fd8da608
-"evdev: Map the HP mic mute and programmable keys" on FreeBSD main
-6dc19a71f70c, the version sent for review (an earlier version, with the
-notes at the end of the table rows, is in branch `olivier-evdev-hp-keys`
-of github.com/ocochard/freebsd-src and in branch `zbook` as
-0d71515aee38).
+Patch: [evdev_hp_keys.patch](evdev_hp_keys.patch), commit 2ee07098c642
+"evdev: Map the HP mic mute and programmable keys on HP only" on FreeBSD
+main, which fixes the landed d34baf1b5ca0 (#122); in review as
+[#130](https://ron-dev.freebsd.org/FreeBSD/src/pulls/130).
 Machine: HP ZBook Ultra G1a.
 
 This document explains the work for a first-year computer science student:
@@ -60,35 +58,53 @@ no event for the first two keys.
 
 ## 3. The fix
 
-```diff
- 	/* 0x60 - 0x7f */
- 	NONE,		NONE,		NONE,		NONE,
- 	NONE,		NONE,		NONE,		NONE,
--	NONE,		NONE,		NONE,		NONE,
-+	/* 0x68: HP programmable key */
-+	KEY_PROG1,	NONE,		NONE,		NONE,
- ...
- 	/* 0x00 - 0x1f. 0xE0 prefixed */
--	NONE,		NONE,		NONE,		NONE,
-+	/* 0xE0 0x01: HP mic mute (Fn+Esc on other HP models) */
-+	NONE,		KEY_MICMUTE,	NONE,		NONE,
+The scan codes `e0 01` and `68` are vendor keys. systemd's hwdb
+(`60-keyboard.hwdb`, which writes the 0xE0 code 0x01 as `81`) gives them
+many meanings:
+
+| Code | Meanings in hwdb |
+|---|---|
+| `e0 01` (`81`) | micmute on HP ZBook, EliteBook, ProBook, Elite Dragonfly and some others; fn_esc on consumer HP; playpause on Dell; touchpad_toggle on Alienware; insert on IdeaPad 5; rfkill on other IdeaPads; prog1 on Lenovo LOQ; `!esc` on Samsung (no release code) |
+| `68` | prog1 on the Elite Dragonfly G2; `!performance` on Dell and Alienware (no release code); leftmeta or setup on ThinkPad tablets; up on an Acer; f17; unknown on the EliteBook 845 G7 |
+
+`evdev_at_set1_scancodes[]` is one table for every AT keyboard (`atkbd`,
+`kbdmux`, `hv_kbd`), so a code can only be mapped where SMBIOS names the
+machine, like hwdb's DMI match:
+
+```c
+static const struct evdev_at_quirk {
+	const char	*maker;		/* prefix of smbios.system.maker */
+	const char	*product;	/* substring of smbios.system.product */
+	uint8_t		index;
+	uint16_t	keycode;
+} evdev_at_quirks[] = {
+	{ "HP",		"ZBook",		0x81,	KEY_MICMUTE },
+	...
+	{ "HP",		"ZBook Ultra G1a",	0x68,	KEY_PROG1 },
+};
 ```
 
-The key names follow systemd's hwdb: `KEYBOARD_KEY_81=micmute` in its block
-for HP ZBooks, EliteBooks and ProBooks (hwdb writes the 0xE0 code 0x01 as
-0x81), and `KEYBOARD_KEY_68=prog1` ("HP Programmable Key") in its block for
-the Elite Dragonfly G2.
+A `SYSINIT` at `SI_SUB_TUNABLES` reads `smbios.system.maker` and
+`smbios.system.product` with `getenv_string()` and writes the matching
+entries into the table once, before any keyboard attaches. The lookup
+path is unchanged, and `evdev_support_all_known_keys()` advertises only
+the keys that apply to the machine. The table entries themselves stay
+`NONE`.
+
+The key names follow hwdb: micmute for the HP business models, prog1
+("HP Programmable Key") for the Elite Dragonfly G2; the ZBook Ultra G1a
+sends `68` for its programmable key (measured, section 4).
 
 `KEY_MICMUTE` is 248, and X keycodes stop at 255 (evdev key + 8 = 256).
 xf86-input-libinput remaps it to keycode 198, which the XKB evdev keymap
-names `XF86AudioMicMute`; that is what X delivered in the test.
+names `XF86AudioMicMute`.
 
 ### 3.1 Tradeoffs and alternatives
 
 | Alternative | Tradeoff |
 |---|---|
-| This table entry | Global: every AT keyboard that sends `e0 01` or `68` now reports these keys. systemd's generic HP block maps `e0 01` to `fn_esc` instead, and other vendors may use the codes for other keys. There is precedent: the same table maps the ChromeOS EC codes `e0 11` to `e0 1e`. |
-| A per-machine override from userland | Would be the hwdb model, but atkbd's evdev device does not implement `EVIOCSKEYCODE`, so there is no interface for it today. |
+| A global table entry | Gives every vendor HP's meaning: Insert toggles mic mute on an IdeaPad 5, and on Dell a key without release code leaves `KEY_PROG1` held. |
+| A per-machine override from userland (`EVIOCSKEYCODE`) | The hwdb model, but `atkbd` does not implement `ev_set_keycode`, and FreeBSD has no hwdb applier in userland. Also needs force-release for the `!` keys. |
 | HP WMI hotkey events (`acpi_hp`) | No key of this laptop raised a WMI event during the captures; the scancodes are already there. |
 
 ### 3.2 What the patch does not fix
@@ -101,13 +117,31 @@ names `XF86AudioMicMute`; that is what X delivered in the test.
 
 ## 4. Tested
 
-Laptop, 2026-11-17, kernel `zbook-n291269-0d71515aee38` (branch `zbook`).
+Laptop, 2026-11-23, kernel built from the laptop's source tree with this
+`evdev_utils.c`. [evbit.c](evdev_hp_keys_evbit.c) prints, for each
+`/dev/input/event*`, whether `EVIOCGBIT` reports `KEY_MICMUTE` and
+`KEY_PROG1`; DTrace reads the two table entries.
 
-| Configuration | Measured result |
+| Boot | `smbios.system.product` | table `0x81` / `0x68` | AT keyboard and kbdmux advertise |
+|---|---|---|---|
+| normal | HP ZBook Ultra G1a 14 inch Mobile Workstation PC | 248 (`KEY_MICMUTE`) / 148 (`KEY_PROG1`) | MICMUTE, PROG1 |
+| `nextboot -e smbios.system.product="Test Laptop 15"` | Test Laptop 15 | 0 / 0 | MICMUTE (from the ChromeOS `e0 1b` entry), no PROG1 |
+
+Earlier, with the keys mapped (2026-11-17):
+
+| Key | Measured result |
 |---|---|
-| Before, mic off and programmable key | no event on `/dev/input/event4` |
-| After, mic off | `KEY_MICMUTE` (248) down and up on `AT keyboard` |
-| After, programmable key | `KEY_PROG1` (148) down and up on `AT keyboard` |
-| After, X (`xinput test-xi2 --root`) | keycode 198 = `XF86AudioMicMute`, keycode 156 = `XF86Launch1` |
+| mic off | `KEY_MICMUTE` (248) down and up on `AT keyboard` |
+| programmable key | `KEY_PROG1` (148) down and up on `AT keyboard` |
+| X (`xinput test-xi2 --root`) | keycode 198 = `XF86AudioMicMute`, keycode 156 = `XF86Launch1` |
 
-Not tested: other keyboards that may send `e0 01` or `68`.
+`buildkernel GENERIC` on main: no warning. Not tested: key presses on the
+new kernel (the table holds the same values as the kernel tested on
+2026-11-17), other HP models.
+
+## 5. Review
+
+The first version (d34baf1b5ca0, #122, approved by wulf) put both codes
+in the global table. The FreeBSD commit review then reported both
+problems of section 3.1 (POSTCR-d34baf1b5ca0...-1 and -2); this commit is
+the fix.
