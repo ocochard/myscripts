@@ -10,6 +10,7 @@ This is a collection of scripts and utilities primarily focused on FreeBSD syste
 - **network/**: Network testing and monitoring utilities
 - **tools/**: General purpose utilities and documentation
 - **configs/**: Configuration files for various tools (tmux, vim, csh, etc.)
+- **fiscal/**: French income tax engine (IR, PS) and optimizer, Python; see `fiscal/README.md`
 - **Linux/**, **MacOS/**, **Windows/**: Platform-specific scripts and notes
 
 ## Common Development Tasks

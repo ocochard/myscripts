@@ -11,3 +11,4 @@ Somes of my notes and scripts:
 - [tools](tools/README.md)
 - [netint](netint/ai/README.md)
 - [network](network)
+- [fiscal: French income tax engine and optimizer](fiscal/README.md)

@@ -1,0 +1,57 @@
+# Synthetic rule set with round numbers, used only to test the mechanics.
+# Values are NOT real; real values live in rules/ir/revenus-YYYY.yaml.
+annee_revenus: 2099
+loi_de_finances: "test"
+bareme:
+  source: test
+  status: verified
+  tranches:
+    - {seuil: 0, taux: 0.0}
+    - {seuil: 10000, taux: 0.11}
+    - {seuil: 30000, taux: 0.30}
+    - {seuil: 80000, taux: 0.41}
+    - {seuil: 180000, taux: 0.45}
+quotient_familial: {source: test, status: verified, plafond_demi_part: 1800, plafond_parent_isole: 4200, plafond_case_l: 1000}
+decote: {source: test, status: verified, forfait_seul: 900, forfait_couple: 1500, taux: 0.4525}
+abattement_salaires: {source: test, status: verified, taux: 0.10, minimum: 500, maximum: 14000}
+abattement_pensions: {source: test, status: verified, taux: 0.10, minimum_par_personne: 400, maximum_foyer: 4000}
+abattement_age: {source: test, status: verified, seuil_1: 17000, montant_1: 2700, seuil_2: 27000, montant_2: 1350}
+charges: {source: test, status: verified, plafond_pension_enfant_majeur: 7000}
+capitaux: {source: test, status: verified, pfu_taux_ir: 0.128, abattement_dividendes: 0.40}
+micro:
+  source: test
+  status: verified
+  abattement_minimum: 305
+  foncier: {seuil: 15000, abattement: 0.30}
+  bic:
+    vente: {seuil: 188700, abattement: 0.71}
+    services: {seuil: 77700, abattement: 0.50}
+  bnc: {seuil: 77700, abattement: 0.34}
+deficit_foncier: {source: test, status: verified, plafond_global: 10700, plafond_renovation_energetique: 21400}
+prelevements_sociaux:
+  source: test
+  status: verified
+  taux: {fonciers: 0.172, plus_values: 0.172, bic_non_pro: 0.172, rcm: 0.172}
+  csg_deductible: {fonciers: 0.068, plus_values: 0.068, bic_non_pro: 0.068, rcm: 0.068}
+cehr:
+  source: test
+  status: verified
+  seul: [{seuil: 250000, taux: 0.03}, {seuil: 500000, taux: 0.04}]
+  couple: [{seuil: 500000, taux: 0.03}, {seuil: 1000000, taux: 0.04}]
+cdhr: {source: test, status: verified, applicable: false}
+niches: {source: test, status: verified, plafond_global: 10000, plafond_majore: 18000}
+recouvrement: {source: test, status: verified, seuil_mise_en_recouvrement: 61, seuil_restitution: 8}
+dispositifs:
+  dons:
+    {nature: reduction, bucket: hors_plafond, ordre: 10, case: 7UF, source: test, status: verified,
+     params: {taux_75: 0.75, taux_66: 0.66, plafond_75: 1000, plafond_75_majore: 2000, plafond_pct_rni: 0.20}}
+  scolarite: {nature: reduction, bucket: hors_plafond, ordre: 5, case: 7EC, source: test, status: verified, params: {college: 61, lycee: 153, superieur: 183}}
+  emploi_domicile:
+    {nature: credit, bucket: global, ordre: 0, case: 7DB, source: test, status: verified, taux: 0.50,
+     params: {plafond_base: 12000, majoration: 1500, plafond_max: 15000, plafond_premiere_annee: 15000,
+              plafond_max_premiere_annee: 18000, plafond_invalidite: 20000}}
+  garde_enfant: {nature: credit, bucket: global, ordre: 0, case: 7GA, source: test, status: verified, taux: 0.50, plafond: 3500}
+  pme_ir: {nature: reduction, bucket: global, ordre: 20, case: 7CF, source: test, status: verified, taux: 0.18, plafond: 50000, plafond_couple: 100000}
+  sofica: {nature: reduction, bucket: majore, ordre: 30, case: 7FN, source: test, status: verified, taux: 0.30, plafond: 18000, params: {plafond_pct_rng: 0.25}}
+  pinel: {nature: reduction, bucket: global, ordre: 40, case: 7QI, source: test, status: verified}
+  girardin_industriel: {nature: reduction, bucket: majore, quote_part_plafond: 0.44, ordre: 50, case: 7KH, source: test, status: verified}

@@ -1,0 +1,24 @@
+# Optimizer assumptions for payments made in 2026 (income year 2026).
+# Every number here is a belief, not a fact: change them and compare plans.
+annee_revenus: 2026
+budget: 15000                # cash available for tax levers before 31.12
+taux_actualisation: 0.03     # return of the best alternative use of that cash
+risque_max: eleve            # faible | modere | eleve | tres_eleve
+blocage_max_ans: 25
+pas: 250                     # allocation granularity (euros)
+leviers:
+  per:
+    rendement: 0.04
+    frais: 0.007
+    annees_avant_retraite: 20
+    tmi_sortie: 0.11         # expected marginal rate in retirement
+  fcpi:
+    rendement: 0.0           # historical FCPI performance is poor; be conservative
+    frais: 0.035
+    blocage_ans: 7
+    risque: tres_eleve
+  sofica:
+    valeur_rachat: 0.85
+    blocage_ans: 8
+  girardin_industriel:
+    taux_reduction: 1.12

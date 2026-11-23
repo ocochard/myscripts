@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fiscal"
+version = "0.1.0"
+description = "Local-first French income tax engine (IR, PS) and optimizer"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.6", "pyyaml>=6", "typer>=0.12", "pdfplumber>=0.11"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "hypothesis>=6"]
+
+[project.scripts]
+fiscal = "fiscal.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

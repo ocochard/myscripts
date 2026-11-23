@@ -1,0 +1,10 @@
+# Personal tax data never enters the repository.
+*.pdf
+private/
+foyers/
+inbox/
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.hypothesis/

@@ -1,0 +1,29 @@
+# Fictitious household, income 2025. Copy to foyers/ (git-ignored) for real data.
+annee_revenus: 2025
+situation: marie
+declarants:
+  - naissance: 1982-03-14
+    salaires: 72000          # 1AJ
+    per_versements: 6000     # 6NS
+    per_plafond_disponible: 21000
+  - naissance: 1984-09-02
+    salaires: 41000          # 1BJ
+    per_plafond_disponible: 9000
+personnes_a_charge:
+  - naissance: 2014-05-01
+  - naissance: 2017-11-20
+capitaux:
+  dividendes: 3000           # 2DC
+  interets: 800              # 2TR
+  plus_values: 2500          # 3VG
+fonciers:
+  regime: micro
+  recettes: 9600             # 4BE
+avantages:
+  - dispositif: dons
+    interet_general: 1200    # 7UF
+  - dispositif: emploi_domicile
+    depenses: 4800           # 7DB
+    majorations: 2
+prelevements:
+  pas_preleve: 9500

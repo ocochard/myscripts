@@ -1,0 +1,230 @@
+# Income year 2026, déclaration 2027. PROVISIONAL.
+# LF 2027 is not enacted yet: every value below is the 2025 value carried over
+# and marked unverified, except where a 2026 change is already law:
+#   - PS on produits de placement at 18.6 % from 1.1.2026 (LFSS 2026 art. 12): rcm rate already 0.186.
+#   - PER: no deduction for payments at age 70+ (LF 2026 art. 9), unused ceilings
+#     carried 5 years (LF 2026 art. 10): not used by the engine (plafond is an input).
+# Replace this file with sourced values once LF 2027 and the IR 2027 brochure are out.
+annee_revenus: 2026
+loi_de_finances: "provisional: 2025 values pending LF 2027"
+
+bareme:
+  source: "CGI 197-I-1; BROCH p.370 tableau 5, p.379"
+  status: unverified
+  tranches:
+    - {seuil: 0, taux: 0.0}
+    - {seuil: 11600, taux: 0.11}
+    - {seuil: 29579, taux: 0.30}
+    - {seuil: 84577, taux: 0.41}
+    - {seuil: 181917, taux: 0.45}
+
+quotient_familial:
+  source: "CGI 197-I-2; BROCH p.51, p.370, p.380"
+  status: unverified
+  plafond_demi_part: 1807
+  plafond_parent_isole: 4262
+  plafond_case_l: 1079
+  # Not yet used by the engine (raises UnsupportedCase): réduction complémentaire
+  # 1801 per half-part (invalidité / ancien combattant), 2011 for veufs with dependants.
+
+decote:
+  source: "CGI 197-I-4; BROCH p.60 note 69, p.370, p.380"
+  status: unverified
+  forfait_seul: 897
+  forfait_couple: 1483
+  taux: 0.4525
+
+abattement_salaires:
+  source: "CGI 83-3°; BROCH p.52"
+  status: unverified
+  taux: 0.10
+  minimum: 509
+  maximum: 14555
+
+abattement_pensions:
+  source: "CGI 158-5-a; BROCH p.52 (PLF flat 2000 € per person not enacted)"
+  status: unverified
+  taux: 0.10
+  minimum_par_personne: 454
+  maximum_foyer: 4439
+
+abattement_age:
+  source: "CGI 157 bis; BROCH p.60"
+  status: unverified
+  seuil_1: 17670
+  montant_1: 2822
+  seuil_2: 28430
+  montant_2: 1411
+
+charges:
+  source: "CGI 156-II-2°; BROCH p.54 note 12 (doubled to 13710 for a married adult child supported alone: not modelled)"
+  status: unverified
+  plafond_pension_enfant_majeur: 6855
+
+capitaux:
+  source: "CGI 200 A, 158-3-2°; BROCH p.97ff"
+  status: unverified
+  pfu_taux_ir: 0.128
+  abattement_dividendes: 0.40
+
+micro:
+  source: "CGI 50-0, 102 ter, 32; loi Le Meur 2024-1039; BROCH p.45, p.53-54"
+  status: unverified
+  abattement_minimum: 305
+  foncier: {seuil: 15000, abattement: 0.30}
+  bic:
+    vente: {seuil: 188700, abattement: 0.71}
+    services: {seuil: 77700, abattement: 0.50}               # incl. long-term furnished rental (LMNP)
+    meuble_tourisme_classe: {seuil: 77700, abattement: 0.50}
+    meuble_tourisme_non_classe: {seuil: 15000, abattement: 0.30}
+  bnc: {seuil: 77700, abattement: 0.34}
+
+deficit_foncier:
+  source: "CGI 156-I-3°; BROCH p.46, p.218-219 (21400 for E/F/G -> A..D renovation, extended to 2027 by LF 2026 art. 47)"
+  status: unverified
+  plafond_global: 10700
+  plafond_renovation_energetique: 21400
+
+prelevements_sociaux:
+  source: "CSS L136-6, L136-8 (LFSS 2026 art. 12); BROCH p.45, p.61-62"
+  status: unverified
+  # revenus du patrimoine assessed through the 2025 return: 10.6 + 0.5 + 7.5 = 18.6 %.
+  # Fonciers stay at 9.2 % CSG (17.2 %). RCM withheld at source in 2025 were at 17.2 % (not recomputed).
+  taux:
+    fonciers: 0.172
+    plus_values: 0.186
+    bic_non_pro: 0.186
+    rcm: 0.186
+  csg_deductible:
+    fonciers: 0.068
+    plus_values: 0.068
+    bic_non_pro: 0.068
+    rcm: 0.068
+
+cehr:
+  source: "CGI 223 sexies; BROCH p.326"
+  status: unverified
+  seul: [{seuil: 250000, taux: 0.03}, {seuil: 500000, taux: 0.04}]
+  couple: [{seuil: 500000, taux: 0.03}, {seuil: 1000000, taux: 0.04}]
+
+cdhr:
+  source: "CGI 224 (LF 2025 art. 10, extended by LF 2026 art. 2); BOI-IR-CDHR-10; BROCH p.327"
+  status: unverified
+  applicable: true
+  taux_minimum: 0.20
+  seuil_seul: 250000
+  seuil_couple: 500000
+
+niches:
+  source: "CGI 200-0 A; BROCH p.318-319"
+  status: unverified
+  plafond_global: 10000
+  plafond_majore: 18000
+
+recouvrement:
+  source: "CGI 1657-1 bis (61 €, BROCH p.60 note 65); CGI 1965 L (8 € refund: not confirmed)"
+  status: unverified
+  seuil_mise_en_recouvrement: 61
+  seuil_restitution: 8
+
+# ordre: imputation order of réductions (lower first). Approximation pending the
+# full BOFiP order (BOI-IR-LIQ-20-20-20): non-carryable first.
+dispositifs:
+  dons:
+    nature: reduction
+    bucket: hors_plafond
+    ordre: 10
+    case: "7UD/7VM/7UF"
+    source: "CGI 200, 200-1 ter; LF 2026 art. 28; BROCH p.55, p.381"
+    status: unverified
+    params: {taux_75: 0.75, taux_66: 0.66, plafond_75: 1000, plafond_75_majore: 2000, plafond_pct_rni: 0.20}
+  scolarite:
+    nature: reduction
+    bucket: hors_plafond
+    ordre: 5
+    case: "7EA/7EC/7EF"
+    source: "CGI 199 quater F; BROCH p.55-59, p.381 (shared custody halves: not modelled)"
+    status: unverified
+    params: {college: 61, lycee: 153, superieur: 183}
+  emploi_domicile:
+    nature: credit
+    bucket: global
+    ordre: 0
+    case: 7DB
+    source: "CGI 199 sexdecies; BROCH p.57"
+    status: unverified
+    taux: 0.50
+    params: {plafond_base: 12000, majoration: 1500, plafond_max: 15000, plafond_premiere_annee: 15000,
+             plafond_max_premiere_annee: 18000, plafond_invalidite: 20000}
+  garde_enfant:
+    nature: credit
+    bucket: global
+    ordre: 0
+    case: 7GA
+    source: "CGI 200 quater B; BROCH p.57 (1750 per child in shared custody: enter the halved cap's spending)"
+    status: unverified
+    taux: 0.50
+    plafond: 3500
+  pme_ir:
+    nature: reduction
+    bucket: global
+    ordre: 20
+    case: 7CF
+    source: "CGI 199 terdecies-0 A; BROCH p.56"
+    status: unverified
+    taux: 0.18
+    plafond: 50000
+    plafond_couple: 100000
+  fcpi:
+    nature: reduction
+    bucket: global
+    ordre: 21
+    case: "7GQ"
+    source: "CGI 199 terdecies-0 A VI; BROCH p.56 (18 % to 27.9.2025, 25 % from 28.9.2025)"
+    status: unverified
+    taux: 0.18
+    plafond: 12000
+    plafond_couple: 24000
+    params: {taux_majore: 0.25}
+  fip_corse_outremer:
+    nature: reduction
+    bucket: global
+    ordre: 22
+    case: "7FL/7FM"
+    source: "CGI 199 terdecies-0 A VI bis/ter; BROCH p.56 (FIP métropole: no réduction in 2025)"
+    status: unverified
+    taux: 0.30
+    plafond: 12000
+    plafond_couple: 24000
+  sofica:
+    nature: reduction
+    bucket: majore
+    ordre: 30
+    case: 7FN
+    source: "CGI 199 unvicies; BROCH p.58 (30/36/48 %: base rate here)"
+    status: unverified
+    taux: 0.30
+    plafond: 18000
+    params: {plafond_pct_rng: 0.25}
+  pinel:
+    nature: reduction
+    bucket: global
+    ordre: 40
+    case: "7Q*"
+    source: "CGI 199 novovicies; BROCH p.257 (investments to 31.12.2024; yearly fraction entered as-is)"
+    status: unverified
+  denormandie:
+    nature: reduction
+    bucket: global
+    ordre: 41
+    case: "7N*"
+    source: "CGI 199 novovicies; BROCH p.265"
+    status: unverified
+  girardin_industriel:
+    nature: reduction
+    bucket: majore
+    quote_part_plafond: 0.44
+    ordre: 50
+    case: "7KH.."
+    source: "CGI 199 undecies B; BROCH p.316 note 3 (44 %, or 34 % with rétrocession: not modelled)"
+    status: unverified
