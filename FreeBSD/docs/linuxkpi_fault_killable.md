@@ -212,9 +212,13 @@ its original kernel. 1920x1080 300-frame clips; VA-API through ffmpeg 9.0.2; eac
 | ZBook | encode H.264, HEVC, `low_power 0`, CQP and VBR | 300 frames each | 300 frames each |
 | ZBook | encode `low_power 1` | fails cleanly, exit 178 | same |
 | ZBook | vkmark | 70343, 67099, 58895 | 67610, 71302, 66017, 60408 |
+| ZBook | LLM load: `MODEL=qwen38-q8 CTX=32768 LLM/llmsrv.sh` (llama.cpp b1b770d90, Vulkan), 6 requests of 1925 prompt + 256 generated tokens | prompt 273-292 t/s, generation 7.2 t/s | prompt 279-292 t/s, generation 7.2 t/s |
+| ZBook | `kill -9` of llama-server during a generation | gone in 1 s | gone in 1 s |
 | X1 Carbon, ZBook | `page rename failed` messages, stuck processes during the regression runs | none | none |
 
 The vkmark spread between runs (about 10%) is larger than any difference between the kernels.
+The ZBook LLM baseline ran on `kernel.evdevtest` (212babfc84dd: the ZBook base plus an evdev change, no LinuxKPI change),
+the patched run on 9f0a9cd7ffcf plus this patch.
 
 Not tested: a desktop session (Xorg or Wayland) on the patched kernels, OpenGL, amdgpu under memory
-pressure, other LinuxKPI drivers (nvidia-drm), and the Xorg hang of drm-kmod#481.
+pressure (the LLM run used 29 GB of 96 GB), other LinuxKPI drivers (nvidia-drm), and the Xorg hang of drm-kmod#481.
