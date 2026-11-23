@@ -95,7 +95,7 @@ The six loader/md(4) memdisk fixes are summarized in a table in
 - [freebsd-drm-kmod-vulkan.md](freebsd-drm-kmod-vulkan.md): drm-kmod Vulkan load hang with a 106 GB model on Strix Halo
 - [mtl_anv_no_engines.md](mtl_anv_no_engines.md): Meteor Lake, ANV rejects the GPU with drm-latest-kmod 6.12 (i915 UAPI); resolved since 6.12.85
 - [mtl_media_gt.md](mtl_media_gt.md): hardware video on Meteor Lake: drm-kmod skips the media GT, and LinuxKPI `vmap()` ignores write-combining, so GT1's GuC fails its signature check. Patches: [mtl_media_gt.patch](mtl_media_gt.patch) (module only), or [mtl_media_gt_unskip.patch](mtl_media_gt_unskip.patch) with the kernel fix [linuxkpi_vmap_prot.patch](linuxkpi_vmap_prot.patch)
-- [linuxkpi_rename_sigbus.md](linuxkpi_rename_sigbus.md): a LinuxKPI device mapping fault retried forever when a page was mapped by another mapping of the same buffer (i915 H.264 VA-API encode on Raptor Lake), leaving an unkillable process; the fault now fails. Patch: [linuxkpi_rename_sigbus.patch](linuxkpi_rename_sigbus.patch)
+- [linuxkpi_fault_killable.md](linuxkpi_fault_killable.md): a LinuxKPI device mapping fault retried forever when a page was held by another mapping of the same buffer (i915 H.264 VA-API encode on Raptor Lake), so `kill -9` could not end the process; the retry loop now gives up once the process is killed. Patch: [linuxkpi_fault_killable.patch](linuxkpi_fault_killable.patch)
 - [debug.openblas.md](debug.openblas.md): debugging a port build crash (`math/openblas` SIGBUS)
 - [ACPI_AMW0_firmware_error.md](ACPI_AMW0_firmware_error.md): reading an ACPI firmware error with acpica-tools (`AMW0` / `EC0._REG`)
 - [TPM_IRQ.md](TPM_IRQ.md): TPM TIS "Failed to switch to ready state" on ST33 chips

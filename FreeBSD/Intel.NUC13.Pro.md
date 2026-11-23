@@ -225,12 +225,12 @@ Known limitation: [freebsd/drm-kmod#481](https://github.com/freebsd/drm-kmod/iss
 "linuxkpi can't [have] two live mappings of the same page") and [PR 296195](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=296195)
 ("Xorg hangs in lkpi_vmf_insert_pfn_prot_locked").
 
-Encoders on a kernel with the containment patch below (2026-11-23): only `h264_vaapi` with `low_power 0`
+Encoders on a kernel with the first containment attempt (2026-11-23): only `h264_vaapi` with `low_power 0`
 (the default, `EncSlice`) hits the double mapping; `h264_vaapi -low_power 1` and `hevc_vaapi` (both modes) encode 300 frames,
 CQP and VBR. Workaround for H.264: `-low_power 1`.
 
-Containment patch: [docs/linuxkpi_rename_sigbus.md](docs/linuxkpi_rename_sigbus.md) (the process gets SIGSEGV within a second
-instead of hanging; tested on this machine).
+Containment patch: [docs/linuxkpi_fault_killable.md](docs/linuxkpi_fault_killable.md): the encode still spins, but `kill -9`
+now ends it within a second (tested on this machine, and checked for regressions on a Meteor Lake and a Strix Halo laptop).
 
 Fix directions:
 
