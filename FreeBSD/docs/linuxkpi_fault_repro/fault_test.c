@@ -47,16 +47,22 @@ touch(volatile unsigned char *p, int page)
 }
 
 static void
-scenario(const char *name, int mode, const int *pages, int npages)
+set_mode(int mode)
+{
+	if (sysctlbyname("debug.lkpi_fault.mode", NULL, NULL, &mode,
+	    sizeof(mode)) != 0)
+		err(1, "sysctl mode");
+}
+
+/* modes[i] is the handler mode for the read of pages[i]. */
+static void
+scenario(const char *name, const int *modes, const int *pages, int npages)
 {
 	pid_t pid;
 	int fd, i, status;
 	char cmd[128];
 
-	if (sysctlbyname("debug.lkpi_fault.mode", NULL, NULL, &mode,
-	    sizeof(mode)) != 0)
-		err(1, "sysctl mode");
-	printf("== %s (mode %d)\n", name, mode);
+	printf("== %s\n", name);
 	fflush(stdout);
 	pid = fork();
 	if (pid == 0) {
@@ -71,8 +77,11 @@ scenario(const char *name, int mode, const int *pages, int npages)
 		    MAP_SHARED, fd, 0);
 		if (p == MAP_FAILED)
 			err(1, "mmap");
-		for (i = 0; i < npages; i++)
+		for (i = 0; i < npages; i++) {
+			set_mode(modes[i]);
+			printf("  [mode %d]", modes[i]);
 			touch(p, pages[i]);
+		}
 		_exit(0);
 	}
 	for (i = 0; i < 10; i++) {
@@ -104,11 +113,15 @@ main(void)
 {
 	static const int p0[] = { 0 };
 	static const int p30[] = { 3, 0 };
+	static const int m0[] = { 0 }, m1[] = { 1 };
+	static const int m22[] = { 2, 2 }, m20[] = { 2, 0 };
 
 	setvbuf(stdout, NULL, _IONBF, 0);
-	scenario("control: handler inserts the page", 0, p0, 1);
-	scenario("#3: handler returns VM_FAULT_SIGBUS", 1, p0, 1);
+	scenario("control: handler inserts the page", m0, p0, 1);
+	scenario("#3: handler returns VM_FAULT_SIGBUS", m1, p0, 1);
 	scenario("#4: handler inserts pages 0-1, then SIGBUS on page 3; "
-	    "then read page 0", 2, p30, 2);
+	    "then read page 0, handler still failing", m22, p30, 2);
+	scenario("#4b: same failure on page 3; then read page 0 with the "
+	    "handler inserting again", m20, p30, 2);
 	return (0);
 }

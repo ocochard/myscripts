@@ -1,4 +1,4 @@
-From b2936ef4dc75b44b064e4d68d12e5971da4e260b Mon Sep 17 00:00:00 2001
+From c6edd0febc4d7d2c025eba85482be7550213c526 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 23 Nov 2026 15:15:32 +0100
 Subject: [PATCH] linuxkpi: Make a fault handler's SIGBUS fail the fault
@@ -13,14 +13,16 @@ Pages the handler inserted before the error stay exclusive-busy, since
 vm_fault_populate() returns at once on failure.  The next fault on one
 of them sleeps forever, and kill -9 cannot end the process.
 
-Translate VM_FAULT_SIGBUS to VM_PAGER_ERROR, and release the pages the
-handler busied when populate fails.
+Translate VM_FAULT_SIGBUS to VM_PAGER_ERROR, so the access fails (the
+process gets SIGSEGV), and on any populate failure remove the pages the
+handler inserted, so the next fault asks the driver again rather than
+mapping pages the driver did not finish setting up.
 ---
- sys/compat/linuxkpi/common/src/linux_compat.c | 21 ++++++++++++++++++-
- 1 file changed, 20 insertions(+), 1 deletion(-)
+ sys/compat/linuxkpi/common/src/linux_compat.c | 25 ++++++++++++++++++-
+ 1 file changed, 24 insertions(+), 1 deletion(-)
 
 diff --git a/sys/compat/linuxkpi/common/src/linux_compat.c b/sys/compat/linuxkpi/common/src/linux_compat.c
-index 08c7cfdac8ed..3093495dc9a2 100644
+index 08c7cfdac8ed..acc269bc4d9e 100644
 --- a/sys/compat/linuxkpi/common/src/linux_compat.c
 +++ b/sys/compat/linuxkpi/common/src/linux_compat.c
 @@ -507,8 +507,14 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
@@ -56,19 +58,23 @@ index 08c7cfdac8ed..3093495dc9a2 100644
  		break;
  	case VM_FAULT_NOPAGE:
  		/*
-@@ -570,6 +578,17 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+@@ -570,6 +578,21 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
  	}
  	up_write(&vmap->vm_mm->mmap_sem);
  	VM_OBJECT_WLOCK(vm_obj);
 +
-+	/* On failure, release the pages the fault handler busied. */
++	/*
++	 * On failure, take back the pages the handler inserted and busied,
++	 * so that the next fault asks the driver again.
++	 */
 +	if (err != VM_PAGER_OK) {
 +		for (i = pfn_first; i < pfn_first + pfn_count; i++) {
 +			m = vm_page_lookup(vm_obj, i);
-+			if (m != NULL) {
-+				vm_page_deactivate(m);
-+				vm_page_xunbusy(m);
-+			}
++			if (m == NULL || !vm_page_xbusied(m))
++				continue;
++			if ((m->oflags & VPO_UNMANAGED) == 0)
++				pmap_remove_all(m);
++			vm_page_remove(m);
 +		}
 +	}
  	return (err);
