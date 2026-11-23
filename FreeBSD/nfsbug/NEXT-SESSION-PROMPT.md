@@ -9,9 +9,10 @@ stopped before its jail is removed), moved that hook's work to a task to
 avoid a deadlock, added two tests that a removed server jail goes away,
 rebased everything onto main 6edecf52def6, squashed #9 and #10 into one
 commit, measured why NLM cannot run in a jail and added an NFSv3 case
-without NLM (session 34d90969, 2026-11-21 to 11-22). Earlier sessions:
+without NLM, then built each branch alone and ran all 13 cases on the
+final heads (session 34d90969, 2026-11-21 to 11-23). Earlier sessions:
 4a7ee611 (2026-11-02 to 11-18). The `nfsbug/` docs are committed and
-pushed in myscripts (last: fa9e41e). Copy the block below verbatim into
+pushed in myscripts (last: 973094a). Copy the block below verbatim into
 the fresh session as the first user message.
 
 State at the end: no coding item left. Next steps are mine (file the PRs,
@@ -139,9 +140,9 @@ add `PR:` lines to the commits and the #6 PR number to the
   (`v3_basic`).
 
 **How the tests are run** (bhyve VM, since a client bug can hang the host):
-- The last full test kernel is in `/tmp/kobj-new-NODEBUG` and
-  `/tmp/kobj-new-DBG`, built from `/tmp/nfsnew-src`: upstream/main
-  6edecf52def6 with all 8 commits cherry-picked, in this order:
+- The last full test kernel is in `/tmp/kobj-final-NODEBUG` and
+  `/tmp/kobj-final-DBG`, built from `/tmp/nfsfinal-src`: upstream/main
+  6edecf52def6 with the 7 final commits cherry-picked, in this order:
   `nfscl-jail`, `kgss-vnet`, `upstream/main..nfscbd-jail`,
   `upstream/main..nfsd-jail-dying`, `upstream/main..session-leak` (the
   last range holds the tests and #6). Do the same for a fresh one; with #6
@@ -183,7 +184,7 @@ add `PR:` lines to the commits and the #6 PR number to the
   exclusivity kyua uses with `kyua list -v`, not `kyua report`.
 - `/tmp` may be gone after a reboot; recreate both scripts from below. The
   scratch worktrees `/tmp/nfsall-src`, `/tmp/nfscbd-src`, `/tmp/nfsleak-src`,
-  `/tmp/nfsnew-src` are then stale entries: `git -C ~/freebsd-src worktree prune`. The
+  `/tmp/nfsnew-src`, `/tmp/nfsfinal-src` are then stale entries: `git -C ~/freebsd-src worktree prune`. The
   experiment scripts of this session were in `/tmp/delegexp`,
   `/tmp/dyingexp` and `/tmp/delegexp-tools/rpcdump.py` (prints every RPC
   call and reply of a port 2049 pcap).
