@@ -115,7 +115,7 @@ The DSP program and the tuning come from linux-firmware, in Cirrus formats:
   The base address of each algorithm is not in the file: the driver reads it from a table that the running program keeps in XM.
 
 A region offset counts in DSP words; turning it into a register address depends on the memory type
-(`cs_region_to_reg()`, `cs35l54.c:363`): 4 bytes per word for unpacked memory, 3 bytes for packed XM/YM, 5 bytes for PM.
+(`cs_region_to_reg()`, `cs35l54.c:422`): 4 bytes per word for unpacked memory, 3 bytes for packed XM/YM, 5 bytes for PM.
 
 ## 2. The problem
 
@@ -161,7 +161,7 @@ The audio path (solid arrows) already worked; the patch adds the control path (d
 
 ### 3.1 The driver, `sys/dev/sound/pci/hda/cs35l54.c`
 
-**Attach** (`cs35l54_attach()`, `cs35l54.c:1104`):
+**Attach** (`cs35l54_attach()`, `cs35l54.c:1192`):
 read the amplifier list from `_DSD` (`cs_get_amps()`, `:980`), the platform id from `_SUB` (`cs_get_sub()`, `:1025`)
 and the reset GPIO from `_CRS` (`cs_get_reset()`, `:1067`).
 The firmware download takes seconds and sleeps on I2C, so it runs in a taskqueue thread;
@@ -183,9 +183,9 @@ Each amplifier is matched to its entry by a silicon id read from its OTP memory.
 The values go into four controls of the protection algorithm (`CAL_AMBIENT`, `CAL_R`, `CAL_STATUS`, `CAL_CHECKSUM`),
 whose offsets come from the `.wmfw` metadata (`cs_find_ctl()`, `:566`).
 
-**Play and pause** (`cs_play()`, `:816`, `cs_stop()`, `:844`): mailbox `AUDIO_PLAY`, wait for power state PS0, enable the audio port inputs; and the reverse.
+**Play and pause** (`cs_play()`, `:866`, `cs_stop()`, `:916`): per amplifier, mailbox `AUDIO_PLAY`, wait for power state PS0, enable the audio port inputs (as Linux `cs35l56_hda_play()` does); and the reverse.
 
-**Sysctls** (`dev.cs35l54.0.*`): `loaded`, `play` and `volume`, and `subsystem`, the `_SUB` it matches against the codec,
+**Sysctls** (`dev.cs35l54.0.*`): `loaded` and `play` (read-only), `volume`, and `subsystem`, the `_SUB` it matches against the codec,
 so that a tool such as [hdaa2dot](../hdaa2dot) can draw the amplifiers behind the codec's speaker pin ([example](../soundsetup.md)).
 
 **Suspend and resume**: pause on suspend; on resume (`cs_resume_task()`, `:913`) download again if the amplifiers lost their program, otherwise restart a running stream.
@@ -204,7 +204,7 @@ if (speaker)
 ```
 
 The amplifier driver registers for `hdaa_speaker`, ignores codecs whose subsystem id differs from its `_SUB`,
-and queues the I2C work to a task (`cs_speaker_event()`, `cs35l54.c:942`): the handler runs in the trigger path and must not sleep.
+and queues the I2C work to a task (`cs_speaker_event()`, `cs35l54.c:1029`): the handler runs in the trigger path and must not sleep.
 
 ### 3.3 Installing the firmware: `fwget(8)` and the port
 
@@ -219,7 +219,7 @@ The port fetches the files from linux-firmware (tag 20261019) and installs them 
 it is the word after the end of the previous read; the next words are correct.
 Reading 0x4804, whose reset value is 0x28, returned 0x18180200, the value of 0x4808.
 Linux reads the same chips correctly. The cause is not found.
-The driver reads one extra word starting 4 bytes early and drops it (`cs_read()`, `cs35l54.c:205`), which is correct with or without the problem.
+The driver reads one extra word starting 4 bytes early and drops it (`cs_read()`, `cs35l54.c:265`), which is correct with or without the problem.
 
 **`device_get_property()` on an I2C child hangs the machine.**
 The first version read `cirrus,dev-index` with `device_get_property()`.
@@ -254,7 +254,6 @@ and the rebased driver passed the rows marked "rebased" below:
 | Configuration | Result |
 |---|---|
 | `kldload`, firmware from raw files | `cs35l540: 4 amplifiers, firmware 3.11.18`, `dev.cs35l54.0.loaded: 1` (also rebased) |
-| `sysctl dev.cs35l54.0.play=1` with a 440 Hz tone on `pcm4` | sound (heard; also rebased, on the stock kernel) |
 | Test kernel with the hdaa hook, tone with no sysctl | `play` goes 0 -> 1 -> 0 with the stream; sound (heard; also rebased driver, on the old-base test kernel) |
 | YouTube in Chromium through PulseAudio | sound; pause/resume restarts at once |
 | Calibration | each amplifier matched its UEFI entry by silicon id; control addresses and values for AMP1 equal the Linux driver's |
@@ -264,6 +263,76 @@ and the rebased driver passed the rows marked "rebased" below:
 | `kldunload`, then `kldload` of the module with the `subsystem` sysctl (2026-11-21) | firmware and calibration downloaded again in 4 s; `subsystem: 103c8d01`, equal to `dev.hdaa.1.%pnpinfo` |
 | `fwget -n` with the acpi subsystem | prints `sound-firmware-cirrus-cs35l54` |
 | Real suspend-to-idle | untested |
+| Review changes (2026-11-23: layout, named constants, read-only `play`, probe over the ID table, one PLAY/PS0 loop), module swapped in with devd stopped | 4 amplifiers calibrated, firmware 3.11.18; `sysctl dev.cs35l54.0.play=1` refused (`oid 'dev.cs35l54.0.play' is read only`); `play` 0 -> 1 -> 0 around a tone; two 3 s 440 Hz tones measured through the microphones at 3.00 and 3.05 s ([cs35l54_tone_measure.py](cs35l54_tone_measure.py)); no PS0 or I2C error |
+| `buildkernel GENERIC` (review changes) | no warning |
 | Attach at boot (`kld_list`) | untested |
 | Other laptops, other chips | untested |
 | `fwget` installing from a package repository | untested (package not in a repository) |
+
+Sound devices after loading `snd_acp` and `snd_cs35l54` (the log
+christos asked for), 2026-11-23:
+
+```
+hdac0: <ATI (0x1640) HDA Controller> mem 0xa0448000-0xa044bfff at device 0.1 on pci3
+hdac1: <AMD Raven HDA Controller> mem 0xa0440000-0xa0447fff at device 0.6 on pci3
+hdacc0: <ATI R6xx HDA CODEC> at cad 0 on hdac0
+hdaa0: <ATI R6xx Audio Function Group> at nid 1 on hdacc0
+pcm0: <ATI R6xx (HDMI)> at nid 3 on hdaa0
+pcm1: <ATI R6xx (HDMI)> at nid 5 on hdaa0
+pcm2: <ATI R6xx (HDMI)> at nid 7 on hdaa0
+pcm3: <ATI R6xx (HDMI)> at nid 9 on hdaa0
+hdacc1: <Realtek ALC245 HDA CODEC> at cad 0 on hdac1
+hdaa1: <Realtek ALC245 Audio Function Group> at nid 1 on hdacc1
+pcm4: <Realtek ALC245 (Analog)> at nid 23 and 25 on hdaa1
+pcm5: <Realtek ALC245 (Left Analog Headphones)> at nid 33 on hdaa1
+pcm6: <AMD ACP 7.x digital microphones> mem 0xa0400000-0xa043ffff,0x3000000000-0x30007fffff irq 37 at device 0.5 on pci3
+cs35l540: <Cirrus Logic CS35L54 speaker amplifiers> at addr 0x30 on iicbus18
+cs35l540: 0x30: calibration R 7144, ambient 25 C
+cs35l540: 0x31: calibration R 7632, ambient 25 C
+cs35l540: 0x32: calibration R 7540, ambient 25 C
+cs35l540: 0x33: calibration R 7023, ambient 25 C
+cs35l540: 4 amplifiers, firmware 3.11.18
+
+$ cat /dev/sndstat
+Installed devices:
+pcm0: <ATI R6xx (HDMI)> (play)
+pcm1: <ATI R6xx (HDMI)> (play)
+pcm2: <ATI R6xx (HDMI)> (play)
+pcm3: <ATI R6xx (HDMI)> (play)
+pcm4: <Realtek ALC245 (Analog)> (play/rec) default
+pcm5: <Realtek ALC245 (Left Analog Headphones)> (play)
+pcm6: <AMD ACP 7.x digital microphones> (rec)
+No devices installed from userspace.
+
+$ sysctl dev.cs35l54.0
+dev.cs35l54.0.loaded: 1
+dev.cs35l54.0.volume: -30
+dev.cs35l54.0.play: 0
+dev.cs35l54.0.%pnpinfo: _HID=CSC3554 _UID=1 _CID=none
+dev.cs35l54.0.%location: addr=0x30 handle=\_SB_.I2CB.SPKR
+dev.cs35l54.0.%driver: cs35l54
+dev.cs35l54.0.%parent: iicbus18
+```
+
+The amplifiers play the stream of `pcm4`: the HDA codec drives them
+through its I2S port, and `snd_cs35l54` follows that stream's start and
+stop.
+
+## 5. Review
+
+[#127](https://ron-dev.freebsd.org/FreeBSD/src/pulls/127), christos.
+Answers checked against the code and Linux `cs35l56*` drivers; changes
+marked "done" are tested (section 4).
+
+| Point | Answer | Change |
+|---|---|---|
+| Use the `snd_hda:` prefix, not `hdaa:` | Main uses `snd_hda:` for 22 of the last 40 commits in that directory. | done: retitle the hdaa commit |
+| Only this model, or a generic name? | The driver uses only CS35L56-family registers and takes the platform and amplifier count from ACPI; what ties it to CS35L54 B0 is the one-entry HID table, the `cs35l54-b0` firmware prefix, the B0 revision check and two firmware register addresses that move on B2. Linux drives CS35L54/56/57 with one driver. | keep `snd_cs35l54`, the chip tested: Cirrus added the CS35L54 and CS35L57 to Linux's `cs35l56` driver in 2024 because they "have the same control interface as the CS35L56" ([patch](https://patches.linaro.org/project/alsa-devel/patch/20240308135900.603192-3-rf@opensource.cirrus.com/)), and Linux now covers CS35L54/56/57/63 with it ([docs](https://docs.kernel.org/sound/codecs/cs35l56.html)); `cs35l56` is only the first chip Linux supported, not a Cirrus family name. Adding a chip is an ID table entry with its type and per-revision addresses; rename if the maintainer prefers a family name |
+| dmesg of the sound devices | No complete boot log yet; attach at boot is untested (section 4). | done: log after loading the modules, above; attach at boot is still untested |
+| Structs and defines scattered | Defines, structs, prototypes and tables sit in several places; two values are inline (volume layout, ASP RX enable bits). | done: move all to the top, name the constants |
+| `hdaa_speaker.h`: why not an existing header? | `hdaa.h` needs sound(4) headers, `hdac.h` the generated `hdac_if.h`; the amplifier driver needs one typedef and one event, so a small header keeps it independent. `hdac.h` would work if preferred. | none unless asked |
+| Man page list "should be sorted" | SEE ALSO is already in mdoc(7) order (section, then name); `mandoc -Tlint` is clean. | ask which list is meant |
+| Volume encoding "magic" | USER_VOLUME bits 15:6, 10-bit two's complement, 0.25 dB steps, -100 to +12 dB (Linux `cs35l56.h`). | done: named constants |
+| Writable `play` sysctl | A test hook from before the hdaa event; writing 0 during a stream silences the speakers until the next stream. | done: read-only |
+| Traverse `cs35l54_ids[]` in probe | Probe checks only entry 0. | done: loop over the table, as iichid does |
+| Separate PS0 wait loop | Meant to start all amplifiers before waiting, but PS0 is reached at once (Linux trace); Linux does PLAY, PS0 wait, port enable per amplifier. | done: one loop |

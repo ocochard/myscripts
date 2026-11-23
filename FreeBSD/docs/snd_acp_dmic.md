@@ -98,7 +98,7 @@ flowchart LR
 conversion, mixing and the `/dev/dsp` interface. A hardware driver gives
 it channels: methods to set format and block size, start and stop
 (`trigger`), and report the position in the ring (`getptr`). It calls
-`chn_intr()` each time a block is ready (`acp_intr()`, line 300).
+`chn_intr()` each time a block is ready (`acp_intr()`, line 303).
 
 **Power and reset.** Before use, the ACP is powered on through its
 power-gating state machine (`ACP_PGFSM_CONTROL`/`STATUS`) and reset
@@ -191,15 +191,19 @@ A new `pcm(4)` driver, `snd_acp`, record only:
   `pcm(4)` calls `getptr` before it reads the ring, so the driver
   processes the samples that arrived since the last call in place, and
   only then reports them: it writes zeros over the first 100 ms
-  (`ACP_MUTE_BYTES`, line 114), starts the running average of each
+  (`ACP_MUTE_BYTES`, line 112), starts the running average of each
   channel from its first sample after that, and subtracts it (the
   filter above, saturated to 32 bits). It tracks its progress in bytes
   since the start, not as a ring offset, so the mute window survives the
-  ring wrapping. The sysctl `dev.pcm.N.dc_filter` (line 563, default 1)
-  turns the filter off; the mute stays, since the burst is not sound.
-- Loading (line 655, commit eac669d546ee): `MODULE_PNP_INFO` with
-  vendor 0x1022 and device 0x15e2, so `devmatch(8)` loads the module.
-  The revision and microphone checks stay in probe and attach.
+  ring wrapping. The filter is skipped when `dev.pcm.N.bitperfect` is
+  set, the standard sound(4) switch for unprocessed samples; the mute
+  stays, since the burst is not sound.
+- Interrupt: the PDM DMA interrupt is enabled in `EXT_INTR_CNTL(0)` only,
+  so `acp_intr()` reads and clears `EXT_INTR_STAT(0)` only.
+- Loading: one `pci_device_table` (`acp_ids[]`, vendor 0x1022, device
+  0x15e2) serves `PCI_MATCH()` in probe and `PCI_PNP_INFO()` for
+  `devmatch(8)`. The revision check stays in probe: pci(4) gives devmatch
+  no `revid` to match. The microphone checks stay in attach.
 - Stop, detach, suspend and resume undo or redo the above.
 
 Where the values come from: there is no public datasheet. Register
@@ -258,13 +262,27 @@ analysed on another machine:
 | Test | Result |
 |---|---|
 | start of 6 recordings, filter on and off | first 100 ms exactly zero on both channels; peak after it -21 to -44 dBFS (before: 0 dBFS) |
-| `dc_filter=0`, 3 runs | channel 0 DC from 0.5 to 1 s -23.5 to -23.6 dBFS |
-| `dc_filter=1`, 3 runs | channel 0 DC from 0.5 to 1 s -49.2, -72.1, -88.2 dBFS (first run after load: the drift was not over) |
-| 5 s, `dc_filter=1` | DC -74.7 dBFS channel 0, -92.9 dBFS channel 1 (before: -21.8); peak -37.4 dBFS; -54 to -60 dBFS per window |
+| filter off, 3 runs | channel 0 DC from 0.5 to 1 s -23.5 to -23.6 dBFS |
+| filter on, 3 runs | channel 0 DC from 0.5 to 1 s -49.2, -72.1, -88.2 dBFS (first run after load: the drift was not over) |
+| 5 s, filter on | DC -74.7 dBFS channel 0, -92.9 dBFS channel 1 (before: -21.8); peak -37.4 dBFS; -54 to -60 dBFS per window |
 | filter in the driver vs the same arithmetic in Python on a raw recording | same output shape; both settle to zero after the start |
-| `kldxref -d` | `pnp info for bus pci format U16:vendor;U16:device 1 entries` |
+| `kldxref -d` | `pnp info for bus pci format M16:mask;U16:vendor;U16:device;U16:subvendor;U16:subdevice;U16:class;U16:subclass;U16:revid; 1 entries` |
 | `devmatch -a` with the module unloaded | `unattached: snd_acp.ko` (plain `devmatch` skips a device that had a driver since boot) |
-| boot of kernel zbook-n291263-fcbccb606aad, `snd_acp` in neither `kld_list` nor `loader.conf` | loaded from `/boot/kernel.zbook/snd_acp.ko` by `devmatch`, `pcm6` attached, `dc_filter` 1; 5 s recording: DC -70.6 / -75.0 dBFS |
+| boot of kernel zbook-n291263-fcbccb606aad, `snd_acp` in neither `kld_list` nor `loader.conf` | loaded from `/boot/kernel.zbook/snd_acp.ko` by `devmatch`, `pcm6` attached; 5 s recording: DC -70.6 / -75.0 dBFS |
+
+Review changes (`bitperfect`, one status register, `pci_device_table`),
+2026-11-23: module built from the two commits against the laptop's
+kernel, swapped in with `kldunload`/`kldload`, recorded natively
+(stereo S32_LE, 48 kHz) with Python's `ossaudiodev`:
+
+| Test | Result |
+|---|---|
+| 5 s, filter on | 1920000 bytes; DC -90.5 / -95.9 dBFS |
+| 5 s, `dev.pcm.6.bitperfect=1` | 1920000 bytes; DC on channel 0 -24.0 dBFS: the raw offset |
+| interrupts during a 5 s recording | 471 (about 94/s) |
+| `dev.pcm.6.dc_filter` | no longer exists |
+| `devmatch -a -h` on the new module's `linker.hints` | `pcm6: snd_acp.ko` |
+| `buildkernel GENERIC` on main 6dc19a71f70c | no warning |
 
 Same laptop on Ubuntu (Linux 7.0.0-43) for comparison: quiet -42 to -48
 dBFS per window, clapping peak -2 dBFS. The quieter floor there may be
@@ -291,3 +309,21 @@ the interrupt. No ACP error was provoked, so that path is untested.
 
 Not tested: suspend and resume while recording,
 desktop applications, ACP revisions 0x71 and 0x72, other laptops.
+
+## 5. Review
+
+[#124](https://ron-dev.freebsd.org/FreeBSD/src/pulls/124), christos (line
+numbers of the first commit), with wulf. Answers checked against the code
+and the Linux `sound/soc/amd` drivers; all changes are made and tested
+(section 4).
+
+| Question | Answer | Change |
+|---|---|---|
+| Is the `dc_filter` sysctl needed? | Only to read raw samples (offset included), which is what `dev.pcm.%d.bitperfect` already means. | done: no sysctl, the high-pass is skipped when bitperfect is set; the 100 ms mute stays |
+| Why 2 loops over `EXT_INTR_STAT(n)`? | Copied from Linux's generic ACP handler. PDM is enabled only in `EXT_INTR_CNTL(0)`, so it latches only in `STAT(0)`: 141 of 141 interrupts in the Linux trace, as Linux's PS driver checks. | done |
+| One format: retire `acp_fmt[]`? | Every Linux AMD PDM path accepts only S32_LE (wulf: same on ACP 6.x). The array stays: pcm(4) walks a zero-terminated `fmtlist`; only the channel count (2/4/6 in hardware) could add entries. | none |
+| More than 7.x IDs? | Linux drives 0x70-0x72 with one code path. 0x7D-0x7F use another interrupt register layout and have no Linux PDM support yet. Only 0x70 is tested. | none |
+| Check `acp_ids[]` in probe? | Yes, one table for probe and devmatch: `pci_device_table`, `PCI_MATCH()`, `PCI_PNP_INFO()`. The revision check stays in code: pci(4) pnpinfo has no `revid`, so devmatch could never match it. | done |
+| Clear `running` in detach, as in suspend? | `acp_pdm_stop()` already clears it; suspend sets it back on purpose so resume restarts the DMA. `pcm_unregister()` has stopped the channel before. | none |
+| `mixer_init()`? | No gain to control: Linux shows zero mixer controls for this card, and mixer.c's soft volume covers playback only. | none |
+| How does `getptr` work? | The ACP counts DMA bytes in a 64-bit counter that does not restart; start saves it, getptr returns (count - start) modulo the ring, rounded down to an 8-byte frame, as Linux's PS PDM driver does. | comment added above `acpchan_getptr()` |

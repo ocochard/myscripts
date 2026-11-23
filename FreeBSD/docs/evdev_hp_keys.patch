@@ -1,4 +1,4 @@
-From 2ee07098c642edaa68476ffcba0e21d4d60d657b Mon Sep 17 00:00:00 2001
+From 48e63fef647d68f857fa719d65c400817fc3ca14 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 23 Nov 2026 10:55:04 +0100
 Subject: [PATCH] evdev: Map the HP mic mute and programmable keys on HP only
@@ -18,11 +18,11 @@ Reported by:	llm-postcr
 Fixes:		d34baf1b5ca0 ("evdev: Map the HP mic mute and programmable keys")
 MFC after:	1 week
 ---
- sys/dev/evdev/evdev_utils.c | 49 ++++++++++++++++++++++++++++++++++---
- 1 file changed, 45 insertions(+), 4 deletions(-)
+ sys/dev/evdev/evdev_utils.c | 57 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 53 insertions(+), 4 deletions(-)
 
 diff --git a/sys/dev/evdev/evdev_utils.c b/sys/dev/evdev/evdev_utils.c
-index 07ea01f31432..29f1579ea125 100644
+index 07ea01f31432..ecc4fec8403f 100644
 --- a/sys/dev/evdev/evdev_utils.c
 +++ b/sys/dev/evdev/evdev_utils.c
 @@ -148,16 +148,14 @@ static uint16_t evdev_at_set1_scancodes[] = {
@@ -44,7 +44,7 @@ index 07ea01f31432..29f1579ea125 100644
  	NONE,		NONE,		NONE,		NONE,
  	NONE,		NONE,		NONE,		NONE,
  	NONE,		NONE,		NONE,		NONE,
-@@ -224,6 +222,49 @@ static uint16_t evdev_nfinger_codes[] = {
+@@ -224,6 +222,57 @@ static uint16_t evdev_nfinger_codes[] = {
  	BTN_TOOL_QUINTTAP,
  };
  
@@ -60,6 +60,7 @@ index 07ea01f31432..29f1579ea125 100644
 +	uint8_t		index;
 +	uint16_t	keycode;
 +} evdev_at_quirks[] = {
++	/* hwdb: HP EliteBook, Elite Dragonfly, ProBook, ZBook block */
 +	{ "HP",		"ZBook",		0x81,	KEY_MICMUTE },
 +	{ "HP",		"EliteBook",		0x81,	KEY_MICMUTE },
 +	{ "HP",		"ProBook",		0x81,	KEY_MICMUTE },
@@ -68,9 +69,13 @@ index 07ea01f31432..29f1579ea125 100644
 +	{ "Hewlett-Packard", "ZBook",		0x81,	KEY_MICMUTE },
 +	{ "Hewlett-Packard", "EliteBook",	0x81,	KEY_MICMUTE },
 +	{ "Hewlett-Packard", "ProBook",		0x81,	KEY_MICMUTE },
++	/* hwdb "HP Elite Dragonfly G2" block */
 +	{ "HP",		"Elite Dragonfly G2",	0x68,	KEY_PROG1 },
++	/* Not in hwdb: measured on a ZBook Ultra G1a */
 +	{ "HP",		"ZBook Ultra G1a",	0x68,	KEY_PROG1 },
 +};
++/* Any uint8_t index is in the table. */
++CTASSERT(nitems(evdev_at_set1_scancodes) > UINT8_MAX);
 +
 +static void
 +evdev_at_quirks_init(void *arg __unused)
@@ -83,10 +88,13 @@ index 07ea01f31432..29f1579ea125 100644
 +	    sizeof(product)) == 0)
 +		return;
 +	for (q = evdev_at_quirks; q < evdev_at_quirks + nitems(evdev_at_quirks);
-+	    q++)
-+		if (strncmp(maker, q->maker, strlen(q->maker)) == 0 &&
++	    q++) {
++		/* A quirk only fills a code the generic table leaves out. */
++		if (evdev_at_set1_scancodes[q->index] == NONE &&
++		    strncmp(maker, q->maker, strlen(q->maker)) == 0 &&
 +		    strstr(product, q->product) != NULL)
 +			evdev_at_set1_scancodes[q->index] = q->keycode;
++	}
 +}
 +SYSINIT(evdev_at_quirks, SI_SUB_TUNABLES, SI_ORDER_ANY, evdev_at_quirks_init,
 +    NULL);

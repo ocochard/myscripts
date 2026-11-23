@@ -122,7 +122,7 @@ index b1ecb014a2b0..3b9938cdee5a 100644
 2.56.0
 
 
-From 8a651c2184de02ada8cebc07a4854b2cd2833dc6 Mon Sep 17 00:00:00 2001
+From ce8c6689ec4eee59e2775420f49ef8b9f53c3aab Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Tue, 17 Nov 2026 14:35:24 +0100
 Subject: [PATCH 2/2] acpi_video: Let devmatch load the module
@@ -132,14 +132,14 @@ has no device ID, so nothing loaded it and the brightness keys sent no
 event unless it was loaded by hand.  It now loads on any machine with a
 display controller and attaches only where ACPI provides _DOD and _DOS.
 ---
- sys/dev/acpica/acpi_video.c | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
+ sys/dev/acpica/acpi_video.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
 
 diff --git a/sys/dev/acpica/acpi_video.c b/sys/dev/acpica/acpi_video.c
-index 07fbe54d832b..bf3b6a291a1c 100644
+index 07fbe54d832b..bfe0d856a892 100644
 --- a/sys/dev/acpica/acpi_video.c
 +++ b/sys/dev/acpica/acpi_video.c
-@@ -195,6 +195,18 @@ static driver_t acpi_video_driver = {
+@@ -195,6 +195,20 @@ static driver_t acpi_video_driver = {
  };
  
  DRIVER_MODULE(acpi_video, vgapci, acpi_video_driver, acpi_video_modevent, NULL);
@@ -147,6 +147,8 @@ index 07fbe54d832b..bf3b6a291a1c 100644
 +/*
 + * No device ID identifies ACPI video: let devmatch(8) load the module for
 + * any display controller, the probe then looks for the ACPI methods.
++ * devmatch ignores the description; it matches the whole-table key
++ * class=0x03 (PCI base class display) in the vgapci device's pnpinfo.
 + */
 +static const struct {
 +	const char	*desc;

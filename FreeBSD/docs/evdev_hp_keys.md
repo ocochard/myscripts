@@ -1,6 +1,6 @@
 # evdev: the HP mic mute and programmable keys
 
-Patch: [evdev_hp_keys.patch](evdev_hp_keys.patch), commit 2ee07098c642
+Patch: [evdev_hp_keys.patch](evdev_hp_keys.patch), commit 48e63fef647d
 "evdev: Map the HP mic mute and programmable keys on HP only" on FreeBSD
 main, which fixes the landed d34baf1b5ca0 (#122); in review as
 [#130](https://ron-dev.freebsd.org/FreeBSD/src/pulls/130).
@@ -84,9 +84,19 @@ static const struct evdev_at_quirk {
 };
 ```
 
+Each group of rows names its source in a comment: the hwdb block for HP
+EliteBook, Elite Dragonfly, ProBook and ZBook (micmute), the hwdb block
+for the Elite Dragonfly G2 (prog1), and the measurement on the ZBook Ultra
+G1a, which hwdb does not list. Other vendors are left out on purpose:
+hwdb gives these codes other keys there (section 3).
+
 A `SYSINIT` at `SI_SUB_TUNABLES` reads `smbios.system.maker` and
 `smbios.system.product` with `getenv_string()` and writes the matching
-entries into the table once, before any keyboard attaches. The lookup
+entries into the table once, before any keyboard attaches. A quirk only
+fills an entry the generic table leaves `NONE`, so it can never replace a
+generic mapping, and the first matching quirk wins. A `CTASSERT` checks
+that the table has more than 255 entries, so any `uint8_t` index is in
+range. The lookup
 path is unchanged, and `evdev_support_all_known_keys()` advertises only
 the keys that apply to the machine. The table entries themselves stay
 `NONE`.
@@ -145,3 +155,15 @@ The first version (d34baf1b5ca0, #122, approved by wulf) put both codes
 in the global table. The FreeBSD commit review then reported both
 problems of section 3.1 (POSTCR-d34baf1b5ca0...-1 and -2); this commit is
 the fix.
+
+[#130](https://ron-dev.freebsd.org/FreeBSD/src/pulls/130), imp:
+
+- "Where does this list come from? Do we have a source for other
+  vendors?" systemd's hwdb, per block; the 0x68 row of the ZBook Ultra
+  G1a is a measurement. The rows now carry their source as comments.
+  hwdb maps the same codes to other keys for other vendors, which is why
+  they are not in the list.
+- "Do you need a sanity check here to make sure we're not overwriting a
+  real entry?" Yes: a quirk now only fills a `NONE` entry. Tested again
+  on the ZBook (table 0x81 = 248, 0x68 = 148).
+

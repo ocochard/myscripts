@@ -1,4 +1,4 @@
-From 4a48d48141f8f0bfaf6a7cb491350f90ec72c20e Mon Sep 17 00:00:00 2001
+From d86417597c0ab87a67b326fafe83d7547b6976ae Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sat, 21 Nov 2026 23:49:05 +0100
 Subject: [PATCH 1/2] snd_acp: Add a driver for AMD ACP 7.x digital microphones
@@ -12,10 +12,10 @@ ACP 7.x.
  share/man/man4/Makefile               |   1 +
  share/man/man4/snd_acp.4              |  86 ++++
  sys/conf/files.amd64                  |   1 +
- sys/dev/sound/pci/acp.c               | 626 ++++++++++++++++++++++++++
+ sys/dev/sound/pci/acp.c               | 624 ++++++++++++++++++++++++++
  sys/modules/sound/driver/Makefile     |   4 +
  sys/modules/sound/driver/acp/Makefile |   7 +
- 6 files changed, 725 insertions(+)
+ 6 files changed, 723 insertions(+)
  create mode 100644 share/man/man4/snd_acp.4
  create mode 100644 sys/dev/sound/pci/acp.c
  create mode 100644 sys/modules/sound/driver/acp/Makefile
@@ -138,10 +138,10 @@ index b87c847bfb87..e73e2061715b 100644
  dev/thunderbolt/hcm.c		optional	thunderbolt
 diff --git a/sys/dev/sound/pci/acp.c b/sys/dev/sound/pci/acp.c
 new file mode 100644
-index 000000000000..342216c60046
+index 000000000000..b2f133dcc598
 --- /dev/null
 +++ b/sys/dev/sound/pci/acp.c
-@@ -0,0 +1,626 @@
+@@ -0,0 +1,624 @@
 +/*-
 + * SPDX-License-Identifier: BSD-2-Clause
 + *
@@ -191,8 +191,6 @@ index 000000000000..342216c60046
 +#include <contrib/dev/acpica/include/acpi.h>
 +#include <dev/acpica/acpivar.h>
 +
-+#define	ACP_VENDOR		0x1022
-+#define	ACP_DEVICE		0x15e2
 +
 +/* Address translation unit: how the ACP's DMA reaches system memory. */
 +#define	ACP_ATU_PAGE_SIZE_GRP1	0x0c00
@@ -444,19 +442,14 @@ index 000000000000..342216c60046
 +acp_intr(void *arg)
 +{
 +	struct acp_info *sc = arg;
-+	uint32_t st;
-+	int n;
 +	bool period, running;
 +
-+	period = false;
 +	mtx_lock(&sc->lock);
-+	for (n = 0; n < 2; n++) {
-+		st = acp_rd(sc, ACP_EXT_INTR_STAT(n));
-+		if ((st & ACP_EXT_INTR_PDM_DMA) != 0) {
-+			acp_wr(sc, ACP_EXT_INTR_STAT(n), ACP_EXT_INTR_PDM_DMA);
-+			period = true;
-+		}
-+	}
++	/* Enabled in EXT_INTR_CNTL(0) only, the PDM interrupt latches here. */
++	period = (acp_rd(sc, ACP_EXT_INTR_STAT(0)) &
++	    ACP_EXT_INTR_PDM_DMA) != 0;
++	if (period)
++		acp_wr(sc, ACP_EXT_INTR_STAT(0), ACP_EXT_INTR_PDM_DMA);
 +	running = sc->rch.running;
 +	mtx_unlock(&sc->lock);
 +	if (period && running)
@@ -527,6 +520,11 @@ index 000000000000..342216c60046
 +	return (0);
 +}
 +
++/*
++ * The ACP counts every byte its PDM DMA writes, and the DMA restarts at the
++ * start of the ring on START: the pointer is the count since START, modulo
++ * the ring size, rounded down to a whole frame.
++ */
 +static uint32_t
 +acpchan_getptr(kobj_t obj, void *data)
 +{
@@ -597,12 +595,20 @@ index 000000000000..342216c60046
 +	return (true);
 +}
 +
++static const struct pci_device_table acp_ids[] = {
++	{ PCI_DEV(0x1022, 0x15e2),
++	  PCI_DESCR("AMD ACP 7.x digital microphones") },
++};
++
 +static int
 +acp_probe(device_t dev)
 +{
-+	if (pci_get_vendor(dev) != ACP_VENDOR ||
-+	    pci_get_device(dev) != ACP_DEVICE)
++	const struct pci_device_table *tbl;
++
++	tbl = PCI_MATCH(dev, acp_ids);
++	if (tbl == NULL)
 +		return (ENXIO);
++	/* Not in acp_ids[]: pci(4) gives devmatch(8) no revid to match. */
 +	switch (pci_get_revid(dev)) {
 +	case 0x70:
 +	case 0x71:
@@ -611,7 +617,7 @@ index 000000000000..342216c60046
 +	default:
 +		return (ENXIO);
 +	}
-+	device_set_desc(dev, "AMD ACP 7.x digital microphones");
++	device_set_desc(dev, tbl->descr);
 +	return (BUS_PROBE_DEFAULT);
 +}
 +
@@ -755,16 +761,8 @@ index 000000000000..342216c60046
 +	PCM_SOFTC_SIZE,
 +};
 +
-+static const struct {
-+	uint16_t	vendor;
-+	uint16_t	device;
-+} acp_ids[] = {
-+	{ ACP_VENDOR, ACP_DEVICE },
-+};
-+
 +DRIVER_MODULE(snd_acp, pci, acp_driver, 0, 0);
-+MODULE_PNP_INFO("U16:vendor;U16:device", pci, snd_acp, acp_ids,
-+    nitems(acp_ids));
++PCI_PNP_INFO(acp_ids);
 +MODULE_DEPEND(snd_acp, sound, 1, 1, 1);
 +MODULE_DEPEND(snd_acp, acpi, 1, 1, 1);
 +MODULE_VERSION(snd_acp, 1);
@@ -800,7 +798,7 @@ index 000000000000..5392466bf32c
 2.56.0
 
 
-From 228ca612790e89e423ae3fe2aaf4eb229ba3b5b3 Mon Sep 17 00:00:00 2001
+From b7968752cf9f312e3929fffac3b754e51f04503d Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Tue, 17 Nov 2026 00:40:52 +0100
 Subject: [PATCH 2/2] snd_acp: Mute the start burst and remove the DC offset
@@ -808,42 +806,39 @@ Subject: [PATCH 2/2] snd_acp: Mute the start burst and remove the DC offset
 The PDM microphones start each recording with about 60 ms of
 full-scale noise, then carry a DC offset (-22 dBFS on channel 0 of an
 HP ZBook Ultra G1a).  Mute the first 100 ms and remove the offset with
-a high-pass at about 7.5 Hz, which the dc_filter sysctl can disable.
+a high-pass at about 7.5 Hz, skipped when dev.pcm.N.bitperfect is set.
 ---
- share/man/man4/snd_acp.4 | 10 ++++++-
- sys/dev/sound/pci/acp.c  | 58 ++++++++++++++++++++++++++++++++++++++--
- 2 files changed, 65 insertions(+), 3 deletions(-)
+ share/man/man4/snd_acp.4 |  7 +++++-
+ sys/dev/sound/pci/acp.c  | 54 ++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 58 insertions(+), 3 deletions(-)
 
 diff --git a/share/man/man4/snd_acp.4 b/share/man/man4/snd_acp.4
-index 61f85015ab08..c1458ce3274c 100644
+index 61f85015ab08..91dfef40354a 100644
 --- a/share/man/man4/snd_acp.4
 +++ b/share/man/man4/snd_acp.4
-@@ -72,6 +72,15 @@ driver supports the following devices:
- AMD Audio Coprocessor 7.x (PCI 1022:15e2, revisions 0x70 to 0x72),
- as found in the Ryzen AI Max (Strix Halo) processors
- .El
-+.Sh SYSCTL VARIABLES
-+.Bl -tag -width indent
-+.It Va dev.pcm.%d.dc_filter
-+Remove the DC offset that the microphones carry, with a high-pass filter
-+at about 7.5 Hz.
-+Default 1; 0 delivers the samples unchanged.
-+In both cases the first 100 ms of each recording are muted: the
-+microphones start with a full-scale burst.
-+.El
- .Sh SEE ALSO
+@@ -56,6 +56,12 @@ It provides one recording channel, stereo, 32-bit signed little-endian
+ samples at 48 kHz; the
  .Xr sound 4
- .Sh HISTORY
-@@ -83,4 +92,3 @@ driver first appeared in
+ feeders convert to other formats and rates.
++The driver removes the DC offset that the microphones carry with a
++high-pass filter at about 7.5 Hz, unless
++.Va dev.pcm.%d.bitperfect
++is set.
++The first 100 ms of each recording are muted: the microphones start
++with a full-scale burst.
+ .Pp
+ The driver attaches only when the firmware reports digital microphones:
+ the ACP pin configuration must route the PDM interface, and the ACPI
+@@ -83,4 +89,3 @@ driver first appeared in
  .An Olivier Cochard Aq Mt olivier@FreeBSD.org
  .Sh BUGS
  The microphones' gain cannot be changed; there is no mixer.
 -Recordings carry a DC offset that the driver does not remove.
 diff --git a/sys/dev/sound/pci/acp.c b/sys/dev/sound/pci/acp.c
-index 342216c60046..8083deaa8519 100644
+index b2f133dcc598..aa0f8a945cd8 100644
 --- a/sys/dev/sound/pci/acp.c
 +++ b/sys/dev/sound/pci/acp.c
-@@ -110,6 +110,8 @@
+@@ -108,6 +108,8 @@
  #define	ACP_RATE		48000
  #define	ACP_POLL_US		5
  #define	ACP_TIMEOUT_US		500
@@ -852,7 +847,7 @@ index 342216c60046..8083deaa8519 100644
  
  struct acp_info;
  
-@@ -118,6 +120,8 @@ struct acp_chinfo {
+@@ -116,6 +118,8 @@ struct acp_chinfo {
  	struct pcm_channel	*channel;
  	struct acp_info		*parent;
  	uint64_t		start_pos;
@@ -861,15 +856,7 @@ index 342216c60046..8083deaa8519 100644
  	uint32_t		blksz;
  	bool			running;
  };
-@@ -132,6 +136,7 @@ struct acp_info {
- 	void			*ih;
- 	bus_dma_tag_t		dmat;
- 	struct acp_chinfo	rch;
-+	int			dc_filter;
- };
- 
- static uint32_t acp_fmt[] = {
-@@ -273,6 +278,7 @@ acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
+@@ -271,6 +275,7 @@ acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
  	acp_wr(sc, ACP_ATU_CTRL, 1);
  
  	ch->start_pos = acp_pdm_pos(sc);
@@ -877,7 +864,7 @@ index 342216c60046..8083deaa8519 100644
  	acp_wr(sc, ACP_PDM_ENABLE, 1);
  	acp_wr(sc, ACP_PDM_DMA_ENABLE, 1);
  	if (acp_poll(sc, ACP_PDM_DMA_ENABLE, ACP_PDM_DMA_RUNNING,
-@@ -383,6 +389,47 @@ acpchan_trigger(kobj_t obj, void *data, int go)
+@@ -376,6 +381,50 @@ acpchan_trigger(kobj_t obj, void *data, int go)
  	return (0);
  }
  
@@ -896,10 +883,13 @@ index 342216c60046..8083deaa8519 100644
 +	int64_t y;
 +	uint64_t k;
 +	int c;
++	bool filter;
 +
++	/* bitperfect asks for the samples unprocessed, DC offset included. */
++	filter = (pcm_getflags(sc->dev) & SD_F_BITPERFECT) == 0;
 +	if (end - ch->hpos > b->bufsize)
 +		ch->hpos = end - b->bufsize;	/* overrun */
-+	if (sc->dc_filter == 0 && ch->hpos >= ACP_MUTE_BYTES)
++	if (!filter && ch->hpos >= ACP_MUTE_BYTES)
 +		ch->hpos = end;
 +	if (ch->hpos == end)
 +		return;
@@ -913,7 +903,7 @@ index 342216c60046..8083deaa8519 100644
 +		}
 +		if (k < ACP_MUTE_BYTES + 8)
 +			ch->dc[c] = (int64_t)*p << ACP_DC_SHIFT;
-+		if (sc->dc_filter == 0)
++		if (!filter)
 +			continue;
 +		ch->dc[c] += *p - (ch->dc[c] >> ACP_DC_SHIFT);
 +		y = *p - (ch->dc[c] >> ACP_DC_SHIFT);
@@ -922,10 +912,10 @@ index 342216c60046..8083deaa8519 100644
 +	ch->hpos = end;
 +}
 +
- static uint32_t
- acpchan_getptr(kobj_t obj, void *data)
- {
-@@ -391,9 +438,10 @@ acpchan_getptr(kobj_t obj, void *data)
+ /*
+  * The ACP counts every byte its PDM DMA writes, and the DMA restarts at the
+  * start of the ring on START: the pointer is the count since START, modulo
+@@ -389,9 +438,10 @@ acpchan_getptr(kobj_t obj, void *data)
  	uint64_t pos;
  
  	mtx_lock(&sc->lock);
@@ -938,19 +928,6 @@ index 342216c60046..8083deaa8519 100644
  }
  
  static struct pcmchan_caps *
-@@ -530,6 +578,12 @@ acp_attach(device_t dev)
- 		goto bad_hw;
- 	}
- 
-+	sc->dc_filter = 1;
-+	SYSCTL_ADD_INT(device_get_sysctl_ctx(dev),
-+	    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-+	    "dc_filter", CTLFLAG_RW, &sc->dc_filter, 0,
-+	    "Remove the DC offset of the microphones");
-+
- 	pcm_init(dev, sc);
- 	pcm_addchan(dev, PCMDIR_REC, &acpchan_class, sc);
- 	snprintf(status, SND_STATUSLEN, "mem 0x%jx irq %jd on %s",
 -- 
 2.56.0
 

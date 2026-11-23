@@ -153,6 +153,11 @@ a display controller with nothing behind it is not an unattached device.
   display controller, using the literal key match `T:class=0x03` (the PCI
   base class 0x03, display; the same mechanism iwm(4) uses for
   `T:vendor=0x8086`).
+  devmatch never matches the `D` (description) field: `devmatch.c` skips
+  it, it is for humans. `T:` is a key that holds for the whole table, and
+  devmatch checks it with `strstr()` in the device's pnpinfo, after a
+  space: the vgapci device's own PCI pnpinfo contains `class=0x030000`.
+  The table still needs one row, hence the single description entry.
   The probe then decides; on a machine without the ACPI methods the module
   is loaded but attaches to nothing.
 
@@ -210,3 +215,15 @@ Final version, 2026-11-21, same kernel, the three binaries built from main
 
 Not tested: Intel host bridges and other display controllers; a machine
 whose firmware lacks `_DOD`/`_DOS` (acpi_video should load and not attach).
+
+## 5. Review
+
+[#123](https://ron-dev.freebsd.org/FreeBSD/src/pulls/123), imp: "I like
+all but the devmatch stuff. I don't understand how that works", and on
+the acpi_video table: "how does this work? I didn't think devd could
+match on the description." It does not: see section 3.2. The source
+comment above the table now says so. The devmatch part is section 3.1:
+hostb and vgapci are attached drivers whose only job is to be the bus of
+other drivers, so devmatch skipped them and the modules that attach
+below them (amdtemp, amdsmn, amdsmu, acpi_video) never loaded.
+

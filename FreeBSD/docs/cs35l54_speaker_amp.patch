@@ -1,7 +1,153 @@
-diff --git share/man/man4/Makefile share/man/man4/Makefile
-index 4a39645fcba3..1444ef02c9f7 100644
---- share/man/man4/Makefile
-+++ share/man/man4/Makefile
+From 8d7d367dde1add001c90c8d861d0286b5bf9e55e Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Wed, 11 Nov 2026 15:04:26 +0000
+Subject: [PATCH 1/2] snd_hda: Add an event for internal speaker stream start
+ and stop
+
+Some laptops put smart amplifiers between the HDA codec and the
+speakers.  Those amplifiers sit on another bus (I2C here) and stay
+silent until their driver tells them to play, so their driver must
+know when the codec starts and stops a stream to the internal speaker.
+
+Fire an hdaa_speaker event, outside the hdaa lock, when a playback
+channel whose association contains a fixed internal speaker pin starts
+or stops.  The event carries the codec subsystem id so the amplifier
+driver can match its own platform.
+---
+ sys/dev/sound/pci/hda/hdaa.c         | 35 ++++++++++++++++++++++++++++
+ sys/dev/sound/pci/hda/hdaa_speaker.h | 22 +++++++++++++++++
+ 2 files changed, 57 insertions(+)
+ create mode 100644 sys/dev/sound/pci/hda/hdaa_speaker.h
+
+diff --git a/sys/dev/sound/pci/hda/hdaa.c b/sys/dev/sound/pci/hda/hdaa.c
+index b91864d45dba..1504b44aafe2 100644
+--- a/sys/dev/sound/pci/hda/hdaa.c
++++ b/sys/dev/sound/pci/hda/hdaa.c
+@@ -44,6 +44,7 @@
+ #include <dev/sound/pci/hda/hdac.h>
+ #include <dev/sound/pci/hda/hdaa.h>
+ #include <dev/sound/pci/hda/hda_reg.h>
++#include <dev/sound/pci/hda/hdaa_speaker.h>
+ 
+ #include "mixer_if.h"
+ 
+@@ -2219,10 +2220,38 @@ hdaa_channel_start(struct hdaa_chan *ch)
+ 	return (0);
+ }
+ 
++/*
++ * True if the association drives a fixed internal speaker, which may sit
++ * behind external amplifiers that must follow the stream.
++ */
++static bool
++hdaa_as_has_speaker(struct hdaa_devinfo *devinfo, struct hdaa_audio_as *as)
++{
++	struct hdaa_widget *w;
++	uint32_t conf;
++
++	for (int i = 0; i < 16; i++) {
++		if (as->pins[i] <= 0)
++			continue;
++		w = hdaa_widget_get(devinfo, as->pins[i]);
++		if (w == NULL ||
++		    w->type != HDA_PARAM_AUDIO_WIDGET_CAP_TYPE_PIN_COMPLEX)
++			continue;
++		conf = w->wclass.pin.config;
++		if ((conf & HDA_CONFIG_DEFAULTCONF_DEVICE_MASK) ==
++		    HDA_CONFIG_DEFAULTCONF_DEVICE_SPEAKER &&
++		    (conf & HDA_CONFIG_DEFAULTCONF_CONNECTIVITY_MASK) ==
++		    HDA_CONFIG_DEFAULTCONF_CONNECTIVITY_FIXED)
++			return (true);
++	}
++	return (false);
++}
++
+ static int
+ hdaa_channel_trigger(kobj_t obj, void *data, int go)
+ {
+ 	struct hdaa_chan *ch = data;
++	bool speaker;
+ 	int error = 0;
+ 
+ 	if (!PCMTRIG_COMMON(go))
+@@ -2240,7 +2269,13 @@ hdaa_channel_trigger(kobj_t obj, void *data, int go)
+ 	default:
+ 		break;
+ 	}
++	speaker = error == 0 && ch->dir == PCMDIR_PLAY &&
++	    hdaa_as_has_speaker(ch->devinfo, &ch->devinfo->as[ch->as]);
+ 	hdaa_unlock(ch->devinfo);
++	if (speaker)
++		EVENTHANDLER_INVOKE(hdaa_speaker, ch->devinfo->dev,
++		    hda_get_subsystem_id(ch->devinfo->dev),
++		    go == PCMTRIG_START);
+ 
+ 	return (error);
+ }
+diff --git a/sys/dev/sound/pci/hda/hdaa_speaker.h b/sys/dev/sound/pci/hda/hdaa_speaker.h
+new file mode 100644
+index 000000000000..078024edeb7e
+--- /dev/null
++++ b/sys/dev/sound/pci/hda/hdaa_speaker.h
+@@ -0,0 +1,22 @@
++/*-
++ * SPDX-License-Identifier: BSD-2-Clause
++ *
++ * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
++ */
++
++#ifndef _HDAA_SPEAKER_H_
++#define	_HDAA_SPEAKER_H_
++
++#include <sys/eventhandler.h>
++
++/*
++ * Fired by hdaa(4) when a playback stream to a fixed internal speaker pin
++ * starts or stops, outside of any hdaa lock.  Drivers of external speaker
++ * amplifiers (side codecs) match the codec subsystem id and must not sleep
++ * in the handler.
++ */
++typedef void (*hdaa_speaker_fn)(void *arg, device_t hdaa, uint32_t subsystem,
++    bool active);
++EVENTHANDLER_DECLARE(hdaa_speaker, hdaa_speaker_fn);
++
++#endif /* _HDAA_SPEAKER_H_ */
+-- 
+2.56.0
+
+
+From a2f3c42ec4cc6d6b487558a3577de703d23e6fd6 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sun, 22 Nov 2026 12:15:22 +0100
+Subject: [PATCH 2/2] sound: Add snd_cs35l54 for HDA side speaker amplifiers
+
+The internal speakers of the HP ZBook Ultra G1a are driven by four
+Cirrus Logic CS35L54 smart amplifiers (ACPI CSC3554) on an I2C bus,
+behind the Realtek HDA codec.  They boot a ROM firmware that renders no
+audio, so the speakers stayed silent.
+
+snd_cs35l54 downloads the DSP program and the per-amplifier tuning
+through firmware(9), as module images or raw files, deferring to
+mountroot when attached early, and applies the factory calibration
+from UEFI.  It starts and pauses the amplifiers with the internal
+speaker stream of hdaa(4), keeping them ready for a few seconds between
+streams, and handles suspend and resume.  devmatch(8) loads it.  It is
+built on amd64 only, as it uses the EFI runtime services.
+---
+ share/man/man4/Makefile                   |    2 +
+ share/man/man4/snd_cs35l54.4              |  155 +++
+ sys/dev/sound/pci/hda/cs35l54.c           | 1309 +++++++++++++++++++++
+ sys/modules/sound/driver/Makefile         |    4 +
+ sys/modules/sound/driver/cs35l54/Makefile |    8 +
+ 5 files changed, 1478 insertions(+)
+ create mode 100644 share/man/man4/snd_cs35l54.4
+ create mode 100644 sys/dev/sound/pci/hda/cs35l54.c
+ create mode 100644 sys/modules/sound/driver/cs35l54/Makefile
+
+diff --git a/share/man/man4/Makefile b/share/man/man4/Makefile
+index 4a39645fcba3..f26e05537f53 100644
+--- a/share/man/man4/Makefile
++++ b/share/man/man4/Makefile
 @@ -570,6 +570,7 @@ MAN=	aac.4 \
  	snd_als4000.4 \
  	snd_atiixp.4 \
@@ -10,24 +156,24 @@ index 4a39645fcba3..1444ef02c9f7 100644
  	snd_cs4281.4 \
  	snd_csa.4 \
  	snd_dummy.4 \
-@@ -940,6 +941,7 @@ _pchtherm.4=	pchtherm.4
- _qat.4=		qat.4
- _qat_c2xxx.4=	qat_c2xxx.4
- _rr232x.4=	rr232x.4
+@@ -967,6 +968,7 @@ _qlxgbe.4=	qlxgbe.4
+ _qlnxe.4=	qlnxe.4
+ _sfxge.4=	sfxge.4
+ _smartpqi.4=	smartpqi.4
 +_snd_cs35l54.4=	snd_cs35l54.4
- _speaker.4=	speaker.4
- _spkr.4=	spkr.4
- _superio.4=	superio.4
-diff --git share/man/man4/snd_cs35l54.4 share/man/man4/snd_cs35l54.4
+ _sume.4=	sume.4
+ 
+ MLINKS+=iwx.4 if_iwx.4
+diff --git a/share/man/man4/snd_cs35l54.4 b/share/man/man4/snd_cs35l54.4
 new file mode 100644
-index 000000000000..a979769a7af9
+index 000000000000..0c1b5f54d40a
 --- /dev/null
-+++ share/man/man4/snd_cs35l54.4
-@@ -0,0 +1,156 @@
++++ b/share/man/man4/snd_cs35l54.4
+@@ -0,0 +1,155 @@
 +.\"
 +.\" SPDX-License-Identifier: BSD-2-Clause
 +.\"
-+.\" Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++.\" Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 +.\"
 +.\" Redistribution and use in source and binary forms, with or without
 +.\" modification, are permitted provided that the following conditions
@@ -124,7 +270,7 @@ index 000000000000..a979769a7af9
 +.Ql _ ,
 +then for the raw file.
 +The
-+.Pa audio/sound-firmware-cirrus-kmod
++.Pa audio/sound-firmware-cirrus
 +port installs the raw files;
 +.Xr fwget 8
 +detects the amplifiers and installs it.
@@ -133,8 +279,7 @@ index 000000000000..a979769a7af9
 +.It Va dev.cs35l54.%d.loaded
 +Read-only, 1 once the firmware is downloaded.
 +.It Va dev.cs35l54.%d.play
-+1 while the amplifiers play.
-+Writing 1 or 0 starts or pauses them by hand, for tests.
++Read-only, 1 while the amplifiers play.
 +.It Va dev.cs35l54.%d.subsystem
 +Read-only, the platform subsystem id from ACPI, in lower case:
 +the amplifiers follow the speaker stream of the HDA codec with this
@@ -160,7 +305,7 @@ index 000000000000..a979769a7af9
 +The
 +.Nm
 +driver and this manual page were written by
-+.An Olivier Cochard-Labbe Aq Mt olivier@FreeBSD.org .
++.An Olivier Cochard Aq Mt olivier@FreeBSD.org .
 +.Sh CAVEATS
 +The reset line is a GPIO of the AMD GPIO controller.
 +If the
@@ -180,16 +325,16 @@ index 000000000000..a979769a7af9
 +Only the HP ZBook Ultra G1a has been tested.
 +CS35L56 and CS35L57 amplifiers, speaker-id variants, and SPI or SoundWire
 +attachment are not supported.
-diff --git sys/dev/sound/pci/hda/cs35l54.c sys/dev/sound/pci/hda/cs35l54.c
+diff --git a/sys/dev/sound/pci/hda/cs35l54.c b/sys/dev/sound/pci/hda/cs35l54.c
 new file mode 100644
-index 000000000000..0474711b9621
+index 000000000000..81b3c48e113c
 --- /dev/null
-+++ sys/dev/sound/pci/hda/cs35l54.c
-@@ -0,0 +1,1224 @@
++++ b/sys/dev/sound/pci/hda/cs35l54.c
+@@ -0,0 +1,1309 @@
 +/*-
 + * SPDX-License-Identifier: BSD-2-Clause
 + *
-+ * Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
++ * Copyright (c) 2026 Olivier Cochard <olivier@FreeBSD.org>
 + *
 + * Redistribution and use in source and binary forms, with or without
 + * modification, are permitted provided that the following conditions
@@ -218,8 +363,9 @@ index 000000000000..0474711b9621
 + * found in the HP ZBook Ultra G1a: one ACPI device (CSC3554) describes
 + * several amplifiers on one I2C bus.  The amplifiers boot a ROM firmware
 + * that does not render audio; the driver downloads the DSP program (wmfw)
-+ * and one tuning file (bin) per amplifier from /boot/firmware/cirrus/, then
-+ * starts and stops playback on request.
++ * and one tuning file (bin) per amplifier through firmware(9), applies the
++ * factory calibration from UEFI, and starts or pauses the amplifiers with
++ * the internal speaker stream of hdaa(4).
 + */
 +
 +#include <sys/param.h>
@@ -291,36 +437,32 @@ index 000000000000..0474711b9621
 +#define	CS_MAX_ALGS		64
 +#define	CS_RAW_CHUNK		4096
 +
++/* ASP1_ENABLES1: receive slots 1 and 2, then one transmit bit per slot. */
++#define	CS_ASP_RX1_EN		(1u << 16)
++#define	CS_ASP_RX2_EN		(1u << 17)
++
++/* USER_VOLUME bits 15:6: two's complement, 0.25 dB steps, -100 to +12 dB. */
++#define	CS_VOLUME_MIN		(-400)
++#define	CS_VOLUME_MAX		48
++#define	CS_VOLUME_MASK		0x3FF
++#define	CS_VOLUME_SHIFT		6
++
++/* Speaker calibration: silicon id register, algorithm, UEFI variable size. */
++#define	CS_OTP_UID		0x00300D4
++#define	CS_CAL_ALG		0x9F210
++#define	CS_CAL_MAX		4096
++
++/*
++ * After the stream stops, keep playing for CS_PAUSE_DELAY, then stay set
++ * up for CS_READY_DELAY before allowing hibernation, so that a new stream
++ * starts at once.
++ */
++#define	CS_PAUSE_DELAY		(hz)
++#define	CS_READY_DELAY		(3 * hz)
++
 +struct cs_reg_val {
 +	uint32_t	reg;
 +	uint32_t	val;
-+};
-+
-+/* Defaults to restore after each boot of the amplifier firmware. */
-+static const struct cs_reg_val cs_patch[] = {
-+	{ 0x0004C70, 0x00000018 },	/* SWIRE_DP3_CH1_INPUT */
-+	{ 0x0004C74, 0x00000019 },	/* SWIRE_DP3_CH2_INPUT */
-+	{ 0x0004C78, 0x00000029 },	/* SWIRE_DP3_CH3_INPUT */
-+	{ 0x0004C7C, 0x00000028 },	/* SWIRE_DP3_CH4_INPUT */
-+	{ 0x000E0D4, 0x1F7DF0FF },	/* IRQ1_MASK_18 */
-+	{ CS_USER_MUTE, 0x00000000 },
-+	{ CS_POSTURE, 0x00000000 },
-+};
-+
-+/* Audio serial port 1 setup for the link from the HDA codec. */
-+static const struct cs_reg_val cs_asp_config[] = {
-+	{ 0x0004804, 0x00000021 },	/* ASP1_CONTROL1 */
-+	{ 0x0004808, 0x20200200 },	/* ASP1_CONTROL2 */
-+	{ 0x000480C, 0x00000003 },	/* ASP1_CONTROL3 */
-+	{ 0x0004810, 0x03020100 },	/* ASP1_FRAME_CONTROL1 */
-+	{ 0x0004820, 0x00020100 },	/* ASP1_FRAME_CONTROL5 */
-+	{ 0x0004840, 0x00000018 },	/* ASP1_DATA_CONTROL5 */
-+	{ 0x0004830, 0x00000018 },	/* ASP1_DATA_CONTROL1 */
-+	{ CS_ASP1_ENABLES1, 0x00000000 },
-+	{ 0x0004C20, 0x00000018 },	/* ASP1TX1_INPUT */
-+	{ 0x0004C24, 0x00000019 },	/* ASP1TX2_INPUT */
-+	{ 0x0004C28, 0x00000020 },	/* ASP1TX3_INPUT */
-+	{ 0x0004C2C, 0x00000028 },	/* ASP1TX4_INPUT */
 +};
 +
 +struct cs_alg {
@@ -335,6 +477,7 @@ index 000000000000..0474711b9621
 +	struct task	fw_task;
 +	struct task	play_task;
 +	struct task	resume_task;
++	struct timeout_task idle_task;
 +	eventhandler_tag speaker_tag;
 +	eventhandler_tag mountroot_tag;
 +	gpio_pin_t	reset;
@@ -345,12 +488,74 @@ index 000000000000..0474711b9621
 +	int		volume;		/* dB */
 +	bool		loaded;
 +	bool		playing;
++	bool		ready;		/* set up, cannot hibernate */
 +	bool		stream;		/* HDA speaker stream on */
 +	bool		detaching;
 +	bool		suspended;
 +};
 +
++struct cs_cal_entry {
++	uint32_t	target[2];	/* silicon id, low word first */
++	uint32_t	time[2];
++	int8_t		ambient;	/* degrees C */
++	uint8_t		status;
++	uint16_t	calr;
++} __packed;
++
++struct cs_cal_data {
++	uint32_t	size;
++	uint32_t	count;
++	struct cs_cal_entry entry[];
++} __packed;
++
++struct cs_gpio_res {
++	ACPI_HANDLE	ctrl;
++	uint32_t	pin;
++};
++
 +static int	cs_set_playing(struct cs35l54_softc *sc, bool on);
++static int	cs_stop(struct cs35l54_softc *sc);
++
++/*
++ * Registers set after each boot of the amplifier firmware, in address
++ * order: the audio serial port (ASP1) carrying the speaker stream from the
++ * HDA codec, kept disabled until playback starts, its transmit and the
++ * SoundWire port 3 sources, one interrupt mask, and the firmware mute and
++ * posture controls.  Values as written on the bus by the vendor driver
++ * under Linux on this laptop (I2C trace).
++ */
++static const struct cs_reg_val cs_setup_regs[] = {
++	/* ASP1: enables, then control, frame and data format. */
++	{ CS_ASP1_ENABLES1, 0x00000000 },
++	{ 0x0004804, 0x00000021 },
++	{ 0x0004808, 0x20200200 },
++	{ 0x000480C, 0x00000003 },
++	{ 0x0004810, 0x03020100 },
++	{ 0x0004820, 0x00020100 },
++	{ 0x0004830, 0x00000018 },
++	{ 0x0004840, 0x00000018 },
++	/* ASP1 transmit sources, then SoundWire port 3 sources. */
++	{ 0x0004C20, 0x00000018 },
++	{ 0x0004C24, 0x00000019 },
++	{ 0x0004C28, 0x00000020 },
++	{ 0x0004C2C, 0x00000028 },
++	{ 0x0004C70, 0x00000018 },
++	{ 0x0004C74, 0x00000019 },
++	{ 0x0004C78, 0x00000029 },
++	{ 0x0004C7C, 0x00000028 },
++	/* Interrupt mask register 18. */
++	{ 0x000E0D4, 0x1F7DF0FF },
++	/* Firmware controls: unmuted, default posture. */
++	{ CS_USER_MUTE, 0x00000000 },
++	{ CS_POSTURE, 0x00000000 },
++};
++
++static const struct {
++	const char	*hid;
++} cs35l54_ids[] = {
++	{ "CSC3554" },
++	{ NULL },
++};
 +
 +static int
 +cs_sleep(int us)
@@ -541,10 +746,9 @@ index 000000000000..0474711b9621
 +{
 +	int error;
 +
-+	if ((error = cs_mbox(sc, addr, CS_MBOX_PREVENT_HIB)) != 0 ||
-+	    (error = cs_wr_seq(sc, addr, cs_patch, nitems(cs_patch))) != 0)
++	if ((error = cs_mbox(sc, addr, CS_MBOX_PREVENT_HIB)) != 0)
 +		return (error);
-+	return (cs_wr_seq(sc, addr, cs_asp_config, nitems(cs_asp_config)));
++	return (cs_wr_seq(sc, addr, cs_setup_regs, nitems(cs_setup_regs)));
 +}
 +
 +static uint32_t
@@ -700,24 +904,6 @@ index 000000000000..0474711b9621
 + * CirrusSmartAmpCalibrationData: one entry per amplifier, matched by the
 + * amplifier silicon id, or by index when the entry has no id.
 + */
-+#define	CS_OTP_UID		0x00300D4
-+#define	CS_CAL_ALG		0x9F210
-+#define	CS_CAL_MAX		4096
-+
-+struct cs_cal_entry {
-+	uint32_t	target[2];	/* silicon id, low word first */
-+	uint32_t	time[2];
-+	int8_t		ambient;	/* degrees C */
-+	uint8_t		status;
-+	uint16_t	calr;
-+} __packed;
-+
-+struct cs_cal_data {
-+	uint32_t	size;
-+	uint32_t	count;
-+	struct cs_cal_entry entry[];
-+} __packed;
-+
 +static struct cs_cal_data *
 +cs_read_cal(struct cs35l54_softc *sc)
 +{
@@ -980,8 +1166,17 @@ index 000000000000..0474711b9621
 +		error = cs_load_amp(sc, i, wmfw, cal);
 +	if (error == 0 && !sc->detaching) {
 +		sc->loaded = true;
++		/*
++		 * The setup written before the firmware's REINIT does not
++		 * hold: play does it again.  Until then let them hibernate.
++		 */
++		sc->ready = false;
 +		if (sc->stream)
 +			(void)cs_set_playing(sc, true);
++		else
++			for (int i = 0; i < sc->namps; i++)
++				(void)cs_mbox(sc, sc->addr[i],
++				    CS_MBOX_ALLOW_HIB);
 +		if (cs_rd32(sc, sc->addr[0], CS_FW_VER, &ver) == 0)
 +			device_printf(sc->dev, "%d amplifiers, firmware "
 +			    "%u.%u.%u\n", sc->namps, (ver >> 16) & 0xFF,
@@ -995,9 +1190,9 @@ index 000000000000..0474711b9621
 +static uint32_t
 +cs_volume_raw(int db)
 +{
-+	int q = MAX(-400, MIN(48, db * 4));	/* 0.25 dB steps */
++	int q = MAX(CS_VOLUME_MIN, MIN(CS_VOLUME_MAX, db * 4));
 +
-+	return (((uint32_t)q & 0x3FF) << 6);
++	return (((uint32_t)q & CS_VOLUME_MASK) << CS_VOLUME_SHIFT);
 +}
 +
 +static int
@@ -1007,25 +1202,47 @@ index 000000000000..0474711b9621
 +	int error;
 +
 +	sx_assert(&sc->lock, SA_XLOCKED);
++	if (!sc->ready) {
++		/* Wake them all first, so that they boot in parallel. */
++		for (int i = 0; i < sc->namps; i++)
++			cs_wake(sc, sc->addr[i]);
++		for (int i = 0; i < sc->namps; i++)
++			if ((error = cs_wait_boot(sc, sc->addr[i])) != 0 ||
++			    (error = cs_setup(sc, sc->addr[i])) != 0)
++				goto fail;
++		sc->ready = true;
++	}
 +	for (int i = 0; i < sc->namps; i++) {
 +		addr = sc->addr[i];
-+		cs_wake(sc, addr);
-+		if ((error = cs_wait_boot(sc, addr)) != 0 ||
-+		    (error = cs_setup(sc, addr)) != 0 ||
-+		    (error = cs_wr32(sc, addr, CS_USER_VOLUME,
++		if ((error = cs_wr32(sc, addr, CS_USER_VOLUME,
 +		    cs_volume_raw(sc->volume))) != 0 ||
 +		    (error = cs_mbox(sc, addr, CS_MBOX_PLAY)) != 0)
-+			return (error);
++			goto fail;
 +		if (cs_poll(sc, addr, CS_ACTUAL_PS, 0, 500, 50000, NULL) != 0)
 +			device_printf(sc->dev, "0x%02x: PS0 not reached\n",
 +			    addr);
 +		/* ASP1 RX1 and RX2 in, one TX slot per amplifier. */
 +		error = cs_wr32(sc, addr, CS_ASP1_ENABLES1,
-+		    0x00030000 | 1u << i);
++		    CS_ASP_RX1_EN | CS_ASP_RX2_EN | 1u << i);
 +		if (error != 0)
-+			return (error);
++			goto fail;
 +	}
 +	return (0);
++fail:
++	/* Do not leave the amplifiers already started playing. */
++	(void)cs_stop(sc);
++	return (error);
++}
++
++/* Pause, but stay set up with hibernation prevented. */
++static void
++cs_pause(struct cs35l54_softc *sc)
++{
++	sx_assert(&sc->lock, SA_XLOCKED);
++	for (int i = 0; i < sc->namps; i++) {
++		(void)cs_mbox(sc, sc->addr[i], CS_MBOX_PAUSE);
++		(void)cs_wr32(sc, sc->addr[i], CS_ASP1_ENABLES1, 0);
++	}
 +}
 +
 +static int
@@ -1043,6 +1260,7 @@ index 000000000000..0474711b9621
 +		    (error = cs_mbox(sc, addr, CS_MBOX_ALLOW_HIB)) != 0)
 +			ret = error;
 +	}
++	sc->ready = false;
 +	return (ret);
 +}
 +
@@ -1064,22 +1282,6 @@ index 000000000000..0474711b9621
 +	return (error);
 +}
 +
-+static int
-+cs_sysctl_play(SYSCTL_HANDLER_ARGS)
-+{
-+	struct cs35l54_softc *sc = arg1;
-+	int error, val;
-+
-+	val = sc->playing;
-+	error = sysctl_handle_int(oidp, &val, 0, req);
-+	if (error != 0 || req->newptr == NULL)
-+		return (error);
-+	sx_xlock(&sc->lock);
-+	error = cs_set_playing(sc, val != 0);
-+	sx_xunlock(&sc->lock);
-+	return (error);
-+}
-+
 +/* Follow the HDA speaker stream; runs in taskqueue_thread. */
 +static void
 +cs_play_task(void *arg, int pending)
@@ -1087,8 +1289,38 @@ index 000000000000..0474711b9621
 +	struct cs35l54_softc *sc = arg;
 +
 +	sx_xlock(&sc->lock);
-+	if (!sc->detaching && !sc->suspended)
-+		(void)cs_set_playing(sc, sc->stream);
++	if (sc->detaching || sc->suspended || !sc->loaded) {
++		sx_xunlock(&sc->lock);
++		return;
++	}
++	if (sc->stream) {
++		taskqueue_cancel_timeout(taskqueue_thread, &sc->idle_task,
++		    NULL);
++		(void)cs_set_playing(sc, true);
++	} else if (sc->playing)
++		taskqueue_enqueue_timeout(taskqueue_thread, &sc->idle_task,
++		    CS_PAUSE_DELAY);
++	sx_xunlock(&sc->lock);
++}
++
++/* Stream idle: pause after CS_PAUSE_DELAY, release after CS_READY_DELAY. */
++static void
++cs_idle_task(void *arg, int pending)
++{
++	struct cs35l54_softc *sc = arg;
++
++	sx_xlock(&sc->lock);
++	if (sc->detaching || sc->suspended || sc->stream) {
++		sx_xunlock(&sc->lock);
++		return;
++	}
++	if (sc->playing) {
++		cs_pause(sc);
++		sc->playing = false;
++		taskqueue_enqueue_timeout(taskqueue_thread, &sc->idle_task,
++		    CS_READY_DELAY);
++	} else if (sc->ready)
++		(void)cs_stop(sc);
 +	sx_xunlock(&sc->lock);
 +}
 +
@@ -1228,11 +1460,6 @@ index 000000000000..0474711b9621
 +	return (0);
 +}
 +
-+struct cs_gpio_res {
-+	ACPI_HANDLE	ctrl;
-+	uint32_t	pin;
-+};
-+
 +static ACPI_STATUS
 +cs_find_gpio_cb(ACPI_RESOURCE *res, void *arg)
 +{
@@ -1268,20 +1495,19 @@ index 000000000000..0474711b9621
 +	}
 +}
 +
-+static const struct {
-+	const char	*hid;
-+} cs35l54_ids[] = {
-+	{ "CSC3554" },
-+	{ NULL },
-+};
-+
 +static int
 +cs35l54_probe(device_t dev)
 +{
 +	ACPI_HANDLE handle;
++	int i;
 +
-+	if ((handle = acpi_get_handle(dev)) == NULL ||
-+	    acpi_MatchHid(handle, cs35l54_ids[0].hid) == ACPI_MATCHHID_NOMATCH)
++	if ((handle = acpi_get_handle(dev)) == NULL)
++		return (ENXIO);
++	for (i = 0; cs35l54_ids[i].hid != NULL; i++)
++		if (acpi_MatchHid(handle, cs35l54_ids[i].hid) !=
++		    ACPI_MATCHHID_NOMATCH)
++			break;
++	if (cs35l54_ids[i].hid == NULL)
 +		return (ENXIO);
 +	device_set_desc(dev, "Cirrus Logic CS35L54 speaker amplifiers");
 +	return (BUS_PROBE_DEFAULT);
@@ -1314,13 +1540,14 @@ index 000000000000..0474711b9621
 +	TASK_INIT(&sc->fw_task, 0, cs_fw_task, sc);
 +	TASK_INIT(&sc->play_task, 0, cs_play_task, sc);
 +	TASK_INIT(&sc->resume_task, 0, cs_resume_task, sc);
++	TIMEOUT_TASK_INIT(taskqueue_thread, &sc->idle_task, 0, cs_idle_task,
++	    sc);
 +	sc->speaker_tag = EVENTHANDLER_REGISTER(hdaa_speaker, cs_speaker_event,
 +	    sc, EVENTHANDLER_PRI_ANY);
 +
 +	tree = SYSCTL_CHILDREN(device_get_sysctl_tree(dev));
-+	SYSCTL_ADD_PROC(ctx, tree, OID_AUTO, "play",
-+	    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, sc, 0, cs_sysctl_play,
-+	    "I", "Amplifiers playing (1) or paused (0)");
++	SYSCTL_ADD_BOOL(ctx, tree, OID_AUTO, "play", CTLFLAG_RD,
++	    &sc->playing, 0, "Amplifiers playing");
 +	SYSCTL_ADD_PROC(ctx, tree, OID_AUTO, "volume",
 +	    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, sc, 0, cs_sysctl_volume,
 +	    "I", "Amplifier volume in dB (-100 to 12)");
@@ -1353,8 +1580,9 @@ index 000000000000..0474711b9621
 +	taskqueue_drain(taskqueue_thread, &sc->fw_task);
 +	taskqueue_drain(taskqueue_thread, &sc->play_task);
 +	taskqueue_drain(taskqueue_thread, &sc->resume_task);
++	taskqueue_drain_timeout(taskqueue_thread, &sc->idle_task);
 +	sx_xlock(&sc->lock);
-+	if (sc->playing)
++	if (sc->playing || sc->ready)
 +		cs_stop(sc);
 +	sx_xunlock(&sc->lock);
 +	if (sc->reset != NULL)
@@ -1370,7 +1598,8 @@ index 000000000000..0474711b9621
 +
 +	sx_xlock(&sc->lock);
 +	sc->suspended = true;
-+	if (sc->playing) {
++	taskqueue_cancel_timeout(taskqueue_thread, &sc->idle_task, NULL);
++	if (sc->playing || sc->ready) {
 +		(void)cs_stop(sc);
 +		sc->playing = false;
 +	}
@@ -1408,119 +1637,29 @@ index 000000000000..0474711b9621
 +MODULE_DEPEND(cs35l54, iicbus, IICBUS_MINVER, IICBUS_PREFVER, IICBUS_MAXVER);
 +MODULE_DEPEND(cs35l54, gpiobus, 1, 1, 1);
 +MODULE_DEPEND(cs35l54, firmware, 1, 1, 1);
++MODULE_DEPEND(cs35l54, efirt, 1, 1, 1);
 +MODULE_VERSION(cs35l54, 1);
 +IICBUS_ACPI_PNP_INFO(cs35l54_ids);
-diff --git sys/dev/sound/pci/hda/hdaa.c sys/dev/sound/pci/hda/hdaa.c
-index b91864d45dba..1504b44aafe2 100644
---- sys/dev/sound/pci/hda/hdaa.c
-+++ sys/dev/sound/pci/hda/hdaa.c
-@@ -44,6 +44,7 @@
- #include <dev/sound/pci/hda/hdac.h>
- #include <dev/sound/pci/hda/hdaa.h>
- #include <dev/sound/pci/hda/hda_reg.h>
-+#include <dev/sound/pci/hda/hdaa_speaker.h>
- 
- #include "mixer_if.h"
- 
-@@ -2219,10 +2220,38 @@ hdaa_channel_start(struct hdaa_chan *ch)
- 	return (0);
- }
- 
-+/*
-+ * True if the association drives a fixed internal speaker, which may sit
-+ * behind external amplifiers that must follow the stream.
-+ */
-+static bool
-+hdaa_as_has_speaker(struct hdaa_devinfo *devinfo, struct hdaa_audio_as *as)
-+{
-+	struct hdaa_widget *w;
-+	uint32_t conf;
-+
-+	for (int i = 0; i < 16; i++) {
-+		if (as->pins[i] <= 0)
-+			continue;
-+		w = hdaa_widget_get(devinfo, as->pins[i]);
-+		if (w == NULL ||
-+		    w->type != HDA_PARAM_AUDIO_WIDGET_CAP_TYPE_PIN_COMPLEX)
-+			continue;
-+		conf = w->wclass.pin.config;
-+		if ((conf & HDA_CONFIG_DEFAULTCONF_DEVICE_MASK) ==
-+		    HDA_CONFIG_DEFAULTCONF_DEVICE_SPEAKER &&
-+		    (conf & HDA_CONFIG_DEFAULTCONF_CONNECTIVITY_MASK) ==
-+		    HDA_CONFIG_DEFAULTCONF_CONNECTIVITY_FIXED)
-+			return (true);
-+	}
-+	return (false);
-+}
-+
- static int
- hdaa_channel_trigger(kobj_t obj, void *data, int go)
- {
- 	struct hdaa_chan *ch = data;
-+	bool speaker;
- 	int error = 0;
- 
- 	if (!PCMTRIG_COMMON(go))
-@@ -2240,7 +2269,13 @@ hdaa_channel_trigger(kobj_t obj, void *data, int go)
- 	default:
- 		break;
- 	}
-+	speaker = error == 0 && ch->dir == PCMDIR_PLAY &&
-+	    hdaa_as_has_speaker(ch->devinfo, &ch->devinfo->as[ch->as]);
- 	hdaa_unlock(ch->devinfo);
-+	if (speaker)
-+		EVENTHANDLER_INVOKE(hdaa_speaker, ch->devinfo->dev,
-+		    hda_get_subsystem_id(ch->devinfo->dev),
-+		    go == PCMTRIG_START);
- 
- 	return (error);
- }
-diff --git sys/dev/sound/pci/hda/hdaa_speaker.h sys/dev/sound/pci/hda/hdaa_speaker.h
-new file mode 100644
-index 000000000000..df6b7a528142
---- /dev/null
-+++ sys/dev/sound/pci/hda/hdaa_speaker.h
-@@ -0,0 +1,22 @@
-+/*-
-+ * SPDX-License-Identifier: BSD-2-Clause
-+ *
-+ * Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
-+ */
-+
-+#ifndef _HDAA_SPEAKER_H_
-+#define	_HDAA_SPEAKER_H_
-+
-+#include <sys/eventhandler.h>
-+
-+/*
-+ * Fired by hdaa(4) when a playback stream to a fixed internal speaker pin
-+ * starts or stops, outside of any hdaa lock.  Drivers of external speaker
-+ * amplifiers (side codecs) match the codec subsystem id and must not sleep
-+ * in the handler.
-+ */
-+typedef void (*hdaa_speaker_fn)(void *arg, device_t hdaa, uint32_t subsystem,
-+    bool active);
-+EVENTHANDLER_DECLARE(hdaa_speaker, hdaa_speaker_fn);
-+
-+#endif /* _HDAA_SPEAKER_H_ */
-diff --git sys/modules/sound/driver/Makefile sys/modules/sound/driver/Makefile
-index 02703d4b591a..330654621f48 100644
---- sys/modules/sound/driver/Makefile
-+++ sys/modules/sound/driver/Makefile
-@@ -15,7 +15,7 @@ _maestro3=	maestro3
+diff --git a/sys/modules/sound/driver/Makefile b/sys/modules/sound/driver/Makefile
+index 02703d4b591a..8151bc6f2ce3 100644
+--- a/sys/modules/sound/driver/Makefile
++++ b/sys/modules/sound/driver/Makefile
+@@ -18,6 +18,10 @@ _maestro3=	maestro3
+ SUBDIR+=	cmi
  .endif
  
- .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
--SUBDIR+=	cmi
-+SUBDIR+=	cmi cs35l54
- .endif
- 
++.if ${MACHINE_CPUARCH} == "amd64"
++SUBDIR+=	cs35l54
++.endif
++
  .if ${MACHINE_CPUARCH} == "powerpc"
-diff --git sys/modules/sound/driver/cs35l54/Makefile sys/modules/sound/driver/cs35l54/Makefile
+ SUBDIR+=	ai2s davbus
+ .endif
+diff --git a/sys/modules/sound/driver/cs35l54/Makefile b/sys/modules/sound/driver/cs35l54/Makefile
 new file mode 100644
 index 000000000000..032f20f6d12e
 --- /dev/null
-+++ sys/modules/sound/driver/cs35l54/Makefile
++++ b/sys/modules/sound/driver/cs35l54/Makefile
 @@ -0,0 +1,8 @@
 +.PATH: ${SRCTOP}/sys/dev/sound/pci/hda
 +
@@ -1530,139 +1669,6 @@ index 000000000000..032f20f6d12e
 +SRCS+=	opt_acpi.h opt_platform.h
 +
 +.include <bsd.kmod.mk>
-diff --git usr.sbin/fwget/Makefile usr.sbin/fwget/Makefile
-index 4c934aee3413..84bc1b87276d 100644
---- usr.sbin/fwget/Makefile
-+++ usr.sbin/fwget/Makefile
-@@ -2,6 +2,6 @@ PACKAGE=	fwget
- 
- SCRIPTS=	fwget
- MAN=		fwget.8
--SUBDIR=		pci usb
-+SUBDIR=		acpi pci usb
- 
- .include <bsd.prog.mk>
-diff --git usr.sbin/fwget/acpi/Makefile usr.sbin/fwget/acpi/Makefile
-new file mode 100644
-index 000000000000..ab57620fb000
---- /dev/null
-+++ usr.sbin/fwget/acpi/Makefile
-@@ -0,0 +1,10 @@
-+PACKAGE=	fwget
-+
-+SCRIPTS=acpi \
-+	acpi_cirrus
-+
-+BINDIR= ${LIBEXECDIR}/fwget
-+
-+MAN=
-+
-+.include <bsd.prog.mk>
-diff --git usr.sbin/fwget/acpi/acpi usr.sbin/fwget/acpi/acpi
-new file mode 100644
-index 000000000000..e5476835fc86
---- /dev/null
-+++ usr.sbin/fwget/acpi/acpi
-@@ -0,0 +1,30 @@
-+#
-+# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
-+#
-+# SPDX-License-Identifier: BSD-2-Clause
-+
-+# Map the vendor prefix of an ACPI hardware id to a vendor script.
-+acpi_get_vendor()
-+{
-+	case "$1" in
-+		CSC*)	echo "cirrus" ;;	# Cirrus Logic
-+	esac
-+}
-+
-+acpi_search_packages()
-+{
-+	local hid vendor
-+
-+	# Hardware ids of all ACPI devices, with or without a driver.
-+	for hid in $(devinfo -v | sed -n 's/.*_HID=\([^ ]*\).*/\1/p' | sort -u); do
-+		vendor=$(acpi_get_vendor "${hid}")
-+		if [ -z "${vendor}" ]; then
-+			continue
-+		fi
-+		log_verbose "Trying to match device ${hid} with acpi_${vendor}"
-+		if [ -f "${LIBEXEC_PATH}/acpi_${vendor}" ]; then
-+			. "${LIBEXEC_PATH}/acpi_${vendor}"
-+			acpi_${vendor} "${hid}"
-+		fi
-+	done
-+}
-diff --git usr.sbin/fwget/acpi/acpi_cirrus usr.sbin/fwget/acpi/acpi_cirrus
-new file mode 100644
-index 000000000000..970dad2c116e
---- /dev/null
-+++ usr.sbin/fwget/acpi/acpi_cirrus
-@@ -0,0 +1,12 @@
-+#
-+# Copyright (c) 2026 Olivier Cochard-Labbe <olivier@FreeBSD.org>
-+#
-+# SPDX-License-Identifier: BSD-2-Clause
-+
-+acpi_cirrus()
-+{
-+
-+	case "$1" in
-+	CSC3554)	addpkg "sound-firmware-cirrus-kmod-cs35l54"; return 1 ;;
-+	esac
-+}
-diff --git usr.sbin/fwget/fwget.8 usr.sbin/fwget/fwget.8
-index 86e304775e2d..ece4fd466a7a 100644
---- usr.sbin/fwget/fwget.8
-+++ usr.sbin/fwget/fwget.8
-@@ -23,7 +23,7 @@
- .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- .\"
--.Dd July 7, 2025
-+.Dd November 11, 2026
- .Dt FWGET 8
- .Os
- .Sh NAME
-@@ -49,6 +49,7 @@ Be more verbose
- .It Ar subsystem
- Hardware subsystem(s), default is all supported subsystems.
- Space separated hardware subsystems, accepts
-+.Cm acpi ,
- .Cm pci
- and
- .Cm usb
-@@ -69,6 +70,7 @@ utility and this manual page were written by
- for Beckhoff Automation GmbH & Co\. KG.
- .Sh CAVEATS
- This utility currently only supports the
-+.Xr acpi 4 ,
- .Xr pci 4
- and
- .Xr usb 4
-diff --git usr.sbin/fwget/fwget.sh usr.sbin/fwget/fwget.sh
-index de1e6fa51f0f..ef49e1b32b6a 100755
---- usr.sbin/fwget/fwget.sh
-+++ usr.sbin/fwget/fwget.sh
-@@ -35,7 +35,7 @@ usage()
- Usage: $(basename "$0") [options] [subsystem]
- 
- Supported subsystems
--  pci, usb
-+  acpi, pci, usb
- 
- Options:
-   -n		-- Do not install packages, only print the results
-@@ -100,9 +100,9 @@ done
- shift $(($OPTIND - 1))
- subsystems="$@"
- 
--# Default searching PCI and USB subsystem
-+# Default searching ACPI, PCI and USB subsystem
- if [ -z "${subsystems}" ]; then
--	subsystems="pci usb"
-+	subsystems="acpi pci usb"
- fi
- 
- # Fail early on unsupported subsystem
+-- 
+2.56.0
+
