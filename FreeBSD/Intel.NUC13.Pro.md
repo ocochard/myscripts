@@ -116,7 +116,7 @@ not suspend-to-idle. Not investigated.
 
 ## Next steps
 
-1. VA-API encode: LinuxKPI cannot map one buffer object WB and WC at once, see [Tracing the hang](#tracing-the-hang-2026-11-23).
+1. VA-API H.264 encode (`low_power 0`): LinuxKPI cannot map one buffer object WB and WC at once, see [Tracing the hang](#tracing-the-hang-2026-11-23); use `-low_power 1`.
 2. Associate Wi-Fi with an access point and measure throughput.
 3. Test S3 suspend and resume, and power-off with `enable_guc=3`.
 
@@ -225,10 +225,16 @@ Known limitation: [freebsd/drm-kmod#481](https://github.com/freebsd/drm-kmod/iss
 "linuxkpi can't [have] two live mappings of the same page") and [PR 296195](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=296195)
 ("Xorg hangs in lkpi_vmf_insert_pfn_prot_locked").
 
-Fix directions, none tried:
+Encoders on a kernel with the containment patch below (2026-11-23): only `h264_vaapi` with `low_power 0`
+(the default, `EncSlice`) hits the double mapping; `h264_vaapi -low_power 1` and `hevc_vaapi` (both modes) encode 300 frames,
+CQP and VBR. Workaround for H.264: `-low_power 1`.
 
-- Containment: in `lkpi_vmf_insert_pfn_prot_locked()`, return `VM_FAULT_SIGBUS` instead of `VM_FAULT_NOPAGE` when the page is mapped elsewhere,
-  or make the `linux_cdev_pager_populate()` loop give up; the process then gets `SIGBUS` instead of an unkillable kernel loop.
+Containment patch: [docs/linuxkpi_rename_sigbus.md](docs/linuxkpi_rename_sigbus.md) (the process gets SIGSEGV within a second
+instead of hanging; tested on this machine).
+
+Fix directions:
+
+- Containment: done in the patch above.
 - Real fix: let a second mapping of the same page exist, for example with a fictitious page (`vm_page_getfake()`) for the same physical address,
   as the `OBJT_DEVICE` pager does; the WB and WC aliases of one page also need a decision on the page's memory attribute.
 - Why Meteor Lake encodes fine ([docs/mtl_media_gt.md](docs/mtl_media_gt.md)): not checked; maybe the media driver maps buffers there in one mode only.

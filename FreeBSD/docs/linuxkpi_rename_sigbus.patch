@@ -1,0 +1,91 @@
+From d0b177bd09052aa8d570b5ec37ac4d0f2bc0b6ad Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 23 Nov 2026 08:37:21 +0100
+Subject: [PATCH] linuxkpi: Fail the fault when a page cannot be moved
+
+A FreeBSD page belongs to a single VM object, so a fault cannot map a
+page that another device mapping still maps.  It returned
+VM_FAULT_NOPAGE with nothing inserted, which linux_cdev_pager_populate()
+retries forever: the thread spins in the kernel and cannot be killed.
+i915 hits this when user space maps one buffer object both WB and WC,
+as the Intel media driver does when encoding.
+
+Return VM_FAULT_SIGBUS instead, and make SIGBUS fail the fault rather
+than fall back to the normal fault path, which this pager cannot serve.
+Release the pages the handler busied before the failure.
+---
+ sys/compat/linuxkpi/common/src/linux_compat.c | 21 ++++++++++++++++++-
+ sys/compat/linuxkpi/common/src/linux_page.c   |  2 +-
+ 2 files changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_compat.c b/sys/compat/linuxkpi/common/src/linux_compat.c
+index 08c7cfdac8ed..3093495dc9a2 100644
+--- a/sys/compat/linuxkpi/common/src/linux_compat.c
++++ b/sys/compat/linuxkpi/common/src/linux_compat.c
+@@ -507,8 +507,14 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+     vm_prot_t max_prot, vm_pindex_t *first, vm_pindex_t *last)
+ {
+ 	struct vm_area_struct *vmap;
++	vm_page_t m;
++	vm_pindex_t i, pfn_first;
++	int pfn_count;
+ 	int err;
+ 
++	pfn_first = 0;
++	pfn_count = 0;
++
+ 	/* get VM area structure */
+ 	vmap = linux_cdev_handle_find(vm_obj->handle);
+ 	MPASS(vmap != NULL);
+@@ -541,6 +547,8 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+ 			kern_yield(PRI_USER);
+ 			err = vmap->vm_ops->fault(&vmf);
+ 		}
++		pfn_first = vmap->vm_pfn_first;
++		pfn_count = vmap->vm_pfn_count;
+ 	}
+ 
+ 	/* translate return code */
+@@ -549,7 +557,7 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+ 		err = VM_PAGER_AGAIN;
+ 		break;
+ 	case VM_FAULT_SIGBUS:
+-		err = VM_PAGER_BAD;
++		err = VM_PAGER_ERROR;
+ 		break;
+ 	case VM_FAULT_NOPAGE:
+ 		/*
+@@ -570,6 +578,17 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+ 	}
+ 	up_write(&vmap->vm_mm->mmap_sem);
+ 	VM_OBJECT_WLOCK(vm_obj);
++
++	/* On failure, release the pages the fault handler busied. */
++	if (err != VM_PAGER_OK) {
++		for (i = pfn_first; i < pfn_first + pfn_count; i++) {
++			m = vm_page_lookup(vm_obj, i);
++			if (m != NULL) {
++				vm_page_deactivate(m);
++				vm_page_xunbusy(m);
++			}
++		}
++	}
+ 	return (err);
+ }
+ 
+diff --git a/sys/compat/linuxkpi/common/src/linux_page.c b/sys/compat/linuxkpi/common/src/linux_page.c
+index a95d86753985..d953e227d80e 100644
+--- a/sys/compat/linuxkpi/common/src/linux_page.c
++++ b/sys/compat/linuxkpi/common/src/linux_page.c
+@@ -583,7 +583,7 @@ lkpi_vmf_insert_pfn_prot_locked(struct vm_area_struct *vma, unsigned long addr,
+ 					printf("%s: page rename failed: page "
+ 					    "is mapped\n", __func__);
+ 					VM_OBJECT_WLOCK(vm_obj);
+-					return (VM_FAULT_NOPAGE);
++					return (VM_FAULT_SIGBUS);
+ 				}
+ 				vm_page_remove(page);
+ 			}
+-- 
+2.56.0
+
