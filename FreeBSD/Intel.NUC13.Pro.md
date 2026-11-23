@@ -116,7 +116,7 @@ not suspend-to-idle. Not investigated.
 
 ## Next steps
 
-1. Find which mapping holds the page in the VA-API encode hang, see [VA-API with the iHD driver](#va-api-with-the-ihd-driver).
+1. VA-API encode: LinuxKPI cannot map one buffer object WB and WC at once, see [Tracing the hang](#tracing-the-hang-2026-11-23).
 2. Associate Wi-Fi with an access point and measure throughput.
 3. Test S3 suspend and resume, and power-off with `enable_guc=3`.
 
@@ -179,9 +179,56 @@ when the page is still mapped elsewhere it prints the message and returns `VM_FA
 `linux_cdev_pager_populate()` (`linux_compat.c`) retries that case forever:
 `while (vmap->vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) { kern_yield(PRI_USER); ... }`.
 The loop never checks for a pending signal, so the thread spins at 100% of one CPU and the process cannot exit; only a reboot frees it.
-Which other mapping holds the page (for example a second mmap of the same buffer object with another caching mode) is not known yet.
+What holds the page: see [Tracing the hang](#tracing-the-hang-2026-11-23).
 The path does not depend on `enable_guc`.
 
 Reproduced after a reboot with `hw.i915kms.enable_guc=3` (GuC 70.49.4: submission, SLPC and RC enabled; HuC 7.9.3 authenticated for all workloads):
 the same `h264_vaapi` CQP encode hangs with the same stack, and `timeout 60` cannot end it.
 `shutdown -r now` still rebooted the machine with such a process stuck, in about 40 s.
+
+#### Tracing the hang (2026-11-23)
+
+Three more reproductions under DTrace (scripts read the i915 ioctl structures by their uapi offsets; `i915kms.ko` has no CTF),
+then kgdb on the live kernel (`kgdb /usr/lib/debug/boot/kernel/kernel.debug /dev/mem`) with the stuck processes still looping:
+
+1. The faulting mapping is always GEM handle 38, `I915_MMAP_TYPE_WB` (`__assign_mmap_offset_handle` type 2), length 0x380000 (3.5 MB),
+   created early in the run and first touched by the encoder thread.
+2. Handle 38 gets only one mmap offset (WB); a second mapping of the same object can still come through another handle (see below). It is not a userptr object: drm-kmod refuses mmap offsets on userptr BOs
+   (`I915_GEM_OBJECT_NO_MMAP`, `__assign_mmap_offset()` returns `-ENODEV`), and handle 38's assignment succeeded.
+3. `procstat -v`: the mapping (`0x890c00000-0x890f80000`, type `md`, flag `S`) is 2 MB-aligned, superpage-mapped, all 896 pages resident.
+   Its page-table entry is a writable 2 MB superpage: PDE `0x8040000324a004e7` (PS=1), physical 0x324a00000.
+4. While the loop runs, the pages the rename check rejects (pa 0x324a00000 to 0x324a05000) sit in an `OBJT_SWAP` object with no handle
+   (a LinuxKPI shmem object) and are mapped with no 4 KB pv entry, that is through a 2 MB mapping.
+   In an earlier run, a rejected page (pa 0x293d3e000) was pindex 0 of another BO's device pager object (handle 116, a 4 KB WB mapping).
+5. kgdb afterwards: pa 0x324a00000 is pindex 0 of the mapping's own device pager object, with `psind 1`; pa 0x324a01000 is pindex 1, `psind 0`.
+
+A first hypothesis, a stale `psind` letting `vm_fault_populate()` build a superpage over pages the device pager object does not own,
+is refuted: booted with `vm.pmap.pg_ps_enabled=0` (superpages off), the same encode hangs the same way.
+
+Root cause, found with superpages off (every mapping then has a 4 KB pv entry):
+the rejected page (pa 0x1807e6000, `ref=0x80000001`) is pindex 0 of another device pager object, mapped in the same process at `0x89dd36000`.
+kgdb dump of the two `struct i915_mmap_offset` (the vmas' `vm_private_data`), compared field by field:
+
+| Offset | Existing mapping | Faulting mapping | Field |
+|---|---|---|---|
+| +0x28 | 0x101284 | 0x101bd7 | `vma_node.vm_node.start`: the fake mmap offset, in pages |
+| +0xd8 | 0xfffff801775ae000 | 0xfffff801775ae000 | `obj`: the same GEM object |
+| +0xe0 | 2 | 1 | `mmap_type`: `I915_MMAP_TYPE_WB` against `I915_MMAP_TYPE_WC` |
+| +0xe8/+0xf0 | | | the two nodes link to each other in that object's mmap offset tree |
+
+So the user-space media stack maps one buffer object twice, write-back and write-combined.
+The first fault (WB) moves the object's shmem page into the WB mapping's device pager object.
+A FreeBSD page belongs to one VM object only, so the WC fault cannot take the page while the WB mapping maps it,
+and `linux_cdev_pager_populate()` retries forever. Linux allows one page in many VMAs, so the same sequence works there.
+
+Known limitation: [freebsd/drm-kmod#481](https://github.com/freebsd/drm-kmod/issues/481) (Xorg startup with drm-612-kmod,
+"linuxkpi can't [have] two live mappings of the same page") and [PR 296195](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=296195)
+("Xorg hangs in lkpi_vmf_insert_pfn_prot_locked").
+
+Fix directions, none tried:
+
+- Containment: in `lkpi_vmf_insert_pfn_prot_locked()`, return `VM_FAULT_SIGBUS` instead of `VM_FAULT_NOPAGE` when the page is mapped elsewhere,
+  or make the `linux_cdev_pager_populate()` loop give up; the process then gets `SIGBUS` instead of an unkillable kernel loop.
+- Real fix: let a second mapping of the same page exist, for example with a fictitious page (`vm_page_getfake()`) for the same physical address,
+  as the `OBJT_DEVICE` pager does; the WB and WC aliases of one page also need a decision on the page's memory attribute.
+- Why Meteor Lake encodes fine ([docs/mtl_media_gt.md](docs/mtl_media_gt.md)): not checked; maybe the media driver maps buffers there in one mode only.
