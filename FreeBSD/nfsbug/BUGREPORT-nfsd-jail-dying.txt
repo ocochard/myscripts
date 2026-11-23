@@ -66,12 +66,12 @@ Fix (attached, nfsd_jail_state.patch, against main 6edecf52def6, one commit):
    files only (pNFS layouts are global). A host nfsd, or one in a live
    jail, keeps its state across a restart as before. Records are now
    unlinked and freed with nfsrv_zapclient().
-2. rpcsec_gss: a PR_METHOD_REMOVE hook (osd_jail_register())
-   forgets the RPCSEC_GSS server contexts of a removed vnet jail, and
-   svc_rpc_gss_vnet_cleanup() forgets them too. Contexts are reference
-   counted, so this is safe while the jail's nfsd still runs; crfree()
-   under allprison_lock is safe since prison_free() defers the last
-   release.
+2. rpcsec_gss: a PR_METHOD_REMOVE hook (osd_jail_register()) has the
+   RPCSEC_GSS server contexts of a removed vnet jail forgotten from a
+   task (freeing a context still in setup calls gssd, which must not be
+   waited for under allprison_lock), and svc_rpc_gss_vnet_cleanup()
+   forgets them too. Contexts are reference counted, so this is safe
+   while the jail's nfsd still runs.
 
 Tested with tests/sys/fs/nfs (server and clients in vnet jails), main
 6dc19a71f70c plus other pending NFS jail patches:

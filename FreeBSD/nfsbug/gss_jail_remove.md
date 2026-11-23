@@ -1,7 +1,7 @@
 # #10: a Kerberos NFS server jail stays dying forever
 
 Patch: part of [`nfsd_jail_state.patch`](nfsd_jail_state.patch), against
-main 6edecf52def6: #9 and #10 are one commit, f5ab46ed04b0, on branch
+main 6edecf52def6: #9 and #10 are one commit, 0f791cece4d9, on branch
 `nfsd-jail-dying` in `~/freebsd-src-nfsddying` (squashed 2026-11-22). Not
 committed upstream, not filed. Touches the krpc RPCSEC_GSS code: needs review by
 rmacklem.
@@ -34,16 +34,24 @@ contexts in it, so their credentials leaked.
 ## 3. The fix
 
 - A jail removal hook (`PR_METHOD_REMOVE`, registered with
-  `osd_jail_register()` at load) forgets every context of a removed vnet
-  jail. Jails without their own vnet are skipped: they use their parent's.
+  `osd_jail_register()` at load) has every context of a removed vnet jail
+  forgotten, from a task on `taskqueue_thread` that holds a reference on
+  the jail. Jails without their own vnet are skipped: they use their
+  parent's; so are jails without contexts.
 - `svc_rpc_gss_vnet_cleanup()` forgets the contexts too, before freeing the
   array.
 
 Contexts are reference counted: a service thread that still uses one keeps
-it until it lets go, as with the timeout code. So the hook is safe while the
-jail's nfsd still runs. It runs with `allprison_lock` held; `crfree()` there
-cannot take it again, since `prison_free()` defers the last release to a
-task.
+it until it lets go, as with the timeout code. So the cleanup is safe while
+the jail's nfsd still runs.
+
+Why a task: the hook runs with `allprison_lock` held exclusively. Freeing a
+context still being set up (`ctx->handle` set; `kgss_transfer_context()`
+clears it only once setup completes) calls up to gssd
+(`gss_delete_sec_context()`), and waiting for that RPC under
+`allprison_lock` would stall every jail operation on the host. A first
+version did the work in the hook itself; a local review against the
+callees found it. Module unload waits for pending tasks.
 
 Alternative: call a GSS cleanup from nfsd's exit path (#9). nfsd reaches
 kgssapi only through function pointers, and it would cover nfsd only.

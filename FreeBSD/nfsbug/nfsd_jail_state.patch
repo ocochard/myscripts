@@ -209,10 +209,18 @@ index de5e5da86202..bbb65d747674 100644
   * Check the sequence# for the session and slot provided as an argument.
   * Also, renew the lease if the session will return NFS_OK.
 diff --git sys/rpc/rpcsec_gss/svc_rpcsec_gss.c sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
-index 3990b0220229..2e1707b9b2d9 100644
+index 3990b0220229..4fdafdf61123 100644
 --- sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
 +++ sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
-@@ -198,13 +198,21 @@ SYSCTL_UINT(_kern_rpc_gss, OID_AUTO, client_count, CTLFLAG_RD,
+@@ -74,6 +74,7 @@
+ #include <sys/mutex.h>
+ #include <sys/proc.h>
+ #include <sys/sx.h>
++#include <sys/taskqueue.h>
+ #include <sys/ucred.h>
+ 
+ #include <rpc/rpc.h>
+@@ -198,13 +199,21 @@ SYSCTL_UINT(_kern_rpc_gss, OID_AUTO, client_count, CTLFLAG_RD,
  VNET_DEFINE(struct svc_rpc_gss_client_list *, svc_rpc_gss_client_hash);
  VNET_DEFINE(struct svc_rpc_gss_client_list, svc_rpc_gss_clients);
  VNET_DEFINE_STATIC(uint32_t, svc_rpc_gss_next_clientid) = 1;
@@ -234,15 +242,16 @@ index 3990b0220229..2e1707b9b2d9 100644
  }
  SYSINIT(svc_rpc_gss_init, SI_SUB_VFS, SI_ORDER_ANY,
      svc_rpc_gss_init, NULL);
-@@ -213,6 +221,7 @@ static void
+@@ -213,6 +222,8 @@ static void
  svc_rpc_gss_cleanup(void *unused __unused)
  {
  
 +	osd_jail_deregister(svc_rpc_gss_prison_slot);
++	taskqueue_quiesce(taskqueue_thread);
  	sx_destroy(&svc_rpc_gss_lock);
  }
  SYSUNINIT(svc_rpc_gss_cleanup, SI_SUB_VFS, SI_ORDER_ANY,
-@@ -237,6 +246,7 @@ static void
+@@ -237,6 +248,7 @@ static void
  svc_rpc_gss_vnet_cleanup(void *unused __unused)
  {
  
@@ -250,7 +259,7 @@ index 3990b0220229..2e1707b9b2d9 100644
  	mem_free(VNET(svc_rpc_gss_client_hash),
  	    sizeof(struct svc_rpc_gss_client_list) *
  	    svc_rpc_gss_client_hash_size);
-@@ -789,6 +799,42 @@ svc_rpc_gss_timeout_clients(void)
+@@ -789,6 +801,72 @@ svc_rpc_gss_timeout_clients(void)
  	sx_xunlock(&svc_rpc_gss_lock);
  }
  
@@ -272,21 +281,51 @@ index 3990b0220229..2e1707b9b2d9 100644
 +	sx_xunlock(&svc_rpc_gss_lock);
 +}
 +
++struct svc_rpc_gss_dyingtask {
++	struct task	dt_task;
++	struct prison	*dt_pr;
++};
++
++static void
++svc_rpc_gss_dyingtask(void *arg, int pending __unused)
++{
++	struct svc_rpc_gss_dyingtask *dt = arg;
++
++	CURVNET_SET(dt->dt_pr->pr_vnet);
++	svc_rpc_gss_forget_all_clients();
++	CURVNET_RESTORE();
++	prison_free(dt->dt_pr);
++	mem_free(dt, sizeof(*dt));
++}
++
 +/*
 + * A client holds a credential, so a reference on the jail of the service
 + * that created it, and clients expire only when a request arrives: forget
-+ * them when a vnet jail is removed, or the jail could never go away.
++ * them when a vnet jail is removed, or the jail could never go away.  Do
++ * it from a task: freeing a context still being set up calls gssd, which
++ * must not be waited for with allprison_lock held.
 + */
 +static int
 +svc_rpc_gss_prison_remove(void *obj, void *data __unused)
 +{
 +	struct prison *pr = obj;
++	struct svc_rpc_gss_dyingtask *dt;
++	bool empty;
 +
 +	if ((pr->pr_flags & PR_VNET) == 0)
 +		return (0);
 +	CURVNET_SET(pr->pr_vnet);
-+	svc_rpc_gss_forget_all_clients();
++	sx_slock(&svc_rpc_gss_lock);
++	empty = TAILQ_EMPTY(&VNET(svc_rpc_gss_clients));
++	sx_sunlock(&svc_rpc_gss_lock);
 +	CURVNET_RESTORE();
++	if (empty)
++		return (0);
++	dt = mem_alloc(sizeof(*dt));
++	prison_hold(pr);
++	dt->dt_pr = pr;
++	TASK_INIT(&dt->dt_task, 0, svc_rpc_gss_dyingtask, dt);
++	taskqueue_enqueue(taskqueue_thread, &dt->dt_task);
 +	return (0);
 +}
 +

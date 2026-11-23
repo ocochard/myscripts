@@ -53,9 +53,9 @@ file in `nfsbug/` is byte-identical to its commit's diff.
 | 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 13 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | de7f3c5a6fa7 | not a bug |
 | 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | 0cc0f3961479 | no; text in `BUGREPORT-session-leak.txt` |
 | 7 | `nfscbd_jail.patch`: nfscbd in a jail serves no callbacks (program registered only with the UDP socket, which a jail cannot add) | `nfscbd-jail` (`~/freebsd-src-nfscbdjail`) | aa9ec5017d91 | no; text in `BUGREPORT-nfscbd-jail.txt` |
-| 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | e25acea11283 | no; text in `BUGREPORT-svc-backchannel.txt` |
-| 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | f5ab46ed04b0 (one commit with #10) | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
-| 10 | same commit as #9 (squashed 2026-11-22): the same cycle with the RPCSEC_GSS server contexts (Kerberos); write-up `gss_jail_remove.md` | `nfsd-jail-dying` | f5ab46ed04b0 | same report as #9 |
+| 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | 4c2b13e08d54 | no; text in `BUGREPORT-svc-backchannel.txt` |
+| 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | 0f791cece4d9 (one commit with #10) | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
+| 10 | same commit as #9 (squashed 2026-11-22): the same cycle with the RPCSEC_GSS server contexts (Kerberos); write-up `gss_jail_remove.md` | `nfsd-jail-dying` | 0f791cece4d9 | same report as #9 |
 
 The branches track `upstream/main` (the GitHub mirror): never use a bare
 `git push`; always `git push origin <branch>`.
@@ -104,6 +104,14 @@ add `PR:` lines to the commits and the #6 PR number to the
 - 2026-11-23, each branch built alone on main 6edecf52def6: kernel plus
   the nfscommon, nfscl, nfsd, krpc, kgssapi and nfslockd modules, and the
   nfscbd userland for `nfscbd-jail`: all built, no compiler warning.
+- 2026-11-23, local review pass (the 7 checks of
+  `.agents/skills/freebsd-src/review.md`) found 2 design bugs, both fixed
+  in their commits: F1, #10's hook freed GSS contexts with
+  `allprison_lock` held although a context still in setup calls gssd (now
+  a task); F2, #8 kept every socketless transport on close, which would
+  also keep nfsd's RDMA transports (now an explicit `xp_backchannel`
+  mark). Retested: 13 cases on NODEBUG and WITNESS, and #8's restart
+  experiment (0 s / +10 s / 0 s).
 - 2026-11-23, final heads together (main 6edecf52def6 + the 7 commits,
   `n291531-ed0a6ec4666b`): all 13 cases passed on NODEBUG and WITNESS,
   `session_leak` and `v3_basic` included; nothing dying after the suite

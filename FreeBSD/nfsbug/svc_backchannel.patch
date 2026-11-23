@@ -1,5 +1,5 @@
 diff --git sys/rpc/svc.c sys/rpc/svc.c
-index f94e744d40f4..c246eecf45d4 100644
+index f94e744d40f4..424c7fbe6ee4 100644
 --- sys/rpc/svc.c
 +++ sys/rpc/svc.c
 @@ -75,7 +75,7 @@ static void svc_new_thread(SVCGROUP *grp);
@@ -32,7 +32,7 @@ index f94e744d40f4..c246eecf45d4 100644
  		mtx_lock(&grp->sg_lock);
 -		while ((xprt = TAILQ_FIRST(&grp->sg_xlist)) != NULL) {
 +		TAILQ_FOREACH_SAFE(xprt, &grp->sg_xlist, xp_link, nxprt) {
-+			if (closing && xprt->xp_socket == NULL)
++			if (closing && xprt->xp_backchannel)
 +				continue;
  			xprt_unregister_locked(xprt);
  			TAILQ_INSERT_TAIL(&cleanup, xprt, xp_link);
@@ -68,3 +68,27 @@ index f94e744d40f4..c246eecf45d4 100644
  		SVC_RELEASE(xprt);
  	}
  	KASSERT(STAILQ_EMPTY(&st->st_reqs), ("stray reqs on exit"));
+diff --git sys/rpc/svc.h sys/rpc/svc.h
+index f247b962c927..11ad91750785 100644
+--- sys/rpc/svc.h
++++ sys/rpc/svc.h
+@@ -157,6 +157,7 @@ typedef struct __rpc_svcxprt {
+ 	gid_t		*xp_gidp;
+ 	int		xp_doneddp;
+ 	bool_t		xp_extpg;	/* Can use M_EXTPG mbufs. */
++	bool_t		xp_backchannel;	/* Backchannel of a client connection */
+ } SVCXPRT;
+ 
+ /*
+diff --git sys/rpc/svc_vc.c sys/rpc/svc_vc.c
+index 24c09f182174..f971fab73d7f 100644
+--- sys/rpc/svc_vc.c
++++ sys/rpc/svc_vc.c
+@@ -356,6 +356,7 @@ svc_vc_create_backchannel(SVCPOOL *pool)
+ 	xprt->xp_p1 = cd;
+ 	xprt->xp_p2 = NULL;
+ 	xprt->xp_ops = &svc_vc_backchannel_ops;
++	xprt->xp_backchannel = TRUE;
+ 	return (xprt);
+ }
+ 

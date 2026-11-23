@@ -1,7 +1,7 @@
 # #8: recalls lost after an nfscbd restart
 
 Patch: [`svc_backchannel.patch`](svc_backchannel.patch), against main
-6edecf52def6, on top of #7 (commit e25acea11283). Not committed upstream, not
+6edecf52def6, on top of #7 (commit 4c2b13e08d54). Not committed upstream, not
 filed. Touches the generic
 krpc (`sys/rpc/svc.c`): needs review by rmacklem.
 
@@ -53,11 +53,16 @@ helps.
 
 ## 3. The fix
 
-- `svcpool_close()` keeps transports without a socket registered. Only the
-  backchannel makes such transports (`svc_vc_create_backchannel()`); it
-  belongs to the mount, not to the service, so the mount stays its owner
-  and still unregisters it at unmount. `svcpool_destroy()` keeps removing
-  everything.
+- Backchannel transports are marked (`xp_backchannel`, a new `SVCXPRT`
+  field, set by `svc_vc_create_backchannel()`), and `svcpool_close()` keeps
+  the marked ones registered. A backchannel belongs to the mount, not to
+  the service, so the mount stays its owner and still unregisters it at
+  unmount. `svcpool_destroy()` keeps removing everything.
+- Why a mark and not "no socket": a first version kept every transport
+  without a socket. nfsd's own pool can also hold RDMA server transports
+  (the `svc_rdma_listen` hook, module not in the tree), which have none, so
+  stopping nfsd would have left them registered. An RDMA backchannel from
+  that module is not marked, and behaves as before this patch.
 - A service thread that exits with a transport assigned to it now clears
   `xp_thread` and puts the transport back on the active list if it has a
   request. Before, the pointer was left on the freed thread. That was
@@ -75,7 +80,9 @@ Alternatives:
 - **Document it** in `nfscbd(8)`: a restart needs a remount. No kernel
   change, but the stalls stay.
 
-Tradeoff: the change is in the generic krpc. The nfsd pool uses
+Tradeoff: the change is in the generic krpc, and the new field changes the
+`SVCXPRT` layout: an out-of-tree RDMA module must be rebuilt, and an MFC to
+stable/15 needs care for the KBI. The nfsd pool uses
 `svcpool_close()` too, but all its transports have sockets, so nothing
 changes there.
 

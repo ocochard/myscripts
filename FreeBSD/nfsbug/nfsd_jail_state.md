@@ -1,7 +1,7 @@
 # #9: an NFS server jail stays dying forever
 
 Patch: [`nfsd_jail_state.patch`](nfsd_jail_state.patch), against main
-6edecf52def6, one commit with #10, f5ab46ed04b0, on branch `nfsd-jail-dying` in
+6edecf52def6, one commit with #10, 0f791cece4d9, on branch `nfsd-jail-dying` in
 `~/freebsd-src-nfsddying`. Not committed upstream, not filed. Needs review
 by rmacklem. The Kerberos variant of the same problem is #10,
 [`gss_jail_remove.md`](gss_jail_remove.md).

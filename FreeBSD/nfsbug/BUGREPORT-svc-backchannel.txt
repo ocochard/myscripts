@@ -35,9 +35,12 @@ clnt_vc_soupcall(), but xprt_active() sees an unregistered transport and
 drops it ("Race with xprt_unregister - we lose").
 
 Fix (attached, svc_backchannel.patch, against main 6edecf52def6):
-- svcpool_close() keeps transports without a socket registered. Only
-  svc_vc_create_backchannel() creates such transports; the mount still
-  unregisters them at unmount. svcpool_destroy() still removes all.
+- Backchannel transports are marked (new SVCXPRT field xp_backchannel,
+  set by svc_vc_create_backchannel()), and svcpool_close() keeps the
+  marked ones registered; the mount still unregisters them at unmount.
+  svcpool_destroy() still removes all. A mark rather than "no socket":
+  nfsd's pool can hold socketless RDMA server transports (svc_rdma_listen),
+  which a close must still remove. The field changes the SVCXPRT layout.
 - A service thread that exits with a transport assigned to it clears
   xp_thread and puts the transport back on sg_active if it is active.
   Before, xp_thread was left pointing at the freed thread; harmless while
