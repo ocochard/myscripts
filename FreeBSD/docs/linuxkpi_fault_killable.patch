@@ -1,4 +1,4 @@
-From 967856b9c2d2992e1ba90a2a0d48924154602a38 Mon Sep 17 00:00:00 2001
+From 9b172375d43595da8afaf6a1794f42d359189e1f Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 23 Nov 2026 10:29:11 +0100
 Subject: [PATCH] linuxkpi: Let a killed process leave a retried fault
@@ -12,7 +12,8 @@ kernel and kill -9 cannot end the process.
 Stop retrying once SIGKILL is pending or the process has started to
 exit, and fail the fault.  Nothing changes for a process that is not
 dying, so transient retries and non-fatal signals behave as before.
-Linux drops a retried fault on a fatal signal in the same way.
+Linux returns from such a fault to user space and handles the signal
+there; a FreeBSD pager cannot, so it fails the fault instead.
 ---
  sys/compat/linuxkpi/common/src/linux_compat.c | 10 ++++++++++
  1 file changed, 10 insertions(+)

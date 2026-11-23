@@ -1,7 +1,7 @@
 # LinuxKPI: letting a killed process leave a GPU page fault
 
 Patch: [linuxkpi_fault_killable.patch](linuxkpi_fault_killable.patch), branch `olivier-lkpi-fault-killable`
-(commit 967856b9c2d2 on FreeBSD main d34baf1b5ca0), one file, +10 lines.
+(commit 9b172375d435 on FreeBSD main d34baf1b5ca0), one file, +10 lines.
 Found on: Intel NUC 13 Pro, Core i7-1360P (Raptor Lake-P), Iris Xe 8086:a7a0, `drm-612-kmod` 6.12.110,
 `libva-intel-media-driver` 26.3.5. Investigation: [../Intel.NUC13.Pro.md](../Intel.NUC13.Pro.md#tracing-the-hang-2026-11-23).
 
@@ -10,9 +10,6 @@ operating system does, but has not looked inside the FreeBSD virtual memory (VM)
 
 Result in one line: a process stuck in a GPU page fault used to survive `kill -9` until a reboot;
 with the patch, `kill -9` ends it within a second. Nothing else changes.
-
-It replaces an earlier attempt, `linuxkpi_rename_sigbus`, which failed the fault at once. That version
-also changed what happens to processes that are not being killed, and section 4 explains why that was a risk.
 
 ## 1. Background
 
@@ -147,6 +144,15 @@ The two tests cover the two ways the process can be dying:
   is set only after the other threads have gone. The flag is read without the process lock, as
   `vm_fault()` reads `P_KILLED()`; a stale read only costs one more retry.
 
+Locking: `fatal_signal_pending()` takes the process mutex (`PROC_LOCK`), which never sleeps, while
+the loop holds the LinuxKPI `mmap_sem`, a sleepable sx lock; no code can take them in the other order,
+since nothing sleeps on an sx while holding a mutex. The VM object lock is not held in the loop.
+
+Who sees the new failure: only a fault that is being retried, in a process that is dying. A fault from
+kernel mode (`copyin()` in a system call of that process) returns `EFAULT` instead of hanging. A fault on
+another process's memory (a debugger through `proc_rwmem()`) checks the debugger, which is `curproc`,
+not the target.
+
 `VM_FAULT_SIGSEGV` falls to the `default:` case of the return code translation, so populate returns
 `VM_PAGER_ERROR` and `vm_fault()` fails the fault. No page needs releasing: the loop only runs while
 `vm_pfn_count` is 0. The SIGSEGV that `trapsignal()` then posts does no harm: once `P2_WEXIT` is set,
@@ -156,10 +162,13 @@ that SIGKILL (9) is delivered ahead of SIGSEGV (11).
 Why only fatal signals: a fault cannot be retried after a signal handler runs on FreeBSD, so failing
 it on any signal would turn a harmless SIGALRM or SIGPROF into SIGSEGV. The old in-tree drm2 TTM code
 says so for Xorg, which uses SIGALRM (`sys/dev/drm2/ttm/ttm_bo_vm.c`, removed in d157fbd5b4b5).
-Linux handled retried faults the same way for years: `if ((fault & VM_FAULT_RETRY) &&
-fatal_signal_pending(current)) return;` in the architecture fault handlers, before Peter Xu's 2019
-series let them return to user space on any signal ([LWN](https://lwn.net/Articles/800683/),
-[patch](https://lore.kernel.org/all/20190620022008.19172-3-peterx@redhat.com/)).
+Linux does not need to fail the fault: on a retried fault (`VM_FAULT_RETRY`) with SIGKILL pending,
+or any signal for a user-mode fault, `fault_signal_pending()` (`include/linux/sched/signal.h`) makes
+`do_user_addr_fault()` (`arch/x86/mm/fault.c`) return to user space, where the signal is handled and
+the instruction faults again ([LWN](https://lwn.net/Articles/800683/) on the 2019 series that added the
+non-fatal case). A FreeBSD pager can only supply the page or fail, so the patch fails the fault, and
+only when the process is dying. Linux also queues SIGKILL on every thread of a dying process; the
+`P2_WEXIT` test stands in for that, since FreeBSD queues it once.
 Kernel precedent: the core dump loop in `kern_exec.c` stops its `vm_fault()` calls on
 `curproc_sigkilled()`.
 
@@ -167,7 +176,7 @@ Kernel precedent: the core dump loop in `kern_exec.c` stops its `vm_fault()` cal
 
 | Option | Effect on processes not being killed | Problem |
 |---|---|---|
-| Fail the fault at once when the page is mapped elsewhere (the first version, `linuxkpi_rename_sigbus`) | a transient conflict now kills the process; every driver `VM_FAULT_SIGBUS` stops falling back to the normal fault path | real behaviour change; TTM turns an insert error on the first page back into `VM_FAULT_NOPAGE`, so amdgpu would still loop |
+| Fail the fault at once when the page is mapped elsewhere | a transient conflict now kills the process; every driver `VM_FAULT_SIGBUS` stops falling back to the normal fault path | real behaviour change; TTM turns an insert error on the first page back into `VM_FAULT_NOPAGE`, so amdgpu would still loop |
 | Fail on any pending signal (`sig_intr()`) | SIGALRM, SIGPROF, SIGCHLD now give SIGSEGV | breaks Xorg and profilers |
 | Bound the retries | a slow but legitimate retry now fails | arbitrary limit |
 | This patch | none | the stuck program still needs `kill -9` |
@@ -178,6 +187,8 @@ Not fixed:
   program catches them, as ffmpeg does: they are not fatal, so the loop keeps going.
 - A stop request (SIGSTOP, a debugger attach) or a core dump started from another thread still waits
   on the spinning thread, as before.
+- A debugger reading the memory of a process stuck this way spins in the same loop until the debugger
+  itself is killed.
 - The cause: LinuxKPI cannot map one page through two mappings. That needs a second mapping built from
   fictitious pages (`vm_page_getfake()`), as the `OBJT_DEVICE` pager does, plus a policy for a page
   mapped both WB and WC.
