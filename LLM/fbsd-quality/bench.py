@@ -2079,6 +2079,24 @@ def _dump_trace(agent, path):
         return False
 
 
+def _hide_from_agent(path, mode=0o700):
+    """Make path root-only so a later agent cannot read earlier solutions.
+
+    The agent user owns its workdir and, being the same user in every run,
+    could otherwise list /tmp/fbsd-quality and read any earlier run's .c,
+    Opus reference runs included. Not containment (see run_shell): an agent
+    with sudo still reads everything. Mode 0711 keeps a dir traversable.
+    """
+    if os.geteuid() != 0 or not os.path.isdir(path):
+        return
+    try:
+        os.chown(path, 0, 0)
+        os.chmod(path, mode)
+    except OSError as e:
+        print(f"warning: cannot hide {path} from the agent: {e}",
+              file=sys.stderr)
+
+
 def _archive(rec, workdir, build_result, console, artifact_dir, agent=None):
     """Save sources, build log, guest console and reasoning for one attempt."""
     if not artifact_dir:
@@ -2417,6 +2435,10 @@ def main():
     run_id = args.run_id or f"{re.sub(r'[^A-Za-z0-9._-]', '_', args.model)}-{os.getpid()}"
     workdir = args.workdir or os.path.join("/tmp/fbsd-quality", run_id)
     os.makedirs(workdir, exist_ok=True)
+    # Traversable, not listable: the agent reaches its own task dir only.
+    if not args.workdir:
+        _hide_from_agent(os.path.dirname(workdir), 0o711)
+    _hide_from_agent(workdir, 0o711)
 
     if args.artifacts == "none":
         artifact_dir = None
@@ -2424,6 +2446,8 @@ def main():
         artifact_dir = args.artifacts or os.path.join(
             os.path.dirname(os.path.abspath(args.out)), "artifacts", run_id)
         os.makedirs(artifact_dir, exist_ok=True)
+        _hide_from_agent(os.path.dirname(artifact_dir), 0o711)
+        _hide_from_agent(artifact_dir)
         print(f"artifacts={artifact_dir}", file=sys.stderr)
 
     # A tier that patches the kernel needs a WRITABLE tree. The default
@@ -2476,6 +2500,7 @@ def main():
                                   args.no_progress_patience, args.seed,
                                   args.temperature, args.snippet_timeout,
                                   src_baseline, args.agent_type)
+                    _hide_from_agent(os.path.join(workdir, task["id"]))
                     rec["rep"] = rep + 1
                     # Record the DENOMINATOR, not just which rep this was. A
                     # row saying rep=1 is ambiguous forever after: it could be

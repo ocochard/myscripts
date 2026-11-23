@@ -178,6 +178,14 @@ or running the bench under a user without blanket sudo. Until then, treat every
 run as capable of touching the host, and do not run this on a machine you care
 about.
 
+**Earlier solutions are root-only.** Every run uses the same agent user, so
+before 2026-11-23 any agent could `ls /tmp/fbsd-quality` and read every
+earlier run's `.c`, Opus reference runs included (v45 t5 listed it "looking
+for hints"; it read nothing). `bench.py` now makes `/tmp/fbsd-quality`, the
+run dir and `artifacts/` root-owned 0711, and each finished task dir and each
+run's artifacts root 0700. Read traces with `sudo`. Like the tripwires, this
+stops a curious agent, not one that runs `sudo`.
+
 The corollary for task design: a task may legitimately *require* privilege (an
 agent that has to build its own guest image needs `mdconfig` and `mount`), so
 the sudo access is load-bearing, not merely an oversight to be removed.
