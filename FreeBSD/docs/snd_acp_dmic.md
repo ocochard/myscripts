@@ -198,6 +198,12 @@ A new `pcm(4)` driver, `snd_acp`, record only:
   ring wrapping. The filter is skipped when `dev.pcm.N.bitperfect` is
   set, the standard sound(4) switch for unprocessed samples; the mute
   stays, since the burst is not sound.
+- Gain: bits 4:3 of `ACP_WOV_MISC_CTRL` (0x2c5c) are a 2-bit PDM gain,
+  0 to 3, each step 6 dB (measured, section 4). Linux's PS PDM driver
+  sets it from its `pdm_gain` module parameter, default 3, with no mixer
+  control. Here the mixer's recording level (`rec`) sets it: 0-24 is
+  gain 0, then one step per 25; `mixer.c` gives `rec` 75 at attach, which
+  keeps gain 3. A change applies at once, also during a recording.
 - Interrupt: the PDM DMA interrupt is enabled in `EXT_INTR_CNTL(0)` only,
   so `acp_intr()` reads and clears `EXT_INTR_STAT(0)` only.
 - Loading: one `pci_device_table` (`acp_ids[]`, vendor 0x1022, device
@@ -284,6 +290,25 @@ kernel, swapped in with `kldunload`/`kldload`, recorded natively
 | `devmatch -a -h` on the new module's `linker.hints` | `pcm6: snd_acp.ko` |
 | `buildkernel GENERIC` on main 6dc19a71f70c | no warning |
 
+PDM gain, 2026-11-24, quiet room: a 440 Hz tone played through the
+laptop speakers, recorded by the microphones (3 s, stereo S32_LE,
+Goertzel level, [snd_acp_gain_level.py](snd_acp_gain_level.py)), first with a test build writing the gain field
+directly (three runs per gain), then through the mixer:
+
+| Gain | Register test, channel 0 | `mixer -f /dev/mixer6 rec.volume=` | Mixer test, channel 0 |
+|---|---|---|---|
+| 0 | -85.1, -85.1, -85.4 dBFS | 0.10 | -85.3 dBFS |
+| 1 | -79.1, -79.2, -79.4 | 0.30 | -79.4 |
+| 2 | -72.9, -73.1, -73.1 | 0.60 | -73.5 |
+| 3 | -67.0, -66.9, -67.1 | 1.00 (0.75, the default, gives the same gain) | -67.3 |
+
+Each step adds 6 dB on both channels, and the room noise rises by about
+as much: the gain scales the level, it does not improve the
+signal-to-noise ratio. Changing `rec.volume` from 0.75 to 0.10 during a
+4 s recording moved the tone from -67 dBFS to -86 dBFS at the change.
+pcm(4) also lists `bass` and `treble` (playback, its software EQ) on
+this mixer; they do nothing on a record-only device.
+
 Same laptop on Ubuntu (Linux 7.0.0-43) for comparison: quiet -42 to -48
 dBFS per window, clapping peak -2 dBFS. The quieter floor there may be
 the room; it was not compared in the same conditions.
@@ -325,5 +350,5 @@ and the Linux `sound/soc/amd` drivers; all changes are made and tested
 | More than 7.x IDs? | Linux drives 0x70-0x72 with one code path. 0x7D-0x7F use another interrupt register layout and have no Linux PDM support yet. Only 0x70 is tested. | none |
 | Check `acp_ids[]` in probe? | Yes, one table for probe and devmatch: `pci_device_table`, `PCI_MATCH()`, `PCI_PNP_INFO()`. The revision check stays in code: pci(4) pnpinfo has no `revid`, so devmatch could never match it. | done |
 | Clear `running` in detach, as in suspend? | `acp_pdm_stop()` already clears it; suspend sets it back on purpose so resume restarts the DMA. `pcm_unregister()` has stopped the channel before. | none |
-| `mixer_init()`? | No gain to control: Linux shows zero mixer controls for this card, and mixer.c's soft volume covers playback only. | none |
+| `mixer_init()`? | wulf pointed out the input gain register: bits 4:3 of `ACP_WOV_MISC_CTRL`, 0 to 3. Linux sets it from a module parameter (default 3) and exposes no mixer control, which is why amixer showed none; the driver wrote 3 under a misleading name. Measured: 6 dB per step. | done: the recording level (`rec`) sets the gain, default unchanged |
 | How does `getptr` work? | The ACP counts DMA bytes in a 64-bit counter that does not restart; start saves it, getptr returns (count - start) modulo the ring, rounded down to an 8-byte frame, as Linux's PS PDM driver does. | comment added above `acpchan_getptr()` |

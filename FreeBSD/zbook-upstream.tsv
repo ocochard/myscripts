@@ -9,7 +9,7 @@ lkpi-srcu	1	-	120	NPU needs it
 lkpi-pcim-iomap	1	-	121	NPU needs it
 lkpi-sysfs-binary	1	-	118
 amdiommu-irte	1	-	112	shares amd_iommu.h with amdiommu
-amdiommu	1	-	113	wait for kib (kbowling); shares amd_iommu.h with amdiommu-irte
+amdiommu	1	-	113	shares amd_iommu.h with amdiommu-irte
 devmatch-hostb	1	-	123	shares amdsmu.c with amdsmu-strixhalo
 acp	1	-	124
 acpi-cpu-s2idle-cx	1	-	115	split from s2idle-wake: the commit that makes the ZBook wake

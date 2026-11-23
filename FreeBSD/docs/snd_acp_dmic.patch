@@ -1,7 +1,7 @@
-From d86417597c0ab87a67b326fafe83d7547b6976ae Mon Sep 17 00:00:00 2001
+From 281611f0b8014770630eea9f241a159320a61ec2 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sat, 21 Nov 2026 23:49:05 +0100
-Subject: [PATCH 1/2] snd_acp: Add a driver for AMD ACP 7.x digital microphones
+Subject: [PATCH 1/3] snd_acp: Add a driver for AMD ACP 7.x digital microphones
 
 The built-in microphones of Strix Halo laptops are wired to the ACP's
 PDM interface, not to the HDA codec, so FreeBSD had no way to record
@@ -798,10 +798,10 @@ index 000000000000..5392466bf32c
 2.56.0
 
 
-From b7968752cf9f312e3929fffac3b754e51f04503d Mon Sep 17 00:00:00 2001
+From ff58c180e2e6eebaf9eb039d77e784053782869a Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Tue, 17 Nov 2026 00:40:52 +0100
-Subject: [PATCH 2/2] snd_acp: Mute the start burst and remove the DC offset
+Subject: [PATCH 2/3] snd_acp: Mute the start burst and remove the DC offset
 
 The PDM microphones start each recording with about 60 ms of
 full-scale noise, then carry a DC offset (-22 dBFS on channel 0 of an
@@ -928,6 +928,176 @@ index b2f133dcc598..aa0f8a945cd8 100644
  }
  
  static struct pcmchan_caps *
+-- 
+2.56.0
+
+
+From cd28b2fafb0434e45e43eebe22563acdd0a0fff4 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Mon, 23 Nov 2026 23:59:18 +0100
+Subject: [PATCH 3/3] snd_acp: Set the microphone gain with the recording level
+
+The PDM block has a 2-bit gain, bits 4:3 of ACP_WOV_MISC_CTRL, that the
+driver set to its maximum.  Each step is 6 dB: a 440 Hz tone recorded at
+-85, -79, -73 and -67 dBFS on an HP ZBook Ultra G1a.  Linux sets it from
+the pdm_gain module parameter, default 3, without a mixer control.
+
+Expose it as the mixer's recording level, one step per 25; the default
+level, 75, keeps the maximum gain.
+---
+ share/man/man4/snd_acp.4 | 11 +++++--
+ sys/dev/sound/pci/acp.c  | 62 ++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 67 insertions(+), 6 deletions(-)
+
+diff --git a/share/man/man4/snd_acp.4 b/share/man/man4/snd_acp.4
+index 91dfef40354a..bf52db4b4175 100644
+--- a/share/man/man4/snd_acp.4
++++ b/share/man/man4/snd_acp.4
+@@ -63,6 +63,12 @@ is set.
+ The first 100 ms of each recording are muted: the microphones start
+ with a full-scale burst.
+ .Pp
++The
++.Xr mixer 8
++recording level
++.Pq Cm rec
++sets the microphones' gain in four steps of about 6 dB: 0 to 24 is
++the lowest, 75 to 100 the highest, which is the default.
+ The driver attaches only when the firmware reports digital microphones:
+ the ACP pin configuration must route the PDM interface, and the ACPI
+ .Va _WOV
+@@ -79,7 +85,8 @@ AMD Audio Coprocessor 7.x (PCI 1022:15e2, revisions 0x70 to 0x72),
+ as found in the Ryzen AI Max (Strix Halo) processors
+ .El
+ .Sh SEE ALSO
+-.Xr sound 4
++.Xr sound 4 ,
++.Xr mixer 8
+ .Sh HISTORY
+ The
+ .Nm
+@@ -87,5 +94,3 @@ driver first appeared in
+ .Fx 16.0 .
+ .Sh AUTHORS
+ .An Olivier Cochard Aq Mt olivier@FreeBSD.org
+-.Sh BUGS
+-The microphones' gain cannot be changed; there is no mixer.
+diff --git a/sys/dev/sound/pci/acp.c b/sys/dev/sound/pci/acp.c
+index aa0f8a945cd8..38b8d5b44378 100644
+--- a/sys/dev/sound/pci/acp.c
++++ b/sys/dev/sound/pci/acp.c
+@@ -47,6 +47,8 @@
+ #include <contrib/dev/acpica/include/acpi.h>
+ #include <dev/acpica/acpivar.h>
+ 
++#include <mixer_if.h>
++
+ 
+ /* Address translation unit: how the ACP's DMA reaches system memory. */
+ #define	ACP_ATU_PAGE_SIZE_GRP1	0x0c00
+@@ -93,7 +95,8 @@
+ #define	ACP_PDM_DECIMATION	0x2c2c
+ #define	ACP_PDM_DEC_64		0x2
+ #define	ACP_PDM_MISC_CTRL	0x2c5c
+-#define	ACP_PDM_MISC_CTRL_MASK	0x18
++#define	ACP_PDM_GAIN_MASK	0x18	/* 0 to 3, 6 dB steps */
++#define	ACP_PDM_GAIN_SHIFT	3
+ #define	ACP_PDM_CLK_CTRL	0x2c60
+ #define	ACP_PDM_CLK_DEFAULT	0x7
+ #define	ACP_PDM_RINGBUF_WINDOW	0x04c00000	/* ring address, ACP side */
+@@ -134,6 +137,7 @@ struct acp_info {
+ 	void			*ih;
+ 	bus_dma_tag_t		dmat;
+ 	struct acp_chinfo	rch;
++	int			gain;
+ };
+ 
+ static uint32_t acp_fmt[] = {
+@@ -239,6 +243,15 @@ acp_pdm_pos(struct acp_info *sc)
+ 	return (((uint64_t)hi << 32) | lo);
+ }
+ 
++static void
++acp_set_gain(struct acp_info *sc)
++{
++	mtx_assert(&sc->lock, MA_OWNED);
++	acp_wr(sc, ACP_PDM_MISC_CTRL,
++	    (acp_rd(sc, ACP_PDM_MISC_CTRL) & ~ACP_PDM_GAIN_MASK) |
++	    sc->gain << ACP_PDM_GAIN_SHIFT);
++}
++
+ static void
+ acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
+ {
+@@ -267,8 +280,7 @@ acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
+ 	acp_wr(sc, ACP_PDM_CHANNELS, 0);
+ 	acp_wr(sc, ACP_PDM_DECIMATION, ACP_PDM_DEC_64);
+ 	acp_wr(sc, ACP_PDM_CLK_CTRL, ACP_PDM_CLK_DEFAULT);
+-	acp_wr(sc, ACP_PDM_MISC_CTRL,
+-	    acp_rd(sc, ACP_PDM_MISC_CTRL) | ACP_PDM_MISC_CTRL_MASK);
++	acp_set_gain(sc);
+ 	acp_wr(sc, ACP_PDM_RINGBUF_ADDR, ACP_PDM_RINGBUF_WINDOW);
+ 	acp_wr(sc, ACP_PDM_RINGBUF_SIZE, ch->buffer->bufsize);
+ 	acp_wr(sc, ACP_PDM_WATERMARK, ch->blksz);
+@@ -462,6 +474,47 @@ static kobj_method_t acpchan_methods[] = {
+ };
+ CHANNEL_DECLARE(acpchan);
+ 
++/*
++ * The recording level sets the PDM gain: 0-24 is gain 0, then one step per
++ * 25.  The default level, 75, keeps the maximum gain, as Linux does.
++ */
++static int
++acpmix_init(struct snd_mixer *m)
++{
++	mix_setdevs(m, SOUND_MASK_RECLEV);
++	mix_setrecdevs(m, SOUND_MASK_RECLEV);
++	return (0);
++}
++
++static int
++acpmix_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
++{
++	struct acp_info *sc = mix_getdevinfo(m);
++
++	if (dev != SOUND_MIXER_RECLEV)
++		return (-1);
++	mtx_lock(&sc->lock);
++	sc->gain = MIN(MAX(left, right) / 25, 3);
++	if (sc->rch.running)
++		acp_set_gain(sc);
++	mtx_unlock(&sc->lock);
++	return (0);
++}
++
++static uint32_t
++acpmix_setrecsrc(struct snd_mixer *m, uint32_t src)
++{
++	return (SOUND_MASK_RECLEV);
++}
++
++static kobj_method_t acpmix_methods[] = {
++	KOBJMETHOD(mixer_init,		acpmix_init),
++	KOBJMETHOD(mixer_set,		acpmix_set),
++	KOBJMETHOD(mixer_setrecsrc,	acpmix_setrecsrc),
++	KOBJMETHOD_END
++};
++MIXER_DECLARE(acpmix);
++
+ /* Device methods. */
+ 
+ /*
+@@ -586,7 +639,10 @@ acp_attach(device_t dev)
+ 		goto bad_hw;
+ 	}
+ 
++	sc->gain = 3;
+ 	pcm_init(dev, sc);
++	if (mixer_init(dev, &acpmix_class, sc) != 0)
++		device_printf(dev, "cannot set up the mixer\n");
+ 	pcm_addchan(dev, PCMDIR_REC, &acpchan_class, sc);
+ 	snprintf(status, SND_STATUSLEN, "mem 0x%jx irq %jd on %s",
+ 	    rman_get_start(sc->reg), rman_get_start(sc->irq),
 -- 
 2.56.0
 
