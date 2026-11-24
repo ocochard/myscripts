@@ -36,7 +36,8 @@ In that 2024 boot, i915 and Wi-Fi worked; do not take those lines for the curren
 | Logitech Unifying receiver | 046d:c52b | `hkbd0`, `hms0`, `hcons0`, `hsctrl0` |
 | GPU | Iris Xe (8086:a7a0) | `i915kms` from `drm-612-kmod-6.12.110.1600031_3`, DMC firmware `i915/adlp_dmc.bin` v2.20; `/dev/dri/card0`, `renderD128`, console on `drmfb` |
 | Wi-Fi | Intel AX211 CNVi (8086:51f1) | `iwlwifi0` with `wifi-firmware-iwlwifi-kmod-ax210` (firmware 89.735b75a4.0); scan tested, no association yet. `iwx0` scans too |
-| Bluetooth | Intel AX211 Bluetooth (USB, ugen1.3) | `ubt0` after `iwmbtfw` loads `iwmbt-firmware`; `hccontrol -n ubt0hci read_bd_addr` answers |
+| Bluetooth | Intel AX211 Bluetooth (USB, `ugen1.3` on 2026-11-23, `ugen2.3` on 2026-11-24: the bus number changes between boots) | `ubt0` after `iwmbtfw` loads `iwmbt-firmware`; `hccontrol -n ubt0hci read_bd_addr` answers |
+| Thunderbolt eGPU | Titan Ridge JHL7440 dock + NVIDIA RTX 3070 (10de:2488) | `nvidia` from `nvidia-driver-620.70.06`, Gen3 x4, no Thunderbolt driver; hot-plug needs a kernel patch, see [Thunderbolt eGPU](#thunderbolt-egpu) |
 
 GPU, Wi-Fi and Bluetooth were broken until 2026-11-23, with no code change needed to fix them:
 
@@ -53,7 +54,7 @@ Both `if_iwlwifi` and `if_iwx` load at boot, and `iwlwifi` claims the device.
 After `kldunload if_iwlwifi`, the already loaded `if_iwx` takes the card.
 The unload logs `iwlwifi0: lkpi_pci_dev_release_common: driver did not clean up; leaking mmio resources`; `iwlwifi` still attached again afterwards.
 After a reboot (2026-11-23), i915 (from `kld_list`), `iwlwifi0` and `ubt0` attach at boot.
-Not tested: display output, audio playback, S3 suspend, Thunderbolt devices.
+Not tested: display output, audio playback, S3 suspend, Thunderbolt devices other than the GPU dock.
 
 ## PCI devices without driver
 
@@ -63,7 +64,7 @@ Source: `pciconf -lv | grep -A4 '^none'`.
 |---|---|---|---|---|---|---|
 | none0 | 0:8:0 | 8086:a74f | GNA Scoring Accelerator | low-power neural inference (noise suppression) | nothing usable | none in mainline (out-of-tree `intel_gna`) |
 | none1 | 0:10:0 | 8086:a77d | Crashlog and Telemetry | Platform Monitoring Technology counters, crash records | nothing for normal use | `intel_vsec` with `pmt_telemetry`/`pmt_crashlog` (ID not checked) |
-| none2, none3 | 0:13:2, 0:13:3 | 8086:a73e, a76d | Thunderbolt 4 NHI | USB4/Thunderbolt fabric, PCIe tunneling | eGPU, PCIe docks | `thunderbolt` |
+| none2, none3 | 0:13:2, 0:13:3 | 8086:a73e, a76d | Thunderbolt 4 NHI | USB4/Thunderbolt fabric, PCIe tunneling | nothing for PCIe devices: the firmware connection manager builds the tunnels (see [Thunderbolt eGPU](#thunderbolt-egpu)) | `thunderbolt` |
 | none4 | 0:20:2 | 8086:51ef | PCH Shared SRAM | firmware scratch memory | nothing | none |
 | none5 | 0:22:0 | 8086:51e0 | HECI (Management Engine) | host interface to the Intel ME | nothing for normal use; `hfsts(4)` decodes the ME firmware status | `mei_me` |
 | none6 | 0:31:5 | 8086:51a4 | PCH SPI controller | BIOS flash | nothing (flash updates only) | `spi-intel-pci` |
@@ -72,15 +73,14 @@ Notes:
 
 - Thunderbolt: FreeBSD `thunderbolt(4)` probes any USB4 NHI by class (`Generic USB4 NHI`, `sys/dev/thunderbolt/nhi_pci.c`),
   but it is commented out in GENERIC ("breaks suspend/resume in some instances") and has no module loaded here.
-  USB 3 on the Thunderbolt ports works through `xhci0`; DisplayPort alt mode needs i915.
+  It is not needed for PCIe devices: the firmware connection manager tunnels the GPU dock at boot and after a hot-plug
+  (see [Thunderbolt eGPU](#thunderbolt-egpu)). USB 3 on the Thunderbolt ports works through `xhci0`; DisplayPort alt mode needs i915.
 - HECI: `hfsts.ko` exists in `/boot/kernel` (added 8e5e2c391059, 2026-09-15) and lists 0x51e0 ("Alder Lake Point P MEI"),
   but nothing loads it automatically. `kldload hfsts` exposes the HFSTS1-6 registers; not tried.
 
 ## USB devices without a working driver
 
-| ugen | Device | State |
-|---|---|---|
-| ugen1.3 | Intel AX211 Bluetooth | no driver attached: the controller needs firmware from `iwmbtfw`, which needs the `iwmbt-firmware` package (not installed) |
+None. The AX211 Bluetooth controller works since `iwmbt-firmware` was installed (2026-11-23, see [What works](#what-works)).
 
 The Logitech receiver's vendor HID pages (`page=0xff00`, `0xffbc`) stay unclaimed: they carry Logitech's HID++ pairing and configuration protocol, not input.
 
@@ -119,6 +119,44 @@ not suspend-to-idle. Not investigated.
 1. VA-API H.264 encode (`low_power 0`): LinuxKPI cannot map one buffer object WB and WC at once, see [Tracing the hang](#tracing-the-hang-2026-11-23); use `-low_power 1`.
 2. Associate Wi-Fi with an access point and measure throughput.
 3. Test S3 suspend and resume, and power-off with `enable_guc=3`.
+4. eGPU: get [docs/pci_hotplug_bars.patch](docs/pci_hotplug_bars.patch) reviewed upstream; run a GPU workload on the patched kernel; test hot-unplug with `nvidia` loaded.
+
+## Thunderbolt eGPU
+
+Tested 2026-11-24: Thunderbolt 3 dock with an Intel JHL7440 (Titan Ridge) controller and an NVIDIA GeForce RTX 3070 (10de:2488),
+`nvidia-driver-620.70.06`, `nvidia-kmod-620.70.06.1600031_1`.
+Details, address maps and the patch walk-through: [docs/pci_hotplug_bars.md](docs/pci_hotplug_bars.md).
+
+No Thunderbolt driver is needed.
+The CPU's Thunderbolt 4 controller runs a firmware connection manager, which builds the PCIe tunnel at boot and after a hot-plug.
+To FreeBSD, the dock is a PCIe switch below the hot-plug root port `pcib3` (0:7:2).
+`thunderbolt(4)` stays unloaded.
+
+| Kernel | Dock | Result |
+|---|---|---|
+| stock | on at power-on | the BIOS assigns all GPU BARs (BAR1 8 GB, Resizable BAR); `nvidia-smi`: RTX 3070, 8192 MiB, Gen3 x4 |
+| stock | powered on after boot | GPU BARs stay 0; `NVRM: NVIDIA MEM resource alloc failed, BAR0 @ 0x10` |
+| stock | powered on after boot, then `devctl delete -f` of the dock USB bridge, reload `nvidia`, `devctl rescan` | works, BAR1 256 MB |
+| [docs/pci_hotplug_bars.patch](docs/pci_hotplug_bars.patch) | on at power-on | same as stock |
+| [docs/pci_hotplug_bars.patch](docs/pci_hotplug_bars.patch) | powered on after boot | works, Gen3 x4, BAR1 256 MB |
+
+Cause of the hot-plug failure: FreeBSD does not reserve BARs that firmware left at 0.
+The GPU HDMI audio and the dock USB controller attach first and take small adjacent bridge windows.
+The GPU BAR0 (16 MB, 16 MB aligned) then has no room.
+The patch reserves zero BARs when a device is added below a PCIe port with Hot-Plug Capable set.
+
+GPU workloads, on the stock kernel after the `devctl` workaround (256 MB BAR1):
+
+- Vulkan (`nvidia_icd.json`, needs `nvidia-modeset`): `llama-bench` Qwen3-8B Q4_1 `-ngl 99 -fa 1`: pp512 2711 t/s, tg128 75.9 t/s.
+- `vkcube --wsi display` on HDMI-0 runs at the display's 24 Hz.
+
+Limits:
+
+- Unload `nvidia` before you unplug the dock: hot-unplug with `nvidia` loaded is not tested.
+- After a hot-plug, BAR1 stays at 256 MB; only the BIOS enables the 8 GB Resizable BAR.
+- No IOMMU protects DMA from the dock.
+- AMD USB4 hosts have no firmware connection manager, and FreeBSD has no software one:
+  on the Beelink SER6, `thunderbolt(4)` attaches `nhi0` and the dock never appears.
 
 ## GPU acceleration
 
