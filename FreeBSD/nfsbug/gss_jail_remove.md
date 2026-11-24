@@ -1,7 +1,7 @@
 # #10: a Kerberos NFS server jail stays dying forever
 
 Patch: part of [`nfsd_jail_state.patch`](nfsd_jail_state.patch), against
-main 6edecf52def6: #9 and #10 are one commit, 0f791cece4d9, on branch
+main 6edecf52def6: #9 and #10 are one commit, 9b8e54c993f0, on branch
 `nfsd-jail-dying` in `~/freebsd-src-nfsddying` (squashed 2026-11-22). Not
 committed upstream, not filed. Touches the krpc RPCSEC_GSS code: needs review by
 rmacklem.
@@ -65,3 +65,18 @@ on GENERIC-NODEBUG and on GENERIC with WITNESS, with the `krb5`, `krb5i` and
 
 Untested: a Kerberos service in a jail without its own vnet, other
 RPCSEC_GSS services than nfsd, unloading kgssapi.
+
+
+## Review 2026-11-24
+
+A per-commit review (see [`review-2026-11-24.md`](review-2026-11-24.md))
+found the issues below in this patch; the text above describes the fixed
+version. Retested afterwards: all 13 cases of `tests/sys/fs/nfs` on
+GENERIC-NODEBUG and GENERIC with WITNESS, no jail left dying, no panic.
+
+- D2: the hook took `svc_rpc_gss_lock` shared under `allprison_lock`, and
+  that lock is held exclusively across gssd upcalls. Fixed: the hook takes
+  no lock and queues the task for every vnet jail.
+- D3: a context created after the hook ran (nfsd still serving) was never
+  freed. Fixed: `svc_rpc_gss_create_client()` refuses new contexts in a
+  dying jail (AUTH_REJECTEDCRED). Not testable in the VM.

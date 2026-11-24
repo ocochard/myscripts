@@ -1,5 +1,5 @@
 diff --git sys/kgssapi/gss_impl.c sys/kgssapi/gss_impl.c
-index 4c7147fc3879..417e6a03c7ed 100644
+index 4c7147fc3879..94bdea08cd40 100644
 --- sys/kgssapi/gss_impl.c
 +++ sys/kgssapi/gss_impl.c
 @@ -39,6 +39,7 @@
@@ -31,7 +31,7 @@ index 4c7147fc3879..417e6a03c7ed 100644
  
  	LIST_INIT(&kgss_mechs);
  
-@@ -65,17 +74,11 @@ kgss_load(void)
+@@ -65,17 +74,13 @@ kgss_load(void)
  	KASSERT(cl, ("%s: netlink client already exist", __func__));
  
  	/*
@@ -43,17 +43,18 @@ index 4c7147fc3879..417e6a03c7ed 100644
 -	 * with misconfigured startup, where kernel starts sending GSS queries
 -	 * before userland had started up the gssd(8) daemon.
 -	 * The initial timeout of 200usec is for the Null RPC.
-+	 * The handle is shared by all vnets, so it has no retry and no
-+	 * timeout of its own: each call brings its timeout, short for the
-+	 * Null RPC that checks that the gssd(8) of the vnet runs.
++	 * Retry for 5 minutes with a 10 second interval: some gssd(8)
++	 * calls take about 30 seconds, and this rides out a gssd restart.
++	 * The handle is shared by all vnets; the Null RPC that checks
++	 * that the gssd of a vnet runs asks for a short timeout per call.
  	 */
--	clnt_control(cl, CLSET_RETRIES, &(int){30});
+ 	clnt_control(cl, CLSET_RETRIES, &(int){30});
 -	clnt_control(cl, CLSET_TIMEOUT, &nulltimo);
-+	clnt_control(cl, CLSET_TIMEOUT, &(struct timeval){0});
++	clnt_control(cl, CLSET_TIMEOUT, &(struct timeval){.tv_sec = 300});
  
  	/*
  	 * We literally wait on gssd(8), let's see that in top(1).
-@@ -243,13 +246,11 @@ kgss_gssd_client(void)
+@@ -243,13 +248,11 @@ kgss_gssd_client(void)
  	CLIENT *cl;
  	struct rpc_callextra ext;
  	enum clnt_stat stat;
@@ -69,7 +70,7 @@ index 4c7147fc3879..417e6a03c7ed 100644
  		mtx_unlock(&kgss_gssd_lock);
  		/*
  		 * Can only be NULL if client_nl_create() called from
-@@ -257,26 +258,25 @@ kgss_gssd_client(void)
+@@ -257,26 +260,25 @@ kgss_gssd_client(void)
  		 */
  		if (cl == NULL)
  			return (cl);
@@ -103,19 +104,49 @@ index 4c7147fc3879..417e6a03c7ed 100644
  	if (cl != NULL)
  		CLNT_ACQUIRE(cl);
 diff --git sys/rpc/clnt_nl.c sys/rpc/clnt_nl.c
-index 07bc1e5ae599..ce62cbd0b416 100644
+index 07bc1e5ae599..8a7ea038a635 100644
 --- sys/rpc/clnt_nl.c
 +++ sys/rpc/clnt_nl.c
-@@ -479,7 +479,11 @@ clnt_nl_control(CLIENT *cl, u_int request, void *info)
- 	mtx_lock(&nl->nl_lock);
- 	switch (request) {
- 	case CLSET_TIMEOUT:
--		nl->nl_timo = tvtohz((struct timeval *)info);
-+		/* A zero timeout makes each call use its own. */
-+		if (timevalisset((struct timeval *)info))
-+			nl->nl_timo = tvtohz((struct timeval *)info);
-+		else
-+			nl->nl_timo = 0;
- 		break;
+@@ -265,7 +265,8 @@ clnt_nl_call(CLIENT *cl, struct rpc_callextra *ext, rpcproc_t proc,
+ 	XDR xdrs;
+ 	void *mem;
+ 	uint32_t len, xlen;
+-	u_int retries = 0;
++	u_int retries = 0, tries;
++	int timo;
+ 	bool rv __diagused;
  
- 	case CLGET_TIMEOUT:
+ 	CURVNET_ASSERT_SET();
+@@ -330,11 +331,21 @@ clnt_nl_call(CLIENT *cl, struct rpc_callextra *ext, rpcproc_t proc,
+ 
+ 	nlmsg_flush(&nw);
+ 
++	/*
++	 * A call that asks for less than one attempt of the handle gets a
++	 * single attempt of its own length.
++	 */
++	tries = nl->nl_retries;
++	timo = (nl->nl_timo ? nl->nl_timo : tvtohz(&utimeout)) / tries;
++	if (nl->nl_timo != 0 && timevalisset(&utimeout) &&
++	    tvtohz(&utimeout) < timo) {
++		timo = tvtohz(&utimeout);
++		tries = 1;
++	}
+ 	mtx_lock(&nl->nl_lock);
+ 	if (__predict_true(cr->cr_error == ETIMEDOUT))
+ 		(void)msleep(cr, &nl->nl_lock, nl->nl_prio, nl->nl_wchan,
+-		    (nl->nl_timo ? nl->nl_timo : tvtohz(&utimeout)) /
+-		    nl->nl_retries);
++		    timo);
+ 	TAILQ_REMOVE(&nl->nl_pending, cr, cr_link);
+ 	mtx_unlock(&nl->nl_lock);
+ 
+@@ -377,7 +388,7 @@ clnt_nl_call(CLIENT *cl, struct rpc_callextra *ext, rpcproc_t proc,
+ 		MPASS(cr->cr_mrep == NULL);
+ 		errp->re_errno = cr->cr_error;
+ 		stat = errp->re_status = RPC_CANTRECV;
+-		if (cr->cr_error == ETIMEDOUT && ++retries < nl->nl_retries) {
++		if (cr->cr_error == ETIMEDOUT && ++retries < tries) {
+ 			cr->cr_xid = atomic_fetchadd_32(&nl->nl_xid, 1);
+ 			goto retry;
+ 		}

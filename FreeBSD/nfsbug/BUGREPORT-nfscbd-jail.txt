@@ -34,13 +34,13 @@ Fix (attached, nfscbd_jail.patch, against main 6edecf52def6):
   through a temporary backchannel transport (svc_reg() needs a transport
   only for its pool), and sets nfscl_enablecallb. It runs at each nfscbd
   start, since svcpool_close() removes the registrations at exit.
-- nfscbd_addsock() returns EPERM when no transport could be created, as
-  nfsrvd_addsock() does.
-- nfscbd(8) skips its UDP socket when security.jail.jailed is set, since
-  the kernel now refuses it with an error.
+  Callbacks are enabled only if that registration succeeds.
+- nfscbd(8) skips its UDP socket when security.jail.jailed is set.
+- rc.d/nfscbd uses KEYWORD nojailvnet instead of nojail, as rc.d/nfsd.
 
-Tradeoff: an old nfscbd binary in a jail on a patched kernel exits at start
-("can't Add UDP socket"), where before it ran and served nothing.
+An older nfscbd binary keeps working in a jail: its refused UDP socket no
+longer matters. Design limit, unchanged: the callback pool is host-wide, so
+a jailed nfscbd also serves the host's NFSv4.1 mounts.
 
 Tested in a bhyve VM, GENERIC-NODEBUG, NFSv4.1, server and two clients in
 vnet jails, vfs.nfsd.issue_delegations=1. A jailed NFS client needs the

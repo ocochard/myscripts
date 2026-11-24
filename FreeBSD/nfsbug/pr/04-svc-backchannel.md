@@ -26,7 +26,9 @@ Tested in a bhyve VM with `tests/sys/fs/nfs` (server and clients in vnet
 jails), kernel = main plus all pending NFS jail changes, GENERIC-NODEBUG and
 GENERIC (INVARIANTS, WITNESS): all 13 cases pass, no jail left dying, no
 panic or KASSERT. The branch also builds alone on main (kernel and the
-nfscommon, nfscl, nfsd, krpc, kgssapi and nfslockd modules).
+nfscommon, nfscl, nfsd, krpc, kgssapi and nfslockd modules). A per-commit
+review found issues that are fixed in this version; the list and its
+status are in the author's notes (review-2026-11-24.md).
 
 Reviewers: rmacklem
 PR: <Bugzilla number, from nfsbug/BUGREPORT-svc-backchannel.txt>

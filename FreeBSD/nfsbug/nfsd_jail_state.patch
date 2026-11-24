@@ -11,10 +11,18 @@ index 35c92b63bc4a..e8cda62a1e13 100644
      uint32_t *, int, uint32_t *, NFSPROC_T *);
  int nfsrv_checkreclaimcomplete(struct nfsrv_descript *, int);
 diff --git sys/fs/nfsserver/nfs_nfsdkrpc.c sys/fs/nfsserver/nfs_nfsdkrpc.c
-index 181e93a9ac1f..34a816958aae 100644
+index 181e93a9ac1f..f603cb91c9ad 100644
 --- sys/fs/nfsserver/nfs_nfsdkrpc.c
 +++ sys/fs/nfsserver/nfs_nfsdkrpc.c
-@@ -636,6 +636,12 @@ nfsrvd_nfsd(struct thread *td, struct nfsd_nfsd_args *args)
+@@ -116,6 +116,7 @@ VNET_DECLARE(struct proc *, nfsd_master_proc);
+ 
+ VNET_DEFINE(SVCPOOL *, nfsrvd_pool);
+ VNET_DEFINE(int, nfsrv_numnfsd) = 0;
++VNET_DEFINE(bool, nfsrv_exiting) = false;
+ VNET_DEFINE(struct nfsv4lock, nfsd_suspend_lock);
+ 
+ VNET_DEFINE_STATIC(bool, nfsrvd_inited) = false;
+@@ -636,6 +637,12 @@ nfsrvd_nfsd(struct thread *td, struct nfsd_nfsd_args *args)
  	 * use.
  	 */
  	NFSD_LOCK();
@@ -27,8 +35,21 @@ index 181e93a9ac1f..34a816958aae 100644
  	if (VNET(nfsrv_numnfsd) == 0) {
  		nfsdev_time = time_second;
  		p = td->td_proc;
+@@ -708,9 +715,12 @@ nfsrvd_nfsd(struct thread *td, struct nfsd_nfsd_args *args)
+ 			}
+ 		}
+ 		NFSD_LOCK();
++		/* nfsrvd_init() still walks the clients. */
++		VNET(nfsrv_exiting) = true;
+ 		newnfs_numnfsd--;
+ 		VNET(nfsrv_numnfsd)--;
+ 		nfsrvd_init(1);
++		VNET(nfsrv_exiting) = false;
+ 		PROC_LOCK(p);
+ 		p->p_flag2 &= ~P2_AST_SU;
+ 		PROC_UNLOCK(p);
 diff --git sys/fs/nfsserver/nfs_nfsdport.c sys/fs/nfsserver/nfs_nfsdport.c
-index bda047d2d226..618f5bf9a995 100644
+index bda047d2d226..35c5d5ea1072 100644
 --- sys/fs/nfsserver/nfs_nfsdport.c
 +++ sys/fs/nfsserver/nfs_nfsdport.c
 @@ -51,6 +51,7 @@
@@ -39,7 +60,15 @@ index bda047d2d226..618f5bf9a995 100644
  #include <nlm/nlm_prot.h>
  #include <nlm/nlm.h>
  #include <vm/vm_param.h>
-@@ -4804,6 +4805,9 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
+@@ -76,6 +77,7 @@ uint64_t nfsrv_stripesiz = 0;
+ static int nfsrv_maxstripecnt = 1;
+ 
+ VNET_DECLARE(int, nfsrv_numnfsd);
++VNET_DECLARE(bool, nfsrv_exiting);
+ VNET_DECLARE(struct nfsrv_stablefirst, nfsrv_stablefirst);
+ VNET_DECLARE(SVCPOOL *, nfsrvd_pool);
+ VNET_DECLARE(struct nfsclienthashhead *, nfsclienthash);
+@@ -4804,6 +4806,9 @@ nfssvc_nfsd(struct thread *td, struct nfssvc_args *uap)
  		nfsd_timer(TD_TO_VNET(td));
  		error = nfsrvd_nfsd(td, &nfsdarg);
  		callout_drain(&VNET(nfsd_callout));
@@ -49,10 +78,12 @@ index bda047d2d226..618f5bf9a995 100644
  		free(nfsdarg.addr, M_TEMP);
  		free(nfsdarg.dnshost, M_TEMP);
  		free(nfsdarg.dspath, M_TEMP);
-@@ -8680,14 +8684,66 @@ VNET_SYSUNINIT(nfsrv_cleanup, SI_SUB_VNET_DONE, SI_ORDER_ANY,
+@@ -8680,14 +8685,69 @@ VNET_SYSUNINIT(nfsrv_cleanup, SI_SUB_VNET_DONE, SI_ORDER_ANY,
  
  extern int (*nfsd_call_nfsd)(struct thread *, struct nfssvc_args *);
  
++static struct taskqueue *nfsrv_dyingtq;
++
 +struct nfsrv_dyingtask {
 +	struct task	dt_task;
 +	struct prison	*dt_pr;
@@ -88,14 +119,15 @@ index bda047d2d226..618f5bf9a995 100644
 +		return (0);
 +	CURVNET_SET(pr->pr_vnet);
 +	NFSD_LOCK();
-+	idle = VNET(nfsrv_mntinited) && VNET(nfsrv_numnfsd) == 0;
++	idle = VNET(nfsrv_mntinited) && VNET(nfsrv_numnfsd) == 0 &&
++	    !VNET(nfsrv_exiting);
 +	NFSD_UNLOCK();
 +	if (idle && VNET(nfsstatsv1_p)->srvclients > 0) {
 +		dt = malloc(sizeof(*dt), M_TEMP, M_WAITOK);
 +		prison_hold(pr);
 +		dt->dt_pr = pr;
 +		TASK_INIT(&dt->dt_task, 0, nfsrv_dyingtask, dt);
-+		taskqueue_enqueue(taskqueue_thread, &dt->dt_task);
++		taskqueue_enqueue(nfsrv_dyingtq, &dt->dt_task);
 +	}
 +	CURVNET_RESTORE();
 +	return (0);
@@ -116,20 +148,23 @@ index bda047d2d226..618f5bf9a995 100644
  
  	switch (type) {
  	case MOD_LOAD:
-@@ -8704,6 +8760,7 @@ nfsd_modevent(module_t mod, int type, void *data)
+@@ -8704,6 +8764,10 @@ nfsd_modevent(module_t mod, int type, void *data)
  #endif
  		nfsd_call_nfsd = nfssvc_nfsd;
  		nfs_enable_extpg_cache();
++		nfsrv_dyingtq = taskqueue_create("nfsd jail", M_WAITOK,
++		    taskqueue_thread_enqueue, &nfsrv_dyingtq);
++		taskqueue_start_threads(&nfsrv_dyingtq, 1, PWAIT, "nfsd jail");
 +		prison_slot = osd_jail_register(NULL, methods);
  		loaded = 1;
  		break;
  
-@@ -8718,6 +8775,8 @@ nfsd_modevent(module_t mod, int type, void *data)
+@@ -8718,6 +8782,8 @@ nfsd_modevent(module_t mod, int type, void *data)
  		vn_deleg_ops.vndeleg_disable = NULL;
  #endif
  		nfsd_call_nfsd = NULL;
 +		osd_jail_deregister(prison_slot);
-+		taskqueue_quiesce(taskqueue_thread);
++		taskqueue_free(nfsrv_dyingtq);
  		mtx_destroy(&nfsrc_udpmtx);
  		mtx_destroy(&nfs_v4root_mutex);
  		mtx_destroy(&nfsrv_dontlistlock_mtx);
@@ -209,7 +244,7 @@ index de5e5da86202..bbb65d747674 100644
   * Check the sequence# for the session and slot provided as an argument.
   * Also, renew the lease if the session will return NFS_OK.
 diff --git sys/rpc/rpcsec_gss/svc_rpcsec_gss.c sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
-index 3990b0220229..4fdafdf61123 100644
+index 3990b0220229..5e8ba6bf93bb 100644
 --- sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
 +++ sys/rpc/rpcsec_gss/svc_rpcsec_gss.c
 @@ -74,6 +74,7 @@
@@ -220,11 +255,12 @@ index 3990b0220229..4fdafdf61123 100644
  #include <sys/ucred.h>
  
  #include <rpc/rpc.h>
-@@ -198,13 +199,21 @@ SYSCTL_UINT(_kern_rpc_gss, OID_AUTO, client_count, CTLFLAG_RD,
+@@ -198,13 +199,26 @@ SYSCTL_UINT(_kern_rpc_gss, OID_AUTO, client_count, CTLFLAG_RD,
  VNET_DEFINE(struct svc_rpc_gss_client_list *, svc_rpc_gss_client_hash);
  VNET_DEFINE(struct svc_rpc_gss_client_list, svc_rpc_gss_clients);
  VNET_DEFINE_STATIC(uint32_t, svc_rpc_gss_next_clientid) = 1;
 +static int svc_rpc_gss_prison_slot;
++static struct taskqueue *svc_rpc_gss_dyingtq;
 +
 +static void svc_rpc_gss_forget_all_clients(void);
 +static int svc_rpc_gss_prison_remove(void *obj, void *data);
@@ -238,20 +274,24 @@ index 3990b0220229..4fdafdf61123 100644
  
  	svc_auth_reg(RPCSEC_GSS, svc_rpc_gss, rpc_gss_svc_getcred);
  	sx_init(&svc_rpc_gss_lock, "gsslock");
++	svc_rpc_gss_dyingtq = taskqueue_create("rpcsec_gss jail", M_WAITOK,
++	    taskqueue_thread_enqueue, &svc_rpc_gss_dyingtq);
++	taskqueue_start_threads(&svc_rpc_gss_dyingtq, 1, PWAIT,
++	    "rpcsec_gss jail");
 +	svc_rpc_gss_prison_slot = osd_jail_register(NULL, methods);
  }
  SYSINIT(svc_rpc_gss_init, SI_SUB_VFS, SI_ORDER_ANY,
      svc_rpc_gss_init, NULL);
-@@ -213,6 +222,8 @@ static void
+@@ -213,6 +227,8 @@ static void
  svc_rpc_gss_cleanup(void *unused __unused)
  {
  
 +	osd_jail_deregister(svc_rpc_gss_prison_slot);
-+	taskqueue_quiesce(taskqueue_thread);
++	taskqueue_free(svc_rpc_gss_dyingtq);
  	sx_destroy(&svc_rpc_gss_lock);
  }
  SYSUNINIT(svc_rpc_gss_cleanup, SI_SUB_VFS, SI_ORDER_ANY,
-@@ -237,6 +248,7 @@ static void
+@@ -237,6 +253,7 @@ static void
  svc_rpc_gss_vnet_cleanup(void *unused __unused)
  {
  
@@ -259,7 +299,21 @@ index 3990b0220229..4fdafdf61123 100644
  	mem_free(VNET(svc_rpc_gss_client_hash),
  	    sizeof(struct svc_rpc_gss_client_list) *
  	    svc_rpc_gss_client_hash_size);
-@@ -789,6 +801,72 @@ svc_rpc_gss_timeout_clients(void)
+@@ -661,6 +678,13 @@ svc_rpc_gss_create_client(void)
+ 	list = &VNET(svc_rpc_gss_client_hash)
+ 	    [client->cl_id.ci_id % svc_rpc_gss_client_hash_size];
+ 	sx_xlock(&svc_rpc_gss_lock);
++	/* A dying jail has had its clients forgotten, or soon will. */
++	if (!prison_isalive(curthread->td_ucred->cr_prison)) {
++		sx_xunlock(&svc_rpc_gss_lock);
++		sx_destroy(&client->cl_lock);
++		mem_free(client, sizeof(*client));
++		return (NULL);
++	}
+ 	TAILQ_INSERT_HEAD(list, client, cl_link);
+ 	TAILQ_INSERT_HEAD(&VNET(svc_rpc_gss_clients), client, cl_alllink);
+ 	svc_rpc_gss_client_count++;
+@@ -789,6 +813,64 @@ svc_rpc_gss_timeout_clients(void)
  	sx_xunlock(&svc_rpc_gss_lock);
  }
  
@@ -310,25 +364,28 @@ index 3990b0220229..4fdafdf61123 100644
 +{
 +	struct prison *pr = obj;
 +	struct svc_rpc_gss_dyingtask *dt;
-+	bool empty;
 +
 +	if ((pr->pr_flags & PR_VNET) == 0)
-+		return (0);
-+	CURVNET_SET(pr->pr_vnet);
-+	sx_slock(&svc_rpc_gss_lock);
-+	empty = TAILQ_EMPTY(&VNET(svc_rpc_gss_clients));
-+	sx_sunlock(&svc_rpc_gss_lock);
-+	CURVNET_RESTORE();
-+	if (empty)
 +		return (0);
 +	dt = mem_alloc(sizeof(*dt));
 +	prison_hold(pr);
 +	dt->dt_pr = pr;
 +	TASK_INIT(&dt->dt_task, 0, svc_rpc_gss_dyingtask, dt);
-+	taskqueue_enqueue(taskqueue_thread, &dt->dt_task);
++	taskqueue_enqueue(svc_rpc_gss_dyingtq, &dt->dt_task);
 +	return (0);
 +}
 +
  #ifdef DEBUG
  /*
   * OID<->string routines.  These are uuuuugly.
+@@ -1449,6 +1531,10 @@ svc_rpc_gss(struct svc_req *rqst, struct rpc_msg *msg)
+ 			goto out;
+ 		}
+ 		client = svc_rpc_gss_create_client();
++		if (client == NULL) {
++			result = AUTH_REJECTEDCRED;
++			goto out;
++		}
+ 	} else {
+ 		struct svc_rpc_gss_clientid *p;
+ 		if (gc.gc_handle.length != sizeof(*p)) {

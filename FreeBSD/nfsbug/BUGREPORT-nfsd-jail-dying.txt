@@ -94,3 +94,21 @@ kept its end open) until TCP dropped it; no NFS state was left.
 
 Not tested: NFSv3 and NLM, pNFS, a Kerberos service in a jail without its
 own vnet, kgssapi unload.
+
+Update 2026-11-24, after a code review of the patch:
+- The nfsd removal hook could see no nfsd running while an exiting nfsd
+  still walked the sessions without a lock (nfsrv_freeallbackchannel_xprts()),
+  and free them under it. A per-vnet nfsrv_exiting flag, set around the
+  teardown under NFSD_LOCK, now makes the hook leave the state to the exit
+  path.
+- The RPCSEC_GSS hook took svc_rpc_gss_lock shared under allprison_lock,
+  but that lock is held exclusively across gssd upcalls. The hook now
+  takes no lock and queues its task for every vnet jail.
+- A GSS context created after the hook ran (the jail's nfsd still serving)
+  was never freed. svc_rpc_gss_create_client() now refuses new contexts in
+  a dying jail.
+- Both hooks use a task queue of their own instead of taskqueue_thread.
+Retested: all 13 cases, no jail left dying after the suite, NFSv4.0 /
+client gone / server removed / nfsd restart / nfsd stopped first as above,
+on GENERIC-NODEBUG and GENERIC with WITNESS. The race and the GSS refusal
+are not reproducible in the VM.

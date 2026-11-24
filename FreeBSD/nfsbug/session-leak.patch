@@ -19,10 +19,19 @@ index 7212a685d902..d9ba5962efab 100644
  /*
   * ND_GSS should be the "or" of all GSS type authentications.
 diff --git sys/fs/nfs/nfs_commonkrpc.c sys/fs/nfs/nfs_commonkrpc.c
-index 160329968fa2..fb2ee41d92ea 100644
+index 160329968fa2..b20d39a4cd0f 100644
 --- sys/fs/nfs/nfs_commonkrpc.c
 +++ sys/fs/nfs/nfs_commonkrpc.c
-@@ -711,8 +711,8 @@ nfs_feedback(int type, int proc, void *arg)
+@@ -129,6 +129,8 @@ static void	nfs_down(struct nfsmount *, struct thread *, const char *,
+ static void	nfs_up(struct nfsmount *, struct thread *, const char *,
+     int, int);
+ static int	nfs_msg(struct thread *, const char *, const char *, int);
++static struct nfsclsession *nfs_reqsession(struct nfsmount *,
++    struct nfsrv_descript *);
+ 
+ struct nfs_cached_auth {
+ 	int		ca_refs; /* refcount, including 1 from the cache */
+@@ -711,8 +713,8 @@ nfs_feedback(int type, int proc, void *arg)
   *	- break down rpc header and return with nfs reply
   * nb: always frees up nd_mreq mbuf list
   */
@@ -33,7 +42,34 @@ index 160329968fa2..fb2ee41d92ea 100644
      struct nfsclient *clp, struct nfssockreq *nrp, vnode_t vp,
      struct thread *td, struct ucred *cred, u_int32_t prog, u_int32_t vers,
      u_char *retsum, int toplevel, u_int64_t *xidp, struct nfsclsession *dssep)
-@@ -1363,6 +1363,13 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+@@ -1093,7 +1095,7 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 			 * free'd, threads can get stuck waiting for a slot.
+ 			 */
+ 			if (sep == NULL)
+-				sep = nfsmnt_mdssession(nmp);
++				sep = nfs_reqsession(nmp, nd);
+ 			/*
+ 			 * Bump the sequence# out of range, so that reuse of
+ 			 * this slot will result in an NFSERR_SEQMISORDERED
+@@ -1123,7 +1125,7 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 			 * Free the slot, resetting the slot's sequence#.
+ 			 */
+ 			if (sep == NULL)
+-				sep = nfsmnt_mdssession(nmp);
++				sep = nfs_reqsession(nmp, nd);
+ 			nfsv4_freeslot(sep, nd->nd_slotid, true);
+ 		}
+ 		NFSINCRGLOBAL(nfsstatsv1.rpcinvalid);
+@@ -1160,7 +1162,7 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 	    nd->nd_procnum != NFSV4PROC_CBNULL) {
+ 		/* If sep == NULL, set it to the default in nmp. */
+ 		if (sep == NULL && nmp != NULL)
+-			sep = nfsmnt_mdssession(nmp);
++			sep = nfs_reqsession(nmp, nd);
+ 		/*
+ 		 * and now the actual NFS xdr.
+ 		 */
+@@ -1363,6 +1365,13 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
  				 * has been created during the sleep.
  				 */
  				sep = NFSMNT_MDSSESSION(nmp);
@@ -47,7 +83,7 @@ index 160329968fa2..fb2ee41d92ea 100644
  				NFSUNLOCKMNT(nmp);
  				if ((nd->nd_flag & ND_LOOPBADSESS) != 0) {
  					reterr = nfsv4_sequencelookup(nmp, sep,
-@@ -1563,6 +1570,29 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+@@ -1563,6 +1572,42 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
  	return (error);
  }
  
@@ -72,6 +108,19 @@ index 160329968fa2..fb2ee41d92ea 100644
 +		nd->nd_sep = NULL;
 +	}
 +	return (error);
++}
++
++/*
++ * The MDS session of an RPC: the one it holds a reference on, which is
++ * still the right one after a recovery replaced the MDS session.
++ */
++static struct nfsclsession *
++nfs_reqsession(struct nfsmount *nmp, struct nfsrv_descript *nd)
++{
++
++	if ((nd->nd_flag & ND_HOLDSESS) != 0)
++		return (nd->nd_sep);
++	return (nfsmnt_mdssession(nmp));
 +}
 +
  /*
@@ -171,8 +220,40 @@ index 196226577d6c..c45971bb557b 100644
  #endif	/* _KERNEL */
  
  #endif	/* _NFS_NFSPORT_H */
+diff --git sys/fs/nfsclient/nfs_clcomsubs.c sys/fs/nfsclient/nfs_clcomsubs.c
+index fa772ee12c8b..e1775bfb9ff1 100644
+--- sys/fs/nfsclient/nfs_clcomsubs.c
++++ sys/fs/nfsclient/nfs_clcomsubs.c
+@@ -453,11 +453,21 @@ nfsv4_freeunsentslot(struct nfsmount *nmp, struct nfsclsession *sep,
+     struct nfsrv_descript *nd)
+ {
+ 
+-	if (nmp == NULL || (nd->nd_flag & (ND_NFSV41 | ND_HASSLOTID)) !=
+-	    (ND_NFSV41 | ND_HASSLOTID))
++	if (nmp == NULL)
+ 		return;
+-	if (sep == NULL)
+-		sep = nfsmnt_mdssession(nmp);
+-	if (sep != NULL)
+-		nfsv4_freeslot(sep, nd->nd_slotid, true);
++	if ((nd->nd_flag & (ND_NFSV41 | ND_HASSLOTID)) ==
++	    (ND_NFSV41 | ND_HASSLOTID)) {
++		if (sep == NULL && (nd->nd_flag & ND_HOLDSESS) != 0)
++			sep = nd->nd_sep;
++		if (sep == NULL)
++			sep = nfsmnt_mdssession(nmp);
++		if (sep != NULL)
++			nfsv4_freeslot(sep, nd->nd_slotid, true);
++	}
++	/* The RPC is not sent: drop the reference newnfs_request() would. */
++	if ((nd->nd_flag & ND_HOLDSESS) != 0) {
++		nfsmnt_relsession(nmp, nd->nd_sep);
++		nd->nd_flag &= ~ND_HOLDSESS;
++		nd->nd_sep = NULL;
++	}
+ }
 diff --git sys/fs/nfsclient/nfs_clrpcops.c sys/fs/nfsclient/nfs_clrpcops.c
-index 1f9942689d2a..25d28f226a14 100644
+index 1f9942689d2a..32c681d06851 100644
 --- sys/fs/nfsclient/nfs_clrpcops.c
 +++ sys/fs/nfsclient/nfs_clrpcops.c
 @@ -1133,6 +1133,7 @@ nfsrpc_setclient(struct nfsmount *nmp, struct nfsclclient *clp, int reclaim,
@@ -183,7 +264,7 @@ index 1f9942689d2a..25d28f226a14 100644
  			}
  			TAILQ_INSERT_HEAD(&nmp->nm_sess, dsp,
  			    nfsclds_list);
-@@ -7680,6 +7681,42 @@ nfscl_freenfsclds(struct nfsclds *dsp)
+@@ -7680,6 +7681,48 @@ nfscl_freenfsclds(struct nfsclds *dsp)
  	free(dsp, M_NFSCLDS);
  }
  
@@ -199,6 +280,12 @@ index 1f9942689d2a..25d28f226a14 100644
 +	struct nfsclds *dsp, *ndsp;
 +	TAILQ_HEAD(, nfsclds) freeq;
 +
++	/*
++	 * A pNFS device can point at an MDS session that is also its DS
++	 * (nfsrpc_fillsa()) without a reference: keep them until unmount.
++	 */
++	if (NFSHASPNFS(nmp))
++		return;
 +	TAILQ_INIT(&freeq);
 +	NFSLOCKMNT(nmp);
 +	/* Skip the first entry, which is the live MDS session. */

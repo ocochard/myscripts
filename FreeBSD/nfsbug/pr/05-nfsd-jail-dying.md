@@ -13,7 +13,12 @@ no nfsd running, do the same from a jail removal hook, and refuse to
 start an nfsd in a dying jail.  Free each record with nfsrv_zapclient(),
 so that its credential, callback connection and counters are released
 too.  Forget the RPCSEC_GSS server contexts of a vnet jail when it is
-removed, and at vnet cleanup, which freed only their hash.
+removed, and at vnet cleanup, which freed only their hash, and refuse
+new ones in a dying jail.
+
+The removal hooks run with allprison_lock held, so they leave the work,
+which can wait for gssd or for every nfsd RPC, to a task queue of their
+own; the nfsd hook also leaves the state to an nfsd still exiting.
 
 Measured: server jails left dying after the test suite, 7 -> 0. NFSv4.0
 client, client jail removed first, server removed while mounted, nfsd
@@ -23,18 +28,21 @@ measured). An nfsd restart in a live jail keeps its client state.
 DDB `show prison` on the dying jails showed `ref = 1`, one per client
 record or GSS context.
 
-Both jail removal hooks do their work in a task that holds a jail
-reference, because a hook runs with `allprison_lock` held exclusively:
-freeing a GSS context still in setup calls gssd, and an nfsd thread that
-mounts a ZFS snapshot during a compound needs `allprison_lock` while it
-holds a reference on `nfsv4rootfs_lock`. Both found by reading the code,
-not reproduced.
+Both jail removal hooks run with `allprison_lock` held, so they do their
+work in a task queue of their own, holding a jail reference: freeing a GSS
+context still in setup calls gssd, and an nfsd thread that mounts a ZFS
+snapshot during a compound needs `allprison_lock` while it holds a
+reference on `nfsv4rootfs_lock`. The nfsd hook leaves the state to an
+nfsd that is still exiting, and no GSS context can be created in a dying
+jail. Not reproducible in the VM: the races these guard against.
 
 Tested in a bhyve VM with `tests/sys/fs/nfs` (server and clients in vnet
 jails), kernel = main plus all pending NFS jail changes, GENERIC-NODEBUG and
 GENERIC (INVARIANTS, WITNESS): all 13 cases pass, no jail left dying, no
 panic or KASSERT. The branch also builds alone on main (kernel and the
-nfscommon, nfscl, nfsd, krpc, kgssapi and nfslockd modules).
+nfscommon, nfscl, nfsd, krpc, kgssapi and nfslockd modules). A per-commit
+review found issues that are fixed in this version; the list and its
+status are in the author's notes (review-2026-11-24.md).
 
 Reviewers: rmacklem
 PR: <Bugzilla number, from nfsbug/BUGREPORT-nfsd-jail-dying.txt>

@@ -2,7 +2,7 @@
 
 Patch: [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch), adds
 `tests/sys/fs/nfs/`, against main 6edecf52def6. Branch `nfs-vnet-tests` in
-`~/freebsd-src-nfstest`, one commit, de7f3c5a6fa7 (four commits squashed
+`~/freebsd-src-nfstest`, one commit, 4e1da3c09443 (four commits squashed
 on 2026-11-22: the tests, `v40_basic`, `session_leak` and the delegation
 `recall`). Not committed upstream.
 
@@ -226,3 +226,25 @@ runs: 10 of 10 (one expected failure) in 300 s, cases run exclusively
 Untested: bare metal, kernels loading NFS and Kerberos as modules, stable/15,
 and the whole `/usr/tests` tree (the VM image has only `sys/fs/nfs` and
 `sys/common`).
+
+
+## Review 2026-11-24
+
+A per-commit review (see [`review-2026-11-24.md`](review-2026-11-24.md))
+found the issues below in this patch; the text above describes the fixed
+version. Retested afterwards: all 13 cases of `tests/sys/fs/nfs` on
+GENERIC-NODEBUG and GENERIC with WITNESS, no jail left dying, no panic.
+
+- T1: the stall check did not count the outage from the reset to the
+  first probe after it (a 15 s stall read as 1 s). Fixed.
+- T2: kyua killed the proxy with the body before the cleanup. Fixed: the
+  proxy runs under `daemon(8)`.
+- T3: a host keytab copied into the jails broke the test's keytab, and
+  host-side writes followed copied symlinks. Fixed.
+- T4: the proxy's reset sent its RST only at the client's next request.
+  Fixed: `shutdown(SHUT_RD)`.
+- T5: a `sec=sys` mount that should have failed was not unmounted if it
+  succeeded. Fixed: the cleanup unmounts every NFS mount under the work
+  directory.
+- `two_clients` no longer relies on `sleep 1`; `v3_basic` checks its own
+  mount's options.

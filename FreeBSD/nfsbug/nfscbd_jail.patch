@@ -1,5 +1,18 @@
+diff --git libexec/rc/rc.d/nfscbd libexec/rc/rc.d/nfscbd
+index 450de46e0855..a3e0f6cd959e 100755
+--- libexec/rc/rc.d/nfscbd
++++ libexec/rc/rc.d/nfscbd
+@@ -4,7 +4,7 @@
+ 
+ # PROVIDE: nfscbd
+ # REQUIRE: NETWORKING nfsuserd
+-# KEYWORD: nojail shutdown
++# KEYWORD: nojailvnet shutdown
+ 
+ . /etc/rc.subr
+ 
 diff --git sys/fs/nfsclient/nfs_clkrpc.c sys/fs/nfsclient/nfs_clkrpc.c
-index bf19c5d14d23..ab1f59456057 100644
+index bf19c5d14d23..933eaf5e5f22 100644
 --- sys/fs/nfsclient/nfs_clkrpc.c
 +++ sys/fs/nfsclient/nfs_clkrpc.c
 @@ -53,6 +53,7 @@ static int nfs_cbproc(struct nfsrv_descript *, u_int32_t);
@@ -10,17 +23,7 @@ index bf19c5d14d23..ab1f59456057 100644
  
  /*
   * NFS client system calls for handling callbacks.
-@@ -206,7 +207,8 @@ nfscbd_addsock(struct file *fp)
- 		svc_reg(xprt, NFS_CALLBCKPROG, NFSV4_CBVERS, nfscb_program,
- 		    NULL);
- 		SVC_RELEASE(xprt);
--	}
-+	} else
-+		return (EPERM);
- 
- 	return (0);
- }
-@@ -229,6 +231,7 @@ int
+@@ -229,6 +230,7 @@ int
  nfscbd_nfsd(struct thread *td, struct nfsd_nfscbd_args *args)
  {
  	char principal[128];
@@ -28,7 +31,7 @@ index bf19c5d14d23..ab1f59456057 100644
  	int error;
  
  	if (args != NULL) {
-@@ -253,6 +256,17 @@ nfscbd_nfsd(struct thread *td, struct nfsd_nfscbd_args *args)
+@@ -253,6 +255,17 @@ nfscbd_nfsd(struct thread *td, struct nfsd_nfscbd_args *args)
  
  		NFSD_UNLOCK();
  
@@ -38,10 +41,10 @@ index bf19c5d14d23..ab1f59456057 100644
 +		 * cannot add the UDP one.
 +		 */
 +		xprt = svc_vc_create_backchannel(nfscbd_pool);
-+		svc_reg(xprt, NFS_CALLBCKPROG, NFSV4_CBVERS, nfscb_program,
-+		    NULL);
++		if (svc_reg(xprt, NFS_CALLBCKPROG, NFSV4_CBVERS, nfscb_program,
++		    NULL))
++			nfscl_enablecallb = 1;
 +		SVC_RELEASE(xprt);
-+		nfscl_enablecallb = 1;
 +
  		if (principal[0] != '\0')
  			rpc_gss_set_svc_name_call(principal, "kerberosv5",

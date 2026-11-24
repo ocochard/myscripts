@@ -1,6 +1,6 @@
 # Bug #6: every recovery leaks a session until unmount
 
-Patch: [`session-leak.patch`](session-leak.patch), commit 0cc0f3961479 on
+Patch: [`session-leak.patch`](session-leak.patch), commit 66594a2d11eb on
 branch `session-leak` in `~/freebsd-src-sessleak`, on top of the tests
 (`nfs-vnet-tests`): it also removes the `atf_expect_fail` of the
 `session_leak` test. Not filed yet. Bugzilla text:
@@ -110,3 +110,21 @@ Untested: pNFS (data server sessions) and Kerberos mounts.
 
 `tests/sys/fs/nfs` case `session_leak` (three resets, then 120 s): with the
 fix, passed; without it, 4 sessions left for the mount.
+
+
+## Review 2026-11-24
+
+A per-commit review (see [`review-2026-11-24.md`](review-2026-11-24.md))
+found the issues below in this patch; the text above describes the fixed
+version. Retested afterwards: all 13 cases of `tests/sys/fs/nfs` on
+GENERIC-NODEBUG and GENERIC with WITNESS, no jail left dying, no panic.
+
+- L1: a pNFS device entry can cache the MDS session without a reference,
+  and this patch then freed it (use after free). Fixed: no freeing on pNFS
+  mounts; their sessions stay until unmount, as before. Not testable here.
+- L2: a compound built but not sent (`nfsrpc_write()`, `nfsrpc_setextattr()`)
+  kept its reference, so its session was never freed. Fixed in
+  `nfsv4_freeunsentslot()`.
+- L3, pre-existing: after a recovery, a slot was freed on the new MDS
+  session instead of the one the RPC used. Fixed with `nfs_reqsession()`.
+- Not fixed, separate: NFSv4.0 keeps one nfsclds per SETCLIENTID.

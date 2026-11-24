@@ -1,7 +1,7 @@
 # #9: an NFS server jail stays dying forever
 
 Patch: [`nfsd_jail_state.patch`](nfsd_jail_state.patch), against main
-6edecf52def6, one commit with #10, 0f791cece4d9, on branch `nfsd-jail-dying` in
+6edecf52def6, one commit with #10, 9b8e54c993f0, on branch `nfsd-jail-dying` in
 `~/freebsd-src-nfsddying`. Not committed upstream, not filed. Needs review
 by rmacklem. The Kerberos variant of the same problem is #10,
 [`gss_jail_remove.md`](gss_jail_remove.md).
@@ -118,3 +118,19 @@ seen before this patch too.
 
 Untested: NFSv3 and NLM, pNFS, delegations held at removal, the start guard
 (it needs a process left in a jail that is already dying).
+
+
+## Review 2026-11-24
+
+A per-commit review (see [`review-2026-11-24.md`](review-2026-11-24.md))
+found the issues below in this patch; the text above describes the fixed
+version. Retested afterwards: all 13 cases of `tests/sys/fs/nfs` on
+GENERIC-NODEBUG and GENERIC with WITNESS, no jail left dying, no panic.
+
+- D1: the removal hook could see "no nfsd" while an exiting nfsd still
+  walked the sessions without a lock (use after free). Fixed: a per-vnet
+  `nfsrv_exiting` set around the teardown; the hook leaves the state to the
+  exit path then. Not reproducible on demand (a race).
+- Both removal hooks now use a task queue of their own instead of
+  `taskqueue_thread`, since their tasks can wait for every nfsd RPC or for
+  gssd.

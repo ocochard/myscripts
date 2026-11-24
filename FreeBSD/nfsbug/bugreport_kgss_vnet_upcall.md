@@ -72,35 +72,34 @@ Two changes:
 +VNET_DEFINE_STATIC(bool, kgss_gssd_seen);
 +VNET_DEFINE_STATIC(time_t, kgss_nextrpc);
 ...
--	clnt_control(cl, CLSET_RETRIES, &(int){30});
 -	clnt_control(cl, CLSET_TIMEOUT, &nulltimo);
-+	clnt_control(cl, CLSET_TIMEOUT, &(struct timeval){0});
++	clnt_control(cl, CLSET_TIMEOUT, &(struct timeval){.tv_sec = 300});
 ...
 -		CLNT_CONTROL(cl, CLSET_TIMEOUT, &rpctimo);
 ```
 
 ```diff
- 	case CLSET_TIMEOUT:
--		nl->nl_timo = tvtohz((struct timeval *)info);
-+		/* A zero timeout makes each call use its own. */
-+		if (timevalisset((struct timeval *)info))
-+			nl->nl_timo = tvtohz((struct timeval *)info);
-+		else
-+			nl->nl_timo = 0;
++	tries = nl->nl_retries;
++	timo = (nl->nl_timo ? nl->nl_timo : tvtohz(&utimeout)) / tries;
++	if (nl->nl_timo != 0 && timevalisset(&utimeout) &&
++	    tvtohz(&utimeout) < timo) {
++		timo = tvtohz(&utimeout);
++		tries = 1;
++	}
 ```
 
 1. **"gssd has answered" becomes per jail.** `VNET_DEFINE` gives each
    network stack its own copy of a variable. Each jail pings its own gssd
    until it answers once.
-2. **The shared object no longer has a timeout of its own.** Each upcall
-   brings its timeout: 200 ms for the ping, 25 s for the others (the value
-   the generated `gssd_clnt.c` passes). A netlink handle normally ignores
-   the timeout of each call: it starts with a 60 s timeout of its own
-   (`sys/rpc/clnt_nl.c:202`) that wins. Setting a zero timeout now means
-   "use each call's".
-3. **No retry.** With 30 retries and no handle timeout, each try would get
-   25/30 s, and a slow Kerberos call would be sent twice before gssd
-   answered.
+2. **The shared object keeps one timeout for everybody: 5 minutes, in 30
+   tries of 10 s**, set once at load (upstream set it only after the first
+   answer, which is what leaked into other jails). Some gssd calls take
+   about 27 s (`gss_acquire_cred()` with a name, an expired TGT;
+   e3c26ce5cb41), so the normal upcalls need it.
+3. **A call that asks for less than one try gets one try of that length**
+   (`clnt_nl_call()`). The ping asks for 200 ms, so it waits 200 ms in every
+   jail. The generated `gssd_clnt.c` stubs ask for 25 s, more than one
+   10 s try, so they keep the 10 s tries and the 5 minutes.
 
 The first version had only change 1, and did not fix the hang. A kernel
 stack of the stuck nfsd showed the 200 ms ping itself waiting:
@@ -110,25 +109,36 @@ _sleep clnt_nl_call clnt_call_private kgss_gssd_client gss_import_name
 rpc_gss_acquire_svc_cred rpc_gss_set_svc_name nfsrvd_nfsd
 ```
 
-The ping used the shared object's timeout, not its own. That is how change 2
-was found.
+The ping used the shared object's timeout, not its own.
 
-Tradeoff: in a jail whose gssd answered once and then died, an upcall now
-waits 25 s, not 300 s with retries. The long wait was meant for a gssd
-starting late at boot; the 5 s re-ping covers that, now per jail.
+A second version gave the shared object no timeout at all, so that each
+call used its own. A review on 2026-11-24 found that this cut every gssd
+upcall to the stubs' 25 s, once, below the ~27 s calls that e3c26ce5cb41
+had raised the limit for: `mount -o gssname` could fail again. Change 3
+replaces it.
+
+Who else uses netlink RPC handles, and why change 3 leaves them alone:
+
+| client | handle | one try | per-call timeout | effect |
+|---|---|---|---|---|
+| rpcbind (`rpcb_clnt.c`) | 60 s, 6 tries | 10 s | 60 s | unchanged |
+| rpc.tlsclntd / rpc.tlsservd (`rpctls_impl.c`) | 15 s, 1 try | 15 s | 25 s and 30 s | unchanged |
+| gssd upcalls | 300 s, 30 tries | 10 s | 25 s | unchanged from upstream |
+| gssd ping | same | 10 s | 200 ms | one try of 200 ms (the fix) |
 
 Alternatives:
 
 - **Have netlink report "nobody is listening".** That would fail upcalls at
   once, but it changes a return value seen by every netlink user
   (`sys/netlink/netlink_domain.c:242-250`).
-- **One upcall object per jail.** That undoes 4602d45eb3b1, and netlink
-  refuses two channels with the same name.
-- **Keep 300 s for the normal upcalls.** It would need a per-call timeout
-  field in `struct rpc_callextra`, a binary interface change.
+- **One upcall object per jail, or a second object for the ping.** Netlink
+  keys RPC clients by their group name, so gssd's "kgss" can have only one.
+- **A per-call timeout field in `struct rpc_callextra`.** A binary
+  interface change, for the same effect as change 3.
 
-What the patch does NOT change: the TLS and rpcbind helpers also use netlink
-but never set a zero timeout, so they behave as before.
+A side effect: with upstream's 30 tries, the 200 ms ping slept
+`tvtohz(200 ms) / 30` ticks, 0 below about `hz = 145`, which means no
+timeout at all. Change 3 gives the ping its own single try.
 
 ## 4. Tested
 
@@ -162,3 +172,14 @@ Untested:
 - a KDC slow enough to approach 25 s;
 - the Kerberos module loaded with no gssd ever started (the case
   455c354dd4db fixed).
+
+
+## Review 2026-11-24
+
+A per-commit review (see [`review-2026-11-24.md`](review-2026-11-24.md))
+found the issues below in this patch; the text above describes the fixed
+version. Retested afterwards: all 13 cases of `tests/sys/fs/nfs` on
+GENERIC-NODEBUG and GENERIC with WITNESS, no jail left dying, no panic.
+
+- K1: the second version's 25 s upcalls (see section 3), replaced by the
+  one-try rule. The ~27 s gssd call itself cannot be reproduced in the VM.

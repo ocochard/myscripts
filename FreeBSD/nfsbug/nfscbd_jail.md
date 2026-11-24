@@ -1,7 +1,7 @@
 # #7: NFSv4.1 callbacks from an nfscbd in a jail
 
 Patch: [`nfscbd_jail.patch`](nfscbd_jail.patch), against main 6edecf52def6.
-Branch `nfscbd-jail` in `~/freebsd-src-nfscbdjail`, commit aa9ec5017d91.
+Branch `nfscbd-jail` in `~/freebsd-src-nfscbdjail`, commit b2016b20d2a9.
 Not committed upstream, not filed.
 Needs review by rmacklem.
 
@@ -65,22 +65,26 @@ clients, which hid the bug.
   a transport only to find the pool, so a temporary backchannel transport
   is used and released at once. This runs at each `nfscbd` start, because
   `svcpool_close()` removes the registrations when `nfscbd` exits.
-- `nfscbd_addsock()` returns EPERM when no transport could be created, as
-  `nfsrvd_addsock()` does, instead of reporting success.
-- `nfscbd(8)` skips the UDP socket in a jail, since the kernel now refuses
-  it with an error that would otherwise stop `nfscbd`.
+  Callbacks are enabled only if that registration succeeds.
+- `nfscbd(8)` skips the UDP socket in a jail, which the kernel cannot serve
+  there anyway.
+- `rc.d/nfscbd` is `nojailvnet` instead of `nojail`, as `rc.d/nfsd`, so
+  `nfscbd_enable` works in a vnet jail.
 
 Alternatives:
 
-- **Only the error in `nfscbd_addsock()`.** Removes the false "callbacks
-  on", but a jail still gets no delegations.
+- **An error from `nfscbd_addsock()` for the refused UDP socket.** A first
+  version did this; the 2026-11-24 review found that it made an older
+  `nfscbd` binary exit in a jail, although the pool registration already
+  serves it. Removed.
 - **A pool-level `svc_reg()` variant in the krpc.** Cleaner than the
   temporary transport, but it changes the krpc interface for one caller.
 - **Run `nfscbd` on the host.** Works today, but serves every jail from the
   host and hides the bug.
 
-Tradeoff: an old `nfscbd` binary in a jail on a new kernel now exits at
-start ("can't Add UDP socket"), where before it ran and served nothing.
+Design limit, not changed: the callback pool is one for the whole host, so
+a jailed `nfscbd` also serves the host's NFSv4.1 mounts, and they lose
+their callbacks when that jail stops.
 
 The callback pool stays one global: one `nfscbd`, on the host or in any jail,
 serves the callbacks of every vnet.
@@ -105,3 +109,15 @@ kernel too. Measured and fixed in #8, see
 
 Untested: Kerberos callbacks (`nfscbd -P`), pNFS layout recalls, a WITNESS
 kernel.
+
+
+## Review 2026-11-24
+
+A per-commit review (see [`review-2026-11-24.md`](review-2026-11-24.md))
+found the issues below in this patch; the text above describes the fixed
+version. Retested afterwards: all 13 cases of `tests/sys/fs/nfs` on
+GENERIC-NODEBUG and GENERIC with WITNESS, no jail left dying, no panic.
+
+- C2: the EPERM for the refused UDP socket, removed.
+- C3: `rc.d/nfscbd` was `nojail`. Fixed.
+- C4: `svc_reg()`'s result was ignored. Fixed.

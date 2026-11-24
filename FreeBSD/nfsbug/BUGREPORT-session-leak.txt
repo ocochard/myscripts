@@ -64,3 +64,18 @@ reset pairs 15s apart every 120s), together with the STALE_CLIENTID fix:
   (* 1 per reset, measured as 1 -> 5 for 4 resets)
 
 Not tested: pNFS (DS sessions) and Kerberos mounts.
+
+Update 2026-11-24, after a code review of the patch (now a commit on top
+of the NFS tests, nfs_vnet_tests.patch):
+- On pNFS mounts no session is freed: a device entry can cache the MDS
+  session without a reference (nfsrpc_fillsa()), so freeing it would be a
+  use after free. Those sessions stay until unmount, as before.
+- nfsv4_freeunsentslot() drops the reference of a compound that is built
+  but not sent (nfsrpc_write() on a uio copy error, nfsrpc_setextattr()
+  with an oversize value), which otherwise kept its session forever.
+- Pre-existing, fixed on the way: after a recovery, newnfs_request() and
+  nfsv4_freeunsentslot() freed the slot on the new MDS session instead of
+  the one the RPC used; they now use the session the RPC holds.
+- Not fixed: NFSv4.0 keeps one nfsclds per SETCLIENTID until unmount.
+Retested: tests/sys/fs/nfs, all 13 cases (session_leak passes) on
+GENERIC-NODEBUG and GENERIC with WITNESS.

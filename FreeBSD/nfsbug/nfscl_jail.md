@@ -142,3 +142,19 @@ enforce_statfs=1`) on one virtual bridge.
 
 Untested: NFSv4.2-specific operations, NFS over TLS from a jail, pNFS, a
 jail without vnet, and the NFS client loaded as a module.
+
+
+## Review 2026-11-24
+
+A per-commit review (see [`review-2026-11-24.md`](review-2026-11-24.md))
+found the issues below in this patch; the text above describes the fixed
+version. Retested afterwards: all 13 cases of `tests/sys/fs/nfs` on
+GENERIC-NODEBUG and GENERIC with WITNESS, no jail left dying, no panic.
+
+- S1: jails *without* their own vnet could mount NFS too, and their gssd
+  and rpc.tlsclntd upcalls then used the host's identities. Fixed: EPERM
+  in `nfs_mount()` for `jailed_without_vnet()`. Measured: refused.
+- S2: NFSv2/3 locks of a jailed mount went to the host's NLM. Fixed:
+  `nfs_advlock()` returns ENOLCK for them. Measured: ENOLCK at once.
+- Not fixed, follow-up: NFSv4 owner strings are mapped in the vnet of the
+  thread that parses the reply (nfsiod: the host's tables).

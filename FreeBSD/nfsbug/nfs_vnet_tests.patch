@@ -49,10 +49,10 @@ index 000000000000..1bf93391e294
 +.include <bsd.test.mk>
 diff --git tests/sys/fs/nfs/basic_test.sh tests/sys/fs/nfs/basic_test.sh
 new file mode 100644
-index 000000000000..fd6b999d66ec
+index 000000000000..f4c05b61cc50
 --- /dev/null
 +++ tests/sys/fs/nfs/basic_test.sh
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,202 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -165,11 +165,9 @@ index 000000000000..fd6b999d66ec
 +	# NLM cannot run in a jail: lock locally.
 +	nfs_mount ${cl} $(nfs_addr srv) nfsv3,tcp,nolockd
 +	m=$(nfs_mnt ${cl})
-+	if [ ${cl} = host ]; then
-+		atf_check -o match:nfsv3 nfsstat -m
-+	else
-+		atf_check -o match:nfsv3 jexec ${cl} nfsstat -m
-+	fi
++	# The line after "<server> on <mount point>" lists its options.
++	atf_check -o match:nfsv3 -x \
++	    "nfsstat -m | awk -v m=$m '\$NF == m { getline; print }'"
 +	echo locked > $m/lockfile
 +	atf_check lockf -k -w -t 0 $m/lockfile true
 +	atf_check rm $m/lockfile
@@ -219,7 +217,7 @@ index 000000000000..fd6b999d66ec
 +
 +two_clients_body()
 +{
-+	local m1 m2
++	local i m1 m2
 +
 +	nfs_init
 +	nfs_require_clients 2
@@ -234,9 +232,12 @@ index 000000000000..fd6b999d66ec
 +	echo from-c1 > $m1/file
 +	atf_check -o inline:"from-c1\n" cat $m2/file
 +	# A lock held through c1 conflicts with one asked through c2.
-+	lockf -w -k $m1/file sleep 5 &
-+	sleep 1
-+	atf_check -s exit:75 -e ignore lockf -w -t 0 $m2/file true
++	lockf -w -k $m1/file sleep 10 &
++	for i in $(seq 10); do
++		lockf -k -w -t 0 $m2/file true 2>/dev/null || break
++		sleep 0.5
++	done
++	atf_check -s exit:75 -e ignore lockf -k -w -t 0 $m2/file true
 +	wait
 +	atf_check lockf -w -t 0 $m2/file true
 +}
@@ -556,10 +557,10 @@ index 000000000000..52e4f1ca3910
 +}
 diff --git tests/sys/fs/nfs/nfs.subr tests/sys/fs/nfs/nfs.subr
 new file mode 100644
-index 000000000000..86127ff78088
+index 000000000000..0d181f0b6588
 --- /dev/null
 +++ tests/sys/fs/nfs/nfs.subr
-@@ -0,0 +1,524 @@
+@@ -0,0 +1,534 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -670,6 +671,8 @@ index 000000000000..86127ff78088
 +		mount -t nullfs -o ro /$d ${root}/$d
 +	done
 +	cp -Rp /etc ${root}/etc
++	# The test writes these; never through a copied symlink.
++	rm -f ${root}/etc/hosts ${root}/etc/krb5.conf ${root}/etc/krb5.keytab
 +	mkdir -p ${root}/dev ${root}/export ${root}/mnt ${root}/tmp \
 +	    ${root}/var/db ${root}/var/log ${root}/var/run ${root}/var/tmp
 +	chmod 1777 ${root}/tmp ${root}/var/tmp
@@ -926,7 +929,7 @@ index 000000000000..86127ff78088
 +	    -r ${NFS_REALM} -q "addprinc -randkey ${princ}"
 +	atf_check -o ignore -e ignore jexec ${kdc} kadmin.local \
 +	    -r ${NFS_REALM} -q "ktadd -k /tmp/$1.keytab ${princ}"
-+	cat ${kdc}/tmp/$1.keytab >> $1/etc/krb5.keytab
++	cp ${kdc}/tmp/$1.keytab $1/etc/krb5.keytab
 +	chmod 600 $1/etc/krb5.keytab
 +}
 +
@@ -949,10 +952,12 @@ index 000000000000..86127ff78088
 +	local i
 +
 +	: > proxy.log
-+	python3 $(atf_get_srcdir)/nfs_reset_proxy.py \
++	# In a session of its own: kyua kills the body's process group
++	# before the cleanup, which still needs the proxy to unmount.
++	daemon -p proxy.pid -o proxy.log python3 \
++	    $(atf_get_srcdir)/nfs_reset_proxy.py \
 +	    --listen ${NFS_HOST}:${NFS_PROXY_PORT} \
-+	    --server $(nfs_addr $1):2049 > proxy.log 2>&1 &
-+	echo $! > proxy.pid
++	    --server $(nfs_addr $1):2049
 +	echo ${NFS_HOST}:${NFS_PROXY_PORT} > proxy.addr
 +	for i in $(seq 10); do
 +		grep -q listening proxy.log && return 0
@@ -998,7 +1003,7 @@ index 000000000000..86127ff78088
 +{
 +	local gap last now
 +
-+	gap=$(awk -v s=$1 '$1 >= s {
++	gap=$(awk -v s=$1 'BEGIN { p = s } $1 >= s {
 +		if (p != "" && $1 - p > m)
 +			m = $1 - p
 +		p = $1
@@ -1067,6 +1072,12 @@ index 000000000000..86127ff78088
 +			umount -N ${m} 2>/dev/null
 +		done
 +	fi
++	# Also a mount that was made without nfs_mount, such as one that
++	# was expected to fail; deepest first.
++	for m in $(mount -p -t nfs | awk -v d="$PWD/" \
++	    'index($2, d) == 1 { print $2 }' | sort -r); do
++		umount -N ${m} 2>/dev/null
++	done
 +	vnet_cleanup
 +	# Server state left by a proxy reset can keep a jail dying, and with
 +	# it a reference on its root: wait a little, then force.
@@ -1086,10 +1097,10 @@ index 000000000000..86127ff78088
 +}
 diff --git tests/sys/fs/nfs/nfs_reset_proxy.py tests/sys/fs/nfs/nfs_reset_proxy.py
 new file mode 100644
-index 000000000000..8cb9ea205be7
+index 000000000000..80e986ca6ab3
 --- /dev/null
 +++ tests/sys/fs/nfs/nfs_reset_proxy.py
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,297 @@
 +#!/usr/bin/env python3
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
@@ -1326,12 +1337,19 @@ index 000000000000..8cb9ea205be7
 +    log("reset %d connection(s)" % len(victims))
 +    for client, server in victims:
 +        try:
-+            # Zero linger: close() sends a RST.
++            # Zero linger: the close() sends a RST.
 +            client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
 +                              struct.pack("ii", 1, 0))
 +        except OSError:
 +            pass
-+        close_all(client, server)
++        # Wake the threads blocked in recv(): they close the sockets.
++        # A close() from here would only take effect at their next
++        # recv(), and lose the request that wakes them.
++        for s in (client, server):
++            try:
++                s.shutdown(socket.SHUT_RD)
++            except OSError:
++                pass
 +
 +
 +def resetter():
