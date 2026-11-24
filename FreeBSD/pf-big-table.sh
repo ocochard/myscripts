@@ -13,7 +13,7 @@ entries=$(wc -l prod_data-shield_ipv4_blocklist.txt | awk '{print $1}')
 #sudo sysctl net.pf.request_maxcount=100000
 maxcount=$(sysctl -n net.pf.request_maxcount)
 if [ ${entries} -gt ${maxcount} ]; then
-	echo "System’s net.pf.request_maxcount ($maxcount) too small to load this $entries elements table"
+	echo "System's net.pf.request_maxcount ($maxcount) too small to load this $entries elements table"
 	echo "Increasing it..."
 	sudo sysctl net.pf.request_maxcount=$(( ${entries} + 1 ))
 fi
@@ -24,7 +24,7 @@ table <shield_ipv4.blocklist> persist file "prod_data-shield_ipv4_blocklist.txt"
 EOF
 echo "System configured with net.pf.request_maxcount ${maxcount} loading a ${entries} table multiple times"
 for i in $(jot 10); do
-	echo "Try: $i"
+	echo "Try: $i"
 	echo "current VM usage"
 	vmstat -z | awk 'NR==1; /table entries/{print; exit}'
 	sudo pfctl -f pf.conf
