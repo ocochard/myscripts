@@ -1,6 +1,6 @@
 # acpi_spmc: accept Intel constraints without a device-specific state
 
-Patch: [`acpi_spmc_intel_constraints.patch`](acpi_spmc_intel_constraints.patch), commit 0f969b17ba76 on main d5f0768e13f3
+Patch: [`acpi_spmc_intel_constraints.patch`](acpi_spmc_intel_constraints.patch), commit c6c5c5d43e93 on main d5f0768e13f3
 (tested build: same change on base 6dc19a71f70c).
 Machine: Intel NUC 13 Pro (see [../Intel.NUC13.Pro.md](../Intel.NUC13.Pro.md)).
 
@@ -119,7 +119,7 @@ that out-of-bounds read into a rejection.
 @@
  		constraint->min_d_state =
  		    constraint_package->Package.Elements[1].Integer.Value;
-+		/* The minimum device-specific state is optional. */
++		/* Optional: Intel Low Power S0 Idle _DSM spec, Table 9. */
  		constraint->min_dev_specific_state =
 -		    constraint_package->Package.Elements[2].Integer.Value;
 +		    constraint_package->Package.Count > 2 ?
