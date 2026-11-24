@@ -1,14 +1,12 @@
 # snd_acp: recording from the built-in microphones of an AMD laptop
 
-Patch: [snd_acp_dmic.patch](snd_acp_dmic.patch), commits 4a48d48141f8 (driver,
-with the devmatch PCI ID folded in) and 228ca612790e (mute and DC filter) on
-FreeBSD main 6dc19a71f70c, the version sent for review. An earlier
-version, three commits (6ba38c3ca4a6, e4c888c47347, eac669d546ee) that
-still enabled the ACP error interrupt, is in branch
-[`olivier-acp`](https://github.com/ocochard/freebsd-src/compare/main...olivier-acp).
+Patch: [snd_acp_dmic.patch](snd_acp_dmic.patch), three commits on FreeBSD
+main a1c255f69aaf, in review as
+[#124](https://ron-dev.freebsd.org/FreeBSD/src/pulls/124):
+a09391de8e13 (the driver), 568f24ff96b9 (start burst mute and DC filter)
+and a7297cefc587 (the PDM gain as the recording level).
 Laptop: HP ZBook Ultra G1a (AMD Ryzen AI Max+ PRO 395, Strix Halo).
-Line numbers below are `sys/dev/sound/pci/acp.c` in eac669d546ee; the
-final version moves code after `acp_hw_init()` down by a few lines.
+Line numbers below are `sys/dev/sound/pci/acp.c` in a7297cefc587.
 Raw data from Linux: [acp/](acp/).
 
 ## 1. Background
@@ -80,7 +78,7 @@ not need the DSP: the driver removes it with a small filter (below).
 by physical address directly. It writes to its own address space; an
 *address translation unit* (ATU) maps those addresses to system pages
 through a small page table that the driver fills, one entry per 4 KB
-page (`acp_pdm_start()`, line 240):
+page (`acp_pdm_start()`, line 257):
 
 ```mermaid
 flowchart LR
@@ -98,11 +96,11 @@ flowchart LR
 conversion, mixing and the `/dev/dsp` interface. A hardware driver gives
 it channels: methods to set format and block size, start and stop
 (`trigger`), and report the position in the ring (`getptr`). It calls
-`chn_intr()` each time a block is ready (`acp_intr()`, line 303).
+`chn_intr()` each time a block is ready (`acp_intr()`, line 314).
 
 **Power and reset.** Before use, the ACP is powered on through its
 power-gating state machine (`ACP_PGFSM_CONTROL`/`STATUS`) and reset
-(`ACP_SOFT_RESET`) (`acp_hw_init()`, line 189; `acp_reset()`, line 178).
+(`ACP_SOFT_RESET`) (`acp_hw_init()`, line 191; `acp_reset()`, line 180).
 
 **DC offset and high-pass filter.** A recording is a list of numbers
 that swing around zero. When the microphone's zero point is off, every
@@ -172,26 +170,30 @@ then enable; one interrupt per 8 KB.
 
 A new `pcm(4)` driver, `snd_acp`, record only:
 
-- Probe (line 486): PCI 1022:15e2 revisions 0x70 to 0x72.
-- Attach (line 518): map BAR 0, power on and reset the ACP, then
+- Probe (line 576): PCI 1022:15e2 revisions 0x70 to 0x72. 1022:15e2 is the
+  ID of every ACP since Raven, so devmatch(8) loads the module on any Ryzen
+  machine with an ACP; probe then refuses the other revisions.
+- Attach (line 613): map BAR 0, power on and reset the ACP, then
   check that the firmware reports digital microphones (`acp_has_dmic()`,
-  line 466): the pin configuration must route the PDM interface (the
+  line 539): the pin configuration must route the PDM interface (the
   values Linux accepts), and the ACPI method `_WOV` of the ACP device,
-  when present, must not return 0. Then one recording channel.
-- Start (`acp_pdm_start()`, line 240): page table for the 64 KB ring
+  when present, must not return 0. Then one recording channel; if it
+  cannot be added (the 64 KB ring is allocated without waiting), or if
+  `pcm_register()` fails, `pcm_unregister()` undoes `pcm_init()`.
+- Start (`acp_pdm_start()`, line 257): page table for the 64 KB ring
   (a contiguous buffer below 4 GB from `sndbuf_alloc()`), ATU, PDM
   interrupt enabled, 2 channels, decimation 64, PDM clock and control,
   ring address, size and interrupt watermark (the block size), then PDM
   and DMA enable, and wait for the DMA's running bit.
-- Position (`acpchan_getptr()`, line 427): the ACP counts the bytes it
-  wrote in a 64-bit counter (`acp_pdm_pos()`, line 228); the driver
+- Position (`acpchan_getptr()`, line 445): the ACP counts the bytes it
+  wrote in a 64-bit counter (`acp_pdm_pos()`, line 236); the driver
   keeps the value at start and returns the difference modulo the ring
   size.
-- Cleaning (`acp_rec_process()`, line 392, commit e4c888c47347):
+- Cleaning (`acp_rec_process()`, line 402, second commit):
   `pcm(4)` calls `getptr` before it reads the ring, so the driver
   processes the samples that arrived since the last call in place, and
   only then reports them: it writes zeros over the first 100 ms
-  (`ACP_MUTE_BYTES`, line 112), starts the running average of each
+  (`ACP_MUTE_BYTES`, line 114), starts the running average of each
   channel from its first sample after that, and subtracts it (the
   filter above, saturated to 32 bits). It tracks its progress in bytes
   since the start, not as a ring offset, so the mute window survives the
@@ -201,16 +203,32 @@ A new `pcm(4)` driver, `snd_acp`, record only:
 - Gain: bits 4:3 of `ACP_WOV_MISC_CTRL` (0x2c5c) are a 2-bit PDM gain,
   0 to 3, each step 6 dB (measured, section 4). Linux's PS PDM driver
   sets it from its `pdm_gain` module parameter, default 3, with no mixer
-  control. Here the mixer's recording level (`rec`) sets it: 0-24 is
+  control. Here the mixer's recording level (`rec`) sets it: 1-24 is
   gain 0, then one step per 25; `mixer.c` gives `rec` 75 at attach, which
-  keeps gain 3. A change applies at once, also during a recording.
+  keeps gain 3. A change applies at once, also during a recording, and
+  the DC estimate is scaled with it so the filter stays settled. Level 0
+  (what mixer(8) sets to mute `rec`) zeroes the samples, `bitperfect`
+  included: the lowest gain is only 18 dB down and still records.
 - Interrupt: the PDM DMA interrupt is enabled in `EXT_INTR_CNTL(0)` only,
   so `acp_intr()` reads and clears `EXT_INTR_STAT(0)` only.
 - Loading: one `pci_device_table` (`acp_ids[]`, vendor 0x1022, device
   0x15e2) serves `PCI_MATCH()` in probe and `PCI_PNP_INFO()` for
   `devmatch(8)`. The revision check stays in probe: pci(4) gives devmatch
   no `revid` to match. The microphone checks stay in attach.
-- Stop, detach, suspend and resume undo or redo the above.
+- Stop clears the PDM and DMA enables even when the DMA's running bit is
+  off, so a start that timed out leaves no late DMA behind. The polls
+  wait up to 1000 us, as Linux's `PDM_TIMEOUT`.
+- Suspend stops the DMA and keeps `running` false while the ACP is down
+  (a separate flag remembers to restart), so an interrupt on a shared
+  line cannot reach `chn_intr()` then. Resume zeroes the ring before it
+  restarts the DMA at offset 0: pcm(4) still has its old read pointer,
+  and what it reads before catching up is silence, not old audio.
+- Detach stops the DMA and removes the interrupt handler before
+  `pcm_unregister()` frees the channel that `acp_intr()` passes to
+  `chn_intr()`.
+- Idle power: the ACP stays powered from attach to detach, where Linux
+  resets it 2 s after use. Measured on the package energy counter, the
+  module makes no difference (section 4), so the driver keeps it simple.
 
 Where the values come from: there is no public datasheet. Register
 offsets and values are those of the Linux trace on this laptop; the
@@ -239,7 +257,7 @@ Alternatives:
   is loaded only on machines with an ACP; on an ACP without
   microphones it loads, attach fails, and it stays unused.
 
-What it does not do: no gain control (no mixer), no wake on voice, no
+What it does not do: no wake on voice, no
 I2S or SoundWire devices, and no other ACP revisions (Renoir,
 Rembrandt, ACP 6.3). The residual drift in the first half second is
 reduced, not removed (see the tests).
@@ -309,6 +327,24 @@ signal-to-noise ratio. Changing `rec.volume` from 0.75 to 0.10 during a
 pcm(4) also lists `bass` and `treble` (playback, its software EQ) on
 this mixer; they do nothing on a record-only device.
 
+Fixes from the second review, 2026-11-24: module built from the three
+commits against the laptop's kernel, swapped in with devd stopped. No
+sound played; recordings analysed with
+[acp_review_stats.py](acp_review_stats.py) (zero samples, peak, DC per
+window):
+
+| Test | Result |
+|---|---|
+| 5 s recording | 1920000 bytes, 469 interrupts |
+| `mixer -f /dev/mixer6 rec.mute=on`, 2 s | 192000 of 192000 samples zero; unmuted again: peak -46.1 dBFS |
+| `rec.volume=0`, 2 s | all samples zero; `rec.volume=0.10` (gain 0): peak -63.1 dBFS |
+| mute with `dev.pcm.6.bitperfect=1` | all samples zero; unmuted: peak -23.4 dBFS (raw) |
+| `rec.volume` 0.75 -> 0.10 -> 0.75 during a 5 s recording | DC per 250 ms window -79 to -108 dBFS throughout: no step at the changes |
+| `devctl suspend pcm6` / `devctl resume pcm6` during a 5 s recording | 1920000 bytes, DC -69 to -123 dBFS; a recording after it works |
+| `kldunload` / `kldload`, 3 cycles, recording after each | all record, no error |
+| package power (`MSR 0xC001029B`, 3 x 30 s each, idle) | loaded 24.03, 24.00, 24.03 W; unloaded 24.02, 24.08, 24.04 W |
+| `buildkernel GENERIC`, each of the three commits | no warning |
+
 Same laptop on Ubuntu (Linux 7.0.0-43) for comparison: quiet -42 to -48
 dBFS per window, clapping peak -2 dBFS. The quieter floor there may be
 the room; it was not compared in the same conditions.
@@ -352,3 +388,14 @@ and the Linux `sound/soc/amd` drivers; all changes are made and tested
 | Clear `running` in detach, as in suspend? | `acp_pdm_stop()` already clears it; suspend sets it back on purpose so resume restarts the DMA. `pcm_unregister()` has stopped the channel before. | none |
 | `mixer_init()`? | wulf pointed out the input gain register: bits 4:3 of `ACP_WOV_MISC_CTRL`, 0 to 3. Linux sets it from a module parameter (default 3) and exposes no mixer control, which is why amixer showed none; the driver wrote 3 under a misleading name. Measured: 6 dB per step. | done: the recording level (`rec`) sets the gain, default unchanged |
 | How does `getptr` work? | The ACP counts DMA bytes in a 64-bit counter that does not restart; start saves it, getptr returns (count - start) modulo the ring, rounded down to an 8-byte frame, as Linux's PS PDM driver does. | comment added above `acpchan_getptr()` |
+
+Second review (2026-11-24, before the next round): one bug, `rec` mute
+and level 0 left the microphones live at gain 0; fixed (section 3).
+Also fixed: the restart flag on suspend, stop after a failed start,
+interrupt teardown before `pcm_unregister()`, old audio after resume,
+`pcm_addchan()` and `pcm_register()` failures, the commit message's
+claim about the PCI ID, `device snd_acp` in the amd64 NOTES, the man
+page installed on amd64 only, and `"mixer_if.h"`. Kept: `rec` as its
+own recording source (a `mic` source would add a control that does
+nothing), and the ACP powered while idle (measured: no difference).
+

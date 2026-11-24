@@ -1,37 +1,50 @@
-From 281611f0b8014770630eea9f241a159320a61ec2 Mon Sep 17 00:00:00 2001
+From a09391de8e13478d875b59550b61d4875e722949 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sat, 21 Nov 2026 23:49:05 +0100
 Subject: [PATCH 1/3] snd_acp: Add a driver for AMD ACP 7.x digital microphones
 
 The built-in microphones of Strix Halo laptops are wired to the ACP's
 PDM interface, not to the HDA codec, so FreeBSD had no way to record
-from them.  Capture only: no DSP, I2S or SoundWire.  The PCI ID is
-exported so that devmatch(8) loads the module on machines with an
-ACP 7.x.
+from them.  Capture only: no DSP, I2S or SoundWire.  The PCI ID,
+1022:15e2, is that of every ACP since Raven, so devmatch(8) loads the
+module on any Ryzen machine with an ACP; probe keeps revisions 0x70 to
+0x72 (ACP 7.x).
+
+Reviewed by:	christos
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/124
 ---
- share/man/man4/Makefile               |   1 +
+ share/man/man4/Makefile               |   2 +
  share/man/man4/snd_acp.4              |  86 ++++
+ sys/amd64/conf/NOTES                  |   3 +
  sys/conf/files.amd64                  |   1 +
- sys/dev/sound/pci/acp.c               | 624 ++++++++++++++++++++++++++
+ sys/dev/sound/pci/acp.c               | 640 ++++++++++++++++++++++++++
  sys/modules/sound/driver/Makefile     |   4 +
  sys/modules/sound/driver/acp/Makefile |   7 +
- 6 files changed, 723 insertions(+)
+ 7 files changed, 743 insertions(+)
  create mode 100644 share/man/man4/snd_acp.4
  create mode 100644 sys/dev/sound/pci/acp.c
  create mode 100644 sys/modules/sound/driver/acp/Makefile
 
 diff --git a/share/man/man4/Makefile b/share/man/man4/Makefile
-index 4a39645fcba3..f7afabd8d0e4 100644
+index 4a39645fcba3..f01071b8590b 100644
 --- a/share/man/man4/Makefile
 +++ b/share/man/man4/Makefile
 @@ -567,6 +567,7 @@ MAN=	aac.4 \
  	smbus.4 \
  	smp.4 \
  	smsc.4 \
-+	snd_acp.4 \
++	${_snd_acp.4} \
  	snd_als4000.4 \
  	snd_atiixp.4 \
  	snd_cmi.4 \
+@@ -967,6 +968,7 @@ _qlxgbe.4=	qlxgbe.4
+ _qlnxe.4=	qlnxe.4
+ _sfxge.4=	sfxge.4
+ _smartpqi.4=	smartpqi.4
++_snd_acp.4=	snd_acp.4
+ _sume.4=	sume.4
+ 
+ MLINKS+=iwx.4 if_iwx.4
 diff --git a/share/man/man4/snd_acp.4 b/share/man/man4/snd_acp.4
 new file mode 100644
 index 000000000000..61f85015ab08
@@ -124,6 +137,20 @@ index 000000000000..61f85015ab08
 +.Sh BUGS
 +The microphones' gain cannot be changed; there is no mixer.
 +Recordings carry a DC offset that the driver does not remove.
+diff --git a/sys/amd64/conf/NOTES b/sys/amd64/conf/NOTES
+index 09e7ff185c7d..37722aafae23 100644
+--- a/sys/amd64/conf/NOTES
++++ b/sys/amd64/conf/NOTES
+@@ -54,6 +54,9 @@ device		vt_efifb	# EFI framebuffer
+ 
+ device		tdfx			# Enable 3Dfx Voodoo support
+ 
++# AMD Audio Coprocessor 7.x digital microphones (needs sound)
++device		snd_acp
++
+ #
+ # RAID adapters
+ #
 diff --git a/sys/conf/files.amd64 b/sys/conf/files.amd64
 index b87c847bfb87..e73e2061715b 100644
 --- a/sys/conf/files.amd64
@@ -138,10 +165,10 @@ index b87c847bfb87..e73e2061715b 100644
  dev/thunderbolt/hcm.c		optional	thunderbolt
 diff --git a/sys/dev/sound/pci/acp.c b/sys/dev/sound/pci/acp.c
 new file mode 100644
-index 000000000000..b2f133dcc598
+index 000000000000..cecaba44b03e
 --- /dev/null
 +++ b/sys/dev/sound/pci/acp.c
-@@ -0,0 +1,624 @@
+@@ -0,0 +1,640 @@
 +/*-
 + * SPDX-License-Identifier: BSD-2-Clause
 + *
@@ -190,7 +217,6 @@ index 000000000000..b2f133dcc598
 +
 +#include <contrib/dev/acpica/include/acpi.h>
 +#include <dev/acpica/acpivar.h>
-+
 +
 +/* Address translation unit: how the ACP's DMA reaches system memory. */
 +#define	ACP_ATU_PAGE_SIZE_GRP1	0x0c00
@@ -251,7 +277,7 @@ index 000000000000..b2f133dcc598
 +#define	ACP_BLKSZ_DEFAULT	8192
 +#define	ACP_RATE		48000
 +#define	ACP_POLL_US		5
-+#define	ACP_TIMEOUT_US		500
++#define	ACP_TIMEOUT_US		1000
 +
 +struct acp_info;
 +
@@ -262,6 +288,7 @@ index 000000000000..b2f133dcc598
 +	uint64_t		start_pos;
 +	uint32_t		blksz;
 +	bool			running;
++	bool			resume;	/* was running at suspend */
 +};
 +
 +struct acp_info {
@@ -426,13 +453,11 @@ index 000000000000..b2f133dcc598
 +static void
 +acp_pdm_stop(struct acp_info *sc, struct acp_chinfo *ch)
 +{
-+	if ((acp_rd(sc, ACP_PDM_DMA_ENABLE) & ACP_PDM_DMA_RUNNING) != 0) {
-+		acp_wr(sc, ACP_PDM_ENABLE, 0);
-+		acp_wr(sc, ACP_PDM_DMA_ENABLE, 0);
-+		if (acp_poll(sc, ACP_PDM_DMA_ENABLE, ACP_PDM_DMA_RUNNING,
-+		    0) != 0)
-+			device_printf(sc->dev, "PDM DMA did not stop\n");
-+	}
++	/* Also after a start that timed out: a late DMA must not run. */
++	acp_wr(sc, ACP_PDM_ENABLE, 0);
++	acp_wr(sc, ACP_PDM_DMA_ENABLE, 0);
++	if (acp_poll(sc, ACP_PDM_DMA_ENABLE, ACP_PDM_DMA_RUNNING, 0) != 0)
++		device_printf(sc->dev, "PDM DMA did not stop\n");
 +	acp_wr(sc, ACP_EXT_INTR_CNTL(0),
 +	    acp_rd(sc, ACP_EXT_INTR_CNTL(0)) & ~ACP_EXT_INTR_PDM_DMA);
 +	ch->running = false;
@@ -681,14 +706,19 @@ index 000000000000..b2f133dcc598
 +	}
 +
 +	pcm_init(dev, sc);
-+	pcm_addchan(dev, PCMDIR_REC, &acpchan_class, sc);
++	if (pcm_addchan(dev, PCMDIR_REC, &acpchan_class, sc) != 0) {
++		device_printf(dev, "cannot add the recording channel\n");
++		goto bad_pcm;
++	}
 +	snprintf(status, SND_STATUSLEN, "mem 0x%jx irq %jd on %s",
 +	    rman_get_start(sc->reg), rman_get_start(sc->irq),
 +	    device_get_nameunit(device_get_parent(dev)));
 +	if (pcm_register(dev, status) != 0)
-+		goto bad_hw;
++		goto bad_pcm;
 +	return (0);
 +
++bad_pcm:
++	pcm_unregister(dev);
 +bad_hw:
 +	acp_hw_fini(sc);
 +bad:
@@ -703,11 +733,16 @@ index 000000000000..b2f133dcc598
 +	int error;
 +
 +	sc = pcm_getdevinfo(dev);
-+	if ((error = pcm_unregister(dev)) != 0)
-+		return (error);
++	/* acp_intr() calls chn_intr(): gone before the channel is freed. */
 +	mtx_lock(&sc->lock);
 +	if (sc->rch.running)
 +		acp_pdm_stop(sc, &sc->rch);
++	mtx_unlock(&sc->lock);
++	bus_teardown_intr(dev, sc->irq, sc->ih);
++	sc->ih = NULL;
++	if ((error = pcm_unregister(dev)) != 0)
++		return (error);
++	mtx_lock(&sc->lock);
 +	acp_hw_fini(sc);
 +	mtx_unlock(&sc->lock);
 +	acp_release(sc);
@@ -724,7 +759,7 @@ index 000000000000..b2f133dcc598
 +	running = sc->rch.running;
 +	if (running)
 +		acp_pdm_stop(sc, &sc->rch);
-+	sc->rch.running = running;	/* restart on resume */
++	sc->rch.resume = running;
 +	acp_hw_fini(sc);
 +	mtx_unlock(&sc->lock);
 +	return (0);
@@ -738,10 +773,18 @@ index 000000000000..b2f133dcc598
 +
 +	mtx_lock(&sc->lock);
 +	error = acp_hw_init(sc);
-+	if (error == 0 && sc->rch.running) {
-+		sc->rch.running = false;
++	if (error == 0 && sc->rch.resume) {
++		/*
++		 * The DMA restarts at offset 0 while pcm(4) keeps its read
++		 * pointer: what pcm(4) reads before catching up is silence,
++		 * not the audio recorded before the suspend.
++		 */
++		bzero(sc->rch.buffer->buf, sc->rch.buffer->bufsize);
++		bus_dmamap_sync(sc->rch.buffer->dmatag,
++		    sc->rch.buffer->dmamap, BUS_DMASYNC_PREREAD);
 +		acp_pdm_start(sc, &sc->rch);
 +	}
++	sc->rch.resume = false;
 +	mtx_unlock(&sc->lock);
 +	return (error);
 +}
@@ -798,7 +841,7 @@ index 000000000000..5392466bf32c
 2.56.0
 
 
-From ff58c180e2e6eebaf9eb039d77e784053782869a Mon Sep 17 00:00:00 2001
+From 568f24ff96b97544eb01e66dca72c8019fec31a0 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Tue, 17 Nov 2026 00:40:52 +0100
 Subject: [PATCH 2/3] snd_acp: Mute the start burst and remove the DC offset
@@ -807,6 +850,9 @@ The PDM microphones start each recording with about 60 ms of
 full-scale noise, then carry a DC offset (-22 dBFS on channel 0 of an
 HP ZBook Ultra G1a).  Mute the first 100 ms and remove the offset with
 a high-pass at about 7.5 Hz, skipped when dev.pcm.N.bitperfect is set.
+
+Reviewed by:	christos
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/124
 ---
  share/man/man4/snd_acp.4 |  7 +++++-
  sys/dev/sound/pci/acp.c  | 54 ++++++++++++++++++++++++++++++++++++++--
@@ -835,19 +881,19 @@ index 61f85015ab08..91dfef40354a 100644
  The microphones' gain cannot be changed; there is no mixer.
 -Recordings carry a DC offset that the driver does not remove.
 diff --git a/sys/dev/sound/pci/acp.c b/sys/dev/sound/pci/acp.c
-index b2f133dcc598..aa0f8a945cd8 100644
+index cecaba44b03e..a4b49014be11 100644
 --- a/sys/dev/sound/pci/acp.c
 +++ b/sys/dev/sound/pci/acp.c
-@@ -108,6 +108,8 @@
+@@ -107,6 +107,8 @@
  #define	ACP_RATE		48000
  #define	ACP_POLL_US		5
- #define	ACP_TIMEOUT_US		500
+ #define	ACP_TIMEOUT_US		1000
 +#define	ACP_DC_SHIFT		10	/* high-pass at about 7.5 Hz */
 +#define	ACP_MUTE_BYTES		(ACP_RATE / 10 * 8)	/* first 100 ms */
  
  struct acp_info;
  
-@@ -116,6 +118,8 @@ struct acp_chinfo {
+@@ -115,6 +117,8 @@ struct acp_chinfo {
  	struct pcm_channel	*channel;
  	struct acp_info		*parent;
  	uint64_t		start_pos;
@@ -855,7 +901,7 @@ index b2f133dcc598..aa0f8a945cd8 100644
 +	int64_t			dc[2];	/* DC estimate per channel, Q10 */
  	uint32_t		blksz;
  	bool			running;
- };
+ 	bool			resume;	/* was running at suspend */
 @@ -271,6 +275,7 @@ acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
  	acp_wr(sc, ACP_ATU_CTRL, 1);
  
@@ -864,7 +910,7 @@ index b2f133dcc598..aa0f8a945cd8 100644
  	acp_wr(sc, ACP_PDM_ENABLE, 1);
  	acp_wr(sc, ACP_PDM_DMA_ENABLE, 1);
  	if (acp_poll(sc, ACP_PDM_DMA_ENABLE, ACP_PDM_DMA_RUNNING,
-@@ -376,6 +381,50 @@ acpchan_trigger(kobj_t obj, void *data, int go)
+@@ -374,6 +379,50 @@ acpchan_trigger(kobj_t obj, void *data, int go)
  	return (0);
  }
  
@@ -915,7 +961,7 @@ index b2f133dcc598..aa0f8a945cd8 100644
  /*
   * The ACP counts every byte its PDM DMA writes, and the DMA restarts at the
   * start of the ring on START: the pointer is the count since START, modulo
-@@ -389,9 +438,10 @@ acpchan_getptr(kobj_t obj, void *data)
+@@ -387,9 +436,10 @@ acpchan_getptr(kobj_t obj, void *data)
  	uint64_t pos;
  
  	mtx_lock(&sc->lock);
@@ -932,7 +978,7 @@ index b2f133dcc598..aa0f8a945cd8 100644
 2.56.0
 
 
-From cd28b2fafb0434e45e43eebe22563acdd0a0fff4 Mon Sep 17 00:00:00 2001
+From a7297cefc58737e881a6dc84cacda656959e7639 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 23 Nov 2026 23:59:18 +0100
 Subject: [PATCH 3/3] snd_acp: Set the microphone gain with the recording level
@@ -943,17 +989,30 @@ driver set to its maximum.  Each step is 6 dB: a 440 Hz tone recorded at
 the pdm_gain module parameter, default 3, without a mixer control.
 
 Expose it as the mixer's recording level, one step per 25; the default
-level, 75, keeps the maximum gain.
+level, 75, keeps the maximum gain.  Level 0, which mixer(8) also sets to
+mute, silences the samples: the lowest gain still records.
+
+Reviewed by:	christos
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/124
 ---
- share/man/man4/snd_acp.4 | 11 +++++--
- sys/dev/sound/pci/acp.c  | 62 ++++++++++++++++++++++++++++++++++++++--
- 2 files changed, 67 insertions(+), 6 deletions(-)
+ share/man/man4/snd_acp.4 | 17 +++++++--
+ sys/dev/sound/pci/acp.c  | 81 +++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 89 insertions(+), 9 deletions(-)
 
 diff --git a/share/man/man4/snd_acp.4 b/share/man/man4/snd_acp.4
-index 91dfef40354a..bf52db4b4175 100644
+index 91dfef40354a..8f5ee136b7b1 100644
 --- a/share/man/man4/snd_acp.4
 +++ b/share/man/man4/snd_acp.4
-@@ -63,6 +63,12 @@ is set.
+@@ -24,7 +24,7 @@
+ .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ .\" SUCH DAMAGE.
+ .\"
+-.Dd November 16, 2026
++.Dd November 24, 2026
+ .Dt SND_ACP 4
+ .Os
+ .Sh NAME
+@@ -63,6 +63,16 @@ is set.
  The first 100 ms of each recording are muted: the microphones start
  with a full-scale burst.
  .Pp
@@ -961,12 +1020,16 @@ index 91dfef40354a..bf52db4b4175 100644
 +.Xr mixer 8
 +recording level
 +.Pq Cm rec
-+sets the microphones' gain in four steps of about 6 dB: 0 to 24 is
++sets the microphones' gain in four steps of about 6 dB: 1 to 24 is
 +the lowest, 75 to 100 the highest, which is the default.
++Level 0, or muting
++.Cm rec ,
++silences the recording.
++.Pp
  The driver attaches only when the firmware reports digital microphones:
  the ACP pin configuration must route the PDM interface, and the ACPI
  .Va _WOV
-@@ -79,7 +85,8 @@ AMD Audio Coprocessor 7.x (PCI 1022:15e2, revisions 0x70 to 0x72),
+@@ -79,7 +89,8 @@ AMD Audio Coprocessor 7.x (PCI 1022:15e2, revisions 0x70 to 0x72),
  as found in the Ryzen AI Max (Strix Halo) processors
  .El
  .Sh SEE ALSO
@@ -976,26 +1039,26 @@ index 91dfef40354a..bf52db4b4175 100644
  .Sh HISTORY
  The
  .Nm
-@@ -87,5 +94,3 @@ driver first appeared in
+@@ -87,5 +98,3 @@ driver first appeared in
  .Fx 16.0 .
  .Sh AUTHORS
  .An Olivier Cochard Aq Mt olivier@FreeBSD.org
 -.Sh BUGS
 -The microphones' gain cannot be changed; there is no mixer.
 diff --git a/sys/dev/sound/pci/acp.c b/sys/dev/sound/pci/acp.c
-index aa0f8a945cd8..38b8d5b44378 100644
+index a4b49014be11..590de927d17b 100644
 --- a/sys/dev/sound/pci/acp.c
 +++ b/sys/dev/sound/pci/acp.c
 @@ -47,6 +47,8 @@
  #include <contrib/dev/acpica/include/acpi.h>
  #include <dev/acpica/acpivar.h>
  
-+#include <mixer_if.h>
++#include "mixer_if.h"
 +
- 
  /* Address translation unit: how the ACP's DMA reaches system memory. */
  #define	ACP_ATU_PAGE_SIZE_GRP1	0x0c00
-@@ -93,7 +95,8 @@
+ #define	ACP_ATU_BASE_ADDR_GRP1	0x0c04
+@@ -92,7 +94,8 @@
  #define	ACP_PDM_DECIMATION	0x2c2c
  #define	ACP_PDM_DEC_64		0x2
  #define	ACP_PDM_MISC_CTRL	0x2c5c
@@ -1005,15 +1068,16 @@ index aa0f8a945cd8..38b8d5b44378 100644
  #define	ACP_PDM_CLK_CTRL	0x2c60
  #define	ACP_PDM_CLK_DEFAULT	0x7
  #define	ACP_PDM_RINGBUF_WINDOW	0x04c00000	/* ring address, ACP side */
-@@ -134,6 +137,7 @@ struct acp_info {
+@@ -134,6 +137,8 @@ struct acp_info {
  	void			*ih;
  	bus_dma_tag_t		dmat;
  	struct acp_chinfo	rch;
 +	int			gain;
++	bool			muted;	/* recording level 0 */
  };
  
  static uint32_t acp_fmt[] = {
-@@ -239,6 +243,15 @@ acp_pdm_pos(struct acp_info *sc)
+@@ -239,6 +244,15 @@ acp_pdm_pos(struct acp_info *sc)
  	return (((uint64_t)hi << 32) | lo);
  }
  
@@ -1029,7 +1093,7 @@ index aa0f8a945cd8..38b8d5b44378 100644
  static void
  acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
  {
-@@ -267,8 +280,7 @@ acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
+@@ -267,8 +281,7 @@ acp_pdm_start(struct acp_info *sc, struct acp_chinfo *ch)
  	acp_wr(sc, ACP_PDM_CHANNELS, 0);
  	acp_wr(sc, ACP_PDM_DECIMATION, ACP_PDM_DEC_64);
  	acp_wr(sc, ACP_PDM_CLK_CTRL, ACP_PDM_CLK_DEFAULT);
@@ -1039,13 +1103,32 @@ index aa0f8a945cd8..38b8d5b44378 100644
  	acp_wr(sc, ACP_PDM_RINGBUF_ADDR, ACP_PDM_RINGBUF_WINDOW);
  	acp_wr(sc, ACP_PDM_RINGBUF_SIZE, ch->buffer->bufsize);
  	acp_wr(sc, ACP_PDM_WATERMARK, ch->blksz);
-@@ -462,6 +474,47 @@ static kobj_method_t acpchan_methods[] = {
+@@ -400,7 +413,7 @@ acp_rec_process(struct acp_info *sc, struct acp_chinfo *ch, uint64_t end)
+ 	filter = (pcm_getflags(sc->dev) & SD_F_BITPERFECT) == 0;
+ 	if (end - ch->hpos > b->bufsize)
+ 		ch->hpos = end - b->bufsize;	/* overrun */
+-	if (!filter && ch->hpos >= ACP_MUTE_BYTES)
++	if (!filter && !sc->muted && ch->hpos >= ACP_MUTE_BYTES)
+ 		ch->hpos = end;
+ 	if (ch->hpos == end)
+ 		return;
+@@ -408,7 +421,7 @@ acp_rec_process(struct acp_info *sc, struct acp_chinfo *ch, uint64_t end)
+ 	for (k = ch->hpos; k < end; k += 4) {
+ 		p = &s[(k % b->bufsize) / 4];
+ 		c = (k / 4) & 1;
+-		if (k < ACP_MUTE_BYTES) {
++		if (k < ACP_MUTE_BYTES || sc->muted) {
+ 			*p = 0;
+ 			continue;
+ 		}
+@@ -460,6 +473,61 @@ static kobj_method_t acpchan_methods[] = {
  };
  CHANNEL_DECLARE(acpchan);
  
 +/*
-+ * The recording level sets the PDM gain: 0-24 is gain 0, then one step per
-+ * 25.  The default level, 75, keeps the maximum gain, as Linux does.
++ * The recording level sets the PDM gain: 1-24 is gain 0, then one step per
++ * 25, and 0 mutes.  The default level, 75, keeps the maximum gain, as Linux
++ * does.
 + */
 +static int
 +acpmix_init(struct snd_mixer *m)
@@ -1059,11 +1142,24 @@ index aa0f8a945cd8..38b8d5b44378 100644
 +acpmix_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right)
 +{
 +	struct acp_info *sc = mix_getdevinfo(m);
++	u_int level;
++	int gain;
 +
 +	if (dev != SOUND_MIXER_RECLEV)
 +		return (-1);
++	level = MAX(left, right);
++	gain = MIN(level / 25, 3);
 +	mtx_lock(&sc->lock);
-+	sc->gain = MIN(MAX(left, right) / 25, 3);
++	/* Level 0 mutes: the lowest gain is still 18 dB under the default. */
++	sc->muted = level == 0;
++	if (sc->rch.running && gain != sc->gain) {
++		/* The offset scales with the gain: keep the filter settled. */
++		for (int c = 0; c < 2; c++)
++			sc->rch.dc[c] = gain > sc->gain ?
++			    sc->rch.dc[c] << (gain - sc->gain) :
++			    sc->rch.dc[c] >> (sc->gain - gain);
++	}
++	sc->gain = gain;
 +	if (sc->rch.running)
 +		acp_set_gain(sc);
 +	mtx_unlock(&sc->lock);
@@ -1087,7 +1183,7 @@ index aa0f8a945cd8..38b8d5b44378 100644
  /* Device methods. */
  
  /*
-@@ -586,7 +639,10 @@ acp_attach(device_t dev)
+@@ -584,7 +652,10 @@ acp_attach(device_t dev)
  		goto bad_hw;
  	}
  
@@ -1095,9 +1191,9 @@ index aa0f8a945cd8..38b8d5b44378 100644
  	pcm_init(dev, sc);
 +	if (mixer_init(dev, &acpmix_class, sc) != 0)
 +		device_printf(dev, "cannot set up the mixer\n");
- 	pcm_addchan(dev, PCMDIR_REC, &acpchan_class, sc);
- 	snprintf(status, SND_STATUSLEN, "mem 0x%jx irq %jd on %s",
- 	    rman_get_start(sc->reg), rman_get_start(sc->irq),
+ 	if (pcm_addchan(dev, PCMDIR_REC, &acpchan_class, sc) != 0) {
+ 		device_printf(dev, "cannot add the recording channel\n");
+ 		goto bad_pcm;
 -- 
 2.56.0
 
