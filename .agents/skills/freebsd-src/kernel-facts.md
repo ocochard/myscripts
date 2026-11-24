@@ -9,9 +9,17 @@ plus a measurement or a reviewer's statement, and say which.
 ## Process exit and signals
 
 Use when kernel code must decide that a process is dying, e.g. to leave a
-retry loop. Reviewer rule (kib, PR 131): decide from p_flag/p_flag2, not by
-reading signal queues. He gave no reason; the ptrace fact below is a likely
-one found in the code, not his stated argument.
+retry loop.
+
+Reviewer rules (kib, PR 131):
+- "It is (almost) never correct to check the signal queue anywhere but in
+  kern_sig.c. The signal delivery might find a lot of reasons to ignore or
+  block signal, or take some action not related to killing." Decide from
+  p_flag/p_flag2 only; this rules out `curproc_sigkilled()` and LinuxKPI's
+  `fatal_signal_pending()` outside kern_sig.c too.
+- "The real bug there is spinning in kernel": when a kernel loop cannot make
+  progress, make the failing operation return an error that ends the loop,
+  rather than adding an escape condition to the loop.
 
 | Fact | Source | Verified by |
 |---|---|---|
@@ -47,6 +55,10 @@ one found in the code, not his stated argument.
 | It retries the handler while it returns `VM_FAULT_NOPAGE` with nothing inserted (`vm_pfn_count == 0`), with `kern_yield()` and no signal check | linux_compat.c | measured: unkillable spin |
 | It translated `VM_FAULT_SIGBUS` to `VM_PAGER_BAD`: the normal path then zero-fills a page (the LinuxKPI pager has no `cdev_pg_fault`) | linux_compat.c, vm/device_pager.c | VM test: reads `0x00`, no signal |
 | `lkpi_vmf_insert_pfn_prot_locked()` moves a page out of its current object; if that object still maps it, it prints "page rename failed: page is mapped" and returns `VM_FAULT_NOPAGE` without counting the page | compat/linuxkpi/common/src/linux_page.c | measured (Intel media driver, Raptor Lake) |
+| That refusal is not always permanent. It clears when the other mapping is unmapped (`vm_map_delete()` calls `pmap_map_delete()` before the entry and its object go, and object teardown is deferred until after the map lock is dropped) or when the driver revokes it (`unmap_mapping_range()` -> `cdev_mgtdev_pager_free_pages()`: i915 `__i915_gem_object_put_pages()` on shrink/evict/purge when unpinned, object free; TTM on a move). None of these waits on the faulting thread | vm/vm_map.c, linux_page.c, drm-kmod i915 gem/i915_gem_pages.c, gem/i915_gem_object.c | code |
+| `linux_cdev_pager_dtor()` takes `down_write()` on the mapping owner's `mmap_sem`; a thread looping in populate holds that lock for its own process, but the dtor runs after the pages are unmapped, so the loop ends first | linux_compat.c | code |
+| FreeBSD's legacy `I915_GEM_MMAP` ioctl maps the BO's shmem object directly (`vm_map_find(map, obj->base.filp->f_shmem, ...)`), so a shmem page can be mapped outside any device pager | drm-kmod gem/i915_gem_mman.c | code |
+| drm-kmod builds its own `struct vm_area_struct` on the stack in `dma_buf_mmap_fileops()`: a field added to that struct is not always allocated by LinuxKPI (that vma never reaches the populate path) | drm-kmod drivers/dma-buf/dma-buf.c | code |
 | TTM turns an insert error on the first page into `VM_FAULT_NOPAGE` ("Never error on prefaulted PTEs") | drm-kmod ttm/ttm_bo_vm.c | code |
 | populate never sets `FAULT_FLAG_ALLOW_RETRY`, so TTM does not drop `mmap_sem` in its reserve path | drm-kmod ttm_bo_vm.c, linux/mm.h | code |
 | i915 `vm_fault_gtt()`: a failed `remap_io_mapping()` unpins the GGTT vma without adding it to `userfault_list` | drm-kmod gem/i915_gem_mman.c | code (review finding) |

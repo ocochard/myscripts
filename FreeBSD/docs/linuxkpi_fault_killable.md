@@ -203,7 +203,9 @@ Kernel precedent: the core dump loop in `kern_exec.c` stops its `vm_fault()` cal
 
 | Option | Effect on processes not being killed | Problem |
 |---|---|---|
-| Fail the fault at once when the page is mapped elsewhere | a transient conflict now kills the process; every driver `VM_FAULT_SIGBUS` stops falling back to the normal fault path | real behaviour change; TTM turns an insert error on the first page back into `VM_FAULT_NOPAGE`, so amdgpu would still loop |
+| Fail the fault at once when the page is mapped elsewhere (reviewer's preferred direction, see [reviews/lkpi-fault-killable.md](reviews/lkpi-fault-killable.md)) | a short-lived conflict now kills the process: the refusal clears when the other mapping is unmapped or revoked, which today ends the spin with success | needs a channel beside the return code, since TTM turns an insert error on the first page back into `VM_FAULT_NOPAGE`; needs the `VM_FAULT_SIGBUS` fix of [linuxkpi_fault_sigbus.md](linuxkpi_fault_sigbus.md) |
+| Test only process flags: `P_KILLED()` or `P2_WEXIT` | none | measured: a single-threaded process, or one whose main thread spins, stays unkillable (table in section 5): a plain `kill -9` sets no flag, and the thread it lands on is the spinning one |
+| Add `curproc_sigkilled()` for untraced processes | none | measured: catches every case, but reads the signal queue outside `kern_sig.c`, which the reviewer rejects (delivery can ignore, block or act otherwise) |
 | Fail on any pending signal (`sig_intr()`) | SIGALRM, SIGPROF, SIGCHLD now give SIGSEGV | breaks Xorg and profilers |
 | Bound the retries | a slow but legitimate retry now fails | arbitrary limit |
 | This patch | none | the stuck program still needs `kill -9` |
@@ -238,6 +240,9 @@ its original kernel. 1920x1080 300-frame clips; VA-API through ffmpeg 9.0.2; eac
 | NUC 13 | same, SIGTERM or SIGINT | not run | still spinning after 20 s (ffmpeg catches them), then gone 1 s after `kill -9` |
 | NUC 13 | console after the kill | message without end | no message in the next 3 s |
 | NUC 13 | process flags 3 s after `kill -9` (kgdb, section 3) | `P2_WEXIT` and `P_SINGLE_EXIT` set; `P_WKILLED`, `P_WEXIT` clear; SIGKILL no longer queued | (not run) |
+| bhyve guest, test module looping (mode 3) | `kill -9`, single-threaded process | survives | gone in 1 s |
+| bhyve guest | `kill -9`, 2 threads, worker thread looping | survives | gone in 1 s |
+| bhyve guest | `kill -9`, 2 threads, main thread looping | survives | gone in 1 s |
 | NUC 13, `GENERIC` with INVARIANTS and WITNESS | `kill -9` of the spinning encode, 3 times (once after SIGTERM) | (not run) | gone in 1 s each time; 0 lock order reversals, no assertion |
 | ThinkPad X1 Carbon Gen 12 (Meteor Lake, i915) | decode H.264, HEVC | bit-exact | bit-exact |
 | X1 Carbon | encode H.264, HEVC, `low_power 0`, CQP and VBR | 300 frames each | 300 frames each |
