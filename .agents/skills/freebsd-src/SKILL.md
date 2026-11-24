@@ -6,6 +6,11 @@ description: Create an improvement to the FreeBSD source tree, or review a FreeB
 To review a commit (or a batch by the same author), follow review.md in
 this skill directory.
 
+Before writing or reviewing kernel code that decides a process is dying,
+handles signals in a kernel loop, or touches the VM fault path, device
+pagers or LinuxKPI mmap/faults, read kernel-facts.md in this skill
+directory: verified facts and reviewer rules from earlier patches.
+
 The code:
 1. need to be style(9) compliant (cf .clang-format in top of FreeBSD source tree).
 2. must not include any copy/past from GPL code.
