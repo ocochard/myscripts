@@ -147,6 +147,30 @@ The two tests cover the two ways the process can be dying:
   is set only after the other threads have gone. The flag is read without the process lock, as
   `vm_fault()` reads `P_KILLED()`; a stale read only costs one more retry.
 
+The process flags of the hung case, read with kgdb on the stock kernel (ffmpeg spinning in the loop,
+52 threads), before and 3 s after `kill -9`:
+
+| | Spinning | 3 s after `kill -9` |
+|---|---|---|
+| `P_WKILLED` (tested by `P_KILLED()`) | 0 | 0 |
+| `P_WEXIT` | 0 | 0 |
+| `P_SINGLE_EXIT` | 0 | 1 |
+| `P2_WEXIT` | 0 | 1 |
+| SIGKILL queued, on the process or on any thread | 0 | 0 (already taken) |
+| Threads | 52 | 2 |
+
+```
+main thread: mi_switch thread_suspend_switch thread_single exit1 proc_set_p2_wexit sigexit postsig ast_sig ast
+encoder:     printf lkpi_vmf_insert_pfn_prot_locked remap_io_sg vm_fault_cpu linux_cdev_pager_populate vm_fault ...
+```
+
+So the two other flags one might test both stay clear in this case. `P_KILLED()` is only set by
+`proc_wkilled()`, which `killproc()` (out-of-memory and resource-limit kills) and `ptrace(PT_KILL)`
+call; a plain `kill -9` goes through `tdsendsignal()` and leaves it clear. `P_WEXIT` waits for the
+`thread_single()` loop, which waits for the spinning thread. `P_SINGLE_EXIT`, set by
+`thread_single(p, SINGLE_EXIT)`, would also catch this multithreaded case; it is the flag
+`thread_suspend_check()` uses to make interruptible sleeps return `EINTR` during exit.
+
 Locking: `fatal_signal_pending()` takes the process mutex (`PROC_LOCK`), which never sleeps, while
 the loop holds the LinuxKPI `mmap_sem`, a sleepable sx lock; no code can take them in the other order,
 since nothing sleeps on an sx while holding a mutex. The VM object lock is not held in the loop.
@@ -213,6 +237,7 @@ its original kernel. 1920x1080 300-frame clips; VA-API through ffmpeg 9.0.2; eac
 | NUC 13 (Raptor Lake, i915) | `h264_vaapi` default encode, then `kill -9` | survives `kill -9`, reboot needed (5 times) | gone 1 s after `kill -9`, exit status 137 (3 times) |
 | NUC 13 | same, SIGTERM or SIGINT | not run | still spinning after 20 s (ffmpeg catches them), then gone 1 s after `kill -9` |
 | NUC 13 | console after the kill | message without end | no message in the next 3 s |
+| NUC 13 | process flags 3 s after `kill -9` (kgdb, section 3) | `P2_WEXIT` and `P_SINGLE_EXIT` set; `P_WKILLED`, `P_WEXIT` clear; SIGKILL no longer queued | (not run) |
 | NUC 13, `GENERIC` with INVARIANTS and WITNESS | `kill -9` of the spinning encode, 3 times (once after SIGTERM) | (not run) | gone in 1 s each time; 0 lock order reversals, no assertion |
 | ThinkPad X1 Carbon Gen 12 (Meteor Lake, i915) | decode H.264, HEVC | bit-exact | bit-exact |
 | X1 Carbon | encode H.264, HEVC, `low_power 0`, CQP and VBR | 300 frames each | 300 frames each |
