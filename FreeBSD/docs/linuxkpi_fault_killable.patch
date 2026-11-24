@@ -1,4 +1,4 @@
-From 9b172375d43595da8afaf6a1794f42d359189e1f Mon Sep 17 00:00:00 2001
+From 67983f3451e24d65dd751bbff7a18b60451bc122 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 23 Nov 2026 10:29:11 +0100
 Subject: [PATCH] linuxkpi: Let a killed process leave a retried fault
@@ -14,6 +14,9 @@ exit, and fail the fault.  Nothing changes for a process that is not
 dying, so transient retries and non-fatal signals behave as before.
 Linux returns from such a fault to user space and handles the signal
 there; a FreeBSD pager cannot, so it fails the fault instead.
+
+MFC after:	2 weeks
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/131
 ---
  sys/compat/linuxkpi/common/src/linux_compat.c | 10 ++++++++++
  1 file changed, 10 insertions(+)

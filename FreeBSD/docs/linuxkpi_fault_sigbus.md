@@ -1,7 +1,7 @@
 # LinuxKPI: a driver's SIGBUS gives a zero page, or an unkillable process
 
 Patch: [linuxkpi_fault_sigbus.patch](linuxkpi_fault_sigbus.patch), branch `olivier-lkpi-fault-sigbus`
-(commit c6edd0febc4d on FreeBSD main d34baf1b5ca0), one file, +24/-1.
+(commit 2ab5dfbba783 on FreeBSD main d34baf1b5ca0), one file, +24/-1.
 Reproducer: [linuxkpi_fault_repro/](linuxkpi_fault_repro/), a LinuxKPI test module and a test program.
 Related: [linuxkpi_fault_killable.md](linuxkpi_fault_killable.md) changes the same function; the two
 patches apply in either order.

@@ -1,4 +1,4 @@
-From c6edd0febc4d7d2c025eba85482be7550213c526 Mon Sep 17 00:00:00 2001
+From 2ab5dfbba783f6d9f0ba1e55e757ba50e50aaf1e Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 23 Nov 2026 15:15:32 +0100
 Subject: [PATCH] linuxkpi: Make a fault handler's SIGBUS fail the fault
@@ -17,6 +17,8 @@ Translate VM_FAULT_SIGBUS to VM_PAGER_ERROR, so the access fails (the
 process gets SIGSEGV), and on any populate failure remove the pages the
 handler inserted, so the next fault asks the driver again rather than
 mapping pages the driver did not finish setting up.
+
+MFC after:	2 weeks
 ---
  sys/compat/linuxkpi/common/src/linux_compat.c | 25 ++++++++++++++++++-
  1 file changed, 24 insertions(+), 1 deletion(-)

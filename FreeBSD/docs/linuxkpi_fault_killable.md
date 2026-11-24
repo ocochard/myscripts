@@ -1,7 +1,8 @@
 # LinuxKPI: letting a killed process leave a GPU page fault
 
 Patch: [linuxkpi_fault_killable.patch](linuxkpi_fault_killable.patch), branch `olivier-lkpi-fault-killable`
-(commit 9b172375d435 on FreeBSD main d34baf1b5ca0), one file, +10 lines.
+(commit 67983f3451e2 on FreeBSD main 0df9a2d94988), one file, +10 lines.
+Pull request: [ron-dev #131](https://ron-dev.freebsd.org/FreeBSD/src/pulls/131).
 Found on: Intel NUC 13 Pro, Core i7-1360P (Raptor Lake-P), Iris Xe 8086:a7a0, `drm-612-kmod` 6.12.110,
 `libva-intel-media-driver` 26.3.5. Investigation: [../Intel.NUC13.Pro.md](../Intel.NUC13.Pro.md#tracing-the-hang-2026-11-23).
 
