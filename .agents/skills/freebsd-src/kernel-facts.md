@@ -10,7 +10,8 @@ plus a measurement or a reviewer's statement, and say which.
 
 Use when kernel code must decide that a process is dying, e.g. to leave a
 retry loop. Reviewer rule (kib, PR 131): decide from p_flag/p_flag2, not by
-reading signal queues.
+reading signal queues. He gave no reason; the ptrace fact below is a likely
+one found in the code, not his stated argument.
 
 | Fact | Source | Verified by |
 |---|---|---|
