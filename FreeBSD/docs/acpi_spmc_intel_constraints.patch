@@ -1,0 +1,43 @@
+From 0f969b17ba76ba46b6ac068e2a90df54681d8553 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Tue, 24 Nov 2026 13:00:59 +0100
+Subject: [PATCH] acpi_spmc: Make Intel device-specific state optional
+
+The Intel Low Power S0 Idle _DSM specification marks the minimum
+device-specific state of a constraint package as optional, and its own
+example returns {0xFF, 0}.  Requiring three elements rejected 84 of the
+119 constraints on an Intel NUC 13 Pro, with one boot message each.
+
+Fixes:		508efe35e577 ("acpi_spmc: Check Intel constraint packages")
+---
+ sys/dev/acpica/acpi_spmc.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/sys/dev/acpica/acpi_spmc.c b/sys/dev/acpica/acpi_spmc.c
+index 32456852052c..52e9dea43c39 100644
+--- a/sys/dev/acpica/acpi_spmc.c
++++ b/sys/dev/acpica/acpi_spmc.c
+@@ -691,7 +691,7 @@ acpi_spmc_parse_constraints_intel(struct acpi_spmc_softc *sc, ACPI_OBJECT *objec
+ 			    "constraint %zu's constraint package.\n", i);
+ 			goto skip;
+ 		}
+-		if (constraint_package->Package.Count != 3) {
++		if (constraint_package->Package.Count < 2) {
+ 			device_printf(sc->dev, "Intel: Wrong package length "
+ 			    "for constraint %zu's constraint package.\n", i);
+ 			goto skip;
+@@ -703,8 +703,10 @@ acpi_spmc_parse_constraints_intel(struct acpi_spmc_softc *sc, ACPI_OBJECT *objec
+ 		    constraint_package->Package.Elements[0].Integer.Value;
+ 		constraint->min_d_state =
+ 		    constraint_package->Package.Elements[1].Integer.Value;
++		/* The minimum device-specific state is optional. */
+ 		constraint->min_dev_specific_state =
+-		    constraint_package->Package.Elements[2].Integer.Value;
++		    constraint_package->Package.Count > 2 ?
++		    constraint_package->Package.Elements[2].Integer.Value : 0;
+ 
+ 		j++;
+ 		continue;
+-- 
+2.56.0
+

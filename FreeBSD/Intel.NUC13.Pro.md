@@ -110,9 +110,13 @@ acpi_spmc0: Intel: Wrong package length for constraint 0's constraint package.
 ```
 
 The Intel DSM reports `DEVICE_CONSTRAINTS,CRASH_DUMP_DEVICE,DISPLAY_OFF,DISPLAY_ON,LPI_ENTRY,LPI_EXIT`;
-`acpi_spmc` rejects most entries of its device constraint list.
-Impact: unknown, since this machine uses S3 (`hw.acpi.supported_sleep_state: S3 S4 S5`, `kern.power.suspend: fw_suspend`),
-not suspend-to-idle. Not investigated.
+`acpi_spmc` rejects 84 of the 119 entries of its device constraint list.
+Cause (2026-11-24): FreeBSD requires 3 elements in each constraint package, but the Intel specification makes the third one
+(minimum device-specific state) optional, and 84 entries here have only 2.
+Fix: [docs/acpi_spmc_intel_constraints.patch](docs/acpi_spmc_intel_constraints.patch), see
+[docs/acpi_spmc_intel_constraints.md](docs/acpi_spmc_intel_constraints.md): no message, all 119 constraints kept.
+Impact on this machine: boot noise only. It uses S3 (`hw.acpi.supported_sleep_state: S3 S4 S5`, `kern.power.suspend: fw_suspend`),
+not suspend-to-idle, and the constraint check in `acpi_spmc` is still `#ifdef notyet`.
 
 ## Next steps
 
