@@ -9,15 +9,21 @@ stopped before its jail is removed), moved that hook's work to a task to
 avoid a deadlock, added two tests that a removed server jail goes away,
 rebased everything onto main 6edecf52def6, squashed #9 and #10 into one
 commit, measured why NLM cannot run in a jail and added an NFSv3 case
-without NLM, then built each branch alone and ran all 13 cases on the
-final heads (session 34d90969, 2026-11-21 to 11-23). Earlier sessions:
-4a7ee611 (2026-11-02 to 11-18). The `nfsbug/` docs are committed and
-pushed in myscripts (last: 973094a). Copy the block below verbatim into
+without NLM, built each branch alone and ran all 13 cases on the final
+heads, prepared the ron-dev `pr/*` branches and PR texts, and had every
+commit reviewed at xhigh effort with the freebsd-src skill: 25 findings,
+the real ones fixed and folded into their commits, retested (session
+34d90969, 2026-11-21 to 11-24). Earlier sessions: 4a7ee611 (2026-11-02 to
+11-18). The `nfsbug/` docs are committed and pushed in myscripts (last:
+74a6dd7; its subject says "fix the 25 findings" but some are not fixed,
+see `review-2026-11-24.md`). Copy the block below verbatim into
 the fresh session as the first user message.
 
-State at the end: no coding item left. Next steps are mine (file the PRs,
-add `PR:` lines, create the reviews in the order below) and two design
-questions for rmacklem (NLM and pNFS in jails).
+State at the end: no coding item left. Next steps are mine: file the
+Bugzilla reports, add the `PR:` lines (and 07's PR number in 06's
+`atf_expect_fail` message), then open the `pr/*` branches as ron-dev PRs in
+the order below. Design questions for rmacklem: NLM and pNFS in jails, the
+host-wide callback pool.
 
 ---
 
@@ -138,8 +144,16 @@ add `PR:` lines to the commits and the #6 PR number to the
 
 **Open items** (pick with me first):
 - Reviews and PRs as above; rebase the branches if main moves first
-  (check with `git fetch upstream` and `git range-diff`, then build all
-  8 commits together and run the 13 cases before force-pushing).
+  (check with `git fetch upstream` and `git range-diff`, then build all 7
+  commits together, run the 13 cases, then force-push and move the
+  `pr/*` branches with `git branch -f`).
+- Review findings not fixed (`review-2026-11-24.md`): NFSv4 owner strings
+  of a jailed mount are mapped in the vnet of the thread parsing the reply
+  (nfsiod: the host's tables); `tlscertname` accepts `../` (pre-existing,
+  not verified); NFSv4.0 keeps one nfsclds per SETCLIENTID until unmount
+  (pre-existing). Fixes resting on code reading only: the ~27s gssd upcall
+  (#4), pNFS (#6), the GSS refusal in a dying jail and the nfsd teardown
+  race (#9 + #10).
 - Dying server jails: fixed by #9 and #10, including an nfsd stopped
   before the removal (#9's jail removal hook and start guard, folded in
   2026-11-22). The hook does its work in
@@ -172,7 +186,9 @@ add `PR:` lines to the commits and the #6 PR number to the
   6edecf52def6 with the 7 final commits cherry-picked, in this order:
   `nfscl-jail`, `kgss-vnet`, `upstream/main..nfscbd-jail`,
   `upstream/main..nfsd-jail-dying`, `upstream/main..session-leak` (the
-  last range holds the tests and #6). Do the same for a fresh one; with #6
+  last range holds the tests and #6); #6's last amend (a prototype in
+  `nfs_commonkrpc.c`) was copied in as a file, so that tree's `git log`
+  is one step behind its contents. Do the same for a fresh one; with #6
   in, take the test files from `session-leak`, where `session_leak` has no
   `atf_expect_fail`.
 - Kernel: `include GENERIC-NODEBUG` (or `GENERIC` for WITNESS) plus
