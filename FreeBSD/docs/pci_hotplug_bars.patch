@@ -1,0 +1,61 @@
+From 3a43cccabf1cf7daf4a921120f79e554a36d532f Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Tue, 24 Nov 2026 12:24:55 +0100
+Subject: [PATCH] pci: Reserve unassigned BARs below hot-plug ports
+
+Devices below a hot-plug port often come up with unassigned BARs, and
+pci_add_map() defers those until a driver asks.  By then a sibling
+bridge window can block the growth of the device's bridge window: a
+Thunderbolt eGPU powered on after boot got no room for its 16 MB BAR0.
+Reserve them when the device is added, as CardBus does.
+---
+ sys/dev/pci/pci.c | 26 +++++++++++++++++++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/sys/dev/pci/pci.c b/sys/dev/pci/pci.c
+index a95ace27d122..f68b2ec4a431 100644
+--- a/sys/dev/pci/pci.c
++++ b/sys/dev/pci/pci.c
+@@ -4931,6 +4931,30 @@ pci_add_child_clear_aer(device_t dev, struct pci_devinfo *dinfo)
+ 	}
+ }
+ 
++/*
++ * Devices below a hot-plug port often have unassigned BARs, as firmware
++ * did not see them at boot.  Reserve them when the device is added,
++ * before sibling bridges claim the space the parent windows need.
++ */
++static bool
++pci_below_hotplug_port(device_t bus)
++{
++	device_t pcib;
++
++	for (pcib = device_get_parent(bus); is_pci_device(pcib);
++	    pcib = device_get_parent(device_get_parent(pcib))) {
++		if (pci_find_cap(pcib, PCIY_EXPRESS, NULL) != 0)
++			continue;
++		if ((pcie_read_config(pcib, PCIER_FLAGS, 2) &
++		    PCIEM_FLAGS_SLOT) == 0)
++			continue;
++		if ((pcie_read_config(pcib, PCIER_SLOT_CAP, 4) &
++		    PCIEM_SLOT_CAP_HPC) != 0)
++			return (true);
++	}
++	return (false);
++}
++
+ void
+ pci_add_child(device_t bus, struct pci_devinfo *dinfo)
+ {
+@@ -4943,7 +4967,7 @@ pci_add_child(device_t bus, struct pci_devinfo *dinfo)
+ 	pci_cfg_restore(dev, dinfo);
+ 	pci_clear_pme(dev);
+ 	pci_print_verbose(dinfo);
+-	pci_add_resources(bus, dev, 0, 0);
++	pci_add_resources(bus, dev, pci_below_hotplug_port(bus), 0);
+ 	if (pci_enable_mps_tune)
+ 		pcie_setup_mps(dev);
+ 	pci_child_added(dinfo->cfg.dev);
+-- 
+2.56.0
+
