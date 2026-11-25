@@ -1,31 +1,33 @@
-From e96cd28f5336e5ce943bfa9f4172ff952a713f7a Mon Sep 17 00:00:00 2001
+From 4d3d79812920f8717288547dddd9b5caa6e17915 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Sat, 21 Nov 2026 23:39:23 +0100
-Subject: [PATCH 1/2] devmatch: Match hostb(4) and vgapci(4) devices
+Subject: [PATCH] devmatch: Match hostb(4) devices
 
 amdtemp(4), amdsmn(4) and amdsmu(4) attach below hostb(4), which owns
-the host bridge, and acpi_video(4) below vgapci(4), which owns the
-display controller.  devmatch skipped these attached devices, so the
-modules never autoloaded.  Matching them against the pci hints instead
-would also autoload drm drivers for the display controller.
+the host bridge.  devmatch skipped this attached device, so the modules
+never autoloaded.
 
-Match a device owned by hostb(4) or vgapci(4) against the hints for
-that driver as a bus, and move the tables of amdtemp(4), amdsmn(4) and
-amdsmu(4) there.  devmatch -a still reports the matches on the parent
-bus.  amdsmu(4) now loads at boot on the AMD laptops it supports, where
-it sends the SMU sleep hint on suspend-to-idle.
+Match a device owned by hostb(4) against the hints for hostb as a bus,
+and move the tables of amdtemp(4), amdsmn(4) and amdsmu(4) there, so
+only drivers that attach below hostb(4) match.  devmatch -a still
+reports the matches on the parent bus.  amdsmu(4) now loads at boot on
+the AMD laptops it supports, where it sends the SMU sleep hint on
+suspend-to-idle.
+
+Reviewed by:	imp, wulf
+Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/123
 ---
- sbin/devmatch/devmatch.c  | 32 ++++++++++++++++++++++++++------
+ sbin/devmatch/devmatch.c  | 30 ++++++++++++++++++++++++------
  sys/dev/amdsmn/amdsmn.c   |  2 +-
  sys/dev/amdsmu/amdsmu.c   |  2 +-
  sys/dev/amdtemp/amdtemp.c |  2 +-
- 4 files changed, 29 insertions(+), 9 deletions(-)
+ 4 files changed, 27 insertions(+), 9 deletions(-)
 
 diff --git a/sbin/devmatch/devmatch.c b/sbin/devmatch/devmatch.c
-index baf52c070b70..f6d0db459433 100644
+index baf52c070b70..42f400488317 100644
 --- a/sbin/devmatch/devmatch.c
 +++ b/sbin/devmatch/devmatch.c
-@@ -473,18 +473,37 @@ search_hints(const char *bus, const char *dev, const char *pnpinfo)
+@@ -473,18 +473,35 @@ search_hints(const char *bus, const char *dev, const char *pnpinfo)
  	free(lastmod);
  }
  
@@ -46,14 +48,12 @@ index baf52c070b70..f6d0db459433 100644
 +	bool busdrv;
  
 +	/*
-+	 * hostb(4) and vgapci(4) attach to host bridges and display
-+	 * controllers only to be the bus of the drivers for their functions,
-+	 * such as amdtemp(4) or acpi_video(4), which add their own child once
-+	 * their module is loaded.  Match such a device as if it had no
++	 * hostb(4) attaches to host bridges only to be the bus of the drivers
++	 * for their functions, such as amdtemp(4), which add their own child
++	 * once their module is loaded.  Match a hostb device as if it had no
 +	 * driver, against the hints for that bus, so those modules load.
 +	 */
-+	busdrv = !unbound_flag && (strcmp(dev->dd_drivername, "hostb") == 0 ||
-+	    strcmp(dev->dd_drivername, "vgapci") == 0);
++	busdrv = !unbound_flag && strcmp(dev->dd_drivername, "hostb") == 0;
  	do {
 -		if (!all_flag && dev->dd_name[0] != '\0')
 +		if (!all_flag && !busdrv && dev->dd_name[0] != '\0')
@@ -65,7 +65,7 @@ index baf52c070b70..f6d0db459433 100644
  			break;
  		parent = devinfo_handle_to_device(dev->dd_parent);
  		bus = strdup(parent->dd_name);
-@@ -492,10 +511,11 @@ find_unmatched(struct devinfo_dev *dev, void *arg)
+@@ -492,10 +509,11 @@ find_unmatched(struct devinfo_dev *dev, void *arg)
  		while (p >= bus && isdigit(*p))
  			p--;
  		*++p = '\0';
@@ -118,48 +118,6 @@ index b1ecb014a2b0..3b9938cdee5a 100644
      nitems(amdtemp_products));
  
  static bool
--- 
-2.56.0
-
-
-From ce8c6689ec4eee59e2775420f49ef8b9f53c3aab Mon Sep 17 00:00:00 2001
-From: Olivier Cochard <olivier@FreeBSD.org>
-Date: Tue, 17 Nov 2026 14:35:24 +0100
-Subject: [PATCH 2/2] acpi_video: Let devmatch load the module
-
-acpi_video(4) only probes the ACPI methods of a display controller and
-has no device ID, so nothing loaded it and the brightness keys sent no
-event unless it was loaded by hand.  It now loads on any machine with a
-display controller and attaches only where ACPI provides _DOD and _DOS.
----
- sys/dev/acpica/acpi_video.c | 14 ++++++++++++++
- 1 file changed, 14 insertions(+)
-
-diff --git a/sys/dev/acpica/acpi_video.c b/sys/dev/acpica/acpi_video.c
-index 07fbe54d832b..bfe0d856a892 100644
---- a/sys/dev/acpica/acpi_video.c
-+++ b/sys/dev/acpica/acpi_video.c
-@@ -195,6 +195,20 @@ static driver_t acpi_video_driver = {
- };
- 
- DRIVER_MODULE(acpi_video, vgapci, acpi_video_driver, acpi_video_modevent, NULL);
-+
-+/*
-+ * No device ID identifies ACPI video: let devmatch(8) load the module for
-+ * any display controller, the probe then looks for the ACPI methods.
-+ * devmatch ignores the description; it matches the whole-table key
-+ * class=0x03 (PCI base class display) in the vgapci device's pnpinfo.
-+ */
-+static const struct {
-+	const char	*desc;
-+} acpi_video_pnp[] = {
-+	{ "display controller" },
-+};
-+MODULE_PNP_INFO("D:#;T:class=0x03", vgapci, acpi_video, acpi_video_pnp,
-+    nitems(acpi_video_pnp));
- MODULE_DEPEND(acpi_video, acpi, 1, 1, 1);
- #ifdef EVDEV_SUPPORT
- MODULE_DEPEND(acpi_video, evdev, 1, 1, 1);
 -- 
 2.56.0
 
