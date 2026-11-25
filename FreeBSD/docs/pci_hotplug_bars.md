@@ -205,8 +205,15 @@ Why this place and this order:
 
 - Every function on the bus has reserved the BARs firmware assigned before the pass runs, so an unassigned
   BAR of function 0 cannot take the range firmware gave function 1.
-- New-bus attaches depth-first, so the pass for the GPU's bus runs before the next sibling bridge (the dock
-  USB controller's `pcib7`) claims a window. That is what fixes the eGPU.
+- The pass runs when the GPU's bus is enumerated, before any driver on that bus attaches, so BAR0 (16 MB,
+  16 MB aligned) is reserved before the GPU's HDMI audio function asks for 16 KB. The GPU's bridge window is
+  then created aligned for BAR0 and grows from there. That is what fixes the eGPU.
+  The order of sibling bridges is not fixed: in a hot-plug measured with `debug.bootverbose=1`, the dock
+  USB controller's bridge attached first, and the GPU's downstream port (itself hot-plug capable) added its
+  bus only after its link came up.
+- After a hot-plug, firmware assigns nothing below the dock: the same run printed no `memory decode` line
+  (`pcib_probe_windows()` prints one per open window) for any dock bridge, and every bus number and window
+  was allocated on demand (`Lazy allocation of 1 bus`, `allocated initial memory window`).
 - `pci_reserve_map()` is the path stock already uses for drivers. It keeps the command register, so a failure
   cannot turn off decoding for BARs that were working, and it leaves decoding off until the driver activates
   the resource (`pciconf` shows the GPU BARs `disabled` until `nvidia` loads).
@@ -221,6 +228,7 @@ Devices that already have a driver are skipped, so a rescan does not reserve BAR
 |---|---|---|
 | This patch: a pass after enumeration, through `pci_reserve_map()` | firmware BARs first; failure keeps decoding; same path as driver requests | about 80 lines; two call sites |
 | Pass `force` to `pci_add_resources()` in `pci_add_child()` | one line | a function's unassigned BAR can take a sibling function's firmware range; a 32-bit BAR can land above 4 GB; a failed reservation turns off decoding for the whole function (all three measured in QEMU below) |
+| Reserve the firmware-assigned windows of child bridges when a bus is scanned, as for BARs | keeps every firmware layout without depending on attach order, hot-plug or not | after a hot-plug the dock bridges have no firmware windows (measured), so there is nothing to reserve |
 | Size the whole hot-plugged tree before assigning (Linux `pci_assign_unassigned_bridge_resources()`) | no dependence on attach order | rewrite of bridge window management in `pci_pci.c` |
 | Pad hot-plug bridge windows (Linux `hpmemsize`) | room for later devices | does not help here: the space was there, it was taken in the wrong order |
 | A tunable that forces all zero BARs | covers non-hot-plug cases | devices whose firmware disabled a BAR on purpose would get it; opt-in nobody finds |
