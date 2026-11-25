@@ -1,30 +1,121 @@
-From 3a43cccabf1cf7daf4a921120f79e554a36d532f Mon Sep 17 00:00:00 2001
+From 11735256af9cf17309b17b3e1c142a5bfcb38b85 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
-Date: Tue, 24 Nov 2026 12:24:55 +0100
-Subject: [PATCH] pci: Reserve unassigned BARs below hot-plug ports
+Date: Wed, 25 Nov 2026 09:48:52 +0100
+Subject: [PATCH 1/2] pci: Limit BAR reservations to the BAR's width
 
-Devices below a hot-plug port often come up with unassigned BARs, and
-pci_add_map() defers those until a driver asks.  By then a sibling
-bridge window can block the growth of the device's bridge window: a
-Thunderbolt eGPU powered on after boot got no room for its 16 MB BAR0.
-Reserve them when the device is added, as CardBus does.
+A BAR reserved with a wildcard range, as for an unassigned BAR, a
+relocated one, hw.pci.clear_bars or a driver's lazy allocation, could
+be placed above 4 GB although it decodes only 32 bits; it then kept
+the low 32 bits of the address.  Cap the range at the highest address
+the BAR can decode.
 ---
- sys/dev/pci/pci.c | 26 +++++++++++++++++++++++++-
- 1 file changed, 25 insertions(+), 1 deletion(-)
+ sys/dev/pci/pci.c | 27 +++++++++++++++++++++------
+ 1 file changed, 21 insertions(+), 6 deletions(-)
 
 diff --git a/sys/dev/pci/pci.c b/sys/dev/pci/pci.c
-index a95ace27d122..f68b2ec4a431 100644
+index a95ace27d122..e232364a2a7c 100644
 --- a/sys/dev/pci/pci.c
 +++ b/sys/dev/pci/pci.c
-@@ -4931,6 +4931,30 @@ pci_add_child_clear_aer(device_t dev, struct pci_devinfo *dinfo)
- 	}
+@@ -683,6 +683,18 @@ pci_maprange(uint64_t mapreg)
+ 	return (ln2range);
  }
  
-+/*
-+ * Devices below a hot-plug port often have unassigned BARs, as firmware
-+ * did not see them at boot.  Reserve them when the device is added,
-+ * before sibling bridges claim the space the parent windows need.
-+ */
++/* Highest address a BAR with this map value can decode. */
++static rman_res_t
++pci_bar_maxaddr(pci_addr_t mapreg)
++{
++	int ln2range;
++
++	ln2range = pci_maprange(mapreg);
++	if (ln2range == 20 || ln2range == 32)
++		return (((rman_res_t)1 << ln2range) - 1);
++	return (~0);
++}
++
+ /* adjust some values from PCI 1.0 devices to match 2.0 standards ... */
+ 
+ static void
+@@ -3414,7 +3426,7 @@ pci_add_map(device_t bus, device_t dev, int reg, struct resource_list *rl,
+ {
+ 	struct pci_map *pm;
+ 	pci_addr_t base, map, testval;
+-	pci_addr_t start, end, count;
++	pci_addr_t start, end, count, maxaddr;
+ 	int barlen, basezero, flags, maprange, mapsize, type;
+ 	uint16_t cmd;
+ 	struct resource *res;
+@@ -3524,9 +3536,10 @@ pci_add_map(device_t bus, device_t dev, int reg, struct resource_list *rl,
+ 	flags = RF_ALIGNMENT_LOG2(mapsize);
+ 	if (prefetch)
+ 		flags |= RF_PREFETCHABLE;
++	maxaddr = pci_bar_maxaddr(map);
+ 	if (basezero || base == pci_mapbase(testval) || pci_clear_bars) {
+ 		start = 0;	/* Let the parent decide. */
+-		end = ~0;
++		end = maxaddr;
+ 	} else {
+ 		start = base;
+ 		end = base + count - 1;
+@@ -3543,7 +3556,7 @@ pci_add_map(device_t bus, device_t dev, int reg, struct resource_list *rl,
+ 	    flags);
+ 	if ((pci_do_realloc_bars
+ 		|| pci_has_quirk(pci_get_devid(dev), PCI_QUIRK_REALLOC_BAR))
+-	    && res == NULL && (start != 0 || end != ~0)) {
++	    && res == NULL && (start != 0 || end != maxaddr)) {
+ 		/*
+ 		 * If the allocation fails, try to allocate a resource for
+ 		 * this BAR using any available range.  The firmware felt
+@@ -3551,9 +3564,9 @@ pci_add_map(device_t bus, device_t dev, int reg, struct resource_list *rl,
+ 		 * disable decoding if we can help it.
+ 		 */
+ 		resource_list_delete(rl, type, reg);
+-		resource_list_add(rl, type, reg, 0, ~0, count);
+-		res = resource_list_reserve(rl, bus, dev, type, reg, 0, ~0,
+-		    count, flags);
++		resource_list_add(rl, type, reg, 0, maxaddr, count);
++		res = resource_list_reserve(rl, bus, dev, type, reg, 0,
++		    maxaddr, count, flags);
+ 	}
+ 	if (res == NULL) {
+ 		/*
+@@ -6183,6 +6196,8 @@ pci_reserve_map(device_t dev, device_t child, int type, int rid,
+ 		flags = (flags & ~RF_ALIGNMENT_MASK) | RF_ALIGNMENT_LOG2(mapsize);
+ 	if (PCI_BAR_MEM(map) && (map & PCIM_BAR_MEM_PREFETCH))
+ 		flags |= RF_PREFETCHABLE;
++	if (!PCIR_IS_BIOS(&dinfo->cfg, rid) && end > pci_bar_maxaddr(map))
++		end = pci_bar_maxaddr(map);
+ 
+ 	/*
+ 	 * Allocate enough resource, and then write back the
+-- 
+2.56.0
+
+
+From a68bb9f29f9e67cd5a917f9dd20a1b012d3f2724 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Wed, 25 Nov 2026 09:48:53 +0100
+Subject: [PATCH 2/2] pci: Reserve unassigned BARs below hot-plug ports
+
+Firmware cannot assign BARs to devices that appear below a hot-plug
+port after boot, and pci_add_map() leaves them until a driver asks.  By
+then a sibling bridge window can block the growth of the device's
+bridge window: a Thunderbolt eGPU powered on after boot got no room for
+its 16 MB BAR0.
+
+Reserve them through pci_reserve_map() once every function on the bus
+holds its assigned BARs, and before drivers attach.
+---
+ sys/dev/pci/pci.c | 58 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+
+diff --git a/sys/dev/pci/pci.c b/sys/dev/pci/pci.c
+index e232364a2a7c..f146afa57c8c 100644
+--- a/sys/dev/pci/pci.c
++++ b/sys/dev/pci/pci.c
+@@ -4292,6 +4292,62 @@ pci_add_resources(device_t bus, device_t dev, int force, uint32_t prefetchmask)
+ 	pci_reserve_secbus(bus, dev, cfg, rl);
+ }
+ 
 +static bool
 +pci_below_hotplug_port(device_t bus)
 +{
@@ -44,18 +135,62 @@ index a95ace27d122..f68b2ec4a431 100644
 +	return (false);
 +}
 +
- void
- pci_add_child(device_t bus, struct pci_devinfo *dinfo)
- {
-@@ -4943,7 +4967,7 @@ pci_add_child(device_t bus, struct pci_devinfo *dinfo)
- 	pci_cfg_restore(dev, dinfo);
- 	pci_clear_pme(dev);
- 	pci_print_verbose(dinfo);
--	pci_add_resources(bus, dev, 0, 0);
-+	pci_add_resources(bus, dev, pci_below_hotplug_port(bus), 0);
- 	if (pci_enable_mps_tune)
- 		pcie_setup_mps(dev);
- 	pci_child_added(dinfo->cfg.dev);
++/*
++ * Firmware cannot assign BARs for devices that appear below a hot-plug
++ * port after boot.  Reserve them once every function on the bus holds its
++ * assigned BARs, before drivers and sibling bridges claim the space.
++ */
++static void
++pci_reserve_unassigned_bars(device_t bus)
++{
++	struct pci_devinfo *dinfo;
++	struct pci_map *pm;
++	device_t *devlist;
++	int devcount, i, type;
++
++	if (!pci_below_hotplug_port(bus))
++		return;
++	if (device_get_children(bus, &devlist, &devcount) != 0)
++		return;
++	for (i = 0; i < devcount; i++) {
++		if (device_is_attached(devlist[i]))
++			continue;
++		dinfo = device_get_ivars(devlist[i]);
++		STAILQ_FOREACH(pm, &dinfo->cfg.maps, pm_link) {
++			if (PCIR_IS_BIOS(&dinfo->cfg, pm->pm_reg) ||
++			    pci_mapbase(pm->pm_value) != 0)
++				continue;
++			type = PCI_BAR_MEM(pm->pm_value) ? SYS_RES_MEMORY :
++			    SYS_RES_IOPORT;
++			if (resource_list_find(&dinfo->resources, type,
++			    pm->pm_reg) != NULL)
++				continue;
++			(void)pci_reserve_map(bus, devlist[i], type,
++			    pm->pm_reg, 0, ~0, 1, 1, 0);
++		}
++	}
++	free(devlist, M_TEMP);
++}
++
+ static struct pci_devinfo *
+ pci_identify_function(device_t pcib, device_t dev, int domain, int busno,
+     int slot, int func)
+@@ -4349,6 +4405,7 @@ pci_add_children(device_t dev, int domain, int busno)
+ 		for (f = first_func; f <= pcifunchigh; f++)
+ 			pci_identify_function(pcib, dev, domain, busno, s, f);
+ 	}
++	pci_reserve_unassigned_bars(dev);
+ 	pcie_reconcile_link_mps(dev);
+ #undef REG
+ }
+@@ -4424,6 +4481,7 @@ pci_rescan_method(device_t dev)
+ 
+ 	free(devlist, M_TEMP);
+ 	oldcount = devcount;
++	pci_reserve_unassigned_bars(dev);
+ 
+ 	/* Try to attach the devices just added. */
+ 	error = device_get_children(dev, &devlist, &devcount);
 -- 
 2.56.0
 

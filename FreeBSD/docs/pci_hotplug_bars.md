@@ -1,14 +1,16 @@
 # Thunderbolt eGPU on FreeBSD: reserve BARs below hot-plug ports
 
-Patch: [`pci_hotplug_bars.patch`](pci_hotplug_bars.patch), commit 3a43cccabf1c on main d5f0768e13f3 (tested build: same code on base 6dc19a71f70c).
+Patch: [`pci_hotplug_bars.patch`](pci_hotplug_bars.patch), two commits on main d5f0768e13f3:
+11735256af9c (limit BAR reservations to the BAR's width) and a68bb9f29f9e (reserve unassigned BARs below hot-plug ports).
+Tested builds: the same code on main d5f0768e13f3 (QEMU) and on 6dc19a71f70c (NUC).
 Machine: Intel NUC 13 Pro (see [../Intel.NUC13.Pro.md](../Intel.NUC13.Pro.md)),
 Thunderbolt 3 GPU dock with an Intel JHL7440 (Titan Ridge) controller and an NVIDIA GeForce RTX 3070 (10de:2488),
 `nvidia-kmod-620.70.06`.
 
 In short: when the dock is powered on after boot, FreeBSD finds the GPU but cannot give it memory addresses,
 so the NVIDIA driver fails.
-The patch makes FreeBSD reserve those addresses as soon as a device appears below a hot-plug port,
-before its neighbours take the space.
+The patch makes FreeBSD reserve those addresses as soon as all the devices on a bus below a hot-plug port
+are known, before drivers and neighbouring bridges take the space.
 
 ## Background
 
@@ -49,6 +51,11 @@ If firmware left a BAR at 0, `pci_add_map()` returns without reserving anything
 ("These will be allocated later if the driver specifically requests them", `pci.c` line 3487 on main),
 unless its `force` argument is set.
 Only CardBus passes `force`.
+
+When a driver later asks for such a BAR, `pci_alloc_multi_resource()` calls `pci_reserve_map()` (`pci.c`):
+it reserves a range of the BAR's size and alignment, turns decoding off, writes the BAR and restores the
+command register. If the reservation fails, it prints `... bytes of rid ... failed` and returns NULL;
+it never turns decoding off for the device.
 
 Bridge windows start empty and grow on demand: `pcib_grow_window()` (`sys/dev/pci/pci_pci.c`)
 can only extend a window at its front or its back, and only if the space next to it is free in the parent window.
@@ -123,81 +130,151 @@ and the problem does not appear.
 
 ## The fix
 
-```diff
-+static bool
-+pci_below_hotplug_port(device_t bus)
-+{
-+	device_t pcib;
-+
-+	for (pcib = device_get_parent(bus); is_pci_device(pcib);
-+	    pcib = device_get_parent(device_get_parent(pcib))) {
-+		if (pci_find_cap(pcib, PCIY_EXPRESS, NULL) != 0)
-+			continue;
-+		if ((pcie_read_config(pcib, PCIER_FLAGS, 2) &
-+		    PCIEM_FLAGS_SLOT) == 0)
-+			continue;
-+		if ((pcie_read_config(pcib, PCIER_SLOT_CAP, 4) &
-+		    PCIEM_SLOT_CAP_HPC) != 0)
-+			return (true);
-+	}
-+	return (false);
-+}
-...
--	pci_add_resources(bus, dev, 0, 0);
-+	pci_add_resources(bus, dev, pci_below_hotplug_port(bus), 0);
+Two commits, both in `sys/dev/pci/pci.c`.
+
+### 1. Limit BAR reservations to the BAR's width
+
+A BAR decodes 64, 32 or (legacy) 20 address bits (`pci_maprange()`).
+A reservation with a wildcard range (`0` to `~0`) can come back above 4 GB:
+`pcib_alloc_resource()` (`pci_pci.c`) tries the prefetchable window first, and on this NUC that window is at
+0x60_0000_0000. A 32-bit BAR then keeps only the low 32 bits of the address and decodes somewhere else.
+This happens without the hot-plug change too: in the lazy path above, with `hw.pci.clear_bars`, and in the
+`hw.pci.realloc_bars` retry.
+
+```c
+/* Highest address a BAR with this map value can decode. */
+static rman_res_t
+pci_bar_maxaddr(pci_addr_t mapreg)
+{
+	int ln2range;
+
+	ln2range = pci_maprange(mapreg);
+	if (ln2range == 20 || ln2range == 32)
+		return (((rman_res_t)1 << ln2range) - 1);
+	return (~0);
+}
 ```
 
-`pci_below_hotplug_port()` walks up from the device's bus: bus, bridge, bus, bridge, until the parent is no longer a PCI device
-(the host bridge).
-It returns true if one of those bridges is a PCIe port with a slot whose Slot Capabilities register has
-Hot-Plug Capable set (PCI Express Base Specification, Slot Capabilities register, bit 6).
-For such devices `pci_add_map()` gets `force`, so BARs left at 0 are reserved when the device is added,
-the same path CardBus already uses.
+`pci_add_map()` uses it as the end of its wildcard range and of the `realloc_bars` retry;
+`pci_reserve_map()` lowers the end a driver asks for to it.
+When a prefetchable 32-bit BAR does not fit in a prefetchable window above 4 GB,
+`pcib_alloc_resource()` falls back to the memory window, which is always below 4 GB.
 
-Why here: new-bus attaches depth-first, so the GPU (function 0 below `pcib6`) is added and reserves its BARs
-before `pcib7` claims a window.
-Firmware cannot size windows for devices that were not there at boot, so below a hot-plug port a zero BAR
-means "not assigned yet", not "disabled on purpose".
+### 2. Reserve unassigned BARs below hot-plug ports
 
-The PCIe capability check comes first because `pcie_read_config()` returns all ones when there is no PCIe capability,
-which would look like a hot-plug slot.
+```c
+static void
+pci_reserve_unassigned_bars(device_t bus)
+{
+	...
+	if (!pci_below_hotplug_port(bus))
+		return;
+	...
+	for (i = 0; i < devcount; i++) {
+		if (device_is_attached(devlist[i]))
+			continue;
+		dinfo = device_get_ivars(devlist[i]);
+		STAILQ_FOREACH(pm, &dinfo->cfg.maps, pm_link) {
+			if (PCIR_IS_BIOS(&dinfo->cfg, pm->pm_reg) ||
+			    pci_mapbase(pm->pm_value) != 0)
+				continue;
+			type = PCI_BAR_MEM(pm->pm_value) ? SYS_RES_MEMORY :
+			    SYS_RES_IOPORT;
+			if (resource_list_find(&dinfo->resources, type,
+			    pm->pm_reg) != NULL)
+				continue;
+			(void)pci_reserve_map(bus, devlist[i], type,
+			    pm->pm_reg, 0, ~0, 1, 1, 0);
+		}
+	}
+	...
+}
+```
 
-Bounds: `pci_find_cap()` proves the PCIe capability exists, and `pcie_read_config()` reads at that same capability
-(`cfg.pcie.pcie_location`).
-PCIER_FLAGS (offset 0x02, 2 bytes) and PCIER_SLOT_CAP (offset 0x14, 4 bytes) are inside the version 1 capability too,
-and the slot register is read only when the Slot Implemented flag is set, as `pcib_probe_hotplug()` does in `pci_pci.c`.
+It runs at the end of `pci_add_children()` and in `pci_rescan_method()`, after new devices are added and before
+they attach. A hot-plugged dock reaches `pci_add_children()` through `pci_attach()` of each new bus.
+
+`pci_below_hotplug_port()` walks up from the bus: bus, bridge, bus, bridge, until the parent is no longer a PCI
+device (the host bridge). It returns true if one of those bridges is a PCIe port with a slot whose Slot
+Capabilities register has Hot-Plug Capable set (PCI Express Base Specification, Slot Capabilities register,
+bit 6). The PCIe capability check comes first because `pcie_read_config()` returns all ones when there is no
+PCIe capability, which would look like a hot-plug slot. The slot register is read only when the Slot
+Implemented flag is set, as `pcib_probe_hotplug()` does in `pci_pci.c`.
+
+Why this place and this order:
+
+- Every function on the bus has reserved the BARs firmware assigned before the pass runs, so an unassigned
+  BAR of function 0 cannot take the range firmware gave function 1.
+- New-bus attaches depth-first, so the pass for the GPU's bus runs before the next sibling bridge (the dock
+  USB controller's `pcib7`) claims a window. That is what fixes the eGPU.
+- `pci_reserve_map()` is the path stock already uses for drivers. It keeps the command register, so a failure
+  cannot turn off decoding for BARs that were working, and it leaves decoding off until the driver activates
+  the resource (`pciconf` shows the GPU BARs `disabled` until `nvidia` loads).
+- Below a hot-plug port, a zero BAR means "not assigned yet": firmware cannot size windows for devices that were
+  not there at boot.
+
+Devices that already have a driver are skipped, so a rescan does not reserve BARs a running driver chose not to use.
 
 ### Alternatives
 
 | Option | Gain | Cost |
 |---|---|---|
-| This patch: force below hot-plug ports | automatic; only hot-plug hierarchies change | also reserves I/O BARs there (the GPU got 0x3000-0x307f), which uses 4 KB I/O windows on each bridge |
-| A tunable that forces all zero BARs (Linux assigns them all) | covers non-hot-plug cases | devices whose firmware disabled a BAR on purpose would get it enabled; opt-in nobody finds |
-| Move sibling windows in `pcib_grow_window()` | no early reservation | windows hold live resources; drivers would need to be stopped and moved |
+| This patch: a pass after enumeration, through `pci_reserve_map()` | firmware BARs first; failure keeps decoding; same path as driver requests | about 80 lines; two call sites |
+| Pass `force` to `pci_add_resources()` in `pci_add_child()` | one line | a function's unassigned BAR can take a sibling function's firmware range; a 32-bit BAR can land above 4 GB; a failed reservation turns off decoding for the whole function (all three measured in QEMU below) |
+| Size the whole hot-plugged tree before assigning (Linux `pci_assign_unassigned_bridge_resources()`) | no dependence on attach order | rewrite of bridge window management in `pci_pci.c` |
 | Pad hot-plug bridge windows (Linux `hpmemsize`) | room for later devices | does not help here: the space was there, it was taken in the wrong order |
+| A tunable that forces all zero BARs | covers non-hot-plug cases | devices whose firmware disabled a BAR on purpose would get it; opt-in nobody finds |
 | Userland `devctl delete` + rescan at boot | no kernel change | depends on the layout; breaks with another dock |
 
 What the patch does not fix:
 
+- Attach order still matters: a layout where a parent window cannot grow can still fail. Only sizing the whole
+  tree first removes that.
 - Resizable BAR after a hot-plug: BAR1 stays at 256 MB (the BIOS gives 8 GB at boot).
-- Hot-unplug with `nvidia` loaded: not tested; I unloaded `nvidia` before every unplug.
+- BARs firmware left all-ones (`map == testval` in `pci_add_map()`) stay lazy, as on stock; only zero BARs are
+  reserved early.
+- Unassigned I/O BARs are reserved too (the GPU gets 0x3000-0x307f), which needs a 4 KB I/O window on each bridge.
+- A failed early reservation is logged with the device name `unknown`, as no driver owns the device yet.
+- `sys/powerpc/ofw/ofw_pcibus.c` has its own copy of `pci_add_children()` and no rescan method, so the pass does
+  not run there.
+- ROM BARs are left out of the width cap (`pci_maprange()` does not apply to them).
+- Hot-unplug with `nvidia` loaded: not tested; `nvidia` was unloaded before every unplug.
 - DMA protection: no IOMMU is set up for the dock.
 - USB4 hosts without a firmware connection manager (AMD): FreeBSD has no software connection manager,
   so the dock never appears there (Beelink SER6 test, 2026-11-24: `thunderbolt(4)` attaches `nhi0` and stops).
 
 ## Tested
 
-Intel NUC 13 Pro, 2026-11-24.
+### Intel NUC 13 Pro
+
+Kernels on 6dc19a71f70c.
 
 | Kernel | Dock | GPU BARs | `nvidia-smi` |
 |---|---|---|---|
-| stock main-n291498-6dc19a71f70c | powered on after boot | all 0; `NVRM: NVIDIA MEM resource alloc failed, BAR0 @ 0x10` | no GPU |
+| stock | powered on after boot | all 0; `NVRM: NVIDIA MEM resource alloc failed, BAR0 @ 0x10` | no GPU |
 | stock, after `devctl delete -f pcib7` | same boot | BAR0 0x6a000000, BAR1 0x60e0000000, BAR3 0x60de000000 | RTX 3070, 8192 MiB |
 | stock | on at power-on | assigned by the BIOS (BAR1 8 GB at 0x6000000000) | RTX 3070, 8192 MiB, Gen3 x4 |
-| stock | powered off, then on again after boot (dock USB added before the GPU, as in the patched run below) | all 0; same `NVRM` error | no GPU; `devctl delete -f` of the dock USB bridge, reload, rescan: works |
-| patched | on at power-on | assigned by the BIOS (BAR1 8 GB at 0x6000000000) | RTX 3070, 8192 MiB, Gen3 x4 |
-| patched | powered off, then on again after boot | `vgapci1: ... port 0x3000-0x307f mem 0x69000000-0x69ffffff,0x6000000000-0x600fffffff,0x5ffe000000-0x5fffffffff` when the GPU is added | RTX 3070, 8192 MiB, 54.69 C, Gen3 x4 |
+| stock | powered off, then on again after boot | all 0; same `NVRM` error | no GPU |
+| this patch (2026-11-24) | on at power-on | BIOS layout kept: BAR0 0x6a000000, BAR1 8 GB at 0x6000000000; no failed reservation | RTX 3070, 8192 MiB, Gen3 x4, BAR1 8192 MiB |
+| this patch (2026-11-24) | powered off, then on again after boot | BAR0 0x69000000, BAR1 0x6000000000 (256 MB), BAR3 0x5ffe000000, I/O 0x3000, reserved before any driver; no failed reservation | RTX 3070, 8192 MiB, Gen3 x4, BAR1 256 MiB |
 
-Untested: other machines with hot-plug ports (NVMe U.2 bays,
-desktop root ports); a GPU workload on the patched kernel (Vulkan `llama-bench` and `vkcube` ran on the stock kernel
-after the `devctl` workaround, same 256 MB BAR1 as a patched hot-plug); hot-unplug with `nvidia` loaded.
+### QEMU
+
+[`pci_hotplug_bars_qemu.sh`](pci_hotplug_bars_qemu.sh) boots a q35 guest with UEFI firmware and three PCIe
+root ports (Hot-Plug Capable set), once per kernel, and runs
+[`pci_hotplug_bars_qemu_guest.sh`](pci_hotplug_bars_qemu_guest.sh) in it. The guest re-adds each root port with
+`devctl delete` and `devctl rescan`, which runs `pci_add_children()` on the BAR values left in config space.
+The guest boots with `hw.pci.enable_pcie_hp=0` and powers the hot-plug slot on by hand: under QEMU,
+`pcib_pcie_dll_timeout()` sees the link up while `sc->pcie_link_sta` stays stale, so native hot-plug never adds
+the child bus (also without this patch).
+
+Kernels on main d5f0768e13f3, 2026-11-24.
+
+| Case | Stock | `force` in `pci_add_child()` (alternative above) | This patch |
+|---|---|---|---|
+| 1: function 0's BAR2 (2 MB) zeroed; function 1's BAR2 (64 MB) at 0xc000000000 from firmware | f0 BAR2 stays 0; f1 kept | f0 takes 0xc000000000; f1 is moved to 0xc004000000 | f1 kept at 0xc000000000; f0 gets 0xc004000000 |
+| 2: display hot-plugged, 32-bit prefetchable BAR0 (16 MB), prefetchable window 0xc040000000-0xc043ffffff | BARs stay 0 (no driver) | kernel holds 0xc040000000-0xc040ffffff, register reads `40000008`: the BAR decodes 0x40000000, guest RAM | BAR0 at 0x80000000, register `80000008` |
+| 3: BAR0 assigned with decoding on; BAR2 (1 TB) zeroed, cannot fit | command 0x0002 kept | command 0x0003 becomes 0x0001: BAR0 `disabled` | command 0x0002 kept; `unknown: 0x10000000000 bytes of rid 0x18 res 3 failed` |
+
+Untested: commit 1 alone on any machine; other machines with hot-plug ports (NVMe U.2 bays, desktop root ports);
+native hot-plug under QEMU; hot-unplug with `nvidia` loaded; powerpc.
