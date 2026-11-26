@@ -19,7 +19,7 @@ small proxy that makes a normal FreeBSD nfsd behave like EFS.
 
 ## Patches
 
-In commit order. #1 and #2 are in main; #3 to #10 are proposed in this order.
+In commit order. #1 and #2 are in main; #3 to #5 and #7 to #11 are proposed; #6 is dropped.
 
 | # | patch | component | defect | symptom without it | depends on | write-up | upstream |
 |---|---|---|---|---|---|---|---|
@@ -28,18 +28,19 @@ In commit order. #1 and #2 are in main; #3 to #10 are proposed in this order.
 | 3 | [`nfscl_jail.patch`](nfscl_jail.patch) | NFS client, `nfssvc(2)` | the client lacks `VFCF_JAIL`; reading mount options needs `PRIV_NFS_DAEMON` | a jail cannot mount NFS, so a test client must run on the host; `umount` in a jail exits 1 | nothing; needs the NFS maintainer's agreement (jail policy) | [`nfscl_jail.md`](nfscl_jail.md) | no |
 | 4 | [`kgss_vnet.patch`](kgss_vnet.patch) | kgssapi, `clnt_nl` | "gssd answered" and the upcall timeout are global, but gssd runs per jail | after one jail used Kerberos, an nfsd started in a jail without gssd does not serve | nothing (tested with #3 applied) | [`bugreport_kgss_vnet_upcall.md`](bugreport_kgss_vnet_upcall.md) | no, not filed |
 | 5 | [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch) | `tests/sys/fs/nfs` | the tree had no NFS test at all | regressions like #1 and #2 reach users | #4 when kgssapi is loaded; with #3, also two-client and Kerberos cases | [`nfs_vnet_tests.md`](nfs_vnet_tests.md) | no |
-| 6 | [`session-leak.patch`](session-leak.patch) | NFS client | old sessions are never freed until unmount | `NFSCL session` memory grows with every recovery (37 to 256 in 27 h on EFS) | nothing; can go any time | [`session-leak.md`](session-leak.md) (Bugzilla: [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt)) | no, not filed |
+| 6 | [`session-leak.patch`](session-leak.patch) | NFS client | old sessions are never freed until unmount | `NFSCL session` memory grows with every recovery (37 to 256 in 27 h on EFS) | nothing; can go any time | [`session-leak.md`](session-leak.md) (Bugzilla: [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt)) | dropped 2026-11-26 after rmacklem's reply (too complex for a slow leak) |
 | 7 | [`nfscbd_jail.patch`](nfscbd_jail.patch) | NFS client callbacks (`nfs_clkrpc.c`), `nfscbd(8)` | the callback program is registered only with the UDP socket, which a jail cannot add | a client jail running nfscbd never gets a delegation | nothing (tested with #3 to #5) | [`nfscbd_jail.md`](nfscbd_jail.md) | no, not filed |
 | 8 | [`svc_backchannel.patch`](svc_backchannel.patch) | krpc (`sys/rpc/svc.c`) | `svcpool_close()` at nfscbd exit unregisters the mounts' backchannel transports for good | after an nfscbd restart, recalls on older mounts are dropped: the conflicting open waits 255 s | #7 (tested on top of it) | [`svc_backchannel.md`](svc_backchannel.md) | no, not filed |
 | 9 | [`nfsd_jail_state.patch`](nfsd_jail_state.patch) | NFS server (`nfs_nfsdport.c`, `nfs_nfsdstate.c`, `nfs_nfsdkrpc.c`) | a client record's credential holds the server jail, and records are freed only after the jail is | a removed server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stays dying forever | nothing | [`nfsd_jail_state.md`](nfsd_jail_state.md) | no, not filed |
 | 10 | in [`nfsd_jail_state.patch`](nfsd_jail_state.patch), one commit with #9 | krpc RPCSEC_GSS (`svc_rpcsec_gss.c`) | same cycle with the Kerberos server contexts | a removed Kerberos server jail stays dying forever | nothing (tested with #9) | [`gss_jail_remove.md`](gss_jail_remove.md) | no, not filed |
+| 11 | [`slot_session.patch`](slot_session.patch) | NFS client (`nfs_commonkrpc.c`, `nfs_clcomsubs.c`) | after a recovery, a failed RPC frees its slot on the new MDS session, not the one it took the slot from | another RPC can lose its slot, or "freeing free slot!!"; found by code reading, not reproduced | nothing | [`slot_session.md`](slot_session.md) | no, not filed |
 
 Why this order: the goal is client and server in jails, and #3 is what
 allows the client in a jail, so it goes first. It changes jail policy and
 needs the NFS maintainer's agreement. #4 fixes the bug that hangs a jailed
 nfsd once Kerberos is used in another jail. The tests (#5) then land at full
 strength: two clients and Kerberos, relying on #4 instead of a workaround.
-#6 is independent; ideally a leak check is added to the tests before it.
+#6 was dropped after rmacklem's review; #11, found while reviewing #6, is independent.
 Tradeoff: the tests wait for the slowest review, #3, although they could run
 today with the client on the test machine.
 
@@ -88,7 +89,7 @@ mount then did no I/O until the window ended. The fix treats
 **Bug #6, the leak.** Each recovery leaves the old session in a list, because
 a request in flight may still use it, and nothing ever frees it. The patch
 counts the requests that hold a session and frees old sessions once nobody
-holds them.
+holds them. Dropped after rmacklem's review: too complex for a slow leak.
 
 **Why the tests needed kernel changes (#3, #4).** A good NFS test puts the
 server and the clients in jails, each with its own network stack (a vnet

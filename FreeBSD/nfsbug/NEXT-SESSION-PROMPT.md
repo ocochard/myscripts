@@ -15,14 +15,19 @@ commit reviewed at xhigh effort with the freebsd-src skill: 25 findings,
 the real ones fixed and folded into their commits, retested (session
 34d90969, 2026-11-21 to 11-24). Earlier sessions: 4a7ee611 (2026-11-02 to
 11-18). The `nfsbug/` docs are committed and pushed in myscripts (last:
-74a6dd7; its subject says "fix the 25 findings" but some are not fixed,
+b795b0c before the 2026-11-26 update; 74a6dd7 says "fix the 25 findings" but some are not fixed,
 see `review-2026-11-24.md`). Copy the block below verbatim into
 the fresh session as the first user message.
 
+Update 2026-11-26: rmacklem rejected #6 (session refcounting too messy
+for a slow leak). #6 and the `session_leak` test are dropped; the tests
+are 12 cases. The pre-existing bug found while reviewing #6 (L3: a slot
+freed on the new MDS session after a recovery) is now its own small
+patch, #11 `slot_session.patch`, branch `nfscl-slot-session`.
+
 State at the end: no coding item left. Next steps are mine: file the
-Bugzilla reports, add the `PR:` lines (and 07's PR number in 06's
-`atf_expect_fail` message), then open the `pr/*` branches as ron-dev PRs in
-the order below. Design questions for rmacklem: NLM and pNFS in jails, the
+Bugzilla reports, add the `PR:` lines, then open the `pr/*` branches as
+ron-dev PRs in the order below. Design questions for rmacklem: NLM and pNFS in jails, the
 host-wide callback pool.
 
 ---
@@ -30,11 +35,12 @@ host-wide callback pool.
 I'm continuing work on FreeBSD NFS regression tests with the NFS client and
 server in vnet jails, and the kernel fixes they need. Read these first:
 
-1. `~/myscripts/FreeBSD/nfsbug/README.md`: the goal, the table of all ten
+1. `~/myscripts/FreeBSD/nfsbug/README.md`: the goal, the table of all
    patches in commit order, and a plain explanation of each bug.
 2. The write-up next to each patch in the same directory (`badsession.md`,
    `staleclientid.md`, `nfscl_jail.md`, `bugreport_kgss_vnet_upcall.md`,
-   `nfs_vnet_tests.md`, `session-leak.md`, `nfscbd_jail.md`,
+   `nfs_vnet_tests.md`, `session-leak.md` (dropped), `slot_session.md`,
+   `nfscbd_jail.md`,
    `svc_backchannel.md`, `nfsd_jail_state.md`, `gss_jail_remove.md`), and the
    Bugzilla texts `BUGREPORT-*.txt` (one for #9 and #10 together).
 3. `review-2026-11-24.md`: the per-commit review (25 findings), what was
@@ -47,7 +53,7 @@ server in vnet jails, and the kernel fixes they need. Read these first:
 server and the NFS clients in vnet jails on one machine.
 
 **Patches** (numbering used in all docs). All branches are in `~/freebsd-src`
-(one worktree each), based on `freebsd/main` 6edecf52def6 (rebased 2026-11-22), committed with
+(one worktree each), based on `freebsd/main` 6edecf52def6 (rebased 2026-11-22; #11 on f0ce2ae67f9f), committed with
 author `Olivier Cochard <olivier@FreeBSD.org>`, and pushed to my fork
 (`origin`, github.com/ocochard/freebsd-src) at the same head. Each patch
 file in `nfsbug/` is byte-identical to its commit's diff.
@@ -58,12 +64,13 @@ file in `nfsbug/` is byte-identical to its commit's diff.
 | 2 | `staleclientid.patch`: STALE_CLIENTID in the renew window (45 s stall) | in main | 7a0021a0988f | PR 299221 |
 | 3 | `nfscl_jail.patch`: `VFCF_JAIL` on the NFS client + `NFSSVC_DUMPMNTOPTS` without `PRIV_NFS_DAEMON` | `nfscl-jail` (`~/freebsd-src-nfscljail`) | d3fc593d5ba1 | policy change, no PR; needs rmacklem's agreement |
 | 4 | `kgss_vnet.patch`: gssd state per vnet + per-call timeouts on the shared netlink handle | `kgss-vnet` (`~/freebsd-src-kgssvnet`) | 48ececba446d | no; text in `bugreport_kgss_vnet_upcall.md` |
-| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 13 cases (`session_leak` with expect_fail until #6), one commit (the four earlier ones squashed 2026-11-22) | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | 4e1da3c09443 | not a bug |
-| 6 | `session-leak.patch`: sessions replaced by recovery never freed; also removes the `session_leak` expect_fail | `session-leak` (`~/freebsd-src-sessleak`), on top of `nfs-vnet-tests` | 66594a2d11eb | no; text in `BUGREPORT-session-leak.txt` |
+| 5 | `nfs_vnet_tests.patch`: `tests/sys/fs/nfs`, 12 cases, one commit | `nfs-vnet-tests` (`~/freebsd-src-nfstest`) | b1c9bdbcba5f | not a bug |
+| 6 | `session-leak.patch`: sessions replaced by recovery never freed. DROPPED 2026-11-26 after rmacklem's reply; branch kept as archive only | `session-leak` (`~/freebsd-src-sessleak`), on an old tests commit | 66594a2d11eb | never file |
 | 7 | `nfscbd_jail.patch`: nfscbd in a jail serves no callbacks (program registered only with the UDP socket, which a jail cannot add) | `nfscbd-jail` (`~/freebsd-src-nfscbdjail`) | b2016b20d2a9 | no; text in `BUGREPORT-nfscbd-jail.txt` |
 | 8 | `svc_backchannel.patch`: after an nfscbd restart, `svcpool_close()` had dropped the mounts' backchannels: recalls lost, 255 s stall | `nfscbd-jail`, after #7 | a55296b95d25 | no; text in `BUGREPORT-svc-backchannel.txt` |
 | 9 | `nfsd_jail_state.patch`: a dying server jail with any client record (NFSv4.0, or a client gone without DESTROY_CLIENTID) stayed dying forever; throw the state away when its last nfsd exits | `nfsd-jail-dying` (`~/freebsd-src-nfsddying`) | 9b8e54c993f0 (one commit with #10) | no; text (with #10) in `BUGREPORT-nfsd-jail-dying.txt` |
 | 10 | same commit as #9 (squashed 2026-11-22): the same cycle with the RPCSEC_GSS server contexts (Kerberos); write-up `gss_jail_remove.md` | `nfsd-jail-dying` | 9b8e54c993f0 | same report as #9 |
+| 11 | `slot_session.patch`: after a recovery, a failed RPC freed its slot on the new MDS session (found by reading, not reproduced) | `nfscl-slot-session` (`~/freebsd-src-slotsess`), on main f0ce2ae67f9f | bdd6a92a5712 | no; none needed |
 
 The branches track `upstream/main` (the GitHub mirror): never use a bare
 `git push`; always `git push origin <branch>`.
@@ -73,18 +80,18 @@ run `git switch pr/<name> && git pr main` myself), on freebsd/main
 a82c04293ecc, each identical (`git range-diff`) to the commit above:
 `pr/nfscl-jail` 29e572c16e30, `pr/kgss-vnet` d6dbcc74bc50,
 `pr/nfscbd-jail` 970a790fe602, `pr/svc-backchannel` cddcdd7a71ef (#8 alone),
-`pr/nfsd-jail-dying` 9d3c2c573350, `pr/nfs-vnet-tests` 2b68ed9fc4f4,
-`pr/nfscl-session-leak` 167bf7d61803 (tests commit + #6). PR texts:
+`pr/nfsd-jail-dying` 9d3c2c573350; on freebsd/main f0ce2ae67f9f:
+`pr/nfs-vnet-tests` bc5fc922c192, `pr/nfscl-slot-session` e395ca51e23e.
+`pr/nfscl-session-leak` 167bf7d61803 is #6, dropped: do not open. PR texts:
 `nfsbug/pr/01-07*.md`. Update these branches only with `git branch -f
 pr/<name> <explicit hash>` from a scratch worktree, never by switching the
 tree, which holds my other work.
 
 **Review order** I gave (I create the reviews and push upstream myself):
 #3, #4, #7, #8, #9+#10 (no code dependency, can run in parallel), then the
-tests 4e1da3c09443 (needs #3, #4, #7, #9 and #10), then #6 66594a2d11eb (removes the
-`session_leak` expect_fail). File the PRs first (#9 and #10 share one), then
-add `PR:` lines to the commits and the #6 PR number to the
-`atf_expect_fail` message in the tests commit. One diff per review:
+tests b1c9bdbcba5f (needs #3, #4, #7, #9 and #10). #11 (PR text 07) has
+no dependency and can open any time. File the PRs first (#9 and #10
+share one), then add `PR:` lines to the commits. One diff per review:
 `git diff -U999999 <c>~1 <c>`.
 
 **Tested** (bhyve VM, GENERIC-NODEBUG and GENERIC with WITNESS):
@@ -137,6 +144,11 @@ add `PR:` lines to the commits and the #6 PR number to the
   lock) ENOLCK; #9 scenarios and #8 restart as before. Not testable here:
   the ~27s gssd upcall, pNFS, the GSS refusal in a dying jail, the nfsd
   teardown race.
+- 2026-11-26, kernel `n291690-7ddb9d006a0b` = main f0ce2ae67f9f + #3 #4
+  #7 #8 #9+#10 + 12-case tests + #11 (`/tmp/nfsfinal-src`): all 12 cases
+  passed on NODEBUG and WITNESS, `server_reset` and `server_reset_twice`
+  3 runs each, no jail dying, no "freeing free slot!!", no panic; only the
+  two unrelated LORs. #11's bug itself is not triggerable on demand.
 - 2026-11-23, final heads together (main 6edecf52def6 + the 7 commits,
   `n291531-ed0a6ec4666b`): all 13 cases passed on NODEBUG and WITNESS,
   `session_leak` and `v3_basic` included; nothing dying after the suite
@@ -145,14 +157,14 @@ add `PR:` lines to the commits and the #6 PR number to the
 **Open items** (pick with me first):
 - Reviews and PRs as above; rebase the branches if main moves first
   (check with `git fetch upstream` and `git range-diff`, then build all 7
-  commits together, run the 13 cases, then force-push and move the
+  commits together, run the 12 cases, then force-push and move the
   `pr/*` branches with `git branch -f`).
 - Review findings not fixed (`review-2026-11-24.md`): NFSv4 owner strings
   of a jailed mount are mapped in the vnet of the thread parsing the reply
   (nfsiod: the host's tables); `tlscertname` accepts `../` (pre-existing,
   not verified); NFSv4.0 keeps one nfsclds per SETCLIENTID until unmount
   (pre-existing). Fixes resting on code reading only: the ~27s gssd upcall
-  (#4), pNFS (#6), the GSS refusal in a dying jail and the nfsd teardown
+  (#4), the GSS refusal in a dying jail and the nfsd teardown
   race (#9 + #10).
 - Dying server jails: fixed by #9 and #10, including an nfsd stopped
   before the removal (#9's jail removal hook and start guard, folded in
@@ -183,14 +195,10 @@ add `PR:` lines to the commits and the #6 PR number to the
 **How the tests are run** (bhyve VM, since a client bug can hang the host):
 - The last full test kernel is in `/tmp/kobj-final-NODEBUG` and
   `/tmp/kobj-final-DBG`, built from `/tmp/nfsfinal-src`: upstream/main
-  6edecf52def6 with the 7 final commits cherry-picked, in this order:
-  `nfscl-jail`, `kgss-vnet`, `upstream/main..nfscbd-jail`,
-  `upstream/main..nfsd-jail-dying`, `upstream/main..session-leak` (the
-  last range holds the tests and #6); #6's last amend (a prototype in
-  `nfs_commonkrpc.c`) was copied in as a file, so that tree's `git log`
-  is one step behind its contents. Do the same for a fresh one; with #6
-  in, take the test files from `session-leak`, where `session_leak` has no
-  `atf_expect_fail`.
+  f0ce2ae67f9f with the final commits cherry-picked, in this order:
+  `nfscl-jail`, `nfsd-jail-dying`, `kgss-vnet`,
+  `upstream/main..nfscbd-jail`, `nfs-vnet-tests`, `nfscl-slot-session`.
+  Do the same for a fresh one.
 - Kernel: `include GENERIC-NODEBUG` (or `GENERIC` for WITNESS) plus
   `ident NFSTEST`, `device epair`, `device if_bridge`, `options NULLFS`,
   `options KGSSAPI`. The VM loads no modules. Build in a scratch worktree
@@ -205,9 +213,8 @@ add `PR:` lines to the commits and the #6 PR number to the
   Without it, `delegation_test:recall` fails on any kernel.
 - Image: `sudo ~/myscripts/FreeBSD/kern-test-vm/mkvm.sh -k /tmp/kobj-X/kernel:X [-k ...] -t /tmp/nfstest-vm`.
   Do not boot it with `bootvm.sh`: its nmdm console hangs intermittently.
-  Use `sudo sh /tmp/runvm-stdio.sh /zroot/vm/kern-test.img X 2400` (the full
-  suite takes 10 to 11 minutes plus boot; `server_reset_twice` and
-  `session_leak` are 6 of them), then read `/tmp/kt2-X.log` and
+  Use `sudo sh /tmp/runvm-stdio.sh /zroot/vm/kern-test.img X 2400` (2400 s covers
+  the suite plus boot), then read `/tmp/kt2-X.log` and
   `/tmp/kt2-X.steps`.
 - Payload `/tmp/nfstest-vm/`: `run.sh` (below), `vnet.subr` from
   `tests/sys/common`, `nfs/` with the test files copied from the branch
@@ -294,7 +301,7 @@ atf_test_program{name="krb5_test", is_exclusive=true}
 atf_test_program{name="delegation_test", is_exclusive=true}
 KF
 cd $D
-for t in delegation_test:recall krb5_test:krb5 krb5_test:krb5i krb5_test:krb5p krb5_test:server_freed basic_test:basic basic_test:v3_basic basic_test:v40_basic basic_test:v40_server_freed basic_test:two_clients recovery_test:server_reset recovery_test:server_reset_twice recovery_test:session_leak; do
+for t in delegation_test:recall krb5_test:krb5 krb5_test:krb5i krb5_test:krb5p krb5_test:server_freed basic_test:basic basic_test:v3_basic basic_test:v40_basic basic_test:v40_server_freed basic_test:two_clients recovery_test:server_reset recovery_test:server_reset_twice; do
 	step "test $t"
 	timeout -s KILL 400 kyua debug -k Kyuafile $t 2>&1 | grep -v '^Executing command' | tee -a /root/steps.log
 	sync

@@ -1,9 +1,15 @@
 # Bug #6: every recovery leaks a session until unmount
 
+**Dropped on 2026-11-26.** rmacklem's reply: reference counting the
+sessions is too messy (pNFS device entries, RPCs that return before their
+reply on `intr` or `soft` mounts) for a slow leak. Not to be proposed. A
+pre-existing bug found while reviewing it is fixed separately:
+[`slot_session.md`](slot_session.md).
+
 Patch: [`session-leak.patch`](session-leak.patch), commit 66594a2d11eb on
 branch `session-leak` in `~/freebsd-src-sessleak`, on top of the tests
 (`nfs-vnet-tests`): it also removes the `atf_expect_fail` of the
-`session_leak` test. Not filed yet. Bugzilla text:
+`session_leak` test (since removed from the tests). Not filed. Bugzilla text:
 [`BUGREPORT-session-leak.txt`](BUGREPORT-session-leak.txt).
 
 Read [`badsession.md`](badsession.md) first: it explains sessions and

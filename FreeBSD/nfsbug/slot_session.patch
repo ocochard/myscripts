@@ -1,0 +1,115 @@
+diff --git sys/fs/nfs/nfs.h sys/fs/nfs/nfs.h
+index 7212a685d902..95b1883f18d8 100644
+--- sys/fs/nfs/nfs.h
++++ sys/fs/nfs/nfs.h
+@@ -686,6 +686,7 @@ struct nfsrv_descript {
+ 	uint32_t		*nd_slotseq;	/* ptr to slot seq# in req */
+ 	uint8_t			nd_sessionid[NFSX_V4SESSIONID];	/* Session id */
+ 	uint32_t		nd_slotid;	/* Slotid for this RPC */
++	struct nfsclsession	*nd_sep;	/* MDS session of nd_slotid */
+ 	SVCXPRT			*nd_xprt;	/* Server RPC handle */
+ 	uint32_t		*nd_sequence;	/* Sequence Op. ptr */
+ 	nfsv4stateid_t		nd_curstateid;	/* Current StateID */
+@@ -748,6 +749,7 @@ struct nfsrv_descript {
+ #define	ND_MACHCRED		0x80000000000
+ #define	ND_CANEXTPG		0x100000000000
+ #define	ND_RDMA			0x200000000000
++#define	ND_MDSSESS		0x400000000000	/* nd_sep is set (client) */
+ 
+ /*
+  * ND_GSS should be the "or" of all GSS type authentications.
+diff --git sys/fs/nfs/nfs_commonkrpc.c sys/fs/nfs/nfs_commonkrpc.c
+index 05c4ec15c74d..e4be06af728e 100644
+--- sys/fs/nfs/nfs_commonkrpc.c
++++ sys/fs/nfs/nfs_commonkrpc.c
+@@ -129,6 +129,8 @@ static void	nfs_down(struct nfsmount *, struct thread *, const char *,
+ static void	nfs_up(struct nfsmount *, struct thread *, const char *,
+     int, int);
+ static int	nfs_msg(struct thread *, const char *, const char *, int);
++static struct nfsclsession *nfs_reqsession(struct nfsmount *,
++    struct nfsrv_descript *);
+ 
+ struct nfs_cached_auth {
+ 	int		ca_refs; /* refcount, including 1 from the cache */
+@@ -1093,7 +1095,7 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 			 * free'd, threads can get stuck waiting for a slot.
+ 			 */
+ 			if (sep == NULL)
+-				sep = nfsmnt_mdssession(nmp);
++				sep = nfs_reqsession(nmp, nd);
+ 			/*
+ 			 * Bump the sequence# out of range, so that reuse of
+ 			 * this slot will result in an NFSERR_SEQMISORDERED
+@@ -1123,7 +1125,7 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 			 * Free the slot, resetting the slot's sequence#.
+ 			 */
+ 			if (sep == NULL)
+-				sep = nfsmnt_mdssession(nmp);
++				sep = nfs_reqsession(nmp, nd);
+ 			nfsv4_freeslot(sep, nd->nd_slotid, true);
+ 		}
+ 		NFSINCRGLOBAL(nfsstatsv1.rpcinvalid);
+@@ -1160,7 +1162,7 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 	    nd->nd_procnum != NFSV4PROC_CBNULL) {
+ 		/* If sep == NULL, set it to the default in nmp. */
+ 		if (sep == NULL && nmp != NULL)
+-			sep = nfsmnt_mdssession(nmp);
++			sep = nfs_reqsession(nmp, nd);
+ 		/*
+ 		 * and now the actual NFS xdr.
+ 		 */
+@@ -1382,6 +1384,8 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 						*tl = txdr_unsigned(maxslot);
+ 						nd->nd_slotid = slotpos;
+ 						nd->nd_flag |= ND_HASSLOTID;
++						if ((nd->nd_flag & ND_MDSSESS) != 0)
++							nd->nd_sep = sep;
+ 					}
+ 					if (reterr == NFSERR_BADSESSION ||
+ 					    reterr == 0) {
+@@ -1563,6 +1567,19 @@ newnfs_request(struct nfsrv_descript *nd, struct nfsmount *nmp,
+ 	return (error);
+ }
+ 
++/*
++ * The MDS session that the slot of an RPC belongs to.  After a recovery
++ * replaced the MDS session, it is not the current one.
++ */
++static struct nfsclsession *
++nfs_reqsession(struct nfsmount *nmp, struct nfsrv_descript *nd)
++{
++
++	if ((nd->nd_flag & ND_MDSSESS) != 0)
++		return (nd->nd_sep);
++	return (nfsmnt_mdssession(nmp));
++}
++
+ /*
+  * Reset slots above nfsess_foreslots that are not busy.
+  */
+diff --git sys/fs/nfs/nfs_commonsubs.c sys/fs/nfs/nfs_commonsubs.c
+index 2a2153a09f06..536fd940e749 100644
+--- sys/fs/nfs/nfs_commonsubs.c
++++ sys/fs/nfs/nfs_commonsubs.c
+@@ -455,6 +455,8 @@ nfscl_reqstart(struct nfsrv_descript *nd, int procnum, struct nfsmount *nmp,
+ 			*tl = txdr_unsigned(NFSV4OP_SEQUENCE);
+ 			if (sep == NULL) {
+ 				sep = nfsmnt_mdssession(nmp);
++				nd->nd_sep = sep;
++				nd->nd_flag |= ND_MDSSESS;
+ 				/*
+ 				 * For MDS mount sessions, check for bad
+ 				 * slots.  If the caller does not want this
+diff --git sys/fs/nfsclient/nfs_clcomsubs.c sys/fs/nfsclient/nfs_clcomsubs.c
+index fa772ee12c8b..e5cb9eeea2c0 100644
+--- sys/fs/nfsclient/nfs_clcomsubs.c
++++ sys/fs/nfsclient/nfs_clcomsubs.c
+@@ -456,6 +456,8 @@ nfsv4_freeunsentslot(struct nfsmount *nmp, struct nfsclsession *sep,
+ 	if (nmp == NULL || (nd->nd_flag & (ND_NFSV41 | ND_HASSLOTID)) !=
+ 	    (ND_NFSV41 | ND_HASSLOTID))
+ 		return;
++	if (sep == NULL && (nd->nd_flag & ND_MDSSESS) != 0)
++		sep = nd->nd_sep;
+ 	if (sep == NULL)
+ 		sep = nfsmnt_mdssession(nmp);
+ 	if (sep != NULL)

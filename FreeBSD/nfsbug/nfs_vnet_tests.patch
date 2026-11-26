@@ -557,10 +557,10 @@ index 000000000000..52e4f1ca3910
 +}
 diff --git tests/sys/fs/nfs/nfs.subr tests/sys/fs/nfs/nfs.subr
 new file mode 100644
-index 000000000000..0d181f0b6588
+index 000000000000..ffd0967eeee6
 --- /dev/null
 +++ tests/sys/fs/nfs/nfs.subr
-@@ -0,0 +1,534 @@
+@@ -0,0 +1,527 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -969,13 +969,6 @@ index 000000000000..0d181f0b6588
 +nfs_reset()
 +{
 +	kill -USR1 $(cat proxy.pid)
-+}
-+
-+# Print the number of NFS client sessions allocated in the kernel.
-+nfs_sessions()
-+{
-+	vmstat -m | awk '$1 == "NFSCL" && $2 == "session" { n = $3 }
-+	    END { print n + 0 }'
 +}
 +
 +# Create a file every second in directory $1 in the background and log the
@@ -1400,10 +1393,10 @@ index 000000000000..80e986ca6ab3
 +    main()
 diff --git tests/sys/fs/nfs/recovery_test.sh tests/sys/fs/nfs/recovery_test.sh
 new file mode 100644
-index 000000000000..f75e6320ba6d
+index 000000000000..538de98f62ac
 --- /dev/null
 +++ tests/sys/fs/nfs/recovery_test.sh
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,112 @@
 +#
 +# SPDX-License-Identifier: BSD-2-Clause
 +#
@@ -1511,46 +1504,8 @@ index 000000000000..f75e6320ba6d
 +	nfs_cleanup
 +}
 +
-+atf_test_case "session_leak" "cleanup"
-+session_leak_head()
-+{
-+	atf_set descr 'Free the sessions that recovery replaced'
-+	atf_set require.user root
-+	atf_set require.progs python3
-+	atf_set timeout 300
-+}
-+
-+session_leak_body()
-+{
-+	local i n0 n
-+
-+	n0=$(nfs_sessions)
-+	recovery_setup
-+	for i in 1 2 3; do
-+		nfs_reset
-+		sleep 20
-+	done
-+	# A replaced session is freed 2 x nfsc_renew (120s with nfsd) after
-+	# the recovery that replaced it.
-+	sleep 120
-+
-+	# The mount and each recovery create a session.
-+	[ $(grep -c 'learn session' proxy.log) -ge 4 ] ||
-+	    atf_fail "not every reset caused a recovery"
-+	n=$(nfs_sessions)
-+	atf_expect_fail "Sessions replaced by recovery are freed only at unmount"
-+	[ ${n} -le $((n0 + 1)) ] ||
-+	    atf_fail "$((n - n0)) sessions in use for one mount"
-+}
-+
-+session_leak_cleanup()
-+{
-+	nfs_cleanup
-+}
-+
 +atf_init_test_cases()
 +{
 +	atf_add_test_case "server_reset"
 +	atf_add_test_case "server_reset_twice"
-+	atf_add_test_case "session_leak"
 +}

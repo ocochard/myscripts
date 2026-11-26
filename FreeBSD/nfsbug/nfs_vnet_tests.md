@@ -2,9 +2,7 @@
 
 Patch: [`nfs_vnet_tests.patch`](nfs_vnet_tests.patch), adds
 `tests/sys/fs/nfs/`, against main 6edecf52def6. Branch `nfs-vnet-tests` in
-`~/freebsd-src-nfstest`, one commit, 4e1da3c09443 (four commits squashed
-on 2026-11-22: the tests, `v40_basic`, `session_leak` and the delegation
-`recall`). Not committed upstream.
+`~/freebsd-src-nfstest`, one commit, b1c9bdbcba5f, 12 cases. Not committed upstream.
 
 Read [`badsession.md`](badsession.md) and
 [`staleclientid.md`](staleclientid.md) first: these tests exist to catch
@@ -98,7 +96,6 @@ is short:
 | `nfs_client_start c1` | client jail `c1`, if the kernel allows NFS in jails |
 | `nfs_mount <client> <server> [options]` | mount with NFSv4.1, unless the options give a `minorversion` or `nfsv3` (then `/export` is mounted) |
 | `nfs_proxy_start srv`, `nfs_reset` | put the proxy in front of `srv`; make it forget |
-| `nfs_sessions` | NFS client sessions in use in the kernel (`vmstat -m`) |
 | `nfs_probe_start`, `nfs_probe_check` | start the probe; fail on a gap over 10 s |
 | `nfs_kdc_start`, `nfs_krb5_keytab`, `nfs_gssd_start` | Kerberos realm, keys and daemons |
 | `nfs_cleanup` | unmount, stop everything, remove the jails |
@@ -116,7 +113,6 @@ is short:
 | | `krb5p` | privacy: the data is not visible on the wire |
 | `basic_test.sh` | `v3_basic` | the `basic` checks over NFSv3 with `nolockd`, a local lock, and `nfsstat -m` showing `nfsv3` |
 | `basic_test.sh` | `v40_basic` | the `basic` checks over NFSv4.0 (SETCLIENTID instead of sessions) |
-| `recovery_test.sh` | `session_leak` | three resets, then 120 s: at most one session left for the mount; expected to fail until #6 |
 | `basic_test.sh` | `v40_server_freed` | NFSv4.0 mount, I/O, unmount, then the server jail is removed: it must be gone within 10 s; needs #9 |
 | `krb5_test.sh` | `server_freed` | the same with a Kerberos mount; needs #10 |
 | `delegation_test.sh` | `recall` | c1, running `nfscbd`, gets a delegation; c2 writes the file: recalled within 10 s; needs #7 |
@@ -160,7 +156,7 @@ Alternatives:
 - **Write the proxy in C.** Python is already a test dependency in
   `tests/sys/netpfil`; C would be longer for no gain.
 
-What the tests do NOT cover: the session leak (#6), NFSv4.2, pNFS, NFS over
+What the tests do NOT cover: the sessions recovery leaves until unmount (#6, dropped), NFSv4.2, pNFS, NFS over
 TLS, and protocol conformance in general.
 
 Known side effect: after a reset test, the server jail stays in the "dying"
@@ -187,13 +183,12 @@ bhyve VM, 4 CPUs, 4 GB, kernels with `device epair`, `device if_bridge` and
 The pre-fix kernels were run with the first, single-file version of the
 tests, which had `basic` and both reset cases.
 
-The three later cases, bhyve VM, 2026-11-21, all with the clients in jails:
+Two later cases, bhyve VM, 2026-11-21, all with the clients in jails:
 
-| Kernel | `v40_basic` | `session_leak` | `recall` | other 7 cases |
-|---|---|---|---|---|
-| main 6dc19a71f70c + #3 + #4 | passed | expected failure: 4 sessions | failed: no delegation | passed |
-| same + #6 (`atf_expect_fail` removed) | not run | passed | not run | reset cases passed |
-| same + #7 + #8 (GENERIC-NODEBUG and GENERIC with WITNESS) | passed | expected failure | passed | passed |
+| Kernel | `v40_basic` | `recall` | other 7 cases |
+|---|---|---|---|
+| main 6dc19a71f70c + #3 + #4 | passed | failed: no delegation | passed |
+| same + #7 + #8 (GENERIC-NODEBUG and GENERIC with WITNESS) | passed | passed | passed |
 
 NFSv3 in jails, measured 2026-11-22: without NLM, NFSv3 works (mount, I/O,
 checksums, a local lock with `nolockd`; `v3_basic` passed 3 of 3). NLM
@@ -220,7 +215,7 @@ The capture now uses `--immediate-mode`: `krb5p` and `krb5i` passed 15 of
 Installed like a release: `make install` of `tests/sys/fs/nfs` into a
 staging root, unpacked over `/usr/tests` in the VM, then
 `kyua test -k /usr/tests/sys/fs/nfs/Kyuafile`, which is what `make check`
-runs: 10 of 10 (one expected failure) in 300 s, cases run exclusively
+runs: 10 of 10 cases of that earlier version in 300 s, run exclusively
 (`kyua list -v`: `is_exclusive = true`).
 
 Untested: bare metal, kernels loading NFS and Kerberos as modules, stable/15,
@@ -232,8 +227,10 @@ and the whole `/usr/tests` tree (the VM image has only `sys/fs/nfs` and
 
 A per-commit review (see [`review-2026-11-24.md`](review-2026-11-24.md))
 found the issues below in this patch; the text above describes the fixed
-version. Retested afterwards: all 13 cases of `tests/sys/fs/nfs` on
-GENERIC-NODEBUG and GENERIC with WITNESS, no jail left dying, no panic.
+version. Retested afterwards on GENERIC-NODEBUG and GENERIC with
+WITNESS, no jail left dying, no panic: all 12 cases on 2026-11-26 (main
+f0ce2ae67f9f + #3, #4, #7, #8, #9 + #10, the slot fix), `server_reset`
+and `server_reset_twice` 3 runs each.
 
 - T1: the stall check did not count the outage from the reset to the
   first probe after it (a 15 s stall read as 1 s). Fixed.
