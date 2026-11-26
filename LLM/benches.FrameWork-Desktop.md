@@ -400,14 +400,54 @@ Vulkan buffer holds the other 50 191 MiB.
   acceptance 0.72; ~32 k TTFT 85 179 ms, 39.9 Total TPS, acceptance 0.77.
   0 GPU faults; server RSS 32.7 GB (the table, now anonymous memory). The
   mmap N=2 sweep above (warm) gave 9 095 ms and 38.9.
-- **Why ZFS faults cost so much (from the source, not measured):** with
-  `MADV_RANDOM` the fault handler asks for no read-behind or read-ahead
-  (`vm_fault.c`, `behind = 0; ahead = 0`), so each fault installs one 4 KiB
-  page, while `zfs_getpages` reads the whole 128 KiB record and keeps only
-  that page. With the ARC capped at 8 GiB and a 27 GB randomly read table,
-  the same record can be fetched again for each of its 32 pages. That reads
-  as an inefficiency, not a correctness bug; measuring disk bytes read vs
-  table bytes touched, or a cold run from UFS, would confirm it.
+- **What a cold ZFS prefill costs (measured, 2026-11-26).** Two cold boots
+  (stock kernel, IOMMU off), default mmap, one llama-bench pp4096 (warmup +
+  1 rep = 8 192 prefill tokens). DTrace on `zfs_freebsd_getpages`, disk
+  bytes from `zpool iostat -Hp 1`, ARC from `kstat.zfs.misc.arcstats`:
+
+  | prefill window          | ARC max 8 GiB (default) | ARC max 40 GiB |
+  |-------------------------|------------------------:|---------------:|
+  | pp4096                  | 247.9 | 278.6 |
+  | `zfs_getpages` calls    | 142 619 | 143 374 |
+  | pages installed         | 365 772 (1 429 MiB), 2.56/call | 385 661 (1 506 MiB), 2.69/call |
+  | disk read               | 14 478 MiB, 116 530 ops of 127 KiB | 13 557 MiB, 109 196 ops of 127 KiB |
+  | disk bytes / bytes installed | **10.1×** | **9.0×** |
+  | ARC demand-data hit rate | 20.4 % | 27.4 % |
+  | time in `zfs_getpages`  | 32.8 s of a 36 s window, 230 µs/call | 31.5 s of 35 s, 220 µs/call |
+  | GPU busy, mean          | 38 % | 41 % |
+
+  During load the same calls install 31.8 pages each (full 128 KiB
+  records), because those mappings are not `MADV_RANDOM`. During prefill,
+  with `MADV_RANDOM`, the fault handler asks for no read-behind or
+  read-ahead (`vm_fault.c`, `behind = 0; ahead = 0`), and `zfs_getpages`
+  reads the whole 128 KiB record to install ~2.6 pages of it.
+
+  What this shows:
+  - The amplification is ~10×, and it is **first-touch, not ARC
+    thrashing**: a 40 GiB ARC barely changes it (9.0×, PP +12 %). One
+    prefill touches ~110 000 different records and uses ~10 KiB of each.
+  - The cost that matters is latency, not bytes: page-in time equals the
+    wall time, so faults resolve one at a time (~220 µs each, bimodal
+    16-31 µs ARC hits / 64-511 µs disk reads) and the GPU waits.
+  - One-at-a-time is llama.cpp's choice, not FreeBSD's: ggml runs
+    `GGML_OP_GET_ROWS` with `n_tasks = 1` (`ggml-cpu.c`, a FIXME says extra
+    threads cost more than they gain under GPU offload). Both OSes therefore
+    fault the table from a single thread.
+  - Ubuntu, same cold run (page cache dropped, `/proc/vmstat` +
+    `/proc/diskstats`): pp4096 525.4, prefill window 15 s, **845 MiB** read in
+    125 213 ops of **6.9 KiB**, 1 888 major faults. About the same number of
+    reads as FreeBSD (one per row touched), but ext4 reads a few KiB where
+    ZFS must read and verify a whole 128 KiB record: 17× fewer bytes. Why so
+    few of Ubuntu's reads count as major faults (i.e. block the thread) is
+    not measured.
+  - Verdict: no correctness bug. ZFS cannot read less than a record (the
+    checksum and compression are per record), so random 4 KiB access to a
+    file stored in 128 KiB records costs ~10× the bytes and a ~220 µs page-in
+    each. A possible improvement, untested: `zfs_getpages` could install the
+    rest of a record it has already read even under `MADV_RANDOM`, so later
+    prefills warm faster. Practical levers: `--load-mode none`
+    (what `llmsrv.sh` does) or a smaller `recordsize` on the model dataset
+    (untested; costs sequential load throughput).
 
 Ruled out as causes: the 2026-11-26 userland `pkg upgrade` (no GPU package;
 the 2026-11-22 numbers below were already cold-slow), the NPU kernel and
