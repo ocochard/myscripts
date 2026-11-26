@@ -8,7 +8,9 @@ the open-source Vulkan driver for AMD Radeon). Same silicon in both hosts:
 **All speed measurements: llama.cpp v1.0.0 (build 12359, `b1b770d90`),
 2026-11-14/15, same build on both hosts, no `--no-host` flag (A/B proved it is a no-op on this
 stack, see "The `--no-host` non-finding" below).** Served through
-`LLM/llmsrv.sh`.
+`LLM/llmsrv.sh`. The Flash-Next OS comparison was re-run on 2026-11-26 with
+the same build; see
+[FreeBSD vs Ubuntu, 2026-11-26](#freebsd-vs-ubuntu-2026-11-26-flashnext-only).
 
 > New to these numbers? **[Concepts](#concepts-what-the-numbers-in-this-document-mean)**
 > defines PP / TG / TTFT / Total TPS, what MTP draft *acceptance* is and whether
@@ -22,8 +24,17 @@ stack, see "The `--no-host` non-finding" below).** Served through
 - **Dense alternatives: Qwen3.8-27B.** `qwen38-mtp` (Q8_0 + sidecar MTP head)
   decodes at ~17 t/s; `qwen38-q8` (UD-Q8_K_XL, no MTP) at ~7 t/s and is the
   DaemonDocs doc-accuracy recipe and the no-MTP fallback.
-- **TG is OS-neutral** (memory-bandwidth bound): every slot decodes within a
-  few % on FreeBSD and Ubuntu.
+- **Warm, the two OSes are equal.** On Flash-Next, PP and TG are within 3 %
+  on FreeBSD and Ubuntu at every depth (FreeBSD slightly ahead).
+- **FreeBSD halves Flash-Next PP from a cold start.** The 27.5 GB n-gram
+  embedding table stays in the mmap'd file and is paged in during prefill;
+  on FreeBSD + ZFS those page faults starve the GPU until the pages are
+  resident (PP 255 cold vs 530 warm at d=0). Ubuntu loses only 3 %.
+  `--load-mode none --lazy-mode off` reads the table into RAM at load and
+  fixes it: cold FreeBSD then reaches 569 PP / 31.7 TG, ~8 % / ~5 % above
+  Ubuntu with the same flags. `llmsrv.sh` sets them for `flashnext` /
+  `flashnext-abl` on FreeBSD only (cold llama-server test: 39.6 Total TPS at
+  ~4 k, 0 GPU faults).
 - **ROCm is dead on gfx1151** (MES, MicroEngine Scheduler, 0x83 firmware
   bug). Vulkan-only.
 - **The GTT aperture, not installed RAM, caps model size.** One quant step
@@ -67,6 +78,10 @@ llama-server \
 ```
 
 **Footnotes**:
+- **FreeBSD adds `--load-mode none --lazy-mode off`** (`llmsrv.sh` does it).
+  Without them the 27 GB n-gram table is paged in from ZFS during prefill
+  and PP runs at half speed until it is resident; see
+  [FreeBSD vs Ubuntu, 2026-11-26](#freebsd-vs-ubuntu-2026-11-26-flashnext-only).
 - **No `--no-host` flag.** Direct A/B on `frwk-linux` showed it is a no-op
   with a small BIOS UMA carve-out (which both hosts use). It is still worth
   passing if you have a large "dedicated VRAM" carve-out; see the BIOS
@@ -88,12 +103,12 @@ Same silicon (Ryzen AI MAX+ 395 + 128 GB LPDDR5x-8000 UMA).
 | Component       | `frwk-bsd`                                              | `frwk-linux`                            |
 |-----------------|---------------------------------------------------------|-----------------------------------------|
 | OS              | FreeBSD 16.0-CURRENT                                    | Ubuntu 26.04.1                          |
-| Kernel          | FreeBSD kernel + drm-kmod (`drm-latest-kmod` 6.12.x)    | Linux 7.0.0-43-generic                  |
+| Kernel          | FreeBSD kernel + drm-kmod (`drm-latest-kmod` 6.12.x)    | Linux 7.0.0-43-generic (7.0.0-44 from 2026-11-26) |
 | GPU driver      | [`ocochard/drm-kmod` `strix` branch](https://github.com/ocochard/drm-kmod/tree/strix) | amdgpu in-tree |
 | GPU firmware    | `gpu-firmware-amd-kmod-*`                               | linux-firmware (distro)                 |
 | Mesa            | 26.2.x ([FreeBSD bug 294948](https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=294948), `mesa-dri` ships the RADV ICD, Installable Client Driver) | 26.0.8 |
 | Compiler        | Clang (base system)                                     | GCC 15.2.0                              |
-| CPU governor    | `powerd` adaptive                                       | `performance`                           |
+| CPU governor    | `powerd` adaptive                                       | `performance` (2026-11-26: `powersave`, amd-pstate-epp, EPP `balance_performance`) |
 | llama.cpp       | v1.0.0 (`b1b770d90`)                                    | v1.0.0 (`b1b770d90`)                    |
 
 ### Installing on FreeBSD
@@ -303,6 +318,108 @@ total RAM**:
 | UD-IQ4_XS    | 93.7 GB| loads, but **not worth using**, see below           |
 | **UD-IQ3_XXS**| **82 GB** | **the recipe**                                   |
 
+### FreeBSD vs Ubuntu, 2026-11-26 (`flashnext` only)
+
+Same llama.cpp v1.0.0 (`b1b770d90`, the peeled `v1.0.0` tag) on both hosts,
+`bench-all.sh ONLY=flashnext-iq3`, plus targeted llama-bench reruns. GPU stack
+unchanged on both (Mesa 26.2.2 / 26.0.8, same firmware); Ubuntu was on kernel
+7.0.0-44 and freshly rebooted. FreeBSD ran the NPU-branch `GENERIC-NODEBUG`
+kernel (amdiommu on) for the bench-all run, and stock main n291187
+`GENERIC-NODEBUG` with `hw.amdiommu.enable=0` for the cold-boot tests; the
+cold result is the same on both kernels.
+
+**llama-bench, pp4096 / tg128, fa=1, b=2048, ub=512, r=2:**
+
+| depth | FreeBSD cold (NPU kernel) | FreeBSD cold (stock) | FreeBSD cold, `-lzm off` | FreeBSD cold, `-lm none -lzm off` | FreeBSD warm | Ubuntu after reboot | Ubuntu warm | Ubuntu `-lm none -lzm off` |
+|------:|------------:|------------:|------------:|------------:|------------:|------------:|------------:|------------:|
+| PP 0     | 235.3 ± 8.5 | 254.7 ± 8.6 | 272.4 ± 23.6 | **569.3** ± 2.2 | 529.7 ± 1.6 | 522.6 ± 4.3 | 524.8 ± 5.4 | 528.4 ± 5.9 |
+| PP 8192  | 251.3 ± 3.9 | 263.9 ± 0.2 | 340.4 ± 11.8 | **483.5** ± 0.1 | 461.2 ± 1.7 | 448.7 ± 0.6 | 446.1 ± 0.4 | 449.9 ± 0.4 |
+| PP 32768 | 254.1 ± 4.9 | 264.2 ± 7.3 | 326.7 ± 5.3  | **356.9** ± 0.8 | 335.3 ± 2.1 | 328.8 ± 2.0 | 328.7 ± 2.6 | 329.3 ± 2.0 |
+| TG 0     | 26.44 | 27.51 | 28.07 | **31.71** | 30.89 | 29.92 | 29.78 | 30.20 |
+| TG 8192  | 26.04 | 26.77 | 27.51 | **30.77** | 29.93 | 28.62 | 29.02 | 29.34 |
+| TG 32768 | 24.91 | 25.71 | 27.43 | **29.17** | 28.28 | 27.50 | 27.82 | 27.74 |
+
+"Cold" is the first llama-bench stage after boot (each depth is a new
+process); "warm" is the same command after the model has run once. All
+columns use `--load-mode mmap` (lazy mode auto) except where flags are
+shown; `-lm none -lzm off` is `--load-mode none --lazy-mode off`. Ubuntu
+with its page cache dropped (`echo 3 > /proc/sys/vm/drop_caches`) gave
+pp4096 510.4 vs 528.4 warm; only the load got slower (70 s vs 23 s).
+
+**`llama-server` + `bench_model.py`, spec-off, Total TPS** (FreeBSD was warm
+by this stage):
+
+| host    | ~4 k TTFT | ~4 k Total TPS | ~32 k TTFT | ~32 k Total TPS |
+|---------|----------:|---------------:|-----------:|----------------:|
+| FreeBSD |  8 589 ms | 29.4 | 82 790 ms | 27.6 |
+| Ubuntu  |  8 894 ms | 28.5 | 86 238 ms | 26.7 |
+
+**MTP `--spec-draft-n-max` sweep at ~4 k, Total TPS (draft acceptance):**
+
+| N   | FreeBSD | Ubuntu |
+|----:|--------:|-------:|
+| off | 29.2 | 28.5 |
+| 2   | **38.9** (0.72) | 36.3 (0.73) |
+| 3   | server failed (CPC fault) | **37.9** (0.67) |
+| 4   | 38.7 (0.60) | 34.9 (0.57) |
+| 5   | 32.9 (0.51) | 30.2 (0.46) |
+| 8   | 19.3 (0.37) | 17.3 (0.32) |
+| 16  | 13.0 (0.20) | 13.3 (0.19) |
+
+N=2 stays the recipe. On FreeBSD the Mesa-26 CPC fault (`Faulty UTCL2 client
+ID: CPC (0x5)`, then `ring comp_1.2.0 timeout`) killed two of eight MTP
+server starts (N=5 in the on/off summary, N=3 in the sweep); Ubuntu had
+none. One prompt, 2 reps, MTP nondeterministic: read gaps under ~5 % as noise.
+
+#### Why FreeBSD PP is halved from a cold start
+
+llama.cpp keeps Flash-Next's `token_embd.weight` (q6_K, the n-gram table,
+27 466 MiB) on the CPU as a **lazy-read** tensor
+(`LLAMA_LAZY_MODE_AUTO`: tensors over 4 GiB). It stays in the mmap'd GGUF
+with `POSIX_MADV_RANDOM`, and prefill faults its rows in on demand. The
+Vulkan buffer holds the other 50 191 MiB.
+
+- On FreeBSD each fault is a ZFS read (`recordsize=128K`, compression on,
+  ARC capped at 8 GiB here). During a cold pp4096 the GPU is starved:
+  `gpu_busy_percent` 21-67 % and sclk 1 000-1 950 MHz, against ~87 % and
+  ~2 650 MHz in the TG phase. Once the pages are resident in the VM page
+  cache, PP is full speed and stays so across processes.
+- On Ubuntu (ext4) the same faults are cheap enough that the cold run loses 3 %.
+- `--lazy-mode off` alone does not fix it under `--load-mode mmap`: the table
+  is still mapped from the file, only the madvise changes, and FreeBSD's
+  `MADV_WILLNEED` maps resident pages without starting I/O
+  (`vm_map_madvise` → `vm_map_pmap_enter`). llama.cpp's `MAP_POPULATE` is
+  `#ifdef __linux__`.
+- **`--load-mode none --lazy-mode off` fixes it.** The table is read into
+  RAM at load, prefill faults nothing, and a cold FreeBSD run is at full
+  speed (d=0 wall time 74 s including load; 0 GPU faults in dmesg). It even
+  beats warm mmap by 5-7 %, while Ubuntu gains nothing from the same flags.
+  Why warm mmap still costs FreeBSD 5-7 % is not measured.
+- **Served the same way** (`llmsrv.sh MODEL=flashnext`, MTP N=2, cold
+  boot, page cache never touched): ~4 k prompt TTFT 8 719 ms, 39.6 Total TPS,
+  acceptance 0.72; ~32 k TTFT 85 179 ms, 39.9 Total TPS, acceptance 0.77.
+  0 GPU faults; server RSS 32.7 GB (the table, now anonymous memory). The
+  mmap N=2 sweep above (warm) gave 9 095 ms and 38.9.
+- **Why ZFS faults cost so much (from the source, not measured):** with
+  `MADV_RANDOM` the fault handler asks for no read-behind or read-ahead
+  (`vm_fault.c`, `behind = 0; ahead = 0`), so each fault installs one 4 KiB
+  page, while `zfs_getpages` reads the whole 128 KiB record and keeps only
+  that page. With the ARC capped at 8 GiB and a 27 GB randomly read table,
+  the same record can be fetched again for each of its 32 pages. That reads
+  as an inefficiency, not a correctness bug; measuring disk bytes read vs
+  table bytes touched, or a cold run from UFS, would confirm it.
+
+Ruled out as causes: the 2026-11-26 userland `pkg upgrade` (no GPU package;
+the 2026-11-22 numbers below were already cold-slow), the NPU kernel and
+amdiommu (same on stock with `hw.amdiommu.enable=0`), shader paths and CPU
+threads (below).
+
+Warm FreeBSD pp4096 d=0, one rep each, toggling Vulkan paths: baseline 498,
+`GGML_VK_DISABLE_DOT2=1` 537, `GGML_VK_DISABLE_INTEGER_DOT_PRODUCT=1` 511,
+`GGML_VK_DISABLE_F16=1` 444, `GGML_VK_DISABLE_COOPMAT=1` 396. CPU threads:
+`--threads 32` (what `bench-all.sh` passes, `nproc`) 515 PP / 29.3 TG,
+16 (llama-bench default) 533 / 30.9, 8 534 / 30.9.
+
 ### GSQ-RCO Coder (58 GB): faster, scores lower (`flashnext-gsq`)
 
 `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF` prunes half the routed
@@ -313,7 +430,9 @@ unpruned). The repo ships no MTP head; the unsloth self-contained head loads
 beside it and accepts **more** drafts than on IQ3_XXS. Loads in ~24 s.
 
 frwk-bsd, v1.0.0 (`b1b770d90`), 2026-11-22, both models in one `bench-all.sh`
-session. llama-bench, spec-off:
+session. llama-bench, spec-off. The PP columns are FreeBSD cold-start
+numbers (warm IQ3_XXS is ~530 at d=0, see the 2026-11-26 section), so
+compare the two models with each other, not with other tables:
 
 | depth | IQ3_XXS pp4096 | GSQ pp4096 | IQ3_XXS tg128 | GSQ tg128 |
 |------:|---------------:|-----------:|--------------:|----------:|
@@ -423,6 +542,11 @@ the figure to quote.** `mem_info_gtt_total` says 125.8 GB and
 
 ### Method notes
 
+- **On FreeBSD, warm the model before llama-bench.** `bench-all.sh` runs
+  llama-bench first, so after a boot its FreeBSD PP is the cold-start
+  figure (half of warm) while the later server stages are warm. Pass
+  `--load-mode none --lazy-mode off`, run one throwaway pp4096 first, or
+  report the stage as cold.
 - **`bench_model.py`'s `PP t/s` is not a prefill rate.** It is
   `prompt_tokens / ttft`, a TTFT derivative including request overhead, and it
   can rank the hosts opposite to `llama-bench`. Use `llama-bench pp4096` for
@@ -557,8 +681,9 @@ qwen38-mtp tg (Q8_0, ~8.5 bits/weight ≈ 29 GB for 27B):
 Decode without MTP sits just under the memory-bandwidth ceiling. MTP breaks
 the ceiling by getting multiple accepted tokens per weight read. A MoE such as
 Flash-Next reads only its active experts per token, which is why a 125B model
-decodes faster than a dense 27B. PP is compute-shaped (matmul-heavy), which is
-where OS-visible PP differences come from.
+decodes faster than a dense 27B. PP is compute-shaped (matmul-heavy); warm,
+it is equal on both OSes, and the one OS-visible PP gap measured so far is the
+FreeBSD cold-start page-fault cost on Flash-Next's lazy n-gram table.
 
 ## ROCm 7.2.4 dead-end (`frwk-linux`, 2026-07-07)
 

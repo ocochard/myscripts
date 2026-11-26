@@ -293,6 +293,10 @@ case "${MODEL}" in
     # N=2 was the measured peak on both hosts in the last N sweep (pre-v1.0.0;
     # not re-swept on v1.0.0).
     model_extra="--model-draft ${draft} --spec-type draft-mtp --spec-draft-n-max 2"
+    # FreeBSD: read the 27 GB lazy n-gram table into RAM at load. Left
+    # mmap'd, prefill page-faults it from ZFS and runs at half speed until
+    # the pages are resident. No gain on Ubuntu.
+    [ "${OS}" = "FreeBSD" ] && model_extra="${model_extra} --load-mode none --lazy-mode off"
     if [ "${MODEL}" = "flashnext-abl" ]; then
       # Uncensored variant: mrfakename's abliteration as a rank-1 LoRA, so the
       # cached IQ3_XXS and MTP head are reused (no second 82 GB download). It
@@ -390,7 +394,9 @@ case "${MODEL}" in
 esac
 
 # Notes on flags intentionally NOT set (see Framework-desktop.md):
-# --no-mmap / --direct-io        : wedge the FreeBSD GPU; ~no benefit on Ubuntu
+# --no-mmap / --direct-io        : wedged the FreeBSD GPU on Mesa 25; ~no benefit
+#                                  on Ubuntu (flashnext on FreeBSD sets
+#                                  --load-mode none, tested on Mesa 26)
 # --ctk q8_0 / --ctv q8_0        : crash Vulkan on FreeBSD; ~no benefit on Ubuntu
 # --kv-unified                   : no effect for single-client (parallel slots only)
 # --cache-reuse N                : Qwen3 uses M-RoPE; KV-shifting unsupported
