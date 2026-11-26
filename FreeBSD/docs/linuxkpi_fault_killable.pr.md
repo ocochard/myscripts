@@ -16,9 +16,8 @@ prints the same message in drm-kmod#481.
 As suggested in review, the retries are now bounded in time, like the
 vm_fault OOM handling (vm.pfault_oom_attempts x vm.pfault_oom_wait): after
 compat.linuxkpi.fault_retry_timeout seconds the fault fails and the
-thread gets SIGSEGV. The first retry yields as before, later ones sleep a
-tick. 0 fails at once, -1 retries forever. No signal or process state is
-examined.
+thread gets SIGSEGV. Each retry sleeps a tick first. 0 fails at once, -1
+retries forever. No signal or process state is examined.
 
 Why 30 s by default:
 - Retries are rare: DTrace counting handler calls per fault under VA-API,

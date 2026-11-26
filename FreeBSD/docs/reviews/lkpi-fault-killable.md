@@ -79,10 +79,17 @@ Options for kib: fail at once, or retry for a bounded time then fail (still spin
   as an inspiration? Looping in kernel relying on userspace to do some action is basically a user-controlled
   livelock."
 
+- Pushed as c1a4f9071f58 (rebased on 7aa01f369915; the user added "Reviewed by: imp, kib" although neither
+  had reviewed this version) with the new title/description and comment 1783 on the 30 s default.
+- kib inline review 462: (1) the comment did not say how a handler asks to be called again; (2) the
+  retries == 0 kern_yield() is a tight loop: pause() there too. Both applied in 1b11e3a3abbf (plain while
+  loop, pause() before every retry, no retries variable); VM reproducer rerun on NODEBUG and WITNESS
+  kernels, same results.
+
 ## Bounded retry (implemented)
 
 - compat.linuxkpi.fault_retry_timeout (seconds, CTLFLAG_RWTUN): 0 fails at once, -1 retries forever.
-- First retry yields, later retries pause one tick; at the deadline the fault fails (VM_PAGER_ERROR, SIGSEGV)
+- Each retry pauses one tick first; at the deadline the fault fails (VM_PAGER_ERROR, SIGSEGV)
   with one rate-limited log line.
 - Default 30 s, justified in the tutorial section 3.1: no retry in 389,768 faults on three GPUs (DTrace), so
   normal use is unaffected; the longest legitimate wait is a TTM buffer move, ended by amdgpu's 10 s kernel

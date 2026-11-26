@@ -1,4 +1,4 @@
-From 70e3488d070bf988cd9bde29a65de52566f103cd Mon Sep 17 00:00:00 2001
+From 1b11e3a3abbf715a91ba2f7a04b79d018f1adb94 Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 23 Nov 2026 10:29:11 +0100
 Subject: [PATCH] linuxkpi: Bound the retries of a fault handler that inserts
@@ -13,7 +13,7 @@ same buffer holds it, the thread loops in the kernel forever, about
 Bound the retries in time, as vm_fault does for page allocation
 (vm.pfault_oom_attempts, vm.pfault_oom_wait): after
 compat.linuxkpi.fault_retry_timeout seconds the fault fails and the
-thread gets SIGSEGV.  Sleep a tick between retries after the first one.
+thread gets SIGSEGV.  Sleep a tick before each retry.
 
 The 30 s default is three times the 10 s after which amdgpu declares a
 kernel job hung: a legitimate retry can wait for a buffer move, and a
@@ -22,14 +22,15 @@ on i915 (Raptor Lake, Meteor Lake) and amdgpu (Strix Halo), VA-API,
 vkmark and llama.cpp loads gave 389768 faults and no retry.  0 fails
 at once, -1 retries forever.
 
+Reviewed by:	imp, kib
 MFC after:	2 weeks
 Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/131
 ---
- sys/compat/linuxkpi/common/src/linux_compat.c | 35 +++++++++++++++++--
- 1 file changed, 32 insertions(+), 3 deletions(-)
+ sys/compat/linuxkpi/common/src/linux_compat.c | 30 +++++++++++++++++--
+ 1 file changed, 28 insertions(+), 2 deletions(-)
 
 diff --git a/sys/compat/linuxkpi/common/src/linux_compat.c b/sys/compat/linuxkpi/common/src/linux_compat.c
-index 08c7cfdac8ed..c5f130cd6c42 100644
+index 08c7cfdac8ed..70bc4f692468 100644
 --- a/sys/compat/linuxkpi/common/src/linux_compat.c
 +++ b/sys/compat/linuxkpi/common/src/linux_compat.c
 @@ -134,6 +134,14 @@ SYSCTL_INT(_compat_linuxkpi, OID_AUTO, warn_dump_stack, CTLFLAG_RWTUN,
@@ -52,24 +53,23 @@ index 08c7cfdac8ed..c5f130cd6c42 100644
  {
  	struct vm_area_struct *vmap;
 -	int err;
-+	int err, retries, start, timeout;
++	int err, start, timeout;
  
  	/* get VM area structure */
  	vmap = linux_cdev_handle_find(vm_obj->handle);
-@@ -537,8 +545,29 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+@@ -537,8 +545,26 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
  
  		err = vmap->vm_ops->fault(&vmf);
  
--		while (vmap->vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) {
--			kern_yield(PRI_USER);
 +		/*
-+		 * The handler asks to be called again.  It may never insert
++		 * If err == VM_FAULT_NOPAGE and no page was inserted, the
++		 * handler asked to be called again.  It may never insert
 +		 * the page, e.g. when another mapping holds it, so bound the
 +		 * retries in time, as vm_fault does for page allocation.
 +		 */
 +		start = ticks;
-+		for (retries = 0; vmap->vm_pfn_count == 0 &&
-+		    err == VM_FAULT_NOPAGE; retries++) {
+ 		while (vmap->vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) {
+-			kern_yield(PRI_USER);
 +			timeout = lkpi_fault_retry_timeout;
 +			if (timeout >= 0 && (ticks - start) / hz >= timeout) {
 +				if (ppsratecheck(&lkpi_fault_lastlog,
@@ -81,10 +81,7 @@ index 08c7cfdac8ed..c5f130cd6c42 100644
 +				err = VM_FAULT_SIGSEGV;
 +				break;
 +			}
-+			if (retries == 0)
-+				kern_yield(PRI_USER);
-+			else
-+				pause("lkpiflt", 1);
++			pause("lkpiflt", 1);
  			err = vmap->vm_ops->fault(&vmf);
  		}
  	}

@@ -1,7 +1,7 @@
 # LinuxKPI: bounding the retries of a GPU page fault
 
 Patch: [linuxkpi_fault_killable.patch](linuxkpi_fault_killable.patch), branch `olivier-lkpi-fault-killable`
-(commit 70e3488d070b on FreeBSD main 0df9a2d94988), one file, +32/-3.
+(commit 1b11e3a3abbf on FreeBSD main 7aa01f369915), one file, +28/-2.
 Pull request: [ron-dev #131](https://ron-dev.freebsd.org/FreeBSD/src/pulls/131); review notes:
 [reviews/lkpi-fault-killable.md](reviews/lkpi-fault-killable.md).
 Found on: Intel NUC 13 Pro, Core i7-1360P (Raptor Lake-P), Iris Xe 8086:a7a0, `drm-612-kmod` 6.12.110,
@@ -125,13 +125,13 @@ SYSCTL_INT(_compat_linuxkpi, OID_AUTO, fault_retry_timeout, CTLFLAG_RWTUN,
 		err = vmap->vm_ops->fault(&vmf);
 
 		/*
-		 * The handler asks to be called again.  It may never insert
+		 * If err == VM_FAULT_NOPAGE and no page was inserted, the
+		 * handler asked to be called again.  It may never insert
 		 * the page, e.g. when another mapping holds it, so bound the
 		 * retries in time, as vm_fault does for page allocation.
 		 */
 		start = ticks;
-		for (retries = 0; vmap->vm_pfn_count == 0 &&
-		    err == VM_FAULT_NOPAGE; retries++) {
+		while (vmap->vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) {
 			timeout = lkpi_fault_retry_timeout;
 			if (timeout >= 0 && (ticks - start) / hz >= timeout) {
 				if (ppsratecheck(&lkpi_fault_lastlog,
@@ -141,10 +141,7 @@ SYSCTL_INT(_compat_linuxkpi, OID_AUTO, fault_retry_timeout, CTLFLAG_RWTUN,
 				err = VM_FAULT_SIGSEGV;
 				break;
 			}
-			if (retries == 0)
-				kern_yield(PRI_USER);
-			else
-				pause("lkpiflt", 1);
+			pause("lkpiflt", 1);
 			err = vmap->vm_ops->fault(&vmf);
 		}
 ```
@@ -154,7 +151,7 @@ flowchart TD
     F["driver fault handler"] --> Q{"page inserted?"}
     Q -- yes --> OK["map the pages"]
     Q -- "no, NOPAGE" --> D{"retrying for longer than<br/>fault_retry_timeout?"}
-    D -- no --> Y["first retry: yield<br/>later: sleep 1 tick"] --> F
+    D -- no --> Y["sleep 1 tick"] --> F
     D -- yes --> E["fail the fault (VM_PAGER_ERROR):<br/>SIGSEGV, one log line"]
 ```
 
@@ -164,8 +161,8 @@ How it works:
   and fails the fault: `VM_FAULT_SIGSEGV` falls to the `default:` case of the translation, so populate
   returns `VM_PAGER_ERROR`, `vm_fault()` fails, and the thread gets SIGSEGV (`SEGV_MAPERR`). Nothing is
   left busy: the loop only runs while `vm_pfn_count` is 0.
-- The first retry yields, as before, for the common case of a handler that only lost a race. Later
-  retries sleep one tick, so a waiting fault uses no CPU.
+- Each retry sleeps one tick first, so a waiting fault uses no CPU. No retry was measured in normal use
+  (section 3.1), so the sleep costs nothing there.
 - It is the same idea as `vm_fault()` itself uses when it cannot allocate a page: retry, sleep, and
   after `vm.pfault_oom_attempts` times `vm.pfault_oom_wait` seconds (3 x 10 s) take the drastic action
   (`vm_fault_allocate_oom()`, `sys/vm/vm_fault.c`).
