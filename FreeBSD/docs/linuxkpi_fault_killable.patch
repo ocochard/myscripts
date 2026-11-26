@@ -1,47 +1,93 @@
-From 67983f3451e24d65dd751bbff7a18b60451bc122 Mon Sep 17 00:00:00 2001
+From 70e3488d070bf988cd9bde29a65de52566f103cd Mon Sep 17 00:00:00 2001
 From: Olivier Cochard <olivier@FreeBSD.org>
 Date: Mon, 23 Nov 2026 10:29:11 +0100
-Subject: [PATCH] linuxkpi: Let a killed process leave a retried fault
+Subject: [PATCH] linuxkpi: Bound the retries of a fault handler that inserts
+ no page
 
 linux_cdev_pager_populate() calls the fault handler again for as long
 as it returns VM_FAULT_NOPAGE without inserting a page.  When the page
 can never be inserted, for instance because another mapping of the
-same buffer holds it, the loop never ends: the thread spins in the
-kernel and kill -9 cannot end the process.
+same buffer holds it, the thread loops in the kernel forever, about
+450000 handler calls per second, and kill -9 cannot end the process.
 
-Stop retrying once SIGKILL is pending or the process has started to
-exit, and fail the fault.  Nothing changes for a process that is not
-dying, so transient retries and non-fatal signals behave as before.
-Linux returns from such a fault to user space and handles the signal
-there; a FreeBSD pager cannot, so it fails the fault instead.
+Bound the retries in time, as vm_fault does for page allocation
+(vm.pfault_oom_attempts, vm.pfault_oom_wait): after
+compat.linuxkpi.fault_retry_timeout seconds the fault fails and the
+thread gets SIGSEGV.  Sleep a tick between retries after the first one.
+
+The 30 s default is three times the 10 s after which amdgpu declares a
+kernel job hung: a legitimate retry can wait for a buffer move, and a
+hung move ends with that timeout and the reset.  Retries are rare:
+on i915 (Raptor Lake, Meteor Lake) and amdgpu (Strix Halo), VA-API,
+vkmark and llama.cpp loads gave 389768 faults and no retry.  0 fails
+at once, -1 retries forever.
 
 MFC after:	2 weeks
 Pull Request:	https://ron-dev.freebsd.org/FreeBSD/src/pulls/131
 ---
- sys/compat/linuxkpi/common/src/linux_compat.c | 10 ++++++++++
- 1 file changed, 10 insertions(+)
+ sys/compat/linuxkpi/common/src/linux_compat.c | 35 +++++++++++++++++--
+ 1 file changed, 32 insertions(+), 3 deletions(-)
 
 diff --git a/sys/compat/linuxkpi/common/src/linux_compat.c b/sys/compat/linuxkpi/common/src/linux_compat.c
-index 08c7cfdac8ed..34cf7753d847 100644
+index 08c7cfdac8ed..c5f130cd6c42 100644
 --- a/sys/compat/linuxkpi/common/src/linux_compat.c
 +++ b/sys/compat/linuxkpi/common/src/linux_compat.c
-@@ -538,6 +538,16 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+@@ -134,6 +134,14 @@ SYSCTL_INT(_compat_linuxkpi, OID_AUTO, warn_dump_stack, CTLFLAG_RWTUN,
+     &linuxkpi_warn_dump_stack, 0,
+     "Set to enable stack traces from WARN_ON(). Clear to disable.");
+ 
++static int lkpi_fault_retry_timeout = 30;
++SYSCTL_INT(_compat_linuxkpi, OID_AUTO, fault_retry_timeout, CTLFLAG_RWTUN,
++    &lkpi_fault_retry_timeout, 0,
++    "Seconds a page fault retries a driver fault handler that inserts no page "
++    "before failing (0: fail at once, -1: retry forever)");
++static struct timeval lkpi_fault_lastlog;
++static int lkpi_fault_curpps;
++
+ static struct timeval lkpi_net_lastlog;
+ static int lkpi_net_curpps;
+ static int lkpi_net_maxpps = 99;
+@@ -507,7 +515,7 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+     vm_prot_t max_prot, vm_pindex_t *first, vm_pindex_t *last)
+ {
+ 	struct vm_area_struct *vmap;
+-	int err;
++	int err, retries, start, timeout;
+ 
+ 	/* get VM area structure */
+ 	vmap = linux_cdev_handle_find(vm_obj->handle);
+@@ -537,8 +545,29 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
+ 
  		err = vmap->vm_ops->fault(&vmf);
  
- 		while (vmap->vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) {
-+			/*
-+			 * The handler may never insert the page, e.g. when
-+			 * another mapping holds it.  Give up once the process
-+			 * is killed or exiting, else it can never exit.
-+			 */
-+			if ((curproc->p_flag2 & P2_WEXIT) != 0 ||
-+			    fatal_signal_pending(current)) {
+-		while (vmap->vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) {
+-			kern_yield(PRI_USER);
++		/*
++		 * The handler asks to be called again.  It may never insert
++		 * the page, e.g. when another mapping holds it, so bound the
++		 * retries in time, as vm_fault does for page allocation.
++		 */
++		start = ticks;
++		for (retries = 0; vmap->vm_pfn_count == 0 &&
++		    err == VM_FAULT_NOPAGE; retries++) {
++			timeout = lkpi_fault_retry_timeout;
++			if (timeout >= 0 && (ticks - start) / hz >= timeout) {
++				if (ppsratecheck(&lkpi_fault_lastlog,
++				    &lkpi_fault_curpps, 1))
++					printf("linuxkpi: pid %d (%s): fault not "
++					    "served after %d s, failing it\n",
++					    curproc->p_pid, curproc->p_comm,
++					    timeout);
 +				err = VM_FAULT_SIGSEGV;
 +				break;
 +			}
- 			kern_yield(PRI_USER);
++			if (retries == 0)
++				kern_yield(PRI_USER);
++			else
++				pause("lkpiflt", 1);
  			err = vmap->vm_ops->fault(&vmf);
  		}
+ 	}
 -- 
 2.56.0
 

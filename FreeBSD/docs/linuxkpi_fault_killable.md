@@ -1,16 +1,19 @@
-# LinuxKPI: letting a killed process leave a GPU page fault
+# LinuxKPI: bounding the retries of a GPU page fault
 
 Patch: [linuxkpi_fault_killable.patch](linuxkpi_fault_killable.patch), branch `olivier-lkpi-fault-killable`
-(commit 67983f3451e2 on FreeBSD main 0df9a2d94988), one file, +10 lines.
-Pull request: [ron-dev #131](https://ron-dev.freebsd.org/FreeBSD/src/pulls/131).
+(commit 70e3488d070b on FreeBSD main 0df9a2d94988), one file, +32/-3.
+Pull request: [ron-dev #131](https://ron-dev.freebsd.org/FreeBSD/src/pulls/131); review notes:
+[reviews/lkpi-fault-killable.md](reviews/lkpi-fault-killable.md).
 Found on: Intel NUC 13 Pro, Core i7-1360P (Raptor Lake-P), Iris Xe 8086:a7a0, `drm-612-kmod` 6.12.110,
 `libva-intel-media-driver` 26.3.5. Investigation: [../Intel.NUC13.Pro.md](../Intel.NUC13.Pro.md#tracing-the-hang-2026-11-23).
 
 This document is for a first-year computer science student: someone who knows C and what an
 operating system does, but has not looked inside the FreeBSD virtual memory (VM) system.
 
-Result in one line: a process stuck in a GPU page fault used to survive `kill -9` until a reboot;
-with the patch, `kill -9` ends it within a second. Nothing else changes.
+Result in one line: a GPU page fault that the driver can never serve used to loop in the kernel
+forever, burning a CPU, and the process survived `kill -9` until a reboot; with the patch the retries
+sleep, and after `compat.linuxkpi.fault_retry_timeout` seconds (30 by default) the fault fails and
+the thread gets SIGSEGV.
 
 ## 1. Background
 
@@ -100,6 +103,8 @@ The first fault moves the buffer's page into the write-back mapping's device pag
 fault cannot take that page while the first mapping maps it, since a page has one owner
 (section 1.1): `lkpi_vmf_insert_pfn_prot_locked()` (`src/linux_page.c`) prints the message and returns
 `VM_FAULT_NOPAGE` with nothing inserted, and the loop of section 1.3 calls it again, forever.
+Measured with DTrace on the NUC: 4,497,541 handler calls in 10 s on one thread (about 450,000 per
+second, each about 1 us), no return from populate, 85% of a CPU.
 
 Xorg prints the same message at startup in [drm-kmod#481](https://github.com/freebsd/drm-kmod/issues/481).
 A different hang in the same function is not this loop and is not touched by this patch: an uninterruptible
@@ -111,157 +116,149 @@ sleep on a busy page in `vm_page_busy_acquire()`, reported in
 ## 3. The fix
 
 ```c
-while (vmap->vm_pfn_count == 0 && err == VM_FAULT_NOPAGE) {
-        /*
-         * The handler may never insert the page, e.g. when
-         * another mapping holds it.  Give up once the process
-         * is killed or exiting, else it can never exit.
-         */
-        if ((curproc->p_flag2 & P2_WEXIT) != 0 ||
-            fatal_signal_pending(current)) {
-                err = VM_FAULT_SIGSEGV;
-                break;
-        }
-        kern_yield(PRI_USER);
-        err = vmap->vm_ops->fault(&vmf);
-}
+static int lkpi_fault_retry_timeout = 30;
+SYSCTL_INT(_compat_linuxkpi, OID_AUTO, fault_retry_timeout, CTLFLAG_RWTUN,
+    &lkpi_fault_retry_timeout, 0,
+    "Seconds a page fault retries a driver fault handler that inserts no page "
+    "before failing (0: fail at once, -1: retry forever)");
+...
+		err = vmap->vm_ops->fault(&vmf);
+
+		/*
+		 * The handler asks to be called again.  It may never insert
+		 * the page, e.g. when another mapping holds it, so bound the
+		 * retries in time, as vm_fault does for page allocation.
+		 */
+		start = ticks;
+		for (retries = 0; vmap->vm_pfn_count == 0 &&
+		    err == VM_FAULT_NOPAGE; retries++) {
+			timeout = lkpi_fault_retry_timeout;
+			if (timeout >= 0 && (ticks - start) / hz >= timeout) {
+				if (ppsratecheck(&lkpi_fault_lastlog,
+				    &lkpi_fault_curpps, 1))
+					printf("linuxkpi: pid %d (%s): fault not "
+					    "served after %d s, failing it\n", ...);
+				err = VM_FAULT_SIGSEGV;
+				break;
+			}
+			if (retries == 0)
+				kern_yield(PRI_USER);
+			else
+				pause("lkpiflt", 1);
+			err = vmap->vm_ops->fault(&vmf);
+		}
 ```
 
 ```mermaid
 flowchart TD
     F["driver fault handler"] --> Q{"page inserted?"}
     Q -- yes --> OK["map the pages"]
-    Q -- "no, NOPAGE" --> D{"P2_WEXIT set or<br/>SIGKILL pending?"}
-    D -- no --> Y["kern_yield, retry"] --> F
-    D -- yes --> E["fail the fault<br/>(VM_PAGER_ERROR)"]
+    Q -- "no, NOPAGE" --> D{"retrying for longer than<br/>fault_retry_timeout?"}
+    D -- no --> Y["first retry: yield<br/>later: sleep 1 tick"] --> F
+    D -- yes --> E["fail the fault (VM_PAGER_ERROR):<br/>SIGSEGV, one log line"]
 ```
 
-The two tests cover the two ways the process can be dying:
+How it works:
 
-- `fatal_signal_pending(current)` (`src/linux_schedule.c`): SIGKILL is queued on this thread or on the
-  process. It reads the process queue itself, so it works even when the signal woke another thread.
-  `curproc_sigkilled()` would not: it only looks when *this* thread has a signal AST pending, and
-  `tdsendsignal()` sets that on one thread only.
-- `P2_WEXIT`: another thread already took the signal (or called `exit()`) and is in `exit1()`.
-  SIGKILL is then no longer queued, which is the case measured in 2.1. `P_WEXIT` would be too late: it
-  is set only after the other threads have gone. The flag is read without the process lock, as
-  `vm_fault()` reads `P_KILLED()`; a stale read only costs one more retry.
+- The loop measures how long it has been retrying, in ticks. Once that exceeds the tunable, it stops
+  and fails the fault: `VM_FAULT_SIGSEGV` falls to the `default:` case of the translation, so populate
+  returns `VM_PAGER_ERROR`, `vm_fault()` fails, and the thread gets SIGSEGV (`SEGV_MAPERR`). Nothing is
+  left busy: the loop only runs while `vm_pfn_count` is 0.
+- The first retry yields, as before, for the common case of a handler that only lost a race. Later
+  retries sleep one tick, so a waiting fault uses no CPU.
+- It is the same idea as `vm_fault()` itself uses when it cannot allocate a page: retry, sleep, and
+  after `vm.pfault_oom_attempts` times `vm.pfault_oom_wait` seconds (3 x 10 s) take the drastic action
+  (`vm_fault_allocate_oom()`, `sys/vm/vm_fault.c`).
+- `0` fails at once; `-1` keeps the old behaviour (retry forever). `(ticks - start) / hz` cannot
+  overflow for large values of the tunable.
+- No signal or process state is examined, so a dying process is not a special case: the fault fails at
+  the deadline, the thread reaches the user boundary, and the pending SIGKILL ends the process there.
 
-The process flags of the hung case, read with kgdb on the stock kernel (ffmpeg spinning in the loop,
-52 threads), before and 3 s after `kill -9`:
+Locking: the loop holds the LinuxKPI `mmap_sem`, a sleepable sx lock, while it sleeps in `pause()`;
+sleeping with an sx lock is allowed (only mutexes forbid it), and other faults of the same process
+already waited on that lock while the old loop spun. The VM map lock is not held (populate is called
+after `vm_fault_unlock_map()`).
 
-| | Spinning | 3 s after `kill -9` |
-|---|---|---|
-| `P_WKILLED` (tested by `P_KILLED()`) | 0 | 0 |
-| `P_WEXIT` | 0 | 0 |
-| `P_SINGLE_EXIT` | 0 | 1 |
-| `P2_WEXIT` | 0 | 1 |
-| SIGKILL queued, on the process or on any thread | 0 | 0 (already taken) |
-| Threads | 52 | 2 |
+### 3.1 Why 30 seconds
 
-```
-main thread: mi_switch thread_suspend_switch thread_single exit1 proc_set_p2_wexit sigexit postsig ast_sig ast
-encoder:     printf lkpi_vmf_insert_pfn_prot_locked remap_io_sg vm_fault_cpu linux_cdev_pager_populate vm_fault ...
-```
+- How often legitimate retries happen: DTrace on `linux_cdev_pager_populate()`, counting handler calls
+  per fault, under VA-API decode and encode, vkmark and a llama.cpp Vulkan load, alone and concurrently:
 
-So the two other flags one might test both stay clear in this case. `P_KILLED()` is only set by
-`proc_wkilled()`, which `killproc()` (out-of-memory and resource-limit kills) and `ptrace(PT_KILL)`
-call; a plain `kill -9` goes through `tdsendsignal()` and leaves it clear. `P_WEXIT` waits for the
-`thread_single()` loop, which waits for the spinning thread. `P_SINGLE_EXIT`, set by
-`thread_single(p, SINGLE_EXIT)`, would also catch this multithreaded case; it is the flag
-`thread_suspend_check()` uses to make interruptible sleeps return `EINTR` during exit.
+  | Machine | Faults | Faults that retried | Longest fault |
+  |---|---|---|---|
+  | NUC 13, Raptor Lake, i915 | 1,431 | 0 | 1.1 ms |
+  | X1 Carbon Gen 12, Meteor Lake, i915 | 1,773 | 0 | 5.8 ms |
+  | ZBook Ultra G1a, Strix Halo, amdgpu | 386,564 | 0 | 268 ms |
 
-Locking: `fatal_signal_pending()` takes the process mutex (`PROC_LOCK`), which never sleeps, while
-the loop holds the LinuxKPI `mmap_sem`, a sleepable sx lock; no code can take them in the other order,
-since nothing sleeps on an sx while holding a mutex. The VM object lock is not held in the loop.
-
-Who sees the new failure: only a fault that is being retried, in a process that is dying. A fault from
-kernel mode (`copyin()` in a system call of that process) returns `EFAULT` instead of hanging. A fault on
-another process's memory (a debugger through `proc_rwmem()`) checks the debugger, which is `curproc`,
-not the target.
-
-`VM_FAULT_SIGSEGV` falls to the `default:` case of the return code translation, so populate returns
-`VM_PAGER_ERROR` and `vm_fault()` fails the fault. No page needs releasing: the loop only runs while
-`vm_pfn_count` is 0. The SIGSEGV that `trapsignal()` then posts does no harm: once `P2_WEXIT` is set,
-signals are ignored (`kern_sig.c`: "there is no sense in delivering any signal to usermode"), and before
-that SIGKILL (9) is delivered ahead of SIGSEGV (11).
-
-Why only fatal signals: a fault cannot be retried after a signal handler runs on FreeBSD, so failing
-it on any signal would turn a harmless SIGALRM or SIGPROF into SIGSEGV. The old in-tree drm2 TTM code
-says so for Xorg, which uses SIGALRM (`sys/dev/drm2/ttm/ttm_bo_vm.c`, removed in d157fbd5b4b5).
-Linux does not need to fail the fault: on a retried fault (`VM_FAULT_RETRY`) with SIGKILL pending,
-or any signal for a user-mode fault, `fault_signal_pending()` (`include/linux/sched/signal.h`) makes
-`do_user_addr_fault()` (`arch/x86/mm/fault.c`) return to user space, where the signal is handled and
-the instruction faults again ([LWN](https://lwn.net/Articles/800683/) on the 2019 series that added the
-non-fatal case). A FreeBSD pager can only supply the page or fail, so the patch fails the fault, and
-only when the process is dying. Linux also queues SIGKILL on every thread of a dying process; the
-`P2_WEXIT` test stands in for that, since FreeBSD queues it once.
-Kernel precedent: the core dump loop in `kern_exec.c` stops its `vm_fault()` calls on
-`curproc_sigkilled()`.
+  No retry in 389,768 faults: the deadline does not affect normal operation, so the default only
+  matters in exceptional cases.
+- The longest a legitimate retry can wait, from the code: TTM's fault handler waits for the buffer's
+  kernel fences (buffer moves) interruptibly (`ttm_bo_vm_fault_idle()`); with a signal pending, the wait
+  fails at once and the handler returns `VM_FAULT_NOPAGE`, and it keeps doing so until the move
+  completes. A hung move ends when amdgpu declares the kernel (SDMA) job hung, after 10 s
+  (`amdgpu_device.c`; the 60 s compute timeout does not apply to these fences), followed by a reset.
+  i915's timeouts are shorter (640 ms preemption, 7.5 s for compute, 2.5 s heartbeat).
+- The reset time is not measured: logs of earlier amdgpu ring timeouts on a Framework Desktop show no
+  completed reset. So the default is three times the 10 s timeout, the same total as the page fault's
+  own give-up time for allocation (3 x 10 s).
+- In the one permanent case measured (section 2), the process sleeps 30 s without using CPU, then fails.
 
 ## 4. Alternatives, and what the patch does not fix
 
-| Option | Effect on processes not being killed | Problem |
+| Option | Effect | Problem |
 |---|---|---|
-| Fail the fault at once when the page is mapped elsewhere (reviewer's preferred direction, see [reviews/lkpi-fault-killable.md](reviews/lkpi-fault-killable.md)) | a short-lived conflict now kills the process: the refusal clears when the other mapping is unmapped or revoked, which today ends the spin with success | needs a channel beside the return code, since TTM turns an insert error on the first page back into `VM_FAULT_NOPAGE`; needs the `VM_FAULT_SIGBUS` fix of [linuxkpi_fault_sigbus.md](linuxkpi_fault_sigbus.md) |
-| Test only process flags: `P_KILLED()` or `P2_WEXIT` | none | measured: a single-threaded process, or one whose main thread spins, stays unkillable (table in section 5): a plain `kill -9` sets no flag, and the thread it lands on is the spinning one |
-| Add `curproc_sigkilled()` for untraced processes | none | measured: catches every case, but reads the signal queue outside `kern_sig.c`, which the reviewer rejects (delivery can ignore, block or act otherwise) |
-| Fail on any pending signal (`sig_intr()`) | SIGALRM, SIGPROF, SIGCHLD now give SIGSEGV | breaks Xorg and profilers |
-| Bound the retries | a slow but legitimate retry now fails | arbitrary limit |
-| This patch | none | the stuck program still needs `kill -9` |
+| Leave the loop when SIGKILL is pending or `P2_WEXIT` is set | `kill -9` works at once | reads the signal queue outside `kern_sig.c`: delivery decides whether a signal kills (it can ignore, block, or hand it to a debugger) |
+| Test only process flags, `P_KILLED()` or `P2_WEXIT` | `kill -9` works for a multithreaded process whose spinning thread is not the signalled one | measured: a single-threaded process, or one whose main thread spins, stays unkillable, since a plain `kill -9` sets no flag |
+| Fail at once when the insert is refused | no spin at all | the refusal can clear by itself (the other mapping is unmapped or revoked), so a fault that succeeds today would fail; needs a channel beside the return code, since TTM turns an insert error on the first page into `VM_FAULT_NOPAGE` |
+| Bound the retries in time (this patch) | covers every cause of an endless retry, no CPU while waiting, short conflicts still succeed | a stuck process waits up to the deadline before it fails or dies |
 
 Not fixed:
 
-- The process still spins at 100% of one CPU until killed. SIGTERM and SIGINT do not end it when the
-  program catches them, as ffmpeg does: they are not fatal, so the loop keeps going.
-- A stop request (SIGSTOP, a debugger attach) or a multithreaded `execve()` still waits on the
-  spinning thread, as before. A core dump does not: `sigexit()` sets `P2_WEXIT` before it single-threads
-  the process (`kern_ucoredump.c`), so the spinning thread now leaves the loop.
-- SIGKILL sent to one thread (`pthread_kill()`) goes to that thread's own queue (`tdsendsignal()`).
-  If that thread is blocked on the `mmap_sem` that the spinning thread holds, neither thread sees it,
-  and both stay stuck, as before. `kill -9 <pid>` queues on the process and is not affected.
-- An aio daemon that faults on the requester's memory checks itself (`curproc`), not the requester, so
-  killing the requester does not end its retry.
-- A debugger reading the memory of a process stuck this way spins in the same loop until the debugger
-  itself is killed.
-- The cause: LinuxKPI cannot map one page through two mappings. That needs a second mapping built from
-  fictitious pages (`vm_page_getfake()`), as the `OBJT_DEVICE` pager does, plus a policy for a page
-  mapped both WB and WC.
+- The cause on the NUC: LinuxKPI cannot map one page through two mappings (the media driver maps one
+  buffer write-back and write-combined), so the default H.264 encoder there now fails after 30 s
+  instead of hanging. Use `-low_power 1`, which works.
+- `kill -9` of a stuck process takes effect at the deadline, not at once.
+- The SIGSEGV, not SIGBUS: a failed populate becomes `KERN_FAILURE`, which `vm_fault_trap()` reports as
+  SIGSEGV.
+- A handler that returns `VM_FAULT_SIGBUS` still gets a zero-filled page, and pages inserted before a
+  failure stay busy: [linuxkpi_fault_sigbus.md](linuxkpi_fault_sigbus.md).
 
 ## 5. Tested
 
-2026-11-23. Each test kernel is the source the machine was running plus this patch, built
-GENERIC-NODEBUG, booted once with `nextboot -k kernel.lkpikill`, then the machine was booted back into
-its original kernel. 1920x1080 300-frame clips; VA-API through ffmpeg 9.0.2; each run under a watchdog.
+2026-11-26. Each test kernel is the machine's running source plus this patch, booted once with
+nextboot, then the machine was booted back into its original kernel.
+
+### 5.1 Reproducer (bhyve guest, `lkpi_fault.ko`)
+
+Test module in [linuxkpi_fault_repro/](linuxkpi_fault_repro/): mode 3 returns `VM_FAULT_NOPAGE` forever,
+mode 4 refuses 50 times then inserts. Deadline lowered to 5 s for the test.
+
+| Scenario | Stock 6dc19a71f70c | Patched (GENERIC-NODEBUG and GENERIC with INVARIANTS, WITNESS) |
+|---|---|---|
+| `kill -9`, single-threaded | survives | gone at the deadline (2 s after the kill) |
+| `kill -9`, 2 threads, worker retrying | survives | gone at the deadline (2 s) |
+| `kill -9`, 2 threads, main thread retrying | survives | gone at the deadline (3 s) |
+| CPU while retrying | about 25% (one of 4 vCPUs) | 0% |
+| Never served, no kill | retries forever | SIGSEGV after 5 s, one log line |
+| Refused 50 times, then served | (not run) | succeeds |
+| Deadline 0, refused once | (not run) | SIGSEGV at once |
+| Panic, assertion, lock order reversal | none | none |
+
+### 5.2 Hardware
 
 | Machine | Test | Original kernel | Patched kernel |
 |---|---|---|---|
-| NUC 13 (Raptor Lake, i915) | `h264_vaapi` default encode, then `kill -9` | survives `kill -9`, reboot needed (5 times) | gone 1 s after `kill -9`, exit status 137 (3 times) |
-| NUC 13 | same, SIGTERM or SIGINT | not run | still spinning after 20 s (ffmpeg catches them), then gone 1 s after `kill -9` |
-| NUC 13 | console after the kill | message without end | no message in the next 3 s |
-| NUC 13 | process flags 3 s after `kill -9` (kgdb, section 3) | `P2_WEXIT` and `P_SINGLE_EXIT` set; `P_WKILLED`, `P_WEXIT` clear; SIGKILL no longer queued | (not run) |
-| bhyve guest, test module looping (mode 3) | `kill -9`, single-threaded process | survives | gone in 1 s |
-| bhyve guest | `kill -9`, 2 threads, worker thread looping | survives | gone in 1 s |
-| bhyve guest | `kill -9`, 2 threads, main thread looping | survives | gone in 1 s |
-| NUC 13, `GENERIC` with INVARIANTS and WITNESS | `kill -9` of the spinning encode, 3 times (once after SIGTERM) | (not run) | gone in 1 s each time; 0 lock order reversals, no assertion |
-| ThinkPad X1 Carbon Gen 12 (Meteor Lake, i915) | decode H.264, HEVC | bit-exact | bit-exact |
-| X1 Carbon | encode H.264, HEVC, `low_power 0`, CQP and VBR | 300 frames each | 300 frames each |
-| X1 Carbon | encode `low_power 1` | fails cleanly, exit 178 (not supported) | same |
-| X1 Carbon | vkmark (3 s per scene, vertex, texture, shading) | 12105, 13242, 12265, 13073 | 12690, 13031, 12446, 12271 |
-| HP ZBook Ultra G1a (Strix Halo, amdgpu) | decode H.264, HEVC | bit-exact | bit-exact |
-| ZBook | encode H.264, HEVC, `low_power 0`, CQP and VBR | 300 frames each | 300 frames each |
-| ZBook | encode `low_power 1` | fails cleanly, exit 178 | same |
-| ZBook | vkmark | 70343, 67099, 58895 | 67610, 71302, 66017, 60408 |
-| ZBook | LLM load: `MODEL=qwen38-q8 CTX=32768 LLM/llmsrv.sh` (llama.cpp b1b770d90, Vulkan), 6 requests of 1925 prompt + 256 generated tokens | prompt 273-292 t/s, generation 7.2 t/s | prompt 279-292 t/s, generation 7.2 t/s |
-| ZBook | `kill -9` of llama-server during a generation | gone in 1 s | gone in 1 s |
-| X1 Carbon, ZBook | `page rename failed` messages, stuck processes during the regression runs | none | none |
+| NUC 13 (Raptor Lake, i915), patched kernel with INVARIANTS and WITNESS | default H.264 encode | loops forever, 85% CPU | SIGSEGV after 31 s; 0% CPU at 20 s; `linuxkpi: pid 4523 (ffmpeg): fault not served after 30 s, failing it` |
+| NUC 13 | same, `kill -9` after 5 s | survives, reboot needed | gone 26 s later, at the deadline |
+| NUC 13 | VA-API decode H.264, HEVC; other encodes | bit-exact; work | bit-exact; work; 0 lock order reversals |
+| X1 Carbon Gen 12 (Meteor Lake, i915) | VA-API decode, encode `low_power 0` (`low_power 1` is unsupported there) | bit-exact; 300 frames each | same |
+| X1 Carbon | vkmark | 12105-13242 (4 runs on unpatched kernels, 2026-11-23) | 11846, 12163, 12185, 12457 |
+| ZBook Ultra G1a (Strix Halo, amdgpu) | VA-API decode, encode `low_power 0` | bit-exact; 300 frames each | same |
+| ZBook | vkmark | 58895-70343 (7 runs on unpatched kernels, 2026-11-23 and 24) | 68468, 63633, 61734, 60892 |
+| ZBook | `MODEL=qwen38-q8 CTX=32768 LLM/llmsrv.sh`, 6 requests of 1925 + 256 tokens, then `kill -9` | prompt 273-292 t/s, generation 7.2 t/s, gone in 1 s | prompt 282-294 t/s, generation 7.2 t/s, gone in 1 s |
 
-The vkmark spread between runs (about 10%) is larger than any difference between the kernels.
-The ZBook LLM baseline ran on `kernel.evdevtest` (212babfc84dd: the ZBook base plus an evdev change, no LinuxKPI change),
-the patched run on 9f0a9cd7ffcf plus this patch.
+The first Carbon vkmark run is 2% below the lowest earlier one; the other three are within the earlier
+range, which spans 9%. The patched loop does not run during vkmark (no retry measured on that machine).
 
-An independent review of the patch (code and goal only) found no defect; the last two "not fixed"
-items above come from it.
-
-Not tested: a desktop session (Xorg or Wayland) on the patched kernels, OpenGL, amdgpu under memory
-pressure (the LLM run used 29 GB of 96 GB), other LinuxKPI drivers (nvidia-drm), and the Xorg hang of drm-kmod#481.
+Not tested: a desktop session (Xorg or Wayland), a legitimate retry that lasts (none occurred), an amdgpu
+reset, and other LinuxKPI drivers (nvidia-drm).

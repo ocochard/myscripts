@@ -20,6 +20,10 @@ Reviewer rules (kib, PR 131):
 - "The real bug there is spinning in kernel": when a kernel loop cannot make
   progress, make the failing operation return an error that ends the loop,
   rather than adding an escape condition to the loop.
+- "Looping in kernel relying on userspace to do some action is basically a
+  user-controlled livelock": bound such a loop in time, like the vm_fault OOM
+  handling, and justify the bound with measurements (PR 131: retry statistics
+  under real loads plus the driver timeouts a retry can depend on).
 
 | Fact | Source | Verified by |
 |---|---|---|
@@ -52,7 +56,11 @@ Reviewer rules (kib, PR 131):
 |---|---|---|
 | A LinuxKPI mmap with a `fault` handler gets an `OBJT_MGTDEVICE` object; the driver's `mmap` must set `vm_ops` with `open`, `close` and a unique `vm_private_data` | compat/linuxkpi/common/src/linux_compat.c `linux_file_mmap_single()` | test module |
 | `linux_cdev_pager_populate()` holds the LinuxKPI `mmap_sem` (sx, write) around the handler; the VM map lock is already dropped | linux_compat.c, vm/vm_fault.c | code + WITNESS run, no LOR |
-| It retries the handler while it returns `VM_FAULT_NOPAGE` with nothing inserted (`vm_pfn_count == 0`), with `kern_yield()` and no signal check | linux_compat.c | measured: unkillable spin |
+| It retries the handler while it returns `VM_FAULT_NOPAGE` with nothing inserted (`vm_pfn_count == 0`), with `kern_yield()` and no signal check | linux_compat.c | measured: unkillable spin, about 450,000 handler calls/s on one thread (Raptor Lake) |
+| Legitimate retries are rare: no retry in 389,768 LinuxKPI faults under VA-API, vkmark and llama.cpp loads on i915 (Raptor Lake, Meteor Lake) and amdgpu (Strix Halo) | | DTrace on `linux_cdev_pager_populate()`, handler calls per fault, 2026-11 |
+| TTM's fault handler waits interruptibly for kernel fences (buffer moves); with a signal pending the wait fails at once and it returns `VM_FAULT_NOPAGE`, so a retry can last until the move ends: a hung move ends at amdgpu's 10 s kernel/SDMA job timeout plus reset (60 s is for compute jobs, which these fences are not) | drm-kmod ttm_bo_vm.c `ttm_bo_vm_fault_idle()`, amdgpu_device.c | code |
+| i915 default GPU timeouts: preemption 640 ms (compute 7.5 s), heartbeat 2.5 s | drm-kmod kconfig.mk | code |
+| Precedent for bounding a fault's retries: `vm_fault_allocate_oom()` retries for `vm.pfault_oom_attempts` x `vm.pfault_oom_wait` seconds (3 x 10 s), sleeping in `vm_waitpfault()`, then starts OOM | vm/vm_fault.c | code; suggested by kib on PR 131 |
 | It translated `VM_FAULT_SIGBUS` to `VM_PAGER_BAD`: the normal path then zero-fills a page (the LinuxKPI pager has no `cdev_pg_fault`) | linux_compat.c, vm/device_pager.c | VM test: reads `0x00`, no signal |
 | `lkpi_vmf_insert_pfn_prot_locked()` moves a page out of its current object; if that object still maps it, it prints "page rename failed: page is mapped" and returns `VM_FAULT_NOPAGE` without counting the page | compat/linuxkpi/common/src/linux_page.c | measured (Intel media driver, Raptor Lake) |
 | That refusal is not always permanent. It clears when the other mapping is unmapped (`vm_map_delete()` calls `pmap_map_delete()` before the entry and its object go, and object teardown is deferred until after the map lock is dropped) or when the driver revokes it (`unmap_mapping_range()` -> `cdev_mgtdev_pager_free_pages()`: i915 `__i915_gem_object_put_pages()` on shrink/evict/purge when unpinned, object free; TTM on a move). None of these waits on the faulting thread | vm/vm_map.c, linux_page.c, drm-kmod i915 gem/i915_gem_pages.c, gem/i915_gem_object.c | code |

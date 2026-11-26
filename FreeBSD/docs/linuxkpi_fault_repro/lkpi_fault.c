@@ -8,6 +8,8 @@
  *   2  insert pages 0 .. partial-1, then return VM_FAULT_SIGBUS
  *   3  return VM_FAULT_NOPAGE without inserting: the populate loop retries
  *      forever (logged once per mode-3 episode)
+ *   4  return VM_FAULT_NOPAGE debug.lkpi_fault.refusals times, then insert
+ *      (a conflict that clears by itself)
  *
  * Inserted pages are filled with 0xa5, so a zero-filled page is visible.
  * Pages are never freed by the module: the VM object owns them once inserted.
@@ -32,11 +34,16 @@
 static int lf_mode;
 static int lf_partial = 2;
 static int lf_spins;
+static int lf_refusals = 50;
+static int lf_refused;
 
 static SYSCTL_NODE(_debug, OID_AUTO, lkpi_fault, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "LinuxKPI fault test device");
 SYSCTL_INT(_debug_lkpi_fault, OID_AUTO, mode, CTLFLAG_RW, &lf_mode, 0,
-    "0 insert, 1 SIGBUS, 2 partial insert then SIGBUS, 3 NOPAGE forever");
+    "0 insert, 1 SIGBUS, 2 partial insert then SIGBUS, 3 NOPAGE forever, "
+    "4 NOPAGE refusals times then insert");
+SYSCTL_INT(_debug_lkpi_fault, OID_AUTO, refusals, CTLFLAG_RW, &lf_refusals, 0,
+    "NOPAGE answers before inserting in mode 4");
 SYSCTL_INT(_debug_lkpi_fault, OID_AUTO, partial, CTLFLAG_RW, &lf_partial, 0,
     "pages inserted before SIGBUS in mode 2");
 
@@ -66,6 +73,16 @@ lf_fault(struct vm_fault *vmf)
 	int i, mode;
 
 	mode = lf_mode;
+	if (mode == 4 && lf_refused < lf_refusals) {
+		if (lf_refused++ == 0)
+			printf("lkpi_fault: fault at page %lu, mode 4, refusing "
+			    "%d times\n", addr / PAGE_SIZE, lf_refusals);
+		return (VM_FAULT_NOPAGE);
+	}
+	if (mode == 4)
+		printf("lkpi_fault: mode 4, inserting after %d refusals\n",
+		    lf_refused);
+	lf_refused = 0;
 	if (mode == 3) {
 		if (lf_spins++ == 0)
 			printf("lkpi_fault: fault at page %lu, mode 3 (NOPAGE, "

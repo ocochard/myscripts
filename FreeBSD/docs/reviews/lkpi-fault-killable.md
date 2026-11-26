@@ -4,8 +4,10 @@ PR: https://ron-dev.freebsd.org/FreeBSD/src/pulls/131 (opened 2026-11-23, rebase
 Local branch olivier-lkpi-fault-killable: 67983f3451e2 = the pushed commit + `Pull Request:` trailer (not pushed yet).
 Tutorial: ../linuxkpi_fault_killable.md. Test kit: ../linuxkpi_fault_repro/.
 
-Status 2026-11-24: kib rejects the signal-queue check and asks to fix the refusal at its source.
-Open design choice (below) to agree with him before any code change.
+Status 2026-11-26: redesigned as kib suggested (comment 1766): the retries are bounded in time, as
+vm_fault does for page allocation, with no signal or flag check. Local commit 70e3488d070b
+("linuxkpi: Bound the retries of a fault handler that inserts no page"), tested; to push with
+`git pr main -f`, and the PR title and description to replace in the web UI (linuxkpi_fault_killable.pr.md).
 
 ## Review thread
 
@@ -72,7 +74,23 @@ the surface, so it never frees. Frequency of the short-lived case: unknown, no w
 
 Options for kib: fail at once, or retry for a bounded time then fail (still spins briefly; needs a limit).
 
-## Draft reply (not posted)
+- Posted the transient-conflict caveat (1724) and asked: fail at once or bounded retry?
+- kib (1766): "Might be look at the oom handling in vm_fault.c (vm_pfault_oom_attempts and vm_pfault_oom_wait)
+  as an inspiration? Looping in kernel relying on userspace to do some action is basically a user-controlled
+  livelock."
+
+## Bounded retry (implemented)
+
+- compat.linuxkpi.fault_retry_timeout (seconds, CTLFLAG_RWTUN): 0 fails at once, -1 retries forever.
+- First retry yields, later retries pause one tick; at the deadline the fault fails (VM_PAGER_ERROR, SIGSEGV)
+  with one rate-limited log line.
+- Default 30 s, justified in the tutorial section 3.1: no retry in 389,768 faults on three GPUs (DTrace), so
+  normal use is unaffected; the longest legitimate wait is a TTM buffer move, ended by amdgpu's 10 s kernel
+  job timeout plus an unmeasured reset; 3 x 10 s, as vm_fault's OOM give-up.
+- Tests (tutorial section 5): VM reproducer NODEBUG and WITNESS; NUC (WITNESS) stuck encode -> SIGSEGV after
+  31 s, kill -9 effective at the deadline, 0 LOR; Carbon and ZBook regression unchanged.
+
+## Earlier draft reply (superseded)
 
 > Thanks, understood: no queue checks outside kern_sig.c. I'll drop the P2_WEXIT/signal test and make the
 > refusal fatal instead: when lkpi_vmf_insert_pfn_prot_locked() cannot move a page mapped by another object,

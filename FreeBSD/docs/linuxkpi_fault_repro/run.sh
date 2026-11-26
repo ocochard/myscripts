@@ -9,8 +9,16 @@ kldload ./lkpi_fault.ko && echo "lkpi_fault.ko loaded" || echo "kldload FAILED"
 ./fault_test > /root/fault.log 2>&1
 cat /root/fault.log
 
-# kill -9 of a thread spinning in the populate loop (handler mode 3)
-echo "== kill -9 while spinning (handler returns NOPAGE, inserts nothing)"
+# Kernels with a bounded retry: a short deadline keeps the waits below short.
+bounded=0
+if sysctl -q compat.linuxkpi.fault_retry_timeout > /dev/null 2>&1; then
+	bounded=1
+	echo "fault_retry_timeout default: $(sysctl -n compat.linuxkpi.fault_retry_timeout) s"
+	sysctl -q compat.linuxkpi.fault_retry_timeout=5
+fi
+
+# kill -9 of a thread retrying in the populate loop (handler mode 3)
+echo "== kill -9 while retrying (handler returns NOPAGE, inserts nothing)"
 sysctl -q debug.lkpi_fault.mode=3
 for c in st mt-worker mt-main; do
 	./spin_test $c > /root/spin-$c.log 2>&1 &
@@ -27,7 +35,29 @@ for c in st mt-worker mt-main; do
 		echo "    gone ${n} s after kill -9"
 	fi
 done
+
+if [ $bounded = 1 ]; then
+	echo "== bounded retry (fault_retry_timeout=5)"
+	# Never served: the fault must fail after the deadline.
+	s=$(date +%s)
+	./spin_test st > /root/b1.log 2>&1 &
+	p=$!
+	sleep 2
+	cpu=$(ps -o %cpu= -p $p | tr -d ' ')
+	wait $p; rc=$?
+	echo "  never served: exit status $rc ($( [ $rc -gt 128 ] && kill -l $((rc - 128)) )) after $(( $(date +%s) - s )) s, cpu while waiting ${cpu}%"
+	# Short-lived refusal: 50 NOPAGE answers, then the page.
+	sysctl -q debug.lkpi_fault.mode=4 debug.lkpi_fault.refusals=50
+	s=$(date +%s)
+	./spin_test st > /root/b2.log 2>&1; rc=$?
+	echo "  50 refusals then insert: exit status $rc after $(( $(date +%s) - s )) s: $(cat /root/b2.log)"
+	# Deadline 0: fail at once.
+	sysctl -q compat.linuxkpi.fault_retry_timeout=0 debug.lkpi_fault.refusals=1
+	./spin_test st > /root/b3.log 2>&1; rc=$?
+	echo "  timeout 0, 1 refusal: exit status $rc ($( [ $rc -gt 128 ] && kill -l $((rc - 128)) ))"
+	sysctl -q compat.linuxkpi.fault_retry_timeout=5
+fi
 sysctl -q debug.lkpi_fault.mode=0
 echo "== kernel messages"
-dmesg | grep -E "lkpi_fault|panic|lock order reversal" | tail -20
+dmesg | grep -E "lkpi_fault|linuxkpi:|panic|lock order reversal" | tail -20
 sync
