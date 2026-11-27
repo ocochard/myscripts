@@ -1,7 +1,24 @@
-diff --git sys/compat/linuxkpi/common/src/linux_page.c sys/compat/linuxkpi/common/src/linux_page.c
+From 1db12fa92fb43d8390e8759acd637d113f8d60ce Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Sat, 21 Nov 2026 21:23:41 +0100
+Subject: [PATCH 1/2] linuxkpi: Honor the pgprot argument of vmap()
+
+vmap() ignored prot, so pgprot_writecombine() callers got a cached
+mapping.  On Meteor Lake the i915 media GT does not snoop the CPU
+caches and its GuC rejects the firmware read through such a mapping.
+
+Apply a non-default cache mode with pmap_change_attr(), and restore
+each page's own attribute in vunmap().
+
+Tested on Meteor Lake (i915 media GT, VA-API) and Strix Halo (amdgpu).
+---
+ sys/compat/linuxkpi/common/src/linux_page.c | 66 ++++++++++++++++++++-
+ 1 file changed, 64 insertions(+), 2 deletions(-)
+
+diff --git a/sys/compat/linuxkpi/common/src/linux_page.c b/sys/compat/linuxkpi/common/src/linux_page.c
 index a95d86753985..5f6ff1eab6f5 100644
---- sys/compat/linuxkpi/common/src/linux_page.c
-+++ sys/compat/linuxkpi/common/src/linux_page.c
+--- a/sys/compat/linuxkpi/common/src/linux_page.c
++++ b/sys/compat/linuxkpi/common/src/linux_page.c
 @@ -336,6 +336,7 @@ struct vmmap {
  	LIST_ENTRY(vmmap)	vm_next;
  	void			*vm_addr;
@@ -117,3 +134,35 @@ index a95d86753985..5f6ff1eab6f5 100644
  	pmap_qremove(addr, vmmap->vm_size / PAGE_SIZE);
  	kva_free(addr, vmmap->vm_size);
  	kfree(vmmap);
+-- 
+2.56.0
+
+
+From e91ac9eb85d3fa978d1868922e45a5e3cb61ea84 Mon Sep 17 00:00:00 2001
+From: Olivier Cochard <olivier@FreeBSD.org>
+Date: Fri, 27 Nov 2026 21:40:02 +0100
+Subject: [PATCH 2/2] __FreeBSD_version: Bump for LinuxKPI vmap() honoring
+ pgprot
+
+drm-kmod uses it to enable the Meteor Lake media GT, which needs
+write-combined vmap() mappings.
+---
+ sys/sys/param.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sys/sys/param.h b/sys/sys/param.h
+index 467581018cd0..a91dffa99538 100644
+--- a/sys/sys/param.h
++++ b/sys/sys/param.h
+@@ -74,7 +74,7 @@
+  * cannot include sys/param.h and should only be updated here.
+  */
+ #undef __FreeBSD_version
+-#define __FreeBSD_version 1600032
++#define __FreeBSD_version 1600033
+ 
+ /*
+  * __FreeBSD_kernel__ indicates that this system uses the kernel of FreeBSD,
+-- 
+2.56.0
+
