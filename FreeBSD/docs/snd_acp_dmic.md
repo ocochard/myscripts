@@ -343,6 +343,24 @@ stereo S32_LE, 48 kHz, through Python's `ossaudiodev`, analysed with
 | each commit, modules built against main f0692bcb9aa0 | no warning |
 | `buildkernel` GENERIC + `device snd_acp70` | no warning |
 
+Same tests, 2026-11-27, on a kernel built from main 748b510477b3 with
+the three commits (GENERIC-NODEBUG, booted once with `nextboot`), so with
+main's current pcm(4) locking:
+
+| Test | Result |
+|---|---|
+| boot | `devmatch` loads `snd_acp70.ko` and `snd_acp_pdm.ko`; `acp700` on MSI (irq85), `pcm6`, `/dev/mixer6` with `rec = 0.75` |
+| 5 s recording, then a second one | 1920000 bytes, 469 interrupts; first 100 ms zero; DC -63 / -63 dBFS, then -83 / -95 dBFS |
+| `bitperfect=1` | DC -24.2 dBFS |
+| `rec.volume=0`, `rec.mute=on` | all samples zero |
+| `rec.volume=0.10` / `0.75`, channel 0 | peak -58.9 / -39.3 dBFS |
+| started at level 0, unmuted at 1 s | zeros, then DC per 250 ms -47, -81 ... -87 dBFS |
+| `devctl suspend/resume acp700` during a 5 s recording | 1920000 bytes in 5.49 s |
+| `devctl detach pcm6` | "Device busy" |
+| `kldunload`/`kldload snd_acp70`, 3 cycles (`snd_acp_pdm` follows as its dependency) | all record |
+| `devctl detach acp700`, `devctl attach pci0:195:0:5` | records |
+| `kldunload snd_acp70` during a recording | rc 0, the recording gets EINVAL, no panic |
+
 PDM gain, 2026-11-24, quiet room: a 440 Hz tone played through the
 laptop speakers, recorded by the microphones (3 s, Goertzel level,
 [snd_acp_gain_level.py](snd_acp_gain_level.py)). The gain field is the
