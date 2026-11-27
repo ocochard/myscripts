@@ -1,13 +1,12 @@
-03e4f31f69e049c55cee05641e59a35f038772b8 ("linuxkpi: Let a killed process leave a retried fault")
+4ba6fd2ef5a7 ("linuxkpi: Bound the retries of a fault handler that inserts no page"), in main
 
-PR: https://ron-dev.freebsd.org/FreeBSD/src/pulls/131 (opened 2026-11-23, rebased on 0df9a2d94988).
-Local branch olivier-lkpi-fault-killable: 67983f3451e2 = the pushed commit + `Pull Request:` trailer (not pushed yet).
+PR: https://ron-dev.freebsd.org/FreeBSD/src/pulls/131 (opened 2026-11-23 as 03e4f31f69e0 "linuxkpi: Let a
+killed process leave a retried fault"; redesigned in review).
 Tutorial: ../linuxkpi_fault_killable.md. Test kit: ../linuxkpi_fault_repro/.
 
-Status 2026-11-26: redesigned as kib suggested (comment 1766): the retries are bounded in time, as
-vm_fault does for page allocation, with no signal or flag check. Local commit 70e3488d070b
-("linuxkpi: Bound the retries of a fault handler that inserts no page"), tested; to push with
-`git pr main -f`, and the PR title and description to replace in the web UI (linuxkpi_fault_killable.pr.md).
+Status 2026-11-27: landed in main as 4ba6fd2ef5a7 ("linuxkpi: Bound the retries of a fault handler that
+inserts no page"), PR closed as merged; code identical to the tested 1b11e3a3abbf (range-diff: only
+`Approved by: kib` added). kib approved review 463 on c3eecd3bc0c4. MFC after 2 weeks (about 2026-12-11).
 
 ## Review thread
 

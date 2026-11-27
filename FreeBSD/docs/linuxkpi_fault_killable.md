@@ -1,7 +1,7 @@
 # LinuxKPI: bounding the retries of a GPU page fault
 
 Patch: [linuxkpi_fault_killable.patch](linuxkpi_fault_killable.patch), branch `olivier-lkpi-fault-killable`
-(commit 1b11e3a3abbf on FreeBSD main 7aa01f369915), one file, +28/-2.
+one file, +28/-2. Landed in FreeBSD main as 4ba6fd2ef5a7 (2026-11-27), MFC after 2 weeks.
 Pull request: [ron-dev #131](https://ron-dev.freebsd.org/FreeBSD/src/pulls/131); review notes:
 [reviews/lkpi-fault-killable.md](reviews/lkpi-fault-killable.md).
 Found on: Intel NUC 13 Pro, Core i7-1360P (Raptor Lake-P), Iris Xe 8086:a7a0, `drm-612-kmod` 6.12.110,
