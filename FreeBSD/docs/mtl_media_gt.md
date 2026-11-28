@@ -306,9 +306,11 @@ Both variants remove the GT1 skip:
 
 1. `gt/intel_gt.c`: remove the FreeBSD block that skips GT1. In
    [mtl_media_gt_unskip.patch](mtl_media_gt_unskip.patch) (variant B, the
-   one for upstream), the skip stays for kernels older than
-   `__FreeBSD_version` 1600033, the version bumped with the LinuxKPI fix:
-   on those, GT1 would wedge the whole GPU.
+   one for upstream), the skip stays for kernels older than the
+   `__FreeBSD_version` that comes with the LinuxKPI fix (the patch says
+   1600033, the number of the superseded PR 119; set it to the bump that
+   lands with D60130, section 4.4): on older kernels, GT1 would wedge the
+   whole GPU.
 
 Variant A then fixes WC in i915:
 
@@ -500,6 +502,32 @@ cannot change amdgpu's behavior here, and the tests confirm it. An AMD
 setup that maps write-combined TTM BOs through `ttm_bo_kmap()` would take
 the new path; none was found to test it.
 
+### 4.4 Variant B with D60130 (parallel LinuxKPI work)
+
+Review D60130 (https://reviews.freebsd.org/D60130, "linuxkpi: track
+cache-attribute lifetimes for overlapping vmap mappings", open since
+2026-09-29) fixes the same `vmap()` bug and goes further: it keeps one
+attribute record per page, with a reference count, so overlapping aliases
+share the write-combined attribute and the original one comes back only at
+the last `vunmap()`; a conflicting attribute on a page already mapped is
+refused. The LinuxKPI patch of variant B does not do that: its `vunmap()`
+restores the page's attribute even while another alias is still live.
+
+Tested 2026-11-28 on the X1 Carbon, both boots with the same `i915kms`:
+drm-kmod 6.12.85 with only the GT1 un-skip, its version guard disabled for
+the test.
+
+| | main 6dc19a71f70c (GENERIC-NODEBUG) | main 6dc19a71f70c + D60130 diff 193257 (GENERIC, INVARIANTS and WITNESS) |
+|---|---|---|
+| GT1 GuC firmware | `load failed: status: Reset = 0, BootROM = 0x1A, UKernel = 0x71, MIA = 0x00, Auth = 0x02`, then "Failed to initialize GPU, declaring it wedged!" | submission, SLPC and RC enabled |
+| HuC | not reached | "authenticated for all workloads" |
+| VA-API | I/O errors | 24 decode and 16 encode profiles; H.264 and HEVC decode identical to software (`framemd5`); H.264 and HEVC encode work |
+| Vulkan | software (llvmpipe, vkmark 589): the whole GPU is wedged | hardware MTL, vkmark 11824, 12020, 12064, 12393 |
+| WITNESS | not run | one lock order reversal, in net80211/ifnet (iwlwifi0_com_lo then ifnet_sx), none from LinuxKPI |
+
+Expected on both: "GSC proxy handler failed to init" (no MEI driver), and
+`low_power 1` encodes failing cleanly ("Nothing was written").
+
 ## 5. Reproduce
 
 Variant A (module only):
@@ -545,14 +573,16 @@ sudo kldload /boot/modules.gt1only/i915kms.ko
 
 ## 6. Next steps
 
-1. LinuxKPI: [linuxkpi_vmap_prot.patch](linuxkpi_vmap_prot.patch) is under
-   review at https://ron-dev.freebsd.org/FreeBSD/src/pulls/119. AMD
-   (Strix Halo) shows no regression and never
-   takes the new path (section 4.3); TTM can still pass a WC `prot` to
-   `vmap()` (`drivers/gpu/drm/ttm/ttm_bo_util.c`) on other setups.
-2. drm-kmod: once the LinuxKPI fix is in, send
-   [mtl_media_gt_unskip.patch](mtl_media_gt_unskip.patch) as a pull request
-   to `freebsd/drm-kmod`, referencing commit `5c341599a7a2` and PR #418.
+1. LinuxKPI: back D60130 (section 4.4), which also covers overlapping
+   aliases; report the Meteor Lake result there and ask for a
+   `__FreeBSD_version` bump with it. Close
+   https://ron-dev.freebsd.org/FreeBSD/src/pulls/119
+   ([linuxkpi_vmap_prot.patch](linuxkpi_vmap_prot.patch)) in its favour.
+   AMD (Strix Halo) never took the new path with PR 119 (section 4.3).
+2. drm-kmod: once D60130 is in, set the guard of
+   [mtl_media_gt_unskip.patch](mtl_media_gt_unskip.patch) to its
+   `__FreeBSD_version` and send it as a pull request to `freebsd/drm-kmod`,
+   referencing commit `5c341599a7a2` and PR #418.
    Until then, variant A is the drm-kmod-only alternative.
 3. Test resume from a deep S0ix sleep, once FreeBSD supports S0ix on Intel.
 4. Long-run test: video playback for an hour (mpv `--hwdec=vaapi`).

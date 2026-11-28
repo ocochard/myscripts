@@ -1,4 +1,4 @@
-i915: enable the Meteor Lake media GT on FreeBSD 1600033 and later
+i915: enable the Meteor Lake media GT once LinuxKPI vmap() honours pgprot
 
 Commit 5c341599a7a2 (#418) skips GT1, the standalone media GT, because its
 GuC failed authentication. The cause is not the missing MEI driver:
@@ -7,9 +7,10 @@ uses for the media GT (Wa_22016122933, the media GT does not snoop the
 CPU caches) were cached, and the GuC BootROM read a stale firmware
 signature (BootROM = 0x50, RSA_FAILED).
 
-FreeBSD fixes vmap() in
-https://ron-dev.freebsd.org/FreeBSD/src/pulls/119
-(__FreeBSD_version 1600033). This keeps the skip only for older kernels.
+FreeBSD fixes vmap() in https://reviews.freebsd.org/D60130 (set the
+guard to the __FreeBSD_version bumped with it; the patch says 1600033,
+the number of the superseded ron-dev PR 119). This keeps the skip only
+for older kernels.
 Without MEI, i915 already gives up cleanly on the GSC proxy, and HDCP
 stays disabled by is_hdcp2_supported().
 
